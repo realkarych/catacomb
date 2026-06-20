@@ -48,6 +48,20 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 	return &sqliteStore{db: db, marshal: json.Marshal}, nil
 }
 
+func (s *sqliteStore) applyGraph(tx *sql.Tx, nodes []*model.Node, edges []*model.Edge) error {
+	for _, n := range nodes {
+		if err := s.write(tx, upsertNode, n, n.ID, n.RunID); err != nil {
+			return err
+		}
+	}
+	for _, e := range edges {
+		if err := s.write(tx, upsertEdge, e, e.ID, e.RunID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *sqliteStore) Persist(obs []model.Observation, nodes []*model.Node, edges []*model.Edge) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -59,19 +73,77 @@ func (s *sqliteStore) Persist(obs []model.Observation, nodes []*model.Node, edge
 			return err
 		}
 	}
-	for _, n := range nodes {
-		if err := s.write(tx, upsertNode, n, n.ID, n.RunID); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	}
-	for _, e := range edges {
-		if err := s.write(tx, upsertEdge, e, e.ID, e.RunID); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
+	if err := s.applyGraph(tx, nodes, edges); err != nil {
+		_ = tx.Rollback()
+		return err
 	}
 	return tx.Commit()
+}
+
+func (s *sqliteStore) AppendAndApply(o model.Observation, nodes []*model.Node, edges []*model.Edge) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store.AppendAndApply begin: %w", err)
+	}
+	if err := s.write(tx, insertObservation, o, o.ObsID, o.RunID, o.ExecutionID, o.Seq); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := s.applyGraph(tx, nodes, edges); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) MaxSeq() (uint64, error) {
+	var v sql.NullInt64
+	if err := s.db.QueryRow("SELECT MAX(seq) FROM observations").Scan(&v); err != nil {
+		return 0, fmt.Errorf("store.MaxSeq: %w", err)
+	}
+	if !v.Valid {
+		return 0, nil
+	}
+	return uint64(v.Int64), nil
+}
+
+type rowScanner interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+}
+
+func (s *sqliteStore) ObservationsSince(seq uint64) ([]model.Observation, error) {
+	rows, err := s.db.Query("SELECT body FROM observations WHERE seq > ? ORDER BY seq", seq)
+	if err != nil {
+		return nil, fmt.Errorf("store.ObservationsSince: %w", err)
+	}
+	out, err := scanObservations(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func scanObservations(rows rowScanner) ([]model.Observation, error) {
+	defer func() { _ = rows.Close() }()
+	var out []model.Observation
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return nil, fmt.Errorf("store.ObservationsSince scan: %w", err)
+		}
+		var o model.Observation
+		if err := json.Unmarshal([]byte(body), &o); err != nil {
+			return nil, fmt.Errorf("store.ObservationsSince decode: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.ObservationsSince rows: %w", err)
+	}
+	return out, nil
 }
 
 func (s *sqliteStore) write(tx *sql.Tx, query string, value any, keys ...any) error {
