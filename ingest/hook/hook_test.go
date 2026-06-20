@@ -44,6 +44,8 @@ func TestParsePreToolUse(t *testing.T) {
 	assert.NotEmpty(t, o.Payload.Hash)
 	assert.NotEmpty(t, o.ObsID)
 	assert.Equal(t, uint64(1), o.Seq)
+	assert.False(t, o.EventTime.IsZero())
+	assert.Equal(t, o.EventTime, o.ObservedAt)
 }
 
 func TestParsePostToolUse(t *testing.T) {
@@ -106,12 +108,23 @@ func TestParseNotificationIsMarker(t *testing.T) {
 	obs := parseFixture(t, "Notification", "notification.json")
 	require.Len(t, obs, 1)
 	assert.Equal(t, "marker", obs[0].Kind)
+	assert.Equal(t, "Notification", obs[0].Attrs["hook_event"])
 }
 
 func TestParseUnknownType(t *testing.T) {
 	obs, err := Parse("Mystery", []byte(`{"hook_event_name":"Mystery","session_id":"s1"}`), "exec-T", seqGen())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
+}
+
+func TestParseUnknownTypeDoesNotConsumeSeq(t *testing.T) {
+	next := seqGen()
+	_, err := Parse("Mystery", []byte(`{"session_id":"s1"}`), "e", next)
+	require.NoError(t, err)
+	obs, err := Parse("SessionStart", []byte(`{"session_id":"s1"}`), "e", next)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, uint64(1), obs[0].Seq)
 }
 
 func TestParseMalformed(t *testing.T) {

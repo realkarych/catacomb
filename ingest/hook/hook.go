@@ -28,17 +28,22 @@ type envelope struct {
 	AgentType          string          `json:"agent_type"`
 }
 
+var nowFn = time.Now
+
 func Parse(hookType string, payload []byte, executionID string, nextSeq func() uint64) ([]model.Observation, error) {
 	var e envelope
 	if err := json.Unmarshal(payload, &e); err != nil {
 		return nil, fmt.Errorf("hook.Parse: %w", err)
 	}
-	seq := nextSeq()
-	p := build(hookType, e, seq)
+	p := build(hookType, e)
 	if p == nil {
 		return nil, nil
 	}
-	ts := time.Unix(0, 0).UTC()
+	seq := nextSeq()
+	if p.kind == "user_prompt" {
+		p.correlation.UUID = "p" + strconv.FormatUint(seq, 10)
+	}
+	ts := nowFn().UTC()
 	return []model.Observation{{
 		ObsID:       ulid.Make().String(),
 		RunID:       e.SessionID,
@@ -61,7 +66,7 @@ type partial struct {
 	payload     *model.Payload
 }
 
-func build(hookType string, e envelope, seq uint64) *partial {
+func build(hookType string, e envelope) *partial {
 	base := model.Correlation{SessionID: e.SessionID}
 	switch hookType {
 	case "SessionStart":
@@ -69,9 +74,7 @@ func build(hookType string, e envelope, seq uint64) *partial {
 	case "SessionEnd", "Stop":
 		return &partial{kind: "session_end", correlation: base, attrs: map[string]any{"reason": e.Reason}}
 	case "UserPromptSubmit":
-		c := base
-		c.UUID = "p" + strconv.FormatUint(seq, 10)
-		return &partial{kind: "user_prompt", correlation: c, attrs: map[string]any{"prompt": e.Prompt}}
+		return &partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt": e.Prompt}}
 	case "PreToolUse":
 		c := base
 		c.ToolUseID = e.ToolUseID
