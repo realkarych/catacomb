@@ -1,9 +1,9 @@
 package main
 
-import "fmt"
-
-var Version = "dev"
+import "os"
 
 func main() {
-	fmt.Printf("catacomb %s\n", Version)
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
+	}
 }
