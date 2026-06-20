@@ -15,16 +15,28 @@ func (g *Graph) ApplyAll(obs []model.Observation) {
 func (g *Graph) Apply(o model.Observation) {
 	g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 	switch o.Kind {
+	case "session_start":
+		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
+		g.stamp(n, o)
+		n.Status = strongerStatus(n.Status, model.StatusRunning)
+	case "session_end":
+		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
+		g.stamp(n, o)
+		ts := o.EventTime
+		n.TEnd = &ts
+		n.Status = strongerStatus(n.Status, model.StatusOK)
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
-		g.upsertEdge(o.ExecutionID, o.RunID, model.EdgeParentChild, model.SessionNodeID(o.ExecutionID), n.ID)
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
 		applyTokens(n, o.Attrs)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
+	case "subagent_stop":
+		g.applySubagent(o)
 	}
 }
 
@@ -43,12 +55,29 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Name = name
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
-		n.Status = model.Status(s)
+		n.Status = strongerStatus(n.Status, model.Status(s))
 	}
 	mergePayload(n, o.Payload)
+	parent := model.SessionNodeID(o.ExecutionID)
 	if o.Correlation.MessageID != "" {
-		g.upsertEdge(o.ExecutionID, o.RunID, model.EdgeParentChild, model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), id)
+		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
 	}
+	g.upsertEdge(o.ExecutionID, o.RunID, parent, id)
+}
+
+func (g *Graph) applySubagent(o model.Observation) {
+	n := g.node(model.SubagentID(o.ExecutionID, o.Correlation.AgentID), o.RunID, model.NodeSubagent)
+	g.stamp(n, o)
+	if o.Correlation.AgentID != "" {
+		n.AgentID = o.Correlation.AgentID
+	}
+	if t, ok := o.Attrs["subagent_type"].(string); ok && n.SubagentType == "" {
+		n.SubagentType = t
+	}
+	ts := o.EventTime
+	n.TEnd = &ts
+	n.Status = strongerStatus(n.Status, model.StatusOK)
+	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
 }
 
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
@@ -100,4 +129,20 @@ func toInt64(v any) (int64, bool) {
 
 func isMCP(name string) bool {
 	return strings.HasPrefix(name, "mcp__")
+}
+
+func isTerminal(s model.Status) bool {
+	switch s {
+	case model.StatusOK, model.StatusError, model.StatusBlocked, model.StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func strongerStatus(cur, next model.Status) model.Status {
+	if isTerminal(cur) && !isTerminal(next) {
+		return cur
+	}
+	return next
 }

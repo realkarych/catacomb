@@ -152,7 +152,7 @@ func TestIsMCP(t *testing.T) {
 
 func TestUpsertEdgeEmptyGuard(t *testing.T) {
 	g := NewGraph()
-	g.upsertEdge(execID, runID, model.EdgeParentChild, "", "x")
+	g.upsertEdge(execID, runID, "", "x")
 	assert.Empty(t, g.Edges)
 }
 
@@ -173,4 +173,107 @@ func TestMergePayloadOutputOnly(t *testing.T) {
 	require.NotNil(t, n.Payload)
 	assert.Empty(t, n.Payload.Input)
 	assert.NotEmpty(t, n.Payload.Output)
+}
+
+func TestStatusLatticeTerminalNotOverwritten(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	res := ob("tool_result", "toolu_x", t0)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+	use := ob("assistant_tool_use", "toolu_x", t0)
+	use.Attrs = map[string]any{"name": "Bash", "status": string(model.StatusRunning)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{res, use})
+
+	assert.Equal(t, model.StatusOK, g.Nodes[model.ToolCallID(execID, "toolu_x")].Status)
+}
+
+func TestStatusLatticeProvisionalThenTerminal(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	use := ob("assistant_tool_use", "toolu_y", t0)
+	use.Attrs = map[string]any{"name": "Bash", "status": string(model.StatusRunning)}
+	res := ob("tool_result", "toolu_y", t0)
+	res.Attrs = map[string]any{"status": string(model.StatusError)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, res})
+
+	assert.Equal(t, model.StatusError, g.Nodes[model.ToolCallID(execID, "toolu_y")].Status)
+}
+
+func TestToolWithoutMessageIDAttachesToSession(t *testing.T) {
+	use := ob("assistant_tool_use", "toolu_z", time.Unix(0, 0).UTC())
+	use.Attrs = map[string]any{"name": "Bash"}
+
+	g := NewGraph()
+	g.Apply(use)
+
+	tool := model.ToolCallID(execID, "toolu_z")
+	require.NotNil(t, g.Edges[model.EdgeID(execID, model.EdgeParentChild, model.SessionNodeID(execID), tool)])
+}
+
+func TestSessionStart(t *testing.T) {
+	o := ob("session_start", "", time.Unix(0, 0).UTC())
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.SessionNodeID(execID)]
+	require.NotNil(t, n)
+	assert.Equal(t, model.StatusRunning, n.Status)
+	require.NotNil(t, n.TStart)
+}
+
+func TestSessionEnd(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	g := NewGraph()
+	g.Apply(ob("session_start", "", t0))
+	g.Apply(ob("session_end", "", t0.Add(time.Second)))
+	n := g.Nodes[model.SessionNodeID(execID)]
+	require.NotNil(t, n.TEnd)
+	assert.Equal(t, model.StatusOK, n.Status)
+}
+
+func TestSubagentStop(t *testing.T) {
+	o := ob("subagent_stop", "", time.Unix(0, 0).UTC())
+	o.Correlation.AgentID = "a1"
+	o.Attrs = map[string]any{"subagent_type": "researcher"}
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.SubagentID(execID, "a1")]
+	require.NotNil(t, n)
+	assert.Equal(t, model.NodeSubagent, n.Type)
+	assert.Equal(t, "a1", n.AgentID)
+	assert.Equal(t, "researcher", n.SubagentType)
+	require.NotNil(t, n.TEnd)
+	assert.Equal(t, model.StatusOK, n.Status)
+	require.NotNil(t, g.Edges[model.EdgeID(execID, model.EdgeParentChild, model.SessionNodeID(execID), n.ID)])
+}
+
+func TestSubagentStopMinimal(t *testing.T) {
+	o := ob("subagent_stop", "", time.Unix(0, 0).UTC())
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.SubagentID(execID, "")]
+	require.NotNil(t, n)
+	assert.Empty(t, n.AgentID)
+	assert.Empty(t, n.SubagentType)
+}
+
+func TestSnapshotReturnsAllNodesAndEdges(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	up := ob("user_prompt", "", t0)
+	up.Correlation.UUID = "u1"
+	g := NewGraph()
+	g.Apply(up)
+	nodes, edges := g.Snapshot()
+	assert.Len(t, nodes, 2)
+	assert.Len(t, edges, 1)
+}
+
+func TestIsTerminal(t *testing.T) {
+	assert.True(t, isTerminal(model.StatusOK))
+	assert.True(t, isTerminal(model.StatusError))
+	assert.True(t, isTerminal(model.StatusBlocked))
+	assert.True(t, isTerminal(model.StatusCancelled))
+	assert.False(t, isTerminal(model.StatusRunning))
+	assert.False(t, isTerminal(model.StatusPending))
 }
