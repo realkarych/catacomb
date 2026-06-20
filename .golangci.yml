@@ -35,6 +35,8 @@ linters:
         - shadow
     misspell:
       locale: US
+      ignore-rules:
+        - cancelled
     revive:
       rules:
         - name: var-naming

@@ -32,7 +32,7 @@ Catacomb is **domain-agnostic** and **evaluation-agnostic**: it does not score, 
 
 - **No evaluation / scoring / optimality** (MC-value, rollouts, reward models, improvement reports). Out of scope; supported only via a generic annotation slot for downstream consumers.
 - **No pipeline orchestration or control** of Claude Code. Catacomb only observes.
-- **No multi-tenant SaaS, auth, RBAC.** Single-operator local/self-hosted tool.
+- **No multi-tenant SaaS, accounts, or RBAC.** Single-operator local/self-hosted tool. (This is *not* "no security": the daemon still has a local trust boundary — unix-socket/bearer-token ingress, no unauthenticated exfiltration — per ADR-0013.)
 - **No support for non–Claude-Code runtimes** in v1 (the data model is kept runtime-neutral to allow it later).
 - **No bit-exact replay or model determinism guarantees** (Claude Code does not expose temperature/seed; see §15).
 
@@ -82,8 +82,9 @@ The hook set above is the known-stable core; the exact event taxonomy is version
 
 ```
 Observation {
-  obs_id        string         ULID, monotonic per daemon
-  run_id        string         = session_id (see §5.4)
+  obs_id        string         ULID, globally unique, insert-only (ADR-0010)
+  execution_id  string         per-session ULID; identity prefix for node ids (ADR-0011)
+  run_id        string         grouping label (wrapper or session_id), non-identifying (ADR-0011)
   source        enum{hook, otel, stream_json, jsonl}
   kind          string         source-native event type (e.g. "PostToolUse", "claude_code.tool")
   correlation   {              any subset present
@@ -93,8 +94,9 @@ Observation {
   }
   attrs         map[string]any source-native fields
   payload       Payload?       tool input/output, prompt text (subject to redaction; §11)
-  observed_at   time           when the daemon received it
-  seq           uint64         global receive order
+  event_time    time?          source event time (UTC); drives t_start/t_end (ADR-0018)
+  observed_at   time           daemon ingest time (UTC); metadata, not the order key
+  seq           uint64         persisted monotonic receive order; the merge tiebreak (ADR-0010, ADR-0018)
 }
 ```
 
@@ -112,7 +114,7 @@ Node {
   parent_agent_id string?
   subagent_type string?
   name          string         tool name / subagent type / mcp tool / marker name
-  status        enum{pending, running, ok, error, blocked, cancelled, superseded}
+  status        enum{pending, running, ok, error, blocked, cancelled, superseded, unknown, abandoned}
   t_start, t_end time?
   duration_ms   int?
   tokens_in, tokens_out int?
@@ -121,8 +123,10 @@ Node {
   payload       Payload?       redacted per policy
   payload_hash  string?        sha256 of pre-redaction payload (dedup/integrity)
   sources       []SourceRef    {source, obs_id, observed_at} that contributed (provenance)
-  tier          enum{core, detail}  core nodes always emitted; detail nodes (assistant_turn, hook_event) emitted only when graph.granularity = rich (§12)
-  annotations   map[string]any RESERVED for downstream consumers; Catacomb never reads/writes these
+  step_key      string?        run-invariant best-effort identity for cross-run joins (ADR-0016)
+  rev           uint64         per-node monotonic revision (= originating seq) for export upserts (ADR-0015)
+  tier          enum{core, detail}  core always emitted; detail (hook_event) only when graph.granularity = rich (§12). assistant_turn is core — load-bearing spine (ADR-0021)
+  annotations   map[string]any reserved, per-writer namespaced; Catacomb does not interpret them but PRESERVES/re-keys across merge/supersede/rebuild (ADR-0016)
 }
 ```
 
@@ -148,21 +152,23 @@ Edge {
 
 ### 5.4 Run identity
 
-`run_id := session_id`. A `Run` is the connected subgraph sharing a `run_id`, plus run-level metadata captured for reproducibility (§15): pinned `model_id` (snapshot, not alias), and version hashes of prompts / skills / subagent definitions / Catacomb config. For pipelines spanning multiple Claude Code sessions, a **wrapper run id** groups N session_ids into one logical run. Primary mechanism: env **`CATACOMB_RUN_ID`** set by the orchestrator and inherited by every child session (SDK and CLI); `catacomb run --run-id <id>` is sugar that sets this env for the wrapped process. Absent the env, `run_id` falls back to `session_id`. Sessions attach as child subgraphs under the wrapper run. (Marker-driven grouping deferred.)
+**Two keys, separated (ADR-0011).** Each session attach mints an **`execution_id`** (ULID) — the physical execution instance and the **identity prefix** for canonical node ids (§5.5). **`run_id`** is a **non-identifying grouping label**: the wrapper from env **`CATACOMB_RUN_ID`** (inherited by every child session, SDK and CLI; `catacomb run --run-id <id>` is sugar), or `session_id` by default. A `Run` is the set of executions sharing a `run_id`; a replayed transcript gets a fresh `execution_id` (never colliding with its live origin), and a reused `--run-id` groups for comparison **without merging nodes**. Run-level reproducibility metadata (§15): pinned `model_id`, version hashes of prompts / skills / subagent definitions / Catacomb config.
+
+**Lifecycle (ADR-0012).** A run/execution is **open** on first observation with no intrinsic end. `session_ended` fires on `SessionEnd` + transcript EOF/quiescence (exporters finalize a session here). `run_ended` fires only on an explicit wrapper exit / end-marker, or via the **idle-reaper** (a run with no observation for a quiescence window → status `abandoned` + synthetic `run_ended{reason:timeout}`, releasing its reducer shard). Eviction gates on liveness (never evict a not-yet-ended run, an active wrapper sibling, or a run behind an exporter watermark).
 
 ### 5.5 Canonical id derivation (so all sources collapse to one node)
 
-The linchpin is `tool_use_id`, which is shared across hooks, JSONL, and stream-json; OTel tool spans carry it as an attribute when present.
+The linchpin is `tool_use_id`, which is shared across hooks, JSONL, and stream-json; OTel tool spans carry it as an attribute when present. **All canonical ids are prefixed by the per-session `execution_id` (ADR-0011), never the grouping `run_id`**, so session-scoped keys (`tool_use_id`/`message_id`/`agentId`) cannot collide across a wrapper run or a reused `--run-id`.
 
 | Node type | Canonical id | Fallback |
 |---|---|---|
-| `session` | `session_id` | — |
-| `user_prompt` | `run_id : uuid` | `run_id : t_start` |
-| `assistant_turn` | `run_id : message_id` | `run_id : span_id` |
-| `tool_call` / `mcp_call` | `run_id : tool_use_id` | `run_id : span_id` (OTel-only); last-resort heuristic = `run_id : agent_id : name : t_start±ε` |
-| `subagent` | `run_id : agentId` (the `agent-<agentId>.jsonl` file id) | spawning tool_use id from `agent-<agentId>.meta.json` `toolUseId` → parent `Agent`/`Task` `tool_call`; live: hook `agent_id` / SDK `parent_tool_use_id`; old layout: inline `isSidechain:true` threaded by `parentUuid` |
-| `hook_event` | `run_id : obs_id` | — |
-| `marker` | `run_id : marker_seq` | — |
+| `session` | `execution_id` | — |
+| `user_prompt` | `execution_id : uuid` | `execution_id : t_start` |
+| `assistant_turn` | `execution_id : message.id` (the `msg_*`, distinct from JSONL `uuid`; ADR-0014) | `execution_id : span_id` |
+| `tool_call` / `mcp_call` | `execution_id : tool_use_id` | `execution_id : span_id` (OTel-only); last-resort heuristic = `execution_id : agent_id : name : t_start±ε` |
+| `subagent` | `execution_id : agentId` (the `agent-<agentId>.jsonl` file id) | spawning tool_use id from `agent-<agentId>.meta.json` `toolUseId` → parent `Agent`/`Task` `tool_call`; live: hook `agent_id` / SDK `parent_tool_use_id`; old layout: inline `isSidechain:true` threaded by `parentUuid` |
+| `hook_event` | `execution_id : obs_id` | — |
+| `marker` | `execution_id : marker_seq` | — |
 
 The last-resort heuristic is **conservative**: an OTel-only tool observation lacking `tool_use_id` becomes a *provisional* node tagged `attrs.identity=heuristic`, and is merged into a canonical node only if a strong key (`tool_use_id`) arrives later — Catacomb prefers a rare duplicate over a wrong merge.
 
@@ -194,6 +200,8 @@ Field-level rules for interpreting one transcript into structure (decided in ADR
 - **Threading is a tree, not a chain.** `parent_child` edges within a run follow the on-disk `parentUuid` tree, read from the transcript files (the SDK surface omits `parentUuid`). An `assistant_turn` and its `tool_call`s attach to the nearest ancestor `user_prompt` found by walking `parentUuid` upward; `promptId` (present on user-side records) corroborates the attribution.
 - **Multiple prompts.** Every real user message is a `user_prompt` child of the session; a session holds as many prompt subtrees as the user sent. Sibling order comes from `t_start` (optionally `sequence` edges).
 - **Interruption.** Detected from the transcript, not hooks (the `Stop` hook does not fire on user interrupt). The interrupting message is an ordinary new `user_prompt`; the assistant turn named by the following user record's `interruptedMessageId` — and any in-flight `tool_call` of it lacking a `tool_result` — transitions to status `cancelled`. Cancellation is a status change, never a re-parenting.
+- **Cascade & orphans (ADR-0012, ADR-0014).** Cancellation/supersede **cascades** to descendant `tool_call`s and `subagent` subtrees across files (the `parent_child` closure), except descendants that already hold a genuine terminal. A `tool_call` whose terminal observation **never arrives and was not interrupted** (crashed subagent, dropped MCP, lost `PostToolUse`) is closed `unknown` (EOF / inactivity TTL / run-end), distinct from `cancelled`; an idle run is `abandoned`. A genuine late terminal (`ok`/`error`) always supersedes an inferred status (order-independent).
+- **Compaction threading.** A `compact_boundary` severs and re-stitches the `parentUuid` tree; the upward walk continues across it via `logicalParentUuid` / `compactMetadata.preservedSegment.headUuid`, so post-compaction turns resolve to their true pre-compaction ancestor prompt instead of orphaning on the synthetic `isCompactSummary` record.
 - **Regeneration / edit branches.** A `parentUuid` may have several children (edit/retry/regenerate); all branches are kept. The active branch ends at the current leaf (`leafUuid` / the latest `last-prompt`); nodes off that path get status `superseded` (marked, never deleted). An SDK session-level fork (new `sessionId`) is a separate session grouped by the wrapper run-id (§5.4), not an in-file branch.
 - **Meta-records.** Non-conversational records (the §3 list) are classified and never promoted to `user_prompt`/`assistant_turn`; compaction boundaries (`compact_boundary`, `isCompactSummary`) are segment markers, not prompts.
 - **Version duality.** Tool name (`Agent`|`Task`), sidechain layout (inline `isSidechain:true` | separate `subagents/` files), and the presence of recent attribution fields are resolved behind the versioned parser (§17); unknown record/event types are recorded generically, not dropped.
@@ -220,26 +228,28 @@ type Adapter interface {
 **Strategy: canonical entity + merge with per-field precedence.** Each real action is one node; sources are observations merged by canonical id.
 
 - **Lifecycle:** first observation for an id creates a `pending`/`running` node; subsequent observations (start→end, enrichment, late/out-of-order) **idempotently upsert** fields. Out-of-order is handled because merge is commutative per field given precedence + timestamps.
-- **Per-field precedence** (higher wins; ties broken by latest `observed_at`):
+- **Per-field precedence** (higher wins; ties broken by `seq`, ADR-0018 — never wall-clock):
 
   | Field group | Precedence (high → low) |
   |---|---|
-  | Structure (parent/child, nesting) | OTel span tree → JSONL tree → stream-json `parent_tool_use_id` → hook heuristics |
+  | Structure (parent/child, nesting) | **conditional (ADR-0014):** JSONL tree outranks OTel when the #53954 profile is detected; otherwise OTel span tree → JSONL tree → stream-json `parent_tool_use_id` → hook heuristics |
   | Timing (`t_start`/`t_end`/`duration`) | OTel spans → hooks (pre/post) → JSONL → stream-json |
   | Cost / tokens | OTel metrics/usage → stream-json `result.usage` → JSONL |
   | Payload (input/output) | hooks (`tool_input`/`tool_response`) / JSONL (full) → stream-json deltas |
   | MCP attrs | OTel `mcp_*` → hooks mcp fields → name-pattern parse |
 
+- **Status lattice (ADR-0014):** a genuine terminal (`ok`/`error`) always beats an inferred `cancelled`/`unknown`; the inferred ones are provisional and superseded by any later genuine terminal, so final status is order-independent. Interruption and supersede **cascade transitively over the `parent_child` closure** (across subagent files), except descendants that already hold a genuine terminal.
 - **Provenance:** every contributing observation is recorded in `Node.sources`, so any field is traceable to its origin and the merge is auditable.
-- **CDC:** each create/field-change/edge-add emits a typed **GraphDelta** (`node_upsert`, `edge_upsert`, `node_status`, `run_started`, `run_ended`) to the fan-out bus. Subscribers and streaming exporters consume the same delta stream.
+- **CDC:** each create/field-change/edge-add emits a typed **GraphDelta** (`node_upsert`, `edge_upsert`, `node_status`, `node_merge`, `run_started`, `run_ended`) carrying a per-node `rev` (= originating `seq`) to the fan-out bus; subscribers and streaming exporters consume the same stream and apply **rev-guarded conditional upserts** (ADR-0015).
 
 ## 8. Persistence
 
 - **Durable layer:** embedded DB, **SQLite by default** (ubiquitous, zero-config), **DuckDB optional** (columnar, better for cross-run analytical queries). Behind a `Store` interface.
 - **Tables:** `observations` (append-only log), `nodes`, `edges`, `runs`, `markers`. Nodes/edges hold the materialized graph; observations allow full rebuild.
-- **In-memory graph** serves realtime reads/subscriptions; the durable store is written through (batched) and is the recovery source.
-- **Crash recovery:** on start, rebuild the in-memory graph by replaying `observations` (authoritative) or loading materialized `nodes`/`edges` (fast path) and reconciling.
-- **Retention:** append-only by default; optional per-run TTL / max-runs eviction (config). No retention enforcement in the hot path.
+- **In-memory graph** serves realtime reads/subscriptions; the durable store is written through and is the recovery source.
+- **Atomicity & recovery (ADR-0010):** appending an observation and applying its node/edge upserts happen in **one transaction**, and a durable committed **watermark = max(seq)** is persisted. On boot, materialized tables are a cache valid only to the watermark; replay `observations` with `seq` > watermark and re-reduce. Durability mode is WAL + `synchronous=NORMAL`. A **single-writer lock** (PID/OS lock on the DB file) prevents two daemons corrupting one store; one-shot CLI verbs (`replay`/`export`) open read-only.
+- **Format versioning (ADR-0017):** the store stamps `schema_version` + `reducer_version` + per-observation `body_schema_version`; on boot the daemon refuses-or-migrates, and a `reducer_version` bump rebuilds the graph from the log (rebuild determinism holds **within** a reducer version). The versioned parser (§17) is replay-aware, not just live-ingest-aware.
+- **Retention (gated on liveness, ADR-0012):** append-only by default; optional per-run TTL / max-runs eviction, but never evicts a not-yet-`run_ended` run, an active wrapper sibling, or a run behind any exporter/subscriber watermark. No enforcement in the hot path.
 
 ## 9. Realtime Surfaces
 
@@ -264,19 +274,23 @@ type Exporter interface {
 ```
 
 - **jsonl** — default: one JSON object per node and per edge (materialized), re-emitted on change with a `rev` counter; **event-log mode** (`--mode=events`) streams raw observations/deltas instead. Files split per run; append-only.
-- **otlp (OpenInference passthrough)** — re-emits the graph as OpenInference spans to any OTLP endpoint (Arize Phoenix, Tempo, Honeycomb, …) via the §5.7 export mapper; CDC emits spans as nodes finalize, snapshot replays a run. Near-zero added code; gives free trajectory visualization in external backends.
+- **otlp (OpenInference passthrough)** — re-emits the graph as OpenInference spans to any OTLP endpoint (Arize Phoenix, Tempo, Honeycomb, …) via the §5.7 export mapper. Because spans are immutable, OTLP emits a span only on **terminal status + a settle window** (snapshot-at-finalization, ADR-0015) — explicitly carved out of the upsert-everywhere semantics. Near-zero added code; gives free trajectory visualization in external backends.
 - **neo4j** — nodes as labeled nodes (`:Session`, `:ToolCall`, `:Subagent`, `:McpCall`, `:Marker`, …), edges as relationships (`PARENT_OF`, `NEXT`, `IN_PHASE`). `MERGE` on canonical id for idempotent upsert; CDC applied via Bolt. Snapshot = batched `MERGE`.
 - **postgres** — `nodes` / `edges` tables keyed by canonical id (`INSERT … ON CONFLICT DO UPDATE`), JSONB for `attrs`/`payload`/`annotations`; optional adjacency views and `pg_notify` for downstream CDC. Snapshot = upsert in a transaction.
 
 Both streaming (continuous CDC as the graph grows) and snapshot (`catacomb export --to jsonl|otlp|neo4j|postgres [--run <id>]`) are supported for every target.
 
+**Correctness under failure (ADR-0015).** Sink upserts are **conditional on `rev`** (pg `WHERE excluded.rev > nodes.rev`; neo4j `MERGE … SET` rev-guarded), so reordered/stale deltas are ignored. The bus is non-durable and FIFO-per-node; a `drop` policy never loses state — it marks the node dirty and **re-emits its full current state** once the buffer drains (coalesce-to-latest). On (re)connect or restart an exporter runs `Snapshot` to current state, then attaches to live CDC, resuming from a per-exporter `seq` cursor (full snapshot if the cursor is behind retention). Id changes propagate via `node_merge`; provisional heuristic nodes are buffered locally and not exported until they stabilize.
+
 ## 11. Payload Handling & Privacy
 
-Configurable; default **store payload + hash + redaction**.
+Configurable; default **store payload + hash + redaction** (hardened per ADR-0020).
 
-- Store tool inputs/outputs and prompt text by default, **plus `sha256` of the pre-redaction payload** (dedup/integrity), with configurable **redaction rules**: regex patterns and key-path globs (e.g. `*.api_key`, `authorization`), applied before persistence/export. Redacted spans replaced by `‹redacted:reason›` with the hash retained.
-- Modes: `full+hash+redact` (default) · `refs-only` (store only `transcript_path` refs + hashes, no payload) · `all` (no redaction; logged warning).
-- Size cap per payload (config; default e.g. 256 KiB) with overflow stored as a ref/hash. Redaction and caps apply uniformly to persistence **and** exporters.
+- **Redaction surface is the whole node, not just `payload`** (ADR-0020): tool inputs/outputs, prompt text, **and** `name`, `subagent_type`, marker `state_ref`, and a whitelisted set of `attrs` (`cwd`, `transcript_path`, command-like fields, `description`, `mcp_*`) are scrubbed by the same rules.
+- **Rules = default value-scanning regexes + key-path globs.** A non-empty default regex pack scans **values regardless of key** (credential URIs, `AKIA…`/`ghp_…`/`sk-…`/`xox…`, PEM, JWTs, high-entropy runs) over free-text fields (`command`, `code`, `content`) — so a secret inside `Bash.command` is caught — plus key-path globs (`*.api_key`, `authorization`). Redacted spans become `‹redacted:reason›`.
+- **Redact first, then size-cap** (config; default e.g. 256 KiB; overflow → ref/hash), so truncation can never cut off the span a rule would match. Applied uniformly to persistence **and** every exporter, per-sink.
+- **Hashing is post-redaction** (`sha256` of the redacted payload, for dedup/integrity); any pre-redaction integrity hash is local-only and HMAC'd with a per-deployment key, never exported (so a low-entropy secret can't be brute-forced off its hash).
+- Modes (settable **per exporter**): `full+hash+redact` (default) · `refs-only` (store only `transcript_path` refs + hashes — note the ref points at the **unredacted** on-disk file) · `all` (no redaction; logged warning). Binary/non-UTF-8 payloads are stored as `‹binary:len,sha256›` unless `all`.
 
 ## 12. Configuration & CLI
 
@@ -296,20 +310,24 @@ Configurable; default **store payload + hash + redaction**.
 
 - High subagent fan-out and (future) downstream rollouts multiply event volume; the pipeline is built around **bounded channels** with explicit policies.
 - Adapters → observation log: bounded queue; **hooks fail open** (forwarder drops + warns rather than blocking the agent). OTLP/stream-json/JSONL backpressure within the daemon (buffer + spill to store).
-- Reducer is single-writer per run (sharded by `run_id`) for lock-free merge; reads are served from immutable snapshots.
-- Exporters/subscribers are decoupled via the delta bus with per-consumer bounded buffers and a configurable drop-or-block policy; a slow neo4j sink must not stall ingestion.
+- Reducer is single-writer per **`execution_id`** (ADR-0011) for lock-free merge; parallel sessions run on independent shards; reads are served from immutable snapshots.
+- Exporters/subscribers are decoupled via the delta bus with per-consumer bounded buffers; `drop` is **coalesce-to-latest, never lossy** (ADR-0015) — a slow neo4j sink must not stall ingestion and must not silently diverge.
+- **Fault isolation (ADR-0019):** every adapter and reducer shard runs under a supervised goroutine with a `recover()` boundary; a panic on a malformed beta/undocumented input becomes a quarantined poison observation + adapter restart with backoff, **never a daemon crash**. A health/metrics surface exposes queue depth, hook/exporter drop counts, store errors, open-run count, and per-adapter liveness; affected runs are flagged `lossy`. Dogfooding is loop-broken (the tailer excludes Catacomb's own session; the OTLP exporter refuses its own endpoint).
 - Targets (non-binding): sustain ≥ a few thousand observations/sec on a laptop; p99 ingest→delta latency in the low tens of ms.
 
 ## 14. Extensibility
 
 - **Adapters** and **Exporters** are interfaces; third parties add sources/sinks without touching core.
-- **`Node.annotations`** is a reserved, Catacomb-ignored map — the bridge for downstream layers (e.g. a step-level eval system computing MC-value/advantage, or any external scorer) to attach metadata keyed to canonical nodes.
+- **`Node.annotations`** is the bridge for downstream layers (e.g. a step-level eval system computing MC-value/advantage). Catacomb does not interpret it but is **not** indifferent to it (ADR-0016): annotations are **per-writer namespaced** (`annotations.<owner>.<key>`), live in their own recovery-aware store table, and are **preserved and re-keyed** across the lifecycle events Catacomb controls (heuristic→canonical merge, supersede/cancel, rebuild-from-log).
+- **Cross-run identity (ADR-0016):** because canonical ids are execution-scoped and per-run-random, nodes also carry a best-effort **`step_key`** (run-invariant: structural path + tool name + normalized input hash) and markers a **`phase_key`** (= marker name). The eval layer keys its data by `step_key`/`phase_key` to align "the same step/phase" across repeated runs — the join key MC-value/advantage requires.
 - **OpenInference/OTel conformance** at boundaries keeps the graph portable to external backends (e.g. Arize Phoenix) alongside Catacomb's own store.
 - Runtime-neutral core leaves room for non–Claude-Code agent runtimes later.
 
 ## 15. Determinism & Reproducibility Metadata
 
 Catacomb does not control sampling (Claude Code/Agent SDK expose no temperature/seed today). To make runs comparable for downstream analysis, each `Run` records: pinned `model_id` (dated snapshot, not a moving alias), and version hashes of prompts / skills / subagent definitions / Catacomb config, plus the Claude Code/SDK version (for #53954 and span-schema gating). Catacomb surfaces this metadata; it does not attempt bit-exact replay.
+
+**Time model (ADR-0018):** every observation keeps both `event_time` (source, UTC — drives `t_start`/`t_end`) and `observed_at` (daemon ingest, UTC — metadata only). The authoritative order and merge tiebreak is the persisted monotonic **`seq`**, never wall-clock, so NTP steps / suspend / cross-source skew cannot reorder the reduction; negative durations (cross-clock skew) are dropped to null. **Catacomb versions its own format** (ADR-0017): `schema_version`/`reducer_version`/`body_schema_version`, distinct from the Claude Code version above.
 
 ## 16. Testing Strategy
 
@@ -327,7 +345,11 @@ Catacomb does not control sampling (Claude Code/Agent SDK expose no temperature/
 - **Hook event taxonomy is version-dependent.** Mitigation: isolate event-name knowledge behind the versioned parser; the §3 set is the known-stable core, with unknown events recorded generically rather than dropped.
 - **Transcript threading fields are largely undocumented and version-fragile** (§5.8, ADR-0009): `parentUuid`/`leafUuid`/`promptId`/`interruptedMessageId`/`isSidechain`/`agentId` are on-disk-only (the SDK hides them), the subagent→parent join leans on the community-observed meta `toolUseId` (a documented key is still an open request), and layouts differ across versions (`Task`↔`Agent`, inline↔separate sidechains). Mitigation: read the files (not the SDK surface) for threading; resolve layout/field duality behind the versioned parser; keep both regeneration branches and mark (never delete) `superseded` nodes; treat absent fields as "unknown," not "none."
 - **stream-json envelope is undocumented** (#24612/#24596). Mitigation: isolate parsing behind a single schema module; treat stream-json as a secondary structural signal, not a sole source.
-- **Privacy:** payloads may contain secrets. Mitigation: redaction defaults on; refs-only mode; size caps; uniform application to store and exporters.
+- **Privacy:** payloads may contain secrets, and they hide in values (`Bash.command`) and metadata (`cwd`/`attrs`), not just keyed fields. Mitigation: whole-node redaction with default value-scanning regexes, redact-before-cap, post-redaction hashing, per-sink modes (ADR-0020) — best-effort, not a guarantee.
+- **Local trust boundary:** every daemon ingress is unauthenticated by default and loopback is shared by all local processes, enabling forged-observation injection and bulk payload exfiltration. Mitigation: unix-socket `0600` ingress + per-daemon bearer token for any TCP/realtime surface + gated "subscribe all runs" (ADR-0013); residual same-user risk is documented.
+- **Daemon resilience:** a panic on a beta/undocumented input could crash all runs; silent drops (fail-open hooks, bounded buffers) could hide data loss. Mitigation: per-adapter `recover()`/supervision + poison-quarantine, a health/metrics surface, and `lossy`-run flagging (ADR-0019).
+- **Graph well-formedness:** cross-source parent conflicts and provisional→canonical id rewrites could create cycles/dangling edges, and lean-mode folding could orphan `tool_call`s. Mitigation: enforce `parent_child` as an acyclic forest, cycle/self-loop checks after id rewrite, lean-mode edge contraction, `assistant_turn` reclassified core (ADR-0021).
+- **Exporter divergence:** dropped/reordered CDC deltas and id changes could silently desync sinks. Mitigation: `rev`-guarded conditional upserts, FIFO-per-node, coalesce-to-latest `drop`, snapshot-then-resume, `node_merge` (ADR-0015).
 
 ## 18. Delivery Milestones
 
@@ -348,3 +370,22 @@ The full v1 is large; build it as plan-able increments, each independently usefu
 - **`tool_call` identity fallback:** conservative — provisional `identity=heuristic` node, merged only on a strong key; a rare duplicate is preferred over a wrong merge.
 
 Rationale for each is captured in `docs/adr/`.
+
+## 20. Hardening Decisions (ADR-0010 – ADR-0021)
+
+A design interrogation surfaced gaps the first nine ADRs did not cover. Each is decided in its own ADR and woven into the sections above; summarized here as a map:
+
+- **ADR-0010 — Observation identity & durability:** `obs_id` is a real globally-unique ULID, insert-only (no `REPLACE`); one observation applies in one transaction with a committed `seq` watermark; WAL; `seq` persisted. Fixes the system-of-record corruption and crash atomicity (§5.1, §8).
+- **ADR-0011 — Canonical-id execution scope:** node ids are prefixed by a per-session `execution_id`, not the grouping `run_id`; reducer shards by `execution_id`. Fixes cross-session/wrapper-reuse collisions (§5.4, §5.5, §13).
+- **ADR-0012 — Node finalization & run lifecycle:** `unknown`/`abandoned` terminal statuses, closure triggers, `session_ended` vs `run_ended`, idle-reaper, liveness-gated eviction (§5.2, §5.4, §5.8, §8).
+- **ADR-0013 — Daemon security & trust boundary:** unix-socket `0600` ingress + bearer token for TCP/realtime; gated all-runs subscription; documented threat model (§2, §17).
+- **ADR-0014 — Conditional precedence & status reconciliation:** structure precedence gated on the #53954 profile; status lattice; transitive cancel/supersede cascade; `assistant_turn` keyed on `message.id` (§7, §5.5, §5.8).
+- **ADR-0015 — Exporter correctness under failure:** per-node `rev` + conditional upserts, FIFO-per-node, coalesce-to-latest `drop`, snapshot-then-resume, `node_merge`, OTLP finalize-at-terminal (§7, §10, §13).
+- **ADR-0016 — Cross-run identity & annotations contract:** `step_key`/`phase_key` and namespaced, lifecycle-preserved annotations (§5.2, §14).
+- **ADR-0017 — Data-format versioning & migration:** `schema_version`/`reducer_version`/`body_schema_version`, refuse-or-migrate, rebuild-on-reducer-bump (§8, §15).
+- **ADR-0018 — Time model:** `event_time` vs `observed_at`; `seq` is the order/tiebreak, never wall-clock; UTC; negative-duration rejection (§5.1, §7, §15).
+- **ADR-0019 — Operability, fault isolation & self-observation:** per-adapter `recover()`/supervision + poison-quarantine, health/metrics surface, `lossy`-run flagging, dogfooding loop-break (§13, §17).
+- **ADR-0020 — Redaction surface & secrets-at-rest:** whole-node redaction, default value-scanning regexes, redact-before-cap, post-redaction hashing, per-sink modes (§11).
+- **ADR-0021 — Graph invariants & validation:** `parent_child` acyclic forest, cycle/self-loop checks, lean-mode edge contraction, `assistant_turn` reclassified core (§5.2, §5.3, §16).
+
+These land across milestones (§18): identity/durability/time/versioning (0010/0011/0017/0018) underpin **M0–M1**; precedence/status/lifecycle/invariants (0012/0014/0021) with **M1–M2**; exporter correctness (0015) with **M4**; security/operability (0013/0019) with the daemon in **M0.2+**; redaction (0020) wherever payloads are stored/exported; cross-run identity & annotations (0016) when the eval layer consumes the graph.
