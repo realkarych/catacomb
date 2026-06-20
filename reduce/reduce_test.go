@@ -110,6 +110,21 @@ func TestApplyOrderIndependentFields(t *testing.T) {
 	assert.Equal(t, fwd.Nodes[id].Name, rev.Nodes[id].Name)
 	assert.Equal(t, fwd.Nodes[id].Status, rev.Nodes[id].Status)
 	assert.Equal(t, *fwd.Nodes[id].TStart, *rev.Nodes[id].TStart)
+	assert.Equal(t, fwd.Nodes[id].Type, rev.Nodes[id].Type)
+}
+
+func TestApplyToolTypeUpgradeReversedOrder(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	res := ob("tool_result", "toolu_3", t0)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+	use := ob("assistant_tool_use", "toolu_3", t1)
+	use.Attrs = map[string]any{"name": "mcp__fs__read"}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{res, use})
+
+	assert.Equal(t, model.NodeMCPCall, g.Nodes[model.ToolCallID(execID, "toolu_3")].Type)
 }
 
 func TestToInt64(t *testing.T) {

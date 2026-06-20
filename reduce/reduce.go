@@ -35,6 +35,9 @@ func (g *Graph) applyTool(o model.Observation) {
 		nodeType = model.NodeMCPCall
 	}
 	n := g.node(id, o.RunID, nodeType)
+	if n.Type == model.NodeToolCall && nodeType == model.NodeMCPCall {
+		n.Type = model.NodeMCPCall
+	}
 	g.stamp(n, o)
 	if name, ok := o.Attrs["name"].(string); ok && n.Name == "" {
 		n.Name = name
