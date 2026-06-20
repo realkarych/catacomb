@@ -149,13 +149,13 @@ func scanObservations(rows rowScanner) ([]model.Observation, error) {
 func (s *sqliteStore) write(tx *sql.Tx, query string, value any, keys ...any) error {
 	body, err := s.marshal(value)
 	if err != nil {
-		return fmt.Errorf("store.Persist marshal: %w", err)
+		return fmt.Errorf("store.write marshal: %w", err)
 	}
 	args := make([]any, 0, len(keys)+1)
 	args = append(args, keys...)
 	args = append(args, string(body))
 	if _, err := tx.Exec(query, args...); err != nil {
-		return fmt.Errorf("store.Persist exec: %w", err)
+		return fmt.Errorf("store.write exec: %w", err)
 	}
 	return nil
 }

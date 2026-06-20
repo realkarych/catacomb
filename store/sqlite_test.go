@@ -155,6 +155,7 @@ func TestAppendAndApplyNodeMarshalError(t *testing.T) {
 		return json.Marshal(v)
 	}
 	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "o"}, []*model.Node{{ID: "n"}}, nil))
+	assert.Equal(t, 0, count(t, s, "observations"))
 }
 
 func TestMaxSeqEmpty(t *testing.T) {
