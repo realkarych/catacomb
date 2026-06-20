@@ -41,3 +41,6 @@ logs/
 tmp/
 .cache/
 *.pprof
+
+# Bare binary from `go build ./cmd/catacomb`
+/catacomb
