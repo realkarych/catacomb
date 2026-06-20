@@ -121,3 +121,123 @@ func TestOpenSQLitePublicHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 }
+
+func TestAppendAndApplyRoundTrip(t *testing.T) {
+	s := fileStore(t)
+	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
+	nodes := []*model.Node{{ID: "n1", RunID: "s1", Type: model.NodeSession}}
+	edges := []*model.Edge{{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}}
+	require.NoError(t, s.AppendAndApply(o, nodes, edges))
+
+	assert.Equal(t, 1, count(t, s, "observations"))
+	assert.Equal(t, 1, count(t, s, "nodes"))
+	assert.Equal(t, 1, count(t, s, "edges"))
+}
+
+func TestAppendAndApplyBeginError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "x"}, nil, nil))
+}
+
+func TestAppendAndApplyObsError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "dup"}, nil, nil))
+	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "dup"}, nil, nil))
+}
+
+func TestAppendAndApplyNodeMarshalError(t *testing.T) {
+	s := fileStore(t)
+	s.marshal = func(v any) ([]byte, error) {
+		if _, ok := v.(*model.Node); ok {
+			return nil, errors.New("boom")
+		}
+		return json.Marshal(v)
+	}
+	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "o"}, []*model.Node{{ID: "n"}}, nil))
+	assert.Equal(t, 0, count(t, s, "observations"))
+}
+
+func TestMaxSeqEmpty(t *testing.T) {
+	s := fileStore(t)
+	v, err := s.MaxSeq()
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0), v)
+}
+
+func TestMaxSeqAfterAppend(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "a", Seq: 3}, nil, nil))
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "b", Seq: 7}, nil, nil))
+	v, err := s.MaxSeq()
+	require.NoError(t, err)
+	assert.Equal(t, uint64(7), v)
+}
+
+func TestMaxSeqQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.MaxSeq()
+	require.Error(t, err)
+}
+
+func TestObservationsSince(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "a", RunID: "s1", ExecutionID: "e", Seq: 1, Kind: "session_start"}, nil, nil))
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "b", RunID: "s1", ExecutionID: "e", Seq: 2, Kind: "user_prompt"}, nil, nil))
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "c", RunID: "s1", ExecutionID: "e", Seq: 3, Kind: "session_end"}, nil, nil))
+
+	got, err := s.ObservationsSince(1)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "user_prompt", got[0].Kind)
+	assert.Equal(t, "session_end", got[1].Kind)
+}
+
+func TestObservationsSinceQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.ObservationsSince(0)
+	require.Error(t, err)
+}
+
+func TestObservationsSinceDecodeError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('bad','s1','e',1,'{not json}')`)
+	require.NoError(t, err)
+	_, err = s.ObservationsSince(0)
+	require.Error(t, err)
+}
+
+type fakeRows struct {
+	bodies  []string
+	i       int
+	scanErr error
+	errErr  error
+}
+
+func (f *fakeRows) Next() bool { return f.i < len(f.bodies) }
+
+func (f *fakeRows) Scan(dest ...any) error {
+	if f.scanErr != nil {
+		return f.scanErr
+	}
+	p, _ := dest[0].(*string)
+	*p = f.bodies[f.i]
+	f.i++
+	return nil
+}
+
+func (f *fakeRows) Err() error { return f.errErr }
+
+func (f *fakeRows) Close() error { return nil }
+
+func TestScanObservationsScanError(t *testing.T) {
+	_, err := scanObservations(&fakeRows{bodies: []string{"x"}, scanErr: errors.New("scan")})
+	require.Error(t, err)
+}
+
+func TestScanObservationsRowsErr(t *testing.T) {
+	_, err := scanObservations(&fakeRows{errErr: errors.New("iter")})
+	require.Error(t, err)
+}

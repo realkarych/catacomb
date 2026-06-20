@@ -26,6 +26,14 @@ func (f *fakeStore) Persist([]model.Observation, []*model.Node, []*model.Edge) e
 
 func (f *fakeStore) Close() error { return nil }
 
+func (f *fakeStore) AppendAndApply(model.Observation, []*model.Node, []*model.Edge) error {
+	return nil
+}
+
+func (f *fakeStore) MaxSeq() (uint64, error) { return 0, nil }
+
+func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error) { return nil, nil }
+
 func openFake(f *fakeStore) storeOpener {
 	return func(string) (store.Store, error) { return f, nil }
 }

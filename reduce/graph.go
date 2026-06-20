@@ -20,12 +20,24 @@ func (g *Graph) node(id, runID string, t model.NodeType) *model.Node {
 	return n
 }
 
-func (g *Graph) upsertEdge(executionID, runID string, t model.EdgeType, src, dst string) {
+func (g *Graph) upsertEdge(executionID, runID, src, dst string) {
 	if src == "" || dst == "" {
 		return
 	}
-	id := model.EdgeID(executionID, t, src, dst)
+	id := model.EdgeID(executionID, model.EdgeParentChild, src, dst)
 	if _, ok := g.Edges[id]; !ok {
-		g.Edges[id] = &model.Edge{ID: id, RunID: runID, Type: t, Src: src, Dst: dst}
+		g.Edges[id] = &model.Edge{ID: id, RunID: runID, Type: model.EdgeParentChild, Src: src, Dst: dst}
 	}
+}
+
+func (g *Graph) Snapshot() ([]*model.Node, []*model.Edge) {
+	nodes := make([]*model.Node, 0, len(g.Nodes))
+	for _, n := range g.Nodes {
+		nodes = append(nodes, n)
+	}
+	edges := make([]*model.Edge, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		edges = append(edges, e)
+	}
+	return nodes, edges
 }

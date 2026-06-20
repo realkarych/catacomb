@@ -77,18 +77,6 @@ func runReplayWith(open storeOpener, newExecID func() string, args replayArgs) (
 	return g, nil
 }
 
-func graphSlices(g *reduce.Graph) ([]*model.Node, []*model.Edge) {
-	nodes := make([]*model.Node, 0, len(g.Nodes))
-	for _, n := range g.Nodes {
-		nodes = append(nodes, n)
-	}
-	edges := make([]*model.Edge, 0, len(g.Edges))
-	for _, e := range g.Edges {
-		edges = append(edges, e)
-	}
-	return nodes, edges
-}
-
 func persist(open storeOpener, dbPath string, obs []model.Observation, g *reduce.Graph) error {
 	s, err := open(dbPath)
 	if err != nil {
@@ -96,7 +84,7 @@ func persist(open storeOpener, dbPath string, obs []model.Observation, g *reduce
 	}
 	defer func() { _ = s.Close() }()
 
-	nodes, edges := graphSlices(g)
+	nodes, edges := g.Snapshot()
 	return s.Persist(obs, nodes, edges)
 }
 
@@ -107,6 +95,6 @@ func export(path string, g *reduce.Graph) error {
 	}
 	defer func() { _ = out.Close() }()
 
-	nodes, edges := graphSlices(g)
+	nodes, edges := g.Snapshot()
 	return xjsonl.Snapshot(out, nodes, edges)
 }
