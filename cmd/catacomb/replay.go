@@ -60,7 +60,7 @@ func runReplayWith(open storeOpener, newExecID func() string, args replayArgs) (
 
 	obs, err := ijsonl.ParseReader(f, executionID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("replay parse: %w", err)
 	}
 
 	g := reduce.NewGraph()

@@ -131,3 +131,9 @@ func TestParseReaderAssistantTextOnly(t *testing.T) {
 	require.Len(t, byKind(obs, "assistant_turn"), 1)
 	assert.Empty(t, byKind(obs, "assistant_tool_use"))
 }
+
+func TestParseReaderMessageWithoutContent(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(`{"type":"user","message":{"role":"user"}}`+"\n"), "exec-T")
+	require.NoError(t, err)
+	assert.Empty(t, obs)
+}

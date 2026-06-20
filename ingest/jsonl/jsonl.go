@@ -118,6 +118,9 @@ func decodeLine(raw []byte) (line, []partial, error) {
 }
 
 func decodeContent(raw json.RawMessage) (string, []block, error) {
+	if len(raw) == 0 {
+		return "", nil, nil
+	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
 		return text, nil, nil
