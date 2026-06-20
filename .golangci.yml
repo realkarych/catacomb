@@ -1,0 +1,70 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - forbidigo
+    - gocritic
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - revive
+    - rowserrcheck
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - usetesting
+    - whitespace
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^time\.Sleep$
+          msg: "no wall-clock sleeps; use a deadline, ticker, channel-receive, or testing/synctest"
+    govet:
+      enable:
+        - shadow
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: var-naming
+        - name: error-return
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+  exclusions:
+    generated: strict
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+      - path: cmd/catacomb/main\.go
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes:
+        - github.com/realkarych/catacomb
+  exclusions:
+    generated: strict

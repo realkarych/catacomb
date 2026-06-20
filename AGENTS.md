@@ -1,0 +1,68 @@
+# Catacomb — agent & contributor guide
+
+Real-time execution-graph observability for Claude Code agentic pipelines. A sidecar daemon (plus a reusable core library) captures hooks, subagent allocation, tool calls, and MCP calls; reconciles them from four signal sources into one canonical action graph; persists it to embedded SQLite; and streams/exports it (jsonl, OTLP/OpenInference, neo4j, postgres).
+
+- Design spec → [`docs/specs/2026-06-20-catacomb-design.md`](docs/specs/2026-06-20-catacomb-design.md)
+- Architecture decisions → [`docs/adr/`](docs/adr/)
+- Implementation plans → [`docs/plans/`](docs/plans/)
+
+**Status:** early development (milestone M0.1).
+
+## Principles
+
+- **Simplest thing that works.** Stdlib first; minimal dependencies; **pure Go, no cgo** (single static cross-platform binary). SQLite via `modernc.org/sqlite`, never `mattn/go-sqlite3`.
+- **Deterministic core.** The canonical graph is a deterministic reduction of an append-only observation stream: the same observations, in any order, produce the same graph.
+- **TDD by default.** Failing test first, then the minimal implementation, then refactor under green. Not a suggestion — the process.
+
+## Comments: forbidden
+
+**No comments in Go code. None.** No doc comments, no inline comments, no commented-out code. Well-named identifiers and readable code carry the meaning; if a piece of code seems to need a comment, rename or refactor it instead.
+
+The **only** allowed exceptions are functional Go directives — `//go:build`, `//go:embed`, `//go:generate`, and the `// Code generated … DO NOT EDIT.` marker. Everything else (including `//nolint`) is rejected.
+
+This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy) that parses every `.go` file and fails on any non-directive comment. A failing build is the rule doing its job — delete the comment.
+
+## Go conventions
+
+- **Dependency inversion:** the *consumer* package declares the interface it needs; providers satisfy it. No importing another package's concrete structs to reach across a boundary.
+- **No global mutable state**, no `init()` side effects, no constructors with hidden I/O. Wire dependencies explicitly from `main`.
+- **No "static methods"** — a method that ignores its receiver is a package-level function; write it as one. Do not create empty structs just to group functions.
+- **No `any`/`interface{}` as a data type.** Use concrete types or generics. (`map[string]any` for genuinely open attribute bags is fine.)
+- **Errors:** sentinels checked with `errors.Is`/`errors.As`, never by string; wrap with operation context, `fmt.Errorf("pkg.Op: %w", err)`; log once, at the top.
+- **Logging:** `log/slog`, JSON. Never log or serialize secrets; payloads only ever leave through the redaction policy (ADR-0008).
+- **Concurrency:** `context.Context` is the first parameter for I/O; every goroutine has a defined exit; share by communicating or guard with a mutex and document ownership.
+- **Formatting:** `gofumpt` + `goimports` (local prefix `github.com/realkarych/catacomb`). CI fails if not applied.
+
+## Testing & coverage
+
+- `go test -race`. Table-driven tests are the default; `testify/require` for fatal assertions, `testify/assert` otherwise.
+- Mock through the **caller's** interface; never mock third-party SDKs directly — wrap them.
+- No `time.Sleep` in tests (enforced by `forbidigo`); use deadlines, channels, or `testing/synctest`.
+- Brittle tests (iteration order, error-string parsing, wall clock) are rewritten, not suppressed.
+- **Coverage is 100%** outside the minimal, justified exclusions in [`.testcoverage.yml`](.testcoverage.yml). The threshold does not go down. Code that cannot be unit-tested is a refactoring signal (extract a pure function, inject a dependency), not a reason to add an exclusion.
+
+## Workflow
+
+- Every change goes through a feature branch and PR: `git checkout -b <type>/<short-desc>` from `master`. No direct commits to `master` (the initial scaffold aside).
+- One PR = one logical change. CI must be green before merge. Merge is **squash** (linear `master`).
+- No `--no-verify`; no force-push to `master` (only to your own feature branch).
+- Never commit `.env`, `*.pem`, `*.key`, or any secret.
+
+## CI / linters
+
+| Gate | Tool |
+|------|------|
+| Go lint | `golangci-lint` (config: [`.golangci.yml`](.golangci.yml)) |
+| No comments | `go test ./internal/codepolicy/` |
+| Coverage 100% | `go-test-coverage` ([`.testcoverage.yml`](.testcoverage.yml)) |
+| Docs lint | `markdownlint` ([`.markdownlint.json`](.markdownlint.json)) |
+
+## Build / dev
+
+```
+make build   # build bin/catacomb
+make test    # go test -race + coverage profile
+make cover   # test + 100% coverage gate
+make lint    # golangci-lint
+make fmt     # gofumpt + goimports
+```

@@ -1,0 +1,16 @@
+# Coverage contract. 100% line-statement coverage is required outside the
+# minimal, justified exclusions below (see AGENTS.md "Testing & coverage").
+profile: coverage.out
+local-prefix: github.com/realkarych/catacomb
+
+threshold:
+  file: 100
+  package: 100
+  total: 100
+
+exclude:
+  paths:
+    # Process entry point: os.Exit wiring, verified by smoke build in CI.
+    - ^cmd/catacomb/main\.go$
+    # Repo policy guard: a test-only package with no runtime statements.
+    - ^internal/codepolicy/

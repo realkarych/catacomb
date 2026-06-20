@@ -1,0 +1,43 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+/bin/
+/dist/
+
+# Coverage
+*.out
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+vendor/
+
+# Catacomb local state
+*.db
+*.sqlite
+*.sqlite3
+
+# Env / secrets
+.env
+*.pem
+*.key
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Logs / temp
+*.log
+logs/
+tmp/
+.cache/
+*.pprof
