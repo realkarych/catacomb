@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5.2, §11
+- **Related:** spec §5.2, §11; ADR-0013, ADR-0020
+- **Amended by:** ADR-0020 — the redaction surface is the whole node (not just `payload`), with default value-scanning regexes, redact-before-cap ordering, and **post-redaction** hashing; ADR-0013 adds the daemon trust boundary that limits who can read payloads.
 
 ## Context
 

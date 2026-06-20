@@ -37,3 +37,11 @@ Introduce a **second identity axis** plus an explicit **annotations lifecycle co
 - **+** Keeps within-run identity (ADR-0011) and cross-run identity cleanly separate.
 - **−** `step_key` is heuristic: different inputs can collide or the same logical step can drift if the pipeline changes; it is explicitly best-effort with a confidence tag, never used for within-run merging.
 - **−** Adds an annotations store table and lifecycle handling (merge/supersede/rebuild carry-over) — real complexity for a slot Catacomb otherwise ignores.
+
+## Amendments
+
+- **`step_key` is stable and granularity-independent:** a pure function of the **final, post-cascade** graph, computed over the **rich/core-tier** structural path (pre-contraction, so lean mode yields the same key) walking **only live (non-`superseded`/`abandoned`) ancestors**; superseded/abandoned siblings are excluded from ordinal/sibling-index counting. A late interrupt or lean mode does not change a step's key.
+- **Hashed post-redaction:** the salient-input hash is computed **after** redaction (ADR-0020), with redaction placeholders normalized to a stable typed token (e.g. `‹redacted:uri›`) plus non-secret structural features — so a rotating secret normalizes identically across runs (no leak via the key) and distinct-but-redacted inputs do not collide.
+- **Durable annotation handle:** annotations are keyed by the immutable **(`execution_id`, source-native event key)** (the content key ADR-0010 uses for idempotent ingest), **not** the derived node id and **not** `step_key`. On a reducer-bump rebuild they are re-attached by that handle and `step_key` is recomputed as a secondary index — neither moving handle orphans them.
+- **Annotations in CDC (with ADR-0015):** a write bumps `rev` + emits `node_upsert`; `node_merge` moves them old→new.
+- **`phase_key` discriminates iterations:** `phase_key` = enclosing-step structural path + marker name + **occurrence-ordinal within scope**, so attempt k of a repeating phase aligns across runs while staying distinct within a run.

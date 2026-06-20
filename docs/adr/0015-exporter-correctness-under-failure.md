@@ -37,3 +37,10 @@ ADR-0007 promises exporters "track the live run" via materialized upsert + CDC, 
 - **+** Snapshot + cursor gives clean recovery; `rev` makes upserts safe.
 - **−** Every sink schema gains a `rev` column/property and conditional-write logic; OTLP gains a finalize/settle rule; more exporter complexity.
 - **−** `drop` is now "lossy-intermediate, eventually-complete," not "lossy" — operators must understand the re-emit semantics; metrics make it visible.
+
+## Amendments
+
+- **OTLP finalize is defined:** emit a span on the **genuine** (lattice-final, ADR-0014) terminal **or** a lifecycle close (`run_ended`/`session_ended`/idle-reaper close, after which no further observation is possible), whichever comes first — there is no free-floating "settle window" timer. Provisional `unknown`/`cancelled` do **not** trigger emission. A genuine terminal arriving after a lifecycle-close span is accepted and documented (OTLP is the one immutable, eventual-consistency-exempt sink).
+- **`session_ended` is a GraphDelta variant** (spec §7) — the carrier exporters key OTLP finalize on.
+- **Annotations participate in CDC (with ADR-0016):** an annotation write bumps the node's `rev` and emits a `node_upsert`, so live exporters see it and snapshot-resync re-applies it (keeping "drivable purely from node state"); `node_merge` **moves** annotations old→new id.
+- **`node_delete` rejected:** id changes fold into `node_merge`; removal is retention eviction (ADR-0012). Edges get a `rev`/`edge_delete` tombstone so re-parents are `rev`-guarded too.

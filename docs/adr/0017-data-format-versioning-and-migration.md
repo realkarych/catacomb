@@ -33,3 +33,7 @@ Catacomb persists an append-only observation log and materialized tables and pro
 - **+** Makes the §16 rebuild guarantee precise (per reducer version) instead of aspirational.
 - **−** A migration runner, three version stamps, and replay-aware parser versions to maintain — ongoing cost as the format evolves.
 - **−** A reducer-version bump forces a full rebuild from the log (potentially large); acceptable as a rare upgrade-time cost, and bounded by retention.
+
+## Amendments
+
+- **Annotations survive a reducer-bump rebuild (with ADR-0016):** the dedicated annotations side-table is **not** reconstructed from the observation log (the log never contained it); it is preserved across the rebuild and **re-attached** by its durable `(execution_id, source-native key)` handle, with `step_key` recomputed by the new reducer. The boot sequence (ADR-0010 Amendments) runs the rebuild without touching that table.

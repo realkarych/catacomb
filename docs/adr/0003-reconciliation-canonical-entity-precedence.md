@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5.1, §5.5, §7; ADR-0002
+- **Related:** spec §5.1, §5.5, §7; ADR-0002, ADR-0010, ADR-0011, ADR-0014, ADR-0016, ADR-0018
+- **Amended by:** ADR-0014 (structure precedence is conditional on the #53954 verdict) and ADR-0018 (the merge tiebreak is `seq`, not `observed_at`). The Decision text below predates these two changes; spec §7 is the current statement.
 
 ## Context
 

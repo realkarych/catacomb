@@ -32,3 +32,9 @@ Three reconciliation gaps surfaced, all around how conflicting/late observations
 - **+** Resolves the §7-vs-§17 contradiction with a concrete, version-gated mechanism.
 - **−** The reducer must compute and store a per-execution OTel-completeness verdict and run a closure pass on cancel/supersede; more logic than a static table.
 - **−** The verdict depends on version detection (§15/§17), a version-fragile input; conservative default is "treat OTel structure as incomplete unless proven whole."
+
+## Amendments
+
+- **Prefer the local structural rule; latch the verdict:** the v1 mechanism is purely local — an OTel `parent_child` edge wins **only if** that span has OTel children or a `tool_use_id` linking it to a tool node; otherwise JSONL wins (correct under #53954 by construction, no version detection needed). The per-execution version-keyed verdict is **monotonically latched** (the #53954 profile is an SDK/CLI-version property that does not change mid-execution) and demoted to an optional optimization — it never flaps a parent mid-stream.
+- **Edge revisions (with ADR-0015/0021):** edges carry a `rev` (or an `edge_delete` tombstone) so a re-parent emits delete-old + upsert-new under the same `rev`-guard as nodes; a demoted/re-parented edge **re-anchors orphaned descendants to the surviving ancestor, never drops them** (preserving the ADR-0021 forest invariant).
+- **Lattice = the status rule:** status reconciliation uses this lattice (not the per-field precedence table of ADR-0003/§7, which governs non-status fields); the lattice covers all nine statuses per ADR-0012's amendment.

@@ -32,3 +32,9 @@ ADR-0003 makes the append-only **observation log the system of record** and the 
 - **−** A transaction per observation costs more than batched autocommit; mitigated by WAL and optional batching of independent observations within one transaction.
 - **−** ULID minting adds a tiny per-event cost and a dependency; acceptable and already in the spec.
 - **−** This supersedes the M0.1 plan's `obs-<seq>` counter and `INSERT OR REPLACE`; the plan and store code must be corrected.
+
+## Amendments
+
+- **`seq` stamping point (with ADR-0011/0018):** `seq` is assigned at the single observation-log **append boundary, before fan-out to per-execution shards** — already serialized by the one-txn append and the single-writer DB lock, so `seq` is global, monotonic, and gap-free at no extra contention. "Lock-free per execution" (ADR-0011) refers to merge/materialization only, not `seq` assignment. `rev` (ADR-0015) = this global `seq`, so exporter cursors are valid global cursors.
+- **Boot sequence (with ADR-0017):** if `schema_version` differs → run DDL migrations; if `reducer_version` differs → truncate materialized tables, reset watermark to 0, re-reduce the full log, persist `watermark = max(seq)`; only if `reducer_version` is unchanged use the fast path (replay `seq > watermark`).
+- **Phasing:** clauses 1–2 (ULID `obs_id`, insert-only) + WAL land in **M0.1**; clauses 3–6 (idempotent re-ingest, per-observation atomic apply + watermark, recovery) land with live ingest in **M0.2**. M0.1's single offline persist is the degenerate batch case of clause 4, not a contradiction.
