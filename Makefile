@@ -19,7 +19,7 @@ test:
 
 ## Run tests then enforce the coverage threshold (.testcoverage.yml)
 cover: test
-	@go run github.com/vladopajic/go-test-coverage/v2@latest --config=.testcoverage.yml
+	@go run github.com/vladopajic/go-test-coverage/v2@v2.18.4 --config=.testcoverage.yml
 
 ## Run linters (golangci-lint)
 lint:

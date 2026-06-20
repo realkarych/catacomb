@@ -1,6 +1,7 @@
 package codepolicy
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -11,8 +12,7 @@ import (
 )
 
 var (
-	allowedDirective = regexp.MustCompile(`^//(go:[a-z]+|line |extern |export )`)
-	generatedMarker  = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
+	allowedDirective = regexp.MustCompile(`^//go:(build|embed|generate)\b`)
 	skipDirs         = map[string]bool{".git": true, "testdata": true, "vendor": true, "bin": true, "dist": true}
 )
 
@@ -37,13 +37,16 @@ func TestNoCommentsInGoCode(t *testing.T) {
 		if parseErr != nil {
 			return parseErr
 		}
+		if ast.IsGenerated(file) {
+			return nil
+		}
 		rel, relErr := filepath.Rel(root, path)
 		if relErr != nil {
 			rel = path
 		}
 		for _, group := range file.Comments {
 			for _, comment := range group.List {
-				if allowedDirective.MatchString(comment.Text) || generatedMarker.MatchString(comment.Text) {
+				if allowedDirective.MatchString(comment.Text) {
 					continue
 				}
 				line := fset.Position(comment.Pos()).Line

@@ -18,9 +18,9 @@ Real-time execution-graph observability for Claude Code agentic pipelines. A sid
 
 **No comments in Go code. None.** No doc comments, no inline comments, no commented-out code. Well-named identifiers and readable code carry the meaning; if a piece of code seems to need a comment, rename or refactor it instead.
 
-The **only** allowed exceptions are functional Go directives — `//go:build`, `//go:embed`, `//go:generate`, and the `// Code generated … DO NOT EDIT.` marker. Everything else (including `//nolint`) is rejected.
+The **only** allowed comments are the `//go:build`, `//go:embed`, and `//go:generate` directives. Everything else (including `//nolint` and doc comments) is rejected. Files carrying the standard `// Code generated … DO NOT EDIT.` header are skipped wholesale, so generated code is never our concern.
 
-This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy) that parses every `.go` file and fails on any non-directive comment. A failing build is the rule doing its job — delete the comment.
+This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy) that parses every hand-written `.go` file and fails on any non-directive comment. A failing build is the rule doing its job — delete the comment.
 
 ## Go conventions
 

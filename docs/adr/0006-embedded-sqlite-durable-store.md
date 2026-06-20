@@ -13,6 +13,7 @@ The daemon needs durable, crash-recoverable, locally queryable state with **no e
 
 Use an **embedded database, SQLite by default**, behind a `Store` interface; **DuckDB optional** for analytics-heavy deployments.
 
+- **Driver:** the pure-Go `modernc.org/sqlite` (no cgo), so Catacomb stays a single static cross-platform binary; cgo-based drivers such as `mattn/go-sqlite3` are excluded. This no-cgo constraint is the load-bearing reason SQLite is viable as the zero-config default.
 - Tables: `observations` (append-only log — the system of record), plus materialized `nodes` / `edges` / `runs` / `markers`.
 - An **in-memory graph** serves realtime reads/subscriptions; the store is write-through (batched) and is the recovery source.
 - **Recovery:** rebuild the in-memory graph by replaying `observations` (authoritative) or loading materialized tables (fast path) and reconciling.

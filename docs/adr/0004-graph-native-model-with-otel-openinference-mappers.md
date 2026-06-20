@@ -15,7 +15,7 @@ Make the internal model **graph-native** (`Node` / `Edge`), and treat OTel/OpenI
 
 - **Import:** OTLP spans → Observations (span kind/attrs → node type/fields; `parent_span_id` → `parent_child`).
 - **Export:** nodes/edges → OpenInference span kinds (`AGENT` subagent, `TOOL` tool/mcp, `LLM` assistant turn, `CHAIN` marker span).
-- **Node granularity** is configurable, default **rich** (every action is a node); a **lean** mode collapses `llm_request` and hook nodes into attributes/metrics on the enclosing node.
+- **Node granularity** is one axis with two halves: the `graph.granularity` config is `rich` (default) or `lean`, and each canonical node carries a `tier` of `core` or `detail`. `rich` materializes both tiers; `lean` materializes only `core`-tier nodes and folds `detail`-tier nodes (`assistant_turn`, `hook_event`) into attributes/metrics on their enclosing node. The word `rich` names a granularity mode; the per-node values are `core`/`detail` to avoid overloading it.
 
 ## Alternatives considered
 

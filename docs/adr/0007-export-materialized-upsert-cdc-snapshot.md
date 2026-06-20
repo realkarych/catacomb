@@ -14,7 +14,7 @@ Catacomb is a realtime tool whose graph must flow into external stores both **co
 Define a pluggable `Exporter` interface with **materialized-graph semantics** as the default across all targets, plus streaming and snapshot modes:
 
 - **Materialized + idempotent upsert** by canonical id, so a node/edge that mutates (start→end, enrichment) updates in place rather than duplicating.
-- **Streaming = CDC**: graph deltas (`node_upsert`, `edge_upsert`, `node_status`, `run_started/ended`) drive incremental sink updates.
+- **Streaming = CDC**: graph deltas (`node_upsert`, `edge_upsert`, `node_status`, `run_started`, `run_ended`) drive incremental sink updates.
 - **Snapshot**: `catacomb export --to <target> [--run <id>]` for a full dump.
 - **Targets (v1):** `jsonl` (materialized node/edge records; also an event-log mode), **`otlp` (OpenInference passthrough)** via the ADR-0004 export mapper, `neo4j` (nodes+relationships, `MERGE`), `postgres` (`nodes`/`edges` tables, `INSERT … ON CONFLICT`, JSONB attrs, optional `pg_notify`).
 
