@@ -64,7 +64,7 @@ The hook set above is the known-stable core; the exact event taxonomy is version
             └──────────────────────────────┘    │      │                       │    ┌─ exporters ────────────┐
                                                  │  canonical graph (in-mem)    │ ─▶ │ jsonl   (CDC + snapshot)│
                                                  │      │                       │    │ otlp    (OpenInference) │
-                                                 │  durable store (SQLite/DuckDB)│   │ neo4j / postgres        │
+                                                 │  durable store (SQLite/DuckDB)│   │ neo4j/pg (upsert + CDC) │
                                                  └──────────────────────────────┘    └────────────────────────┘
 
   package layout:  /catacombcore (lib)  ·  /cmd/catacomb (daemon+CLI)  ·  thin frontends over the lib
