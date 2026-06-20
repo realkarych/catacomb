@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5, §5.7; ADR-0003
+- **Related:** spec §5, §5.7; ADR-0003, ADR-0021
+- **Amended by:** ADR-0021 — `assistant_turn` is reclassified **core-tier** (load-bearing spine); lean mode folds only `hook_event`. The detail-tier list in the Decision below is superseded for `assistant_turn`.
 
 ## Context
 
@@ -15,7 +16,7 @@ Make the internal model **graph-native** (`Node` / `Edge`), and treat OTel/OpenI
 
 - **Import:** OTLP spans → Observations (span kind/attrs → node type/fields; `parent_span_id` → `parent_child`).
 - **Export:** nodes/edges → OpenInference span kinds (`AGENT` subagent, `TOOL` tool/mcp, `LLM` assistant turn, `CHAIN` marker span).
-- **Node granularity** is one axis with two halves: the `graph.granularity` config is `rich` (default) or `lean`, and each canonical node carries a `tier` of `core` or `detail`. `rich` materializes both tiers; `lean` materializes only `core`-tier nodes and folds `detail`-tier nodes (`assistant_turn`, `hook_event`) into attributes/metrics on their enclosing node. The word `rich` names a granularity mode; the per-node values are `core`/`detail` to avoid overloading it.
+- **Node granularity** is one axis with two halves: the `graph.granularity` config is `rich` (default) or `lean`, and each canonical node carries a `tier` of `core` or `detail`. `rich` materializes both tiers; `lean` materializes only `core`-tier nodes and folds `detail`-tier nodes (`hook_event`) into attributes/metrics on their enclosing node. The word `rich` names a granularity mode; the per-node values are `core`/`detail` to avoid overloading it. **`assistant_turn` is core** (a load-bearing interior vertex of the prompt→turn→tool spine; reclassified in ADR-0021), so lean never folds it.
 
 ## Alternatives considered
 

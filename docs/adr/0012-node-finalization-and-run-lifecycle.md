@@ -36,3 +36,8 @@ ADR-0009 handles interruption (a `tool_call` whose turn is cut → `cancelled`).
 - **+** The lattice keeps late terminals authoritative, preserving commutativity.
 - **−** Adds a timer/reaper concern and one config knob (quiescence window); a too-short window can prematurely mark `unknown`/`abandoned` (mitigated: provisional, reversible by a later terminal).
 - **−** Adds `unknown`/`abandoned` to the status vocabulary that exporters and the UI must render.
+
+## Amendments
+
+- **The reaper must not clear its own eviction gate:** a synthetic `run_ended{reason:timeout}` does **not** by itself make a run evictable. Eviction additionally requires a cooldown ≥ the reaper quiescence window, and the run's **observations are retained until eviction**, so a reawakened run can still have its inferred (`unknown`/`abandoned`/`cancelled`) statuses superseded by a genuine terminal (ADR-0014) via rebuild. Invariant: **reaper-window < retention-TTL** (spec §5.4/§8).
+- **Status lattice completeness (with ADR-0014):** all nine statuses are classified — genuine-terminal `{ok, error, blocked}` outrank provisional `{cancelled, unknown, superseded, abandoned}`, which are reversible (a `superseded` leaf reverts if `leafUuid` moves back); a genuine terminal always wins regardless of arrival order. `blocked` is the `PreToolUse` permission-deny terminal.

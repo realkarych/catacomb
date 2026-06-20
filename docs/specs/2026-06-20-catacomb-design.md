@@ -107,7 +107,8 @@ Observations are never mutated. The canonical graph is a **deterministic reducti
 ```
 Node {
   id            string         canonical id, stable across sources (§5.5)
-  run_id        string
+  execution_id  string         identity prefix of id (ADR-0011)
+  run_id        string         non-identifying grouping label (ADR-0011)
   type          enum{session, user_prompt, assistant_turn, tool_call, subagent, mcp_call, hook_event, marker}
   parent_id     string?        structural/causal parent
   agent_id      string?        subagent/teammate that issued this; null on main
@@ -136,11 +137,13 @@ The `tier` field is the per-node half of the single granularity axis: the `graph
 
 ```
 Edge {
-  id     string                deterministic: hash(run_id, type, src, dst)
-  run_id string
+  id     string                deterministic: hash(execution_id, type, src, dst) — src/dst are already execution-scoped node ids (ADR-0011)
+  execution_id string
+  run_id string                non-identifying grouping label
   type   enum{parent_child, sequence, marker_span, data_dep}
   src    string                node id
   dst    string                node id
+  rev    uint64                per-edge revision for rev-guarded export upserts; re-parent = edge_delete(old) + edge_upsert(new) (ADR-0014/0015)
   attrs  map[string]any
 }
 ```
@@ -165,10 +168,10 @@ The linchpin is `tool_use_id`, which is shared across hooks, JSONL, and stream-j
 | `session` | `execution_id` | — |
 | `user_prompt` | `execution_id : uuid` | `execution_id : t_start` |
 | `assistant_turn` | `execution_id : message.id` (the `msg_*`, distinct from JSONL `uuid`; ADR-0014) | `execution_id : span_id` |
-| `tool_call` / `mcp_call` | `execution_id : tool_use_id` | `execution_id : span_id` (OTel-only); last-resort heuristic = `execution_id : agent_id : name : t_start±ε` |
+| `tool_call` / `mcp_call` | `execution_id : tool_use_id` | `execution_id : span_id` (OTel-only); last-resort = a provisional `identity=heuristic` node held until a strong key arrives (no timestamp-window id) |
 | `subagent` | `execution_id : agentId` (the `agent-<agentId>.jsonl` file id) | spawning tool_use id from `agent-<agentId>.meta.json` `toolUseId` → parent `Agent`/`Task` `tool_call`; live: hook `agent_id` / SDK `parent_tool_use_id`; old layout: inline `isSidechain:true` threaded by `parentUuid` |
-| `hook_event` | `execution_id : obs_id` | — |
-| `marker` | `execution_id : marker_seq` | — |
+| `hook_event` | `execution_id : hook_type : (uuid \| tool_use_id \| event_time)` (content-based) | — |
+| `marker` | `execution_id : marker_name : boundary [: occurrence]` (content-deterministic — stable on rebuild/out-of-order) | — |
 
 The last-resort heuristic is **conservative**: an OTel-only tool observation lacking `tool_use_id` becomes a *provisional* node tagged `attrs.identity=heuristic`, and is merged into a canonical node only if a strong key (`tool_use_id`) arrives later — Catacomb prefers a rare duplicate over a wrong merge.
 
@@ -179,7 +182,7 @@ The last-resort heuristic is **conservative**: an OTel-only tool observation lac
 Catacomb is phase-agnostic but supports **user-defined markers** to delimit logical phases. The orchestrator emits an explicit marker; Catacomb pairs `start`/`end` into a `marker` node and links the phase's nodes via `marker_span` edges.
 
 ```
-marker { run_id, name, boundary: start|end, state_ref?: <git-sha|snapshot-id>, ts, attrs }
+marker { execution_id, run_id, name, boundary: start|end, occurrence?, state_ref?: <git-sha|snapshot-id>, ts, attrs }
 ```
 
 Emission channels (any; most-robust first): a no-op MCP call `catacomb__mark` (reliable on the SDK path), a sentinel `UserPromptSubmit`/log line convention, or a direct POST to the daemon. (`state_ref` is an opaque string Catacomb stores but does not interpret — e.g. a downstream eval layer may use it to snapshot deterministic state.)
@@ -238,18 +241,18 @@ type Adapter interface {
   | Payload (input/output) | hooks (`tool_input`/`tool_response`) / JSONL (full) → stream-json deltas |
   | MCP attrs | OTel `mcp_*` → hooks mcp fields → name-pattern parse |
 
-- **Status lattice (ADR-0014):** a genuine terminal (`ok`/`error`) always beats an inferred `cancelled`/`unknown`; the inferred ones are provisional and superseded by any later genuine terminal, so final status is order-independent. Interruption and supersede **cascade transitively over the `parent_child` closure** (across subagent files), except descendants that already hold a genuine terminal.
+- **Status lattice (ADR-0012/0014).** Status is reconciled by this lattice, **not** by the per-field precedence table above (which governs non-status fields). Genuine terminals `{ok, error, blocked}` outrank the provisional `{cancelled, unknown, superseded, abandoned}`; provisional statuses are reversible and superseded by any later genuine terminal (and `superseded` reverts if `leafUuid` moves back), so the final status is order-independent (the §16 commutativity invariant covers every status pair). `blocked` is the `PreToolUse` permission-deny terminal. Interruption and supersede **cascade transitively over the `parent_child` closure** (across subagent files), except descendants already holding a genuine terminal.
 - **Provenance:** every contributing observation is recorded in `Node.sources`, so any field is traceable to its origin and the merge is auditable.
-- **CDC:** each create/field-change/edge-add emits a typed **GraphDelta** (`node_upsert`, `edge_upsert`, `node_status`, `node_merge`, `run_started`, `run_ended`) carrying a per-node `rev` (= originating `seq`) to the fan-out bus; subscribers and streaming exporters consume the same stream and apply **rev-guarded conditional upserts** (ADR-0015).
+- **CDC.** Each create/field-change/edge-add emits a typed **GraphDelta**; the canonical variant set is `node_upsert`, `edge_upsert`, `node_status`, `node_merge`, `run_started`, `session_ended`, `run_ended`, each carrying a per-node/edge `rev` (= originating `seq`). Subscribers and streaming exporters consume the same stream and apply **rev-guarded conditional upserts** (ADR-0015). `node_delete` is intentionally absent (id changes use `node_merge`; removal is retention eviction).
 
 ## 8. Persistence
 
 - **Durable layer:** embedded DB, **SQLite by default** (ubiquitous, zero-config), **DuckDB optional** (columnar, better for cross-run analytical queries). Behind a `Store` interface.
-- **Tables:** `observations` (append-only log), `nodes`, `edges`, `runs`, `markers`. Nodes/edges hold the materialized graph; observations allow full rebuild.
+- **Tables:** `observations` (append-only log), `nodes`, `edges`, `runs`, `markers`, and `annotations` (a recovery-aware side table, ADR-0016: owner-namespaced key/value keyed by the immutable `(execution_id, source-native key)` handle + a recorded `step_key`, with its own write-seq). Nodes/edges hold the materialized graph; observations allow full rebuild; the `annotations` table is **not** in the log, so a rebuild **preserves and re-attaches** it (never reconstructs it).
 - **In-memory graph** serves realtime reads/subscriptions; the durable store is written through and is the recovery source.
 - **Atomicity & recovery (ADR-0010):** appending an observation and applying its node/edge upserts happen in **one transaction**, and a durable committed **watermark = max(seq)** is persisted. On boot, materialized tables are a cache valid only to the watermark; replay `observations` with `seq` > watermark and re-reduce. Durability mode is WAL + `synchronous=NORMAL`. A **single-writer lock** (PID/OS lock on the DB file) prevents two daemons corrupting one store; one-shot CLI verbs (`replay`/`export`) open read-only.
 - **Format versioning (ADR-0017):** the store stamps `schema_version` + `reducer_version` + per-observation `body_schema_version`; on boot the daemon refuses-or-migrates, and a `reducer_version` bump rebuilds the graph from the log (rebuild determinism holds **within** a reducer version). The versioned parser (§17) is replay-aware, not just live-ingest-aware.
-- **Retention (gated on liveness, ADR-0012):** append-only by default; optional per-run TTL / max-runs eviction, but never evicts a not-yet-`run_ended` run, an active wrapper sibling, or a run behind any exporter/subscriber watermark. No enforcement in the hot path.
+- **Retention (gated on liveness, ADR-0012):** append-only by default; optional per-run TTL / max-runs eviction, but never evicts a not-yet-`run_ended` run, an active wrapper sibling, or a run behind any exporter/subscriber watermark. A synthetic `run_ended{reason:timeout}` from the idle-reaper does **not** by itself satisfy the gate — eviction needs an added cooldown ≥ the reaper window, and observations are retained until eviction so a reawakened run's inferred statuses can still be superseded. Invariant: **reaper-window < retention-TTL**. No enforcement in the hot path.
 
 ## 9. Realtime Surfaces
 
@@ -274,7 +277,7 @@ type Exporter interface {
 ```
 
 - **jsonl** — default: one JSON object per node and per edge (materialized), re-emitted on change with a `rev` counter; **event-log mode** (`--mode=events`) streams raw observations/deltas instead. Files split per run; append-only.
-- **otlp (OpenInference passthrough)** — re-emits the graph as OpenInference spans to any OTLP endpoint (Arize Phoenix, Tempo, Honeycomb, …) via the §5.7 export mapper. Because spans are immutable, OTLP emits a span only on **terminal status + a settle window** (snapshot-at-finalization, ADR-0015) — explicitly carved out of the upsert-everywhere semantics. Near-zero added code; gives free trajectory visualization in external backends.
+- **otlp (OpenInference passthrough)** — re-emits the graph as OpenInference spans to any OTLP endpoint (Arize Phoenix, Tempo, Honeycomb, …) via the §5.7 export mapper. Because spans are immutable, OTLP emits a span only on a **genuine** (lattice-final, ADR-0014) terminal **or** a lifecycle close (`run_ended`/`session_ended`/idle-reaper close), whichever comes first — not on a provisional `unknown`/`cancelled`, and with no free-floating settle timer (ADR-0015). The rare genuine-terminal-after-lifecycle-close case yields a stale span (OTLP is the one immutable, eventual-consistency-exempt sink). Near-zero added code; free trajectory visualization in external backends.
 - **neo4j** — nodes as labeled nodes (`:Session`, `:ToolCall`, `:Subagent`, `:McpCall`, `:Marker`, …), edges as relationships (`PARENT_OF`, `NEXT`, `IN_PHASE`). `MERGE` on canonical id for idempotent upsert; CDC applied via Bolt. Snapshot = batched `MERGE`.
 - **postgres** — `nodes` / `edges` tables keyed by canonical id (`INSERT … ON CONFLICT DO UPDATE`), JSONB for `attrs`/`payload`/`annotations`; optional adjacency views and `pg_notify` for downstream CDC. Snapshot = upsert in a transaction.
 
@@ -310,7 +313,7 @@ Configurable; default **store payload + hash + redaction** (hardened per ADR-002
 
 - High subagent fan-out and (future) downstream rollouts multiply event volume; the pipeline is built around **bounded channels** with explicit policies.
 - Adapters → observation log: bounded queue; **hooks fail open** (forwarder drops + warns rather than blocking the agent). OTLP/stream-json/JSONL backpressure within the daemon (buffer + spill to store).
-- Reducer is single-writer per **`execution_id`** (ADR-0011) for lock-free merge; parallel sessions run on independent shards; reads are served from immutable snapshots.
+- Reducer is single-writer per **`execution_id`** (ADR-0011) for lock-free merge; parallel sessions run on independent shards; reads are served from immutable snapshots. `seq` (the global order/tiebreak and `rev` source) is stamped **once at the serialized observation-log append, before fan-out to shards** (ADR-0010) — so it is global and gap-free even though merge is lock-free per shard; "lock-free per execution" refers to merge/materialization, not `seq` assignment.
 - Exporters/subscribers are decoupled via the delta bus with per-consumer bounded buffers; `drop` is **coalesce-to-latest, never lossy** (ADR-0015) — a slow neo4j sink must not stall ingestion and must not silently diverge.
 - **Fault isolation (ADR-0019):** every adapter and reducer shard runs under a supervised goroutine with a `recover()` boundary; a panic on a malformed beta/undocumented input becomes a quarantined poison observation + adapter restart with backoff, **never a daemon crash**. A health/metrics surface exposes queue depth, hook/exporter drop counts, store errors, open-run count, and per-adapter liveness; affected runs are flagged `lossy`. Dogfooding is loop-broken (the tailer excludes Catacomb's own session; the OTLP exporter refuses its own endpoint).
 - Targets (non-binding): sustain ≥ a few thousand observations/sec on a laptop; p99 ingest→delta latency in the low tens of ms.

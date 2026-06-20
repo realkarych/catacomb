@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5.4; ADR-0002, ADR-0006
+- **Related:** spec §5.4; ADR-0002, ADR-0006, ADR-0011, ADR-0012
+- **Amended by:** ADR-0011 (`run_id` is a non-identifying grouping label; node identity is the per-session `execution_id`) and ADR-0012 (run lifecycle: `session_ended`/`run_ended`/idle-reaper). The "`run_id` is the subgraph key" framing below is superseded by ADR-0011.
 
 ## Context
 

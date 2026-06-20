@@ -31,3 +31,8 @@ Separate the **logical grouping key** from the **physical execution instance**.
 - **+** Cross-run comparison (the point of ADR-0005's forest) is preserved via the `run_id` grouping label and the cross-run `step_key` (ADR-0016), not via colliding node ids.
 - **−** Changes the canonical-id contract that ADR-0003 (identity) and ADR-0005 (run model) reference; spec §5.5/§5.4 and the M0.1 plan's id helpers must be updated (`run_id:` → `execution_id:`).
 - **−** One more id to mint and thread; mitigated by minting once per session attach and carrying it on every observation.
+
+## Amendments
+
+- **Resume vs replay identity:** disambiguate by **ingest path**, not by inspecting `session_id`. **Live ingest** reuses the existing `execution_id` for a known `session_id` (the `session_id → execution_id` map is persisted on the runs table, restored on boot), so a `--resume`/`--continue` continues the same execution and its work merges into one graph. The offline **`replay`** verb always mints a **fresh** `execution_id` regardless of the transcript's `session_id` (it is a re-derivation, never a continuation). Mirrored in spec §5.4.
+- **Node/Edge identity basis:** the `Node` and `Edge` structs carry `execution_id` (with `run_id` as a non-identifying grouping attribute), and the `Edge` id is keyed on `execution_id` (or on the already-execution-scoped `src`/`dst` node ids); the `marker` record carries `execution_id` and `marker_seq` is per-execution. (Spec §5.2/§5.3/§5.6.)

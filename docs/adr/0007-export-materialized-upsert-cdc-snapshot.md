@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §10, §5.7; ADR-0004, ADR-0006
+- **Related:** spec §10, §5.7; ADR-0004, ADR-0006, ADR-0012, ADR-0015
+- **Amended by:** ADR-0015 — the GraphDelta vocabulary adds `node_merge` and `session_ended`, upserts are `rev`-guarded, and OTLP finalizes on a genuine terminal / lifecycle-close. The 5-variant delta list in the Decision below is extended by spec §7 (the canonical enum).
 
 ## Context
 
@@ -14,7 +15,7 @@ Catacomb is a realtime tool whose graph must flow into external stores both **co
 Define a pluggable `Exporter` interface with **materialized-graph semantics** as the default across all targets, plus streaming and snapshot modes:
 
 - **Materialized + idempotent upsert** by canonical id, so a node/edge that mutates (start→end, enrichment) updates in place rather than duplicating.
-- **Streaming = CDC**: graph deltas (`node_upsert`, `edge_upsert`, `node_status`, `run_started`, `run_ended`) drive incremental sink updates.
+- **Streaming = CDC**: graph deltas drive incremental sink updates. The canonical variant set is pinned in spec §7: `node_upsert`, `edge_upsert`, `node_status`, `node_merge`, `run_started`, `session_ended`, `run_ended`. (`node_delete` is intentionally absent — id changes fold into `node_merge`, and removal is handled by retention eviction, ADR-0012.)
 - **Snapshot**: `catacomb export --to <target> [--run <id>]` for a full dump.
 - **Targets (v1):** `jsonl` (materialized node/edge records; also an event-log mode), **`otlp` (OpenInference passthrough)** via the ADR-0004 export mapper, `neo4j` (nodes+relationships, `MERGE`), `postgres` (`nodes`/`edges` tables, `INSERT … ON CONFLICT`, JSONB attrs, optional `pg_notify`).
 
