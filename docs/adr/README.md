@@ -12,6 +12,7 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0006](0006-embedded-sqlite-durable-store.md) | Embedded SQLite as the default durable store | Accepted |
 | [0007](0007-export-materialized-upsert-cdc-snapshot.md) | Export: materialized graph (upsert + CDC) and snapshot | Accepted |
 | [0008](0008-payload-storage-hash-redaction.md) | Payload handling: store with hash and redaction | Accepted |
+| [0009](0009-conversation-threading-interruption-meta-records.md) | Conversation threading, interruption, and transcript meta-records | Accepted |
 
 Design spec: [`../specs/2026-06-20-catacomb-design.md`](../specs/2026-06-20-catacomb-design.md).
 

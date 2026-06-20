@@ -45,9 +45,11 @@ Claude Code emits observable signal through four channels, each partial:
 | **Hooks** (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `SubagentStop`, `SessionStart`, `SessionEnd`, `PreCompact`, `Notification`) | Fire on **both** SDK and CLI paths; carry `session_id`, `tool_name`, `tool_input`, `tool_response`, `transcript_path`, MCP fields | Flat events; parent→child must be reconstructed |
 | **Native OpenTelemetry traces** (beta: `CLAUDE_CODE_ENABLE_TELEMETRY=1` + `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` + `OTEL_TRACES_EXPORTER`) | Genuine parent→child span tree (`claude_code.interaction` → `llm_request`/`hook`/`tool`; subagent spans nest under the dispatching `tool` span), per-node `agent_id`/`parent_agent_id`/`subagent_type`, cost/token, dedicated MCP signals | **Beta**: span names/attrs may change; on the **Agent SDK streaming path only `llm_request` spans fire** (issue #53954) → hierarchy can collapse on the SDK path; subagent nesting is a recent fix (~v2.1.145) |
 | **`stream-json`** (`claude -p --output-format stream-json`) | NDJSON: `system`(init→`session_id`, mcp_servers, model), `assistant`, `user`(tool_result), `stream_event`(carries `parent_tool_use_id`, `uuid`, `session_id`), `result`(usage) | CLI envelope schema officially **undocumented** (issues #24612/#24596) |
-| **Transcript JSONL** (`~/.claude/projects/<cwd>/*.jsonl`, `**/subagents/agent-*.jsonl`) | **Source of truth for the subagent tree**; pairs `tool_use`↔`tool_result` by `tool_use_id`; offline replay | Written to disk (slight lag); post-hoc shape |
+| **Transcript JSONL** (`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, subagents under `…/<sessionId>/subagents/agent-<agentId>.jsonl` + `agent-<agentId>.meta.json`) | **Source of truth for the conversation tree and the subagent tree**; carries `uuid`/`parentUuid` (threading), `promptId`, `leafUuid`, `agentId`, `isSidechain`, `interruptedMessageId`; pairs `tool_use`↔`tool_result` by `tool_use_id`; offline replay | Written to disk (slight lag); on-disk shape is largely undocumented and version-fragile |
 
-The hook set above is the known-stable core; the exact event taxonomy is version-dependent (e.g. permission decisions surface through `PreToolUse` output, and tool failures through `PostToolUse` with an error `tool_response`, rather than as dedicated events), so the hook receiver isolates event-name knowledge behind the versioned parser of §17.
+The hook set above is the known-stable core; the exact event taxonomy is version-dependent (e.g. permission decisions surface through `PreToolUse` output, and tool failures through `PostToolUse` with an error `tool_response`, rather than as dedicated events). Hooks also carry per-event subagent attribution (`agent_id`, `agent_type`, and on `SubagentStop` an `agent_transcript_path`) on recent versions. The hook receiver isolates event-name and field knowledge behind the versioned parser of §17.
+
+**On-disk transcript vs SDK message surface.** The conversation **thread is a tree** keyed by `uuid`/`parentUuid` *on disk*; the Agent SDK's `getSessionMessages()` exposes only `{type, uuid, session_id, message, parent_tool_use_id}` and does **not** surface `parentUuid`/`isSidechain`/`leafUuid`. Therefore the JSONL adapter reconstructs threading from the **files**, and `parent_tool_use_id` is used only for the subagent boundary, never as the conversation thread. A transcript also contains many **non-conversational meta-records** (`system`/`compact_boundary`, `isCompactSummary`, `file-history-snapshot`, `attachment`, `permission-mode`, `mode`, `last-prompt`, `ai-title`, `queue-operation`, `pr-link`, `isMeta`) that must not be promoted to prompts/turns. The interpretation of all of this — threading, interruption, regeneration branches, subagent parentage, meta-records, and the `Agent`↔`Task` / inline-↔-separate-sidechain version duality — is specified in §5.8 and decided in ADR-0009.
 
 **Design consequence:** because the user drives Claude Code via **both the Agent SDK and interactive CLI**, **hooks are the backbone** (they fire on every path). Native OTel is **enrichment** where it is whole (interactive CLI / `claude -p`). JSONL is the **backfill** for the subagent tree when OTel collapses on the SDK path (#53954). `stream-json` is an additional structural signal (notably `parent_tool_use_id`).
 
@@ -110,7 +112,7 @@ Node {
   parent_agent_id string?
   subagent_type string?
   name          string         tool name / subagent type / mcp tool / marker name
-  status        enum{pending, running, ok, error, blocked, cancelled}
+  status        enum{pending, running, ok, error, blocked, cancelled, superseded}
   t_start, t_end time?
   duration_ms   int?
   tokens_in, tokens_out int?
@@ -158,7 +160,7 @@ The linchpin is `tool_use_id`, which is shared across hooks, JSONL, and stream-j
 | `user_prompt` | `run_id : uuid` | `run_id : t_start` |
 | `assistant_turn` | `run_id : message_id` | `run_id : span_id` |
 | `tool_call` / `mcp_call` | `run_id : tool_use_id` | `run_id : span_id` (OTel-only); last-resort heuristic = `run_id : agent_id : name : t_start±ε` |
-| `subagent` | `run_id : agent_id` | `run_id : spawning_tool_use_id` (the Task/Agent tool_use_id) ↔ JSONL `agent-*.jsonl` |
+| `subagent` | `run_id : agentId` (the `agent-<agentId>.jsonl` file id) | spawning tool_use id from `agent-<agentId>.meta.json` `toolUseId` → parent `Agent`/`Task` `tool_call`; live: hook `agent_id` / SDK `parent_tool_use_id`; old layout: inline `isSidechain:true` threaded by `parentUuid` |
 | `hook_event` | `run_id : obs_id` | — |
 | `marker` | `run_id : marker_seq` | — |
 
@@ -184,6 +186,18 @@ The canonical model is **graph-native**. Bidirectional mappers live at the bound
 - **Export:** nodes/edges → OpenInference span kinds (`AGENT` for subagent, `TOOL` for tool/mcp, `LLM` for assistant_turn, `CHAIN` for marker spans) for OTel/OpenInference backends.
 
 This keeps DAG-shaped edges and non-OTel sources expressible while remaining interoperable.
+
+### 5.8 Conversation threading, interruption & branches
+
+Field-level rules for interpreting one transcript into structure (decided in ADR-0009):
+
+- **Threading is a tree, not a chain.** `parent_child` edges within a run follow the on-disk `parentUuid` tree, read from the transcript files (the SDK surface omits `parentUuid`). An `assistant_turn` and its `tool_call`s attach to the nearest ancestor `user_prompt` found by walking `parentUuid` upward; `promptId` (present on user-side records) corroborates the attribution.
+- **Multiple prompts.** Every real user message is a `user_prompt` child of the session; a session holds as many prompt subtrees as the user sent. Sibling order comes from `t_start` (optionally `sequence` edges).
+- **Interruption.** Detected from the transcript, not hooks (the `Stop` hook does not fire on user interrupt). The interrupting message is an ordinary new `user_prompt`; the assistant turn named by the following user record's `interruptedMessageId` — and any in-flight `tool_call` of it lacking a `tool_result` — transitions to status `cancelled`. Cancellation is a status change, never a re-parenting.
+- **Regeneration / edit branches.** A `parentUuid` may have several children (edit/retry/regenerate); all branches are kept. The active branch ends at the current leaf (`leafUuid` / the latest `last-prompt`); nodes off that path get status `superseded` (marked, never deleted). An SDK session-level fork (new `sessionId`) is a separate session grouped by the wrapper run-id (§5.4), not an in-file branch.
+- **Meta-records.** Non-conversational records (the §3 list) are classified and never promoted to `user_prompt`/`assistant_turn`; compaction boundaries (`compact_boundary`, `isCompactSummary`) are segment markers, not prompts.
+- **Version duality.** Tool name (`Agent`|`Task`), sidechain layout (inline `isSidechain:true` | separate `subagents/` files), and the presence of recent attribution fields are resolved behind the versioned parser (§17); unknown record/event types are recorded generically, not dropped.
+- **Milestone.** M0.1's single-pass reducer captures only a subset (it does not yet thread `parentUuid` or model interruption/branches); full threading lands with the JSONL tailer in M0.2+.
 
 ## 6. Ingestion Adapters
 
@@ -311,6 +325,7 @@ Catacomb does not control sampling (Claude Code/Agent SDK expose no temperature/
 - **Agent SDK streaming gap (#53954):** on the SDK streaming path only `llm_request` spans fire. Mitigation: hooks backbone + JSONL subagent-tree reconstruction make the graph whole without relying on OTel nesting; verify per CLI/SDK version.
 - **Subagent-span nesting is version-dependent** (~v2.1.145+). Mitigation: detect version; prefer JSONL/`parent_tool_use_id` for the tree when in doubt.
 - **Hook event taxonomy is version-dependent.** Mitigation: isolate event-name knowledge behind the versioned parser; the §3 set is the known-stable core, with unknown events recorded generically rather than dropped.
+- **Transcript threading fields are largely undocumented and version-fragile** (§5.8, ADR-0009): `parentUuid`/`leafUuid`/`promptId`/`interruptedMessageId`/`isSidechain`/`agentId` are on-disk-only (the SDK hides them), the subagent→parent join leans on the community-observed meta `toolUseId` (a documented key is still an open request), and layouts differ across versions (`Task`↔`Agent`, inline↔separate sidechains). Mitigation: read the files (not the SDK surface) for threading; resolve layout/field duality behind the versioned parser; keep both regeneration branches and mark (never delete) `superseded` nodes; treat absent fields as "unknown," not "none."
 - **stream-json envelope is undocumented** (#24612/#24596). Mitigation: isolate parsing behind a single schema module; treat stream-json as a secondary structural signal, not a sole source.
 - **Privacy:** payloads may contain secrets. Mitigation: redaction defaults on; refs-only mode; size caps; uniform application to store and exporters.
 
