@@ -34,19 +34,24 @@
 ## Task 1: `traceServer.Export` handler + bearer unary interceptor
 
 **Files:**
+
 - Create `daemon/grpc.go`
 - Create `daemon/grpc_test.go`
 
 **Interfaces:**
 
 Consumes:
+
 - `Daemon.IngestOTLP(req *collectorv1.ExportTraceServiceRequest) error` (`daemon/daemon.go:156`)
 
 Produces:
+
 - `traceServer` struct embedding `collectorv1.UnimplementedTraceServiceServer` with method:
+
   ```go
   func (s *traceServer) Export(ctx context.Context, req *collectorv1.ExportTraceServiceRequest) (*collectorv1.ExportTraceServiceResponse, error)
   ```
+
 - `bearerInterceptor(token string) grpc.UnaryServerInterceptor`
 
 **TDD steps:**
@@ -196,12 +201,14 @@ func bearerInterceptor(token string) grpc.UnaryServerInterceptor {
 ## Task 2: `serveGRPC` supervisor with seams, recover, and exponential backoff
 
 **Files:**
+
 - Modify `daemon/grpc.go` (add `serveGRPC` + `waitFn` type)
 - Modify `daemon/grpc_test.go` (add supervisor tests)
 
 **Interfaces:**
 
 Produces:
+
 ```go
 func (d *Daemon) newGRPCServer(token string) *grpc.Server
 func (d *Daemon) serveGRPC(
@@ -217,6 +224,7 @@ func (d *Daemon) serveGRPC(
 `waitFn` default: timer-based — creates `time.NewTimer(d)`, selects on `timer.C` vs `ctx.Done()`; returns `true` if the timer fired (continue), `false` if context was cancelled (abort).
 
 **Design invariants:**
+
 - Backoff: base 100ms, factor 2, cap 30s. The backoff counter resets to base only when `ctx` is cancelled (i.e., it grows until the supervisor exits). This is the simplest correct rule that keeps the counter monotone within a supervisor lifetime.
 - On `ctx.Done()`: call `srv.GracefulStop()`, then return.
 - On panic inside `serveFn`: `recover()` catches it; count the restart, back off, loop.
@@ -492,6 +500,7 @@ func (d *Daemon) serveGRPC(
 ## Task 3: Second listener, `Discovery.GRPCAddr`, `Serve` extension, `runDaemonWith` wiring
 
 **Files:**
+
 - Modify `daemon/discovery.go` — add `GRPCAddr string \`json:"grpc_addr,omitempty"\`` to `Discovery`
 - Modify `daemon/server.go` — extend `Serve` signature to `Serve(ctx, httpLn, grpcLn net.Listener, token string) error`
 - Modify `cmd/catacomb/daemon.go` — add `listenGRPC` seam parameter, bind second listener, write `GRPCAddr`, call extended `Serve`
@@ -503,9 +512,11 @@ func (d *Daemon) serveGRPC(
 **Interfaces:**
 
 Produces:
+
 - `daemon.Discovery{Addr string \`json:"addr"\`, Token string \`json:"token"\`, GRPCAddr string \`json:"grpc_addr,omitempty"\`}`
 - `func (d *Daemon) Serve(ctx context.Context, httpLn net.Listener, grpcLn net.Listener, token string) error`
 - Updated `runDaemonWith` signature:
+
   ```go
   func runDaemonWith(
       ctx context.Context,
@@ -610,6 +621,7 @@ func TestRunDaemonDiscoveryHasGRPCAddr(t *testing.T) {
 - [ ] **Implement:**
 
 `daemon/discovery.go` — add field:
+
 ```go
 type Discovery struct {
     Addr     string `json:"addr"`
@@ -619,6 +631,7 @@ type Discovery struct {
 ```
 
 `daemon/server.go` — extend `Serve`. **Read the real current `Serve` first** and integrate these additions while preserving its existing structure (the `reapLoop` goroutine, the `http.ErrServerClosed` handling, etc.). The two required additions: (1) create `grpcSrv` and launch the `serveGRPC` supervisor goroutine; (2) the shutdown goroutine that already calls `srv.Close()` on `ctx.Done()` must ALSO call `grpcSrv.GracefulStop()` — this is what makes the real `srv.Serve(grpcLn)` return so the supervisor exits (do NOT put `GracefulStop` inside `serveGRPC`).
+
 ```go
 func (d *Daemon) Serve(ctx context.Context, httpLn net.Listener, grpcLn net.Listener, token string) error {
     srv := &http.Server{Handler: d.Handler(token)}
@@ -642,6 +655,7 @@ func (d *Daemon) Serve(ctx context.Context, httpLn net.Listener, grpcLn net.List
 ```
 
 `daemon/grpc.go` — add `defaultWaitFn`:
+
 ```go
 var defaultWaitFn = func(ctx context.Context, d time.Duration) bool {
     t := time.NewTimer(d)
@@ -656,6 +670,7 @@ var defaultWaitFn = func(ctx context.Context, d time.Duration) bool {
 ```
 
 `cmd/catacomb/daemon.go` — extend `runDaemonWith`:
+
 ```go
 func runDaemonWith(
     ctx context.Context,
@@ -708,6 +723,7 @@ func runDaemonWith(
 ```
 
 `cmd/catacomb/daemon.go` — update `newDaemonCmd` to pass `daemon.ListenLoopback` as the second listen seam:
+
 ```go
 return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards)
 ```
@@ -724,6 +740,7 @@ return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.Listen
 ## Task 4: `catacomb env --protocol grpc` flag
 
 **Files:**
+
 - Modify `cmd/catacomb/env.go` — add `--protocol` flag; `grpc` branch emits gRPC vars; `http` branch unchanged
 - Modify `cmd/catacomb/env_test.go` — add gRPC output tests + missing `GRPCAddr` error test; keep existing HTTP tests passing (they use `Discovery{Addr: ..., Token: ...}` with no `GRPCAddr`, so `--protocol http` is unaffected)
 
@@ -732,10 +749,13 @@ return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.Listen
 **Interfaces:**
 
 Consumes:
+
 - `daemon.Discovery.GRPCAddr` (added in Task 3)
 
 Produces:
+
 - `catacomb env --protocol grpc` stdout:
+
   ```
   CLAUDE_CODE_ENABLE_TELEMETRY=1
   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
@@ -744,6 +764,7 @@ Produces:
   OTEL_EXPORTER_OTLP_ENDPOINT=http://<grpc_addr>
   OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <token>
   ```
+
   Note: gRPC endpoint has NO `/v1/traces` path suffix (the gRPC SDK derives the path from the service descriptor).
 
 **TDD steps:**
