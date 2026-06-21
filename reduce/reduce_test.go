@@ -526,6 +526,16 @@ func TestRunEndedClosesSessionNode(t *testing.T) {
 	assert.Equal(t, model.StatusUnknown, g.Nodes[model.SessionNodeID("e1")].Status)
 }
 
+func TestStopDoesNotTerminateRun(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		{ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceHook, Kind: "stop", Correlation: model.Correlation{SessionID: "s1"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2},
+	})
+	assert.Equal(t, model.StatusRunning, g.Runs["s1"].Status)
+	assert.Equal(t, model.StatusRunning, g.Nodes[model.SessionNodeID("e1")].Status)
+}
+
 func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 	g := NewGraph()
 	o := model.Observation{

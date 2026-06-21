@@ -71,8 +71,10 @@ func build(hookType string, e envelope) *partial {
 	switch hookType {
 	case "SessionStart":
 		return &partial{kind: "session_start", correlation: base, attrs: map[string]any{"source": e.Source}}
-	case "SessionEnd", "Stop":
+	case "SessionEnd":
 		return &partial{kind: "session_end", correlation: base, attrs: map[string]any{"reason": e.Reason}}
+	case "Stop":
+		return &partial{kind: "stop", correlation: base}
 	case "UserPromptSubmit":
 		return &partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt": e.Prompt}}
 	case "PreToolUse":
