@@ -212,6 +212,63 @@ func TestIngestPoisonDoesNotStopOtherRuns(t *testing.T) {
 	assert.Equal(t, int64(1), n)
 }
 
+type runUpsertErrStore struct{ store.Store }
+
+func (s *runUpsertErrStore) UpsertRun(model.Run) error { return errors.New("upsert") }
+
+func TestIngestPersistsRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "s1", runs[0].ID)
+	assert.Equal(t, model.StatusRunning, runs[0].Status)
+}
+
+func TestRecoverRepersistsRuns(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "g.db")
+	s1, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	d1 := New(s1)
+	require.NoError(t, d1.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s1.Close())
+
+	s2, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	runs, err := s2.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "s1", runs[0].ID)
+}
+
+func TestRecoverRunUpsertError(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "g.db")
+	s1, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	d1 := New(s1)
+	require.NoError(t, d1.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s1.Close())
+
+	s2, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(&runUpsertErrStore{Store: s2})
+	assert.Error(t, d2.Recover())
+}
+
+func TestIngestRunUpsertError(t *testing.T) {
+	d := New(&runUpsertErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
 type errStore struct {
 	failSince bool
 }

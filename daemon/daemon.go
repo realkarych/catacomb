@@ -58,6 +58,13 @@ func (d *Daemon) Recover() error {
 		}
 	}
 	d.seq = max
+	for _, g := range d.graphs {
+		for _, r := range g.RunsSnapshot() {
+			if err := d.store.UpsertRun(r); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -93,13 +100,20 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 		d.graphs[execID] = g
 	}
 	for _, o := range obs {
-		applyFn(g, o)
-		nodes, edges := g.Snapshot()
-		if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+		if err := d.applyAndPersist(g, o); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
+	applyFn(g, o)
+	nodes, edges := g.Snapshot()
+	if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+		return err
+	}
+	return d.store.UpsertRun(*g.Runs[o.RunID])
 }
 
 func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {
