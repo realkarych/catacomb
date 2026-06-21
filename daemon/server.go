@@ -14,7 +14,11 @@ import (
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/realkarych/catacomb/export/otlp"
 )
+
+var newExporterFn = otlp.New
 
 func (d *Daemon) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
@@ -87,11 +91,48 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 	}
 }
 
+const exporterBufSize = 1024
+
+func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
+	d.mu.Lock()
+	endpoint := d.otlpEndpoint
+	d.mu.Unlock()
+	if endpoint == "" {
+		return
+	}
+	exp, err := newExporterFn(ctx, endpoint, grpcAddr, httpAddr)
+	if err != nil {
+		log.Printf("catacomb: otlp exporter disabled: %v", err)
+		return
+	}
+	d.mu.Lock()
+	for _, g := range d.graphs {
+		nodes, edges := g.Snapshot()
+		_ = exp.SnapshotState(ctx, nodes, edges)
+	}
+	consumer := d.bus.Subscribe(exporterBufSize)
+	d.exporterConsumer = consumer
+	d.mu.Unlock()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				d.bus.Unsubscribe(consumer)
+				_ = exp.Shutdown(ctx)
+				return
+			case delta := <-consumer.C:
+				_ = exp.ApplyDelta(ctx, delta)
+			}
+		}
+	}()
+}
+
 func (d *Daemon) Serve(ctx context.Context, httpLn, grpcLn net.Listener, token string) error {
 	srv := &http.Server{Handler: d.Handler(token)}
 	grpcSrv := d.newGRPCServer(token)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
 	go d.reapLoop(ctx)
 	go func() {
 		<-ctx.Done()

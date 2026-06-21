@@ -68,7 +68,19 @@ func newWithExporter(exp spanExporter) *Exporter {
 	}
 }
 
+func ExporterWithSpanExporter(exp interface {
+	ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error
+	Shutdown(ctx context.Context) error
+},
+) *Exporter {
+	return newWithExporter(exp)
+}
+
 func (e *Exporter) Name() string { return "otlp" }
+
+func (e *Exporter) Shutdown(ctx context.Context) error {
+	return e.client.Shutdown(ctx)
+}
 
 func newClient(ctx context.Context, endpoint string) (spanExporter, error) {
 	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {

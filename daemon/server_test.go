@@ -6,19 +6,127 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/realkarych/catacomb/export/otlp"
 	"github.com/realkarych/catacomb/model"
 )
+
+type fakeSpanExporter struct {
+	mu     sync.Mutex
+	spans  []sdktrace.ReadOnlySpan
+	closed bool
+}
+
+func (f *fakeSpanExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.spans = append(f.spans, spans...)
+	return nil
+}
+
+func (f *fakeSpanExporter) Shutdown(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+func (f *fakeSpanExporter) spanCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.spans)
+}
+
+func loopback(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln
+}
+
+func TestServeStartsExporterConsumer(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	orig := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fake), nil
+	}
+	t.Cleanup(func() { newExporterFn = orig })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+	require.Eventually(t, func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.exporterConsumer != nil
+	}, 2*time.Second, 5*time.Millisecond)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
+	require.Eventually(t, func() bool { return fake.spanCount() > 0 }, 3*time.Second, 5*time.Millisecond)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestServeExporterSnapshotsExistingGraphs(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	orig := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fake), nil
+	}
+	t.Cleanup(func() { newExporterFn = orig })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+	require.Eventually(t, func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.exporterConsumer != nil
+	}, 2*time.Second, 5*time.Millisecond)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestServeSelfLoopEndpointSkipsExporter(t *testing.T) {
+	d := New(tempStore(t))
+	httpLn, grpcLn := loopback(t), loopback(t)
+	d.SetOTLPEndpoint("grpc://" + grpcLn.Addr().String())
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok2") }()
+	require.Eventually(t, func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.exporterConsumer == nil
+	}, time.Second, 5*time.Millisecond)
+	cancel()
+	require.NoError(t, <-errc)
+}
 
 type errReadCloser struct{}
 

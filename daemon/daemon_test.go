@@ -777,3 +777,30 @@ func TestPublishedDeltaIsIndependentSnapshot(t *testing.T) {
 	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
 	assert.Equal(t, statusAtDrain, toolDelta.Node.Status, "published delta node was mutated by a later apply")
 }
+
+func TestExporterLagZeroWhenNoExporter(t *testing.T) {
+	d := New(tempStore(t))
+	m := d.metricsSnapshot()
+	assert.Equal(t, int64(0), m.ExporterLag)
+}
+
+func TestExporterLagReflectsConsumerDropped(t *testing.T) {
+	d := New(tempStore(t))
+	c := d.Subscribe(0)
+	d.mu.Lock()
+	d.exporterConsumer = c
+	d.mu.Unlock()
+	d.bus.Publish(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "x"}})
+	d.bus.Publish(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 2, Node: &model.Node{ID: "y"}})
+	m := d.metricsSnapshot()
+	assert.Positive(t, m.ExporterLag)
+}
+
+func TestSetOTLPEndpoint(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetOTLPEndpoint("grpc://collector:4317")
+	d.mu.Lock()
+	got := d.otlpEndpoint
+	d.mu.Unlock()
+	assert.Equal(t, "grpc://collector:4317", got)
+}

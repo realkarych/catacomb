@@ -91,6 +91,13 @@ func TestRecordExporterRecordsShutdown(t *testing.T) {
 	assert.True(t, r.shutdown)
 }
 
+func TestExporterShutdownDelegatesToClient(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.Shutdown(context.Background()))
+	assert.True(t, rec.shutdown)
+}
+
 func TestRecordExporterRecordsBatches(t *testing.T) {
 	r := &recordExporter{}
 	err := r.ExportSpans(context.Background(), nil)
