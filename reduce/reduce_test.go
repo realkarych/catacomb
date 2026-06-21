@@ -269,11 +269,29 @@ func TestSnapshotReturnsAllNodesAndEdges(t *testing.T) {
 	assert.Len(t, edges, 1)
 }
 
-func TestIsTerminal(t *testing.T) {
-	assert.True(t, isTerminal(model.StatusOK))
-	assert.True(t, isTerminal(model.StatusError))
-	assert.True(t, isTerminal(model.StatusBlocked))
-	assert.True(t, isTerminal(model.StatusCancelled))
-	assert.False(t, isTerminal(model.StatusRunning))
-	assert.False(t, isTerminal(model.StatusPending))
+func TestResolveStatusGenuineLatches(t *testing.T) {
+	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusOK, model.StatusRunning))
+	assert.Equal(t, model.StatusError, resolveStatus(model.StatusError, model.StatusPending))
+}
+
+func TestResolveStatusGenuineSupersedesProvisional(t *testing.T) {
+	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusUnknown, model.StatusOK))
+	assert.Equal(t, model.StatusError, resolveStatus(model.StatusCancelled, model.StatusError))
+}
+
+func TestResolveStatusProvisionalOverRunning(t *testing.T) {
+	assert.Equal(t, model.StatusUnknown, resolveStatus(model.StatusRunning, model.StatusUnknown))
+}
+
+func TestResolveStatusProvisionalNotRevertedByRunning(t *testing.T) {
+	assert.Equal(t, model.StatusUnknown, resolveStatus(model.StatusUnknown, model.StatusRunning))
+}
+
+func TestResolveStatusRunningOverPending(t *testing.T) {
+	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusPending, model.StatusRunning))
+}
+
+func TestResolveStatusTieTakesNext(t *testing.T) {
+	assert.Equal(t, model.StatusError, resolveStatus(model.StatusOK, model.StatusError))
+	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusRunning, model.StatusRunning))
 }

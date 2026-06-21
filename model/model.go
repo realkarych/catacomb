@@ -45,6 +45,8 @@ const (
 	StatusError     Status = "error"
 	StatusBlocked   Status = "blocked"
 	StatusCancelled Status = "cancelled"
+	StatusUnknown   Status = "unknown"
+	StatusAbandoned Status = "abandoned"
 )
 
 type Correlation struct {
