@@ -12,5 +12,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newReplayCmd())
 	root.AddCommand(newHookCmd())
+	root.AddCommand(newInstallHooksCmd())
 	return root
 }
