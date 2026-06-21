@@ -18,7 +18,7 @@ var nowFn = time.Now
 func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextSeq func() uint64) ([]model.Observation, error) {
 	var out []model.Observation
 	for _, rs := range req.GetResourceSpans() {
-		sessionID := extractSessionID(rs.GetResource().GetAttributes())
+		sessionID := sessionFromAttrs(rs.GetResource().GetAttributes())
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
 				obs, ok := spanToObservation(span, executionID, sessionID, nextSeq)
@@ -35,11 +35,22 @@ func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextS
 	return out, nil
 }
 
-func extractSessionID(attrs []*commonv1.KeyValue) string {
+func sessionFromAttrs(attrs []*commonv1.KeyValue) string {
 	if v, ok := lookupString(attrs, "session.id", "session_id", "gen_ai.conversation.id"); ok {
 		return v
 	}
 	return ""
+}
+
+func SessionID(req *collectorv1.ExportTraceServiceRequest) string {
+	if req == nil {
+		return ""
+	}
+	rs := req.GetResourceSpans()
+	if len(rs) == 0 {
+		return ""
+	}
+	return sessionFromAttrs(rs[0].GetResource().GetAttributes())
 }
 
 func spanToObservation(span *tracev1.Span, executionID, sessionID string, nextSeq func() uint64) (model.Observation, bool) {

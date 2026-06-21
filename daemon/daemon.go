@@ -170,11 +170,18 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		d.quarantine("otel", nil, "nil request")
 		return nil
 	}
-	sessionID := sessionIDOfOTLP(req)
+	sessionID := otelingest.SessionID(req)
 	execID, known := d.execBySession[sessionID]
 	if !known {
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
+	}
+	obs, err := parseFn(req, execID, d.next)
+	if err != nil {
+		var raw []byte
+		raw, _ = proto.Marshal(req)
+		d.quarantine("otel", raw, err.Error())
+		return nil
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
@@ -189,13 +196,6 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		}
 		d.graphs[execID] = g
 	}
-	obs, err := parseFn(req, execID, d.next)
-	if err != nil {
-		var raw []byte
-		raw, _ = proto.Marshal(req)
-		d.quarantine("otel", raw, err.Error())
-		return nil
-	}
 	for _, o := range obs {
 		if err := d.applyAndPersist(g, o); err != nil {
 			var raw []byte
@@ -206,25 +206,6 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		d.lastSeen[o.RunID] = o.ObservedAt
 	}
 	return nil
-}
-
-func sessionIDOfOTLP(req *collectorv1.ExportTraceServiceRequest) string {
-	if req == nil {
-		return ""
-	}
-	rs := req.GetResourceSpans()
-	if len(rs) == 0 {
-		return ""
-	}
-	attrs := rs[0].GetResource().GetAttributes()
-	for _, kv := range attrs {
-		if kv.GetKey() == "session.id" || kv.GetKey() == "session_id" {
-			if v := kv.GetValue().GetStringValue(); v != "" {
-				return v
-			}
-		}
-	}
-	return ""
 }
 
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {

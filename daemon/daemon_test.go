@@ -14,6 +14,7 @@ import (
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 
+	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
@@ -563,16 +564,16 @@ func TestIngestOTLPPersistError(t *testing.T) {
 
 func TestSessionIDOfOTLP(t *testing.T) {
 	req := makeOTLPToolReq("sess-abc", "t5", "Bash")
-	assert.Equal(t, "sess-abc", sessionIDOfOTLP(req))
+	assert.Equal(t, "sess-abc", otelingest.SessionID(req))
 }
 
 func TestSessionIDOfOTLPNilReq(t *testing.T) {
-	assert.Equal(t, "", sessionIDOfOTLP(nil))
+	assert.Equal(t, "", otelingest.SessionID(nil))
 }
 
 func TestSessionIDOfOTLPNoResourceSpans(t *testing.T) {
 	req := &collectorv1.ExportTraceServiceRequest{}
-	assert.Equal(t, "", sessionIDOfOTLP(req))
+	assert.Equal(t, "", otelingest.SessionID(req))
 }
 
 func TestSessionIDOfOTLPNoMatchingAttr(t *testing.T) {
@@ -590,7 +591,7 @@ func TestSessionIDOfOTLPNoMatchingAttr(t *testing.T) {
 			},
 		},
 	}
-	assert.Equal(t, "", sessionIDOfOTLP(req))
+	assert.Equal(t, "", otelingest.SessionID(req))
 }
 
 func TestIngestOTLPReloadsEvictedShard(t *testing.T) {
@@ -616,4 +617,48 @@ func TestIngestOTLPReloadError(t *testing.T) {
 	req := makeOTLPToolReq("otel-err", "t1", "Bash")
 	require.NoError(t, d.IngestOTLP(req))
 	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestIngestOTLPShardsByGenAIConversationID(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	req := &collectorv1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{
+							Key:   "gen_ai.conversation.id",
+							Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "conv-1"}},
+						},
+					},
+				},
+				ScopeSpans: []*tracev1.ScopeSpans{
+					{
+						Spans: []*tracev1.Span{
+							{
+								SpanId: []byte{0, 0, 0, 0, 0, 0, 0, 2},
+								Name:   "claude_code.llm_request",
+								Attributes: []*commonv1.KeyValue{
+									{
+										Key:   "message.id",
+										Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "msg_conv1"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, d.IngestOTLP(req))
+	execID := d.execForTest("conv-1")
+	assert.NotEmpty(t, execID)
+	graphs := d.GraphsForTest()
+	g := graphs[execID]
+	require.NotNil(t, g)
+	runs := g.RunsSnapshot()
+	require.Len(t, runs, 1)
+	assert.Equal(t, "conv-1", runs[0].ID)
 }
