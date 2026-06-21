@@ -30,3 +30,9 @@ func (d *Daemon) execForTest(runID string) string {
 	defer d.mu.Unlock()
 	return d.execBySession[runID]
 }
+
+func (d *Daemon) EvictedForTest() int64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.evicted
+}

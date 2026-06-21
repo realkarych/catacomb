@@ -54,6 +54,7 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 			if err := d.reapIdle(nowFn()); err != nil {
 				log.Printf("catacomb: reaper: %v", err)
 			}
+			d.evictTerminal(nowFn())
 		}
 	}
 }

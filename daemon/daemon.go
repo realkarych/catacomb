@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
-const defaultReaperWindow = 30 * time.Minute
+const (
+	defaultReaperWindow = 30 * time.Minute
+	defaultMaxShards    = 4096
+)
 
 var (
 	nowFn   = time.Now
@@ -30,7 +34,9 @@ type Daemon struct {
 	graphs        map[string]*reduce.Graph
 	execBySession map[string]string
 	quarantined   int64
+	evicted       int64
 	reaperWindow  time.Duration
+	maxShards     int
 	lastSeen      map[string]time.Time
 }
 
@@ -42,7 +48,14 @@ func New(s store.Store) *Daemon {
 		execBySession: map[string]string{},
 		lastSeen:      map[string]time.Time{},
 		reaperWindow:  defaultReaperWindow,
+		maxShards:     defaultMaxShards,
 	}
+}
+
+func (d *Daemon) SetMaxShards(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.maxShards = n
 }
 
 func (d *Daemon) SetReaperWindow(w time.Duration) {
@@ -163,6 +176,49 @@ func sessionIDOf(payload []byte) string {
 		return ""
 	}
 	return e.SessionID
+}
+
+type shardRef struct {
+	execID, runID string
+	ended         time.Time
+}
+
+func (d *Daemon) terminalShards() []shardRef {
+	var out []shardRef
+	for execID, g := range d.graphs {
+		for runID, r := range g.Runs {
+			if r.Status == model.StatusOK || r.Status == model.StatusAbandoned {
+				out = append(out, shardRef{execID, runID, *r.EndedAt})
+			}
+		}
+	}
+	return out
+}
+
+func (d *Daemon) evictShard(execID, runID string) {
+	delete(d.graphs, execID)
+	delete(d.lastSeen, runID)
+	d.evicted++
+}
+
+func (d *Daemon) evictTerminal(now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, t := range d.terminalShards() {
+		if now.Sub(t.ended) > d.reaperWindow {
+			d.evictShard(t.execID, t.runID)
+		}
+	}
+	if d.maxShards > 0 && len(d.graphs) > d.maxShards {
+		rest := d.terminalShards()
+		sort.Slice(rest, func(i, j int) bool { return rest[i].ended.Before(rest[j].ended) })
+		for _, t := range rest {
+			if len(d.graphs) <= d.maxShards {
+				break
+			}
+			d.evictShard(t.execID, t.runID)
+		}
+	}
 }
 
 func (d *Daemon) reapIdle(now time.Time) error {

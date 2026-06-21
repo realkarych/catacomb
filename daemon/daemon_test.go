@@ -385,3 +385,37 @@ func (e *errStore) Quarantine(model.QuarantineRecord) error                     
 func (e *errStore) QuarantineCount() (int64, error)                              { return 0, nil }
 func (e *errStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
 func (e *errStore) Close() error                                                 { return nil }
+
+func TestEvictTerminalAfterCooldown(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1"}`)))
+	d.evictTerminal(time.Now().Add(time.Hour))
+	assert.Empty(t, d.GraphsForTest())
+	assert.Equal(t, int64(1), d.EvictedForTest())
+}
+
+func TestEvictTerminalKeepsRunningAndWithinCooldown(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Hour)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"run1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"done"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"done"}`)))
+	d.evictTerminal(time.Now())
+	assert.Len(t, d.GraphsForTest(), 2)
+}
+
+func TestEvictTerminalSoftCap(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetMaxShards(1)
+	for _, sid := range []string{"a", "b", "c"} {
+		require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"`+sid+`"}`)))
+		require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"`+sid+`"}`)))
+	}
+	d.evictTerminal(time.Now())
+	assert.LessOrEqual(t, len(d.GraphsForTest()), 1)
+}
