@@ -44,6 +44,11 @@ func (g *Graph) Apply(o model.Observation) {
 		g.applyTool(o)
 	case "subagent_stop":
 		g.applySubagent(o)
+	case "marker":
+		n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
+		g.stamp(n, o)
+		n.Attrs = o.Attrs
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
 	case "run_ended":
 		g.applyRunEnded(o)
 	}

@@ -12,6 +12,8 @@ func ToolCallID(executionID, toolUseID string) string { return executionID + ":t
 
 func SubagentID(executionID, agentID string) string { return executionID + ":agent:" + agentID }
 
+func MarkerID(executionID, obsID string) string { return executionID + ":marker:" + obsID }
+
 func EdgeID(executionID string, t EdgeType, src, dst string) string {
 	return executionID + ":" + string(t) + ":" + src + ">" + dst
 }

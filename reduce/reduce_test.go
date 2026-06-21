@@ -496,3 +496,19 @@ func TestCloseOpenDescendantsIgnoresNonParentChild(t *testing.T) {
 	g.closeOpenDescendants(model.SessionNodeID("e1"))
 	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }
+
+func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "m1", RunID: "s1", ExecutionID: "e1", Source: model.SourceHook, Kind: "marker",
+		Correlation: model.Correlation{SessionID: "s1"},
+		Attrs:       map[string]any{"hook_event": "PreCompact", "trigger": "auto"},
+		EventTime:   time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	g.Apply(o)
+	n := g.Nodes[model.MarkerID("e1", "m1")]
+	require.NotNil(t, n)
+	assert.Equal(t, model.NodeMarker, n.Type)
+	assert.Equal(t, "auto", n.Attrs["trigger"])
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), n.ID))
+}

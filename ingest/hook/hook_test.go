@@ -139,3 +139,22 @@ func TestParsePreToolUseBlocked(t *testing.T) {
 	require.Len(t, obs, 1)
 	assert.Equal(t, string(model.StatusBlocked), obs[0].Attrs["status"])
 }
+
+func TestParsePreCompactKeepsTrigger(t *testing.T) {
+	seq := func() uint64 { return 1 }
+	obs, err := Parse("PreCompact", []byte(`{"session_id":"s1","trigger":"manual"}`), "e1", seq)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "marker", obs[0].Kind)
+	assert.Equal(t, "manual", obs[0].Attrs["trigger"])
+	assert.NotContains(t, obs[0].Attrs, "message")
+}
+
+func TestParseNotificationKeepsMessage(t *testing.T) {
+	seq := func() uint64 { return 1 }
+	obs, err := Parse("Notification", []byte(`{"session_id":"s1","message":"needs input"}`), "e1", seq)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "needs input", obs[0].Attrs["message"])
+	assert.NotContains(t, obs[0].Attrs, "trigger")
+}
