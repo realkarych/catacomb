@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/realkarych/catacomb/model"
 )
@@ -169,4 +172,46 @@ func TestMetricsEndpoint(t *testing.T) {
 	var m Metrics
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&m))
 	assert.Equal(t, 1, m.OpenRuns)
+}
+
+func TestOTLPHTTPEndpoint(t *testing.T) {
+	d := New(tempStore(t))
+	req := makeOTLPToolReq("s1", "t1", "Bash")
+	body, err := proto.Marshal(req)
+	require.NoError(t, err)
+	r := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/x-protobuf")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/x-protobuf", rec.Header().Get("Content-Type"))
+	var resp collectorv1.ExportTraceServiceResponse
+	require.NoError(t, proto.Unmarshal(rec.Body.Bytes(), &resp))
+}
+
+func TestOTLPHTTPUnauthorized(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/traces", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestOTLPHTTPBadBody(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/traces", strings.NewReader("not-proto-garbage"))
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestOTLPHTTPBodyReadError(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/traces", errReadCloser{})
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
