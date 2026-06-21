@@ -9,7 +9,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 
+	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
@@ -443,4 +448,217 @@ func TestMetricsUpsertWriteError(t *testing.T) {
 	d := New(&runUpsertErrStore{Store: tempStore(t)})
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	assert.Equal(t, int64(1), d.metricsSnapshot().StoreWriteErrors)
+}
+
+func makeOTLPToolReq(sessionID, toolUseID, toolName string) *collectorv1.ExportTraceServiceRequest {
+	return &collectorv1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{
+							Key:   "session.id",
+							Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: sessionID}},
+						},
+					},
+				},
+				ScopeSpans: []*tracev1.ScopeSpans{
+					{
+						Spans: []*tracev1.Span{
+							{
+								SpanId: []byte{0, 0, 0, 0, 0, 0, 0, 1},
+								Name:   "claude_code.tool",
+								Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+								Attributes: []*commonv1.KeyValue{
+									{
+										Key:   "tool_use_id",
+										Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: toolUseID}},
+									},
+									{
+										Key:   "tool_name",
+										Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: toolName}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestIngestOTLPMergesByToolUseID(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	req := makeOTLPToolReq("s1", "t1", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	execID := d.execForTest("s1")
+	g := d.GraphsForTest()[execID]
+	require.NotNil(t, g)
+	n := g.Nodes[model.ToolCallID(execID, "t1")]
+	require.NotNil(t, n)
+	assert.Len(t, n.Sources, 2)
+}
+
+func TestIngestOTLPNewSession(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	req := makeOTLPToolReq("s-new", "t2", "Read")
+	require.NoError(t, d.IngestOTLP(req))
+	execID := d.execForTest("s-new")
+	assert.NotEmpty(t, execID)
+	g := d.GraphsForTest()[execID]
+	require.NotNil(t, g)
+	n := g.Nodes[model.ToolCallID(execID, "t2")]
+	require.NotNil(t, n)
+}
+
+func TestIngestOTLPParseError(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.IngestOTLP(nil))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestOTLPParseErrorViaSeam(t *testing.T) {
+	orig := parseFn
+	parseFn = func(_ *collectorv1.ExportTraceServiceRequest, _ string, _ func() uint64) ([]model.Observation, error) {
+		return nil, errors.New("parse fail")
+	}
+	t.Cleanup(func() { parseFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	req := makeOTLPToolReq("s1", "t1", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestOTLPPanic(t *testing.T) {
+	orig := applyFn
+	applyFn = func(*reduce.Graph, model.Observation) { panic("otel-boom") }
+	t.Cleanup(func() { applyFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	req := makeOTLPToolReq("s-panic", "t3", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestOTLPPersistError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	req := makeOTLPToolReq("s-perr", "t4", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestSessionIDOfOTLP(t *testing.T) {
+	req := makeOTLPToolReq("sess-abc", "t5", "Bash")
+	assert.Equal(t, "sess-abc", otelingest.SessionID(req))
+}
+
+func TestSessionIDOfOTLPNilReq(t *testing.T) {
+	assert.Equal(t, "", otelingest.SessionID(nil))
+}
+
+func TestSessionIDOfOTLPNoResourceSpans(t *testing.T) {
+	req := &collectorv1.ExportTraceServiceRequest{}
+	assert.Equal(t, "", otelingest.SessionID(req))
+}
+
+func TestSessionIDOfOTLPNoMatchingAttr(t *testing.T) {
+	req := &collectorv1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{
+							Key:   "other.attr",
+							Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "val"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	assert.Equal(t, "", otelingest.SessionID(req))
+}
+
+func TestIngestOTLPReloadsEvictedShard(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"otel-sess"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"otel-sess","tool_name":"Bash","tool_use_id":"t1"}`)))
+	d.dropShardForTest("otel-sess")
+	req := makeOTLPToolReq("otel-sess", "t1", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	execID := d.execForTest("otel-sess")
+	g := d.GraphsForTest()[execID]
+	require.NotNil(t, g)
+	n := g.Nodes[model.ToolCallID(execID, "t1")]
+	require.NotNil(t, n)
+}
+
+func TestIngestOTLPReloadError(t *testing.T) {
+	d := New(&reloadErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"otel-err"}`)))
+	d.dropShardForTest("otel-err")
+	req := makeOTLPToolReq("otel-err", "t1", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestIngestOTLPShardsByGenAIConversationID(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	req := &collectorv1.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
+			{
+				Resource: &resourcev1.Resource{
+					Attributes: []*commonv1.KeyValue{
+						{
+							Key:   "gen_ai.conversation.id",
+							Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "conv-1"}},
+						},
+					},
+				},
+				ScopeSpans: []*tracev1.ScopeSpans{
+					{
+						Spans: []*tracev1.Span{
+							{
+								SpanId: []byte{0, 0, 0, 0, 0, 0, 0, 2},
+								Name:   "claude_code.llm_request",
+								Attributes: []*commonv1.KeyValue{
+									{
+										Key:   "message.id",
+										Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "msg_conv1"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, d.IngestOTLP(req))
+	execID := d.execForTest("conv-1")
+	assert.NotEmpty(t, execID)
+	graphs := d.GraphsForTest()
+	g := graphs[execID]
+	require.NotNil(t, g)
+	runs := g.RunsSnapshot()
+	require.Len(t, runs, 1)
+	assert.Equal(t, "conv-1", runs[0].ID)
 }

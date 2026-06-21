@@ -10,11 +10,15 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func (d *Daemon) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
+	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -23,6 +27,24 @@ func (d *Daemon) Handler(token string) http.Handler {
 		_ = json.NewEncoder(w).Encode(d.metricsSnapshot())
 	})
 	return mux
+}
+
+func (d *Daemon) handleOTLP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var req collectorv1.ExportTraceServiceRequest
+	if err := proto.Unmarshal(body, &req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	_ = d.IngestOTLP(&req)
+	resp, _ := proto.Marshal(&collectorv1.ExportTraceServiceResponse{})
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(resp)
 }
 
 func (d *Daemon) authed(token string, next http.HandlerFunc) http.HandlerFunc {

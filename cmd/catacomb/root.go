@@ -14,5 +14,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newHookCmd())
 	root.AddCommand(newInstallHooksCmd())
 	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newEnvCmd())
 	return root
 }

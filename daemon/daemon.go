@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
+	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/realkarych/catacomb/ingest/hook"
+	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
@@ -24,6 +27,7 @@ const (
 var (
 	nowFn   = time.Now
 	applyFn = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
+	parseFn = otelingest.Parse
 )
 
 type Daemon struct {
@@ -143,6 +147,61 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	for _, o := range obs {
 		if err := d.applyAndPersist(g, o); err != nil {
 			return err
+		}
+		d.lastSeen[o.RunID] = o.ObservedAt
+	}
+	return nil
+}
+
+func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			var raw []byte
+			if req != nil {
+				raw, _ = proto.Marshal(req)
+			}
+			d.quarantine("otel", raw, fmt.Sprintf("panic: %v", r))
+			err = nil
+		}
+	}()
+	if req == nil {
+		d.quarantine("otel", nil, "nil request")
+		return nil
+	}
+	sessionID := otelingest.SessionID(req)
+	execID, known := d.execBySession[sessionID]
+	if !known {
+		execID = d.newExecID()
+		d.execBySession[sessionID] = execID
+	}
+	obs, err := parseFn(req, execID, d.next)
+	if err != nil {
+		var raw []byte
+		raw, _ = proto.Marshal(req)
+		d.quarantine("otel", raw, err.Error())
+		return nil
+	}
+	g, inMem := d.graphs[execID]
+	if !inMem {
+		g = reduce.NewGraph()
+		if known {
+			prior, loadErr := d.store.ObservationsForExecution(execID)
+			if loadErr != nil {
+				d.quarantine("otel", nil, loadErr.Error())
+				return nil
+			}
+			g.ApplyAll(prior)
+		}
+		d.graphs[execID] = g
+	}
+	for _, o := range obs {
+		if err := d.applyAndPersist(g, o); err != nil {
+			var raw []byte
+			raw, _ = proto.Marshal(req)
+			d.quarantine("otel", raw, err.Error())
+			return nil
 		}
 		d.lastSeen[o.RunID] = o.ObservedAt
 	}
