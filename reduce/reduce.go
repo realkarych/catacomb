@@ -30,7 +30,7 @@ func (g *Graph) Apply(o model.Observation) {
 		ts := o.EventTime
 		n.TEnd = &ts
 		n.Status = resolveStatus(n.Status, model.StatusOK)
-		g.closeOpenDescendants(n.ID)
+		g.cascadeStatus(n.ID, model.StatusUnknown)
 		r := g.Runs[o.RunID]
 		r.Status = model.StatusOK
 		ended := o.EventTime
@@ -83,6 +83,9 @@ func (g *Graph) applyTool(o model.Observation) {
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
+		if n.Status == model.StatusCancelled || n.Status == model.StatusSuperseded {
+			g.cascadeStatus(n.ID, n.Status)
+		}
 	}
 	mergePayload(n, o.Payload)
 	parent := model.SessionNodeID(o.ExecutionID)
@@ -192,7 +195,7 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 		r.EndReason = reason
 	}
 	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
-	g.closeOpenDescendants(model.SessionNodeID(o.ExecutionID))
+	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
 }
 
 func appendUnique(xs []string, x string) []string {
@@ -205,7 +208,7 @@ func appendUnique(xs []string, x string) []string {
 	return append(xs, x)
 }
 
-func (g *Graph) closeOpenDescendants(rootID string) {
+func (g *Graph) cascadeStatus(rootID string, status model.Status) {
 	children := map[string][]string{}
 	for _, e := range g.Edges {
 		if e.Type == model.EdgeParentChild {
@@ -223,9 +226,25 @@ func (g *Graph) closeOpenDescendants(rootID string) {
 			}
 			seen[c] = true
 			queue = append(queue, c)
-			g.closeIfOpen(c, model.StatusUnknown)
+			g.applyCascade(c, rootID, status)
 		}
 	}
+}
+
+func (g *Graph) applyCascade(id, rootID string, status model.Status) {
+	if status == model.StatusUnknown {
+		g.closeIfOpen(id, status)
+		return
+	}
+	n := g.Nodes[id]
+	if n == nil || rank(n.Status) >= 3 {
+		return
+	}
+	n.Status = resolveStatus(n.Status, status)
+	if n.Attrs == nil {
+		n.Attrs = map[string]any{}
+	}
+	n.Attrs["cancel_cause"] = rootID
 }
 
 func (g *Graph) closeIfOpen(id string, status model.Status) {

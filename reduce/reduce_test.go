@@ -529,7 +529,7 @@ func TestSessionEndLateGenuineSupersedesUnknown(t *testing.T) {
 	assert.Equal(t, model.StatusOK, rev.Nodes[model.ToolCallID("e1", "t2")].Status)
 }
 
-func TestCloseOpenDescendantsHandlesDiamond(t *testing.T) {
+func TestCascadeStatusHandlesDiamond(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("a", "s1", model.NodeToolCall).Status = model.StatusRunning
@@ -539,24 +539,24 @@ func TestCloseOpenDescendantsHandlesDiamond(t *testing.T) {
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b", 2)
 	g.upsertEdge("e1", "s1", "a", "c", 3)
 	g.upsertEdge("e1", "s1", "b", "c", 9)
-	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
 }
 
-func TestCloseOpenDescendantsSkipsMissingNode(t *testing.T) {
+func TestCascadeStatusSkipsMissingNode(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost", 2)
-	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.NotContains(t, g.Nodes, "ghost")
 }
 
-func TestCloseOpenDescendantsIgnoresNonParentChild(t *testing.T) {
+func TestCascadeStatusIgnoresNonParentChild(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeSequence, Src: model.SessionNodeID("e1"), Dst: "x"}
-	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }
 
@@ -619,6 +619,59 @@ func TestEdgeRevTracksMaxSeq(t *testing.T) {
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "x", 9)
 	id := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), "x")
 	assert.Equal(t, uint64(9), g.Edges[id].Rev)
+}
+
+func TestCascadeStatusCancelsNonTerminalDescendants(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("childRun", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("childDone", "s1", model.NodeToolCall).Status = model.StatusOK
+	g.upsertEdge("e1", "s1", "root", "childRun", 1)
+	g.upsertEdge("e1", "s1", "root", "childDone", 2)
+	g.cascadeStatus("root", model.StatusCancelled)
+	assert.Equal(t, model.StatusCancelled, g.Nodes["childRun"].Status)
+	assert.Equal(t, "root", g.Nodes["childRun"].Attrs["cancel_cause"])
+	assert.Equal(t, model.StatusOK, g.Nodes["childDone"].Status)
+	_, hasCause := g.Nodes["childDone"].Attrs["cancel_cause"]
+	assert.False(t, hasCause)
+}
+
+func TestCascadeStatusSupersededSetsCause(t *testing.T) {
+	g := NewGraph()
+	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.upsertEdge("e1", "s1", "root", "child", 1)
+	g.cascadeStatus("root", model.StatusSuperseded)
+	assert.Equal(t, model.StatusSuperseded, g.Nodes["child"].Status)
+	assert.Equal(t, "root", g.Nodes["child"].Attrs["cancel_cause"])
+}
+
+func TestCascadeUnknownPathHasNoCancelCause(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "child", 1)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
+	assert.Equal(t, model.StatusUnknown, g.Nodes["child"].Status)
+	_, hasCause := g.Nodes["child"].Attrs["cancel_cause"]
+	assert.False(t, hasCause)
+}
+
+func TestToolResultCancelledCascadesToChildren(t *testing.T) {
+	g := NewGraph()
+	parent := toolObs("e1", "s1", "tp", "Task", "running", 1)
+	parent.Correlation.MessageID = "m1"
+	g.Apply(parent)
+	child := toolObs("e1", "s1", "tc", "Bash", "running", 2)
+	child.Correlation.MessageID = ""
+	g.Apply(child)
+	g.upsertEdge("e1", "s1", model.ToolCallID("e1", "tp"), model.ToolCallID("e1", "tc"), 3)
+	cancel := toolObs("e1", "s1", "tp", "Task", string(model.StatusCancelled), 4)
+	cancel.Correlation.MessageID = "m1"
+	g.Apply(cancel)
+	assert.Equal(t, model.StatusCancelled, g.Nodes[model.ToolCallID("e1", "tc")].Status)
+	assert.Equal(t, model.ToolCallID("e1", "tp"), g.Nodes[model.ToolCallID("e1", "tc")].Attrs["cancel_cause"])
 }
 
 func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
