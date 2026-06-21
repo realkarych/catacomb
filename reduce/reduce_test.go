@@ -153,7 +153,7 @@ func TestIsMCP(t *testing.T) {
 
 func TestUpsertEdgeEmptyGuard(t *testing.T) {
 	g := NewGraph()
-	g.upsertEdge(execID, runID, "", "x")
+	g.upsertEdge(execID, runID, "", "x", 1)
 	assert.Empty(t, g.Edges)
 }
 
@@ -479,10 +479,10 @@ func TestCloseOpenDescendantsHandlesDiamond(t *testing.T) {
 	g.node("a", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.node("b", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.node("c", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "a")
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b")
-	g.upsertEdge("e1", "s1", "a", "c")
-	g.upsertEdge("e1", "s1", "b", "c")
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "a", 1)
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b", 2)
+	g.upsertEdge("e1", "s1", "a", "c", 3)
+	g.upsertEdge("e1", "s1", "b", "c", 9)
 	g.closeOpenDescendants(model.SessionNodeID("e1"))
 	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
 }
@@ -490,7 +490,7 @@ func TestCloseOpenDescendantsHandlesDiamond(t *testing.T) {
 func TestCloseOpenDescendantsSkipsMissingNode(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost")
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost", 2)
 	g.closeOpenDescendants(model.SessionNodeID("e1"))
 	assert.NotContains(t, g.Nodes, "ghost")
 }
@@ -545,6 +545,24 @@ func TestResolveStatusSupersededOverRunningButUnderTerminal(t *testing.T) {
 	assert.Equal(t, model.StatusSuperseded, resolveStatus(model.StatusRunning, model.StatusSuperseded))
 	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusSuperseded, model.StatusOK))
 	assert.Equal(t, model.StatusSuperseded, resolveStatus(model.StatusUnknown, model.StatusSuperseded))
+}
+
+func TestNodeRevTracksMaxSeq(t *testing.T) {
+	g := NewGraph()
+	a := toolObs("e1", "s1", "t1", "Bash", "running", 3)
+	b := toolObs("e1", "s1", "t1", "Bash", "ok", 7)
+	c := toolObs("e1", "s1", "t1", "Bash", "ok", 5)
+	g.ApplyAll([]model.Observation{a, b, c})
+	assert.Equal(t, uint64(7), g.Nodes[model.ToolCallID("e1", "t1")].Rev)
+}
+
+func TestEdgeRevTracksMaxSeq(t *testing.T) {
+	g := NewGraph()
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "x", 4)
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "x", 2)
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "x", 9)
+	id := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), "x")
+	assert.Equal(t, uint64(9), g.Edges[id].Rev)
 }
 
 func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {

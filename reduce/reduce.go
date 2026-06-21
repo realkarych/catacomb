@@ -36,7 +36,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
-		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
@@ -49,7 +49,7 @@ func (g *Graph) Apply(o model.Observation) {
 		n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
 		g.stamp(n, o)
 		n.Attrs = o.Attrs
-		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "run_ended":
 		g.applyRunEnded(o)
 	}
@@ -77,7 +77,7 @@ func (g *Graph) applyTool(o model.Observation) {
 	if o.Correlation.MessageID != "" {
 		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
 	}
-	g.upsertEdge(o.ExecutionID, o.RunID, parent, id)
+	g.upsertEdge(o.ExecutionID, o.RunID, parent, id, o.Seq)
 }
 
 func (g *Graph) applySubagent(o model.Observation) {
@@ -92,13 +92,16 @@ func (g *Graph) applySubagent(o model.Observation) {
 	ts := o.EventTime
 	n.TEnd = &ts
 	n.Status = resolveStatus(n.Status, model.StatusOK)
-	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 }
 
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
 	if n.TStart == nil || o.EventTime.Before(*n.TStart) {
 		ts := o.EventTime
 		n.TStart = &ts
+	}
+	if o.Seq > n.Rev {
+		n.Rev = o.Seq
 	}
 	n.Sources = append(n.Sources, model.SourceRef{Source: o.Source, ObsID: o.ObsID, ObservedAt: o.ObservedAt})
 }
