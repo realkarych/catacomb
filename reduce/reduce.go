@@ -98,7 +98,7 @@ func (g *Graph) applyTool(o model.Observation) {
 			g.cascadeStatus(n.ID, n.Status, o.Seq)
 		}
 	}
-	mergePayload(n, o.Payload)
+	g.mergePayload(n, o.Payload, o.Source)
 	g.emitNode(n, o)
 	parent := model.SessionNodeID(o.ExecutionID)
 	if o.Correlation.MessageID != "" {
@@ -124,18 +124,47 @@ func (g *Graph) applySubagent(o model.Observation) {
 }
 
 func sourceRank(s model.Source) int {
-	if s == model.SourceOTel {
+	switch s {
+	case model.SourceOTel:
+		return 3
+	case model.SourceHook:
+		return 2
+	case model.SourceStreamJSON:
 		return 1
+	default:
+		return 0
 	}
-	return 0
+}
+
+func tokenRank(s model.Source) int {
+	switch s {
+	case model.SourceOTel:
+		return 2
+	case model.SourceStreamJSON:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func payloadRank(s model.Source) int {
+	switch s {
+	case model.SourceHook:
+		return 1
+	default:
+		return 0
+	}
 }
 
 type fieldStamps struct {
-	timingRank     int
-	haveTiming     bool
-	nameSeq        uint64
-	haveName       bool
-	haveOTelTokens bool
+	timingRank  int
+	haveTiming  bool
+	nameSeq     uint64
+	haveName    bool
+	tokenRank   int
+	haveToken   bool
+	payloadRank int
+	havePayload bool
 }
 
 func (g *Graph) stampsFor(id string) *fieldStamps {
@@ -177,10 +206,17 @@ func (g *Graph) setName(n *model.Node, o model.Observation, name string) {
 	}
 }
 
-func mergePayload(n *model.Node, p *model.Payload) {
+func (g *Graph) mergePayload(n *model.Node, p *model.Payload, src model.Source) {
 	if p == nil {
 		return
 	}
+	fs := g.stampsFor(n.ID)
+	r := payloadRank(src)
+	if fs.havePayload && r < fs.payloadRank {
+		return
+	}
+	fs.payloadRank = r
+	fs.havePayload = true
 	if n.Payload == nil {
 		n.Payload = &model.Payload{}
 	}
@@ -196,12 +232,12 @@ func mergePayload(n *model.Node, p *model.Payload) {
 
 func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) {
 	fs := g.stampsFor(n.ID)
-	if src != model.SourceOTel && fs.haveOTelTokens {
+	r := tokenRank(src)
+	if fs.haveToken && r < fs.tokenRank {
 		return
 	}
-	if src == model.SourceOTel {
-		fs.haveOTelTokens = true
-	}
+	fs.tokenRank = r
+	fs.haveToken = true
 	if v, ok := toInt64(attrs["tokens_in"]); ok {
 		n.TokensIn = &v
 	}

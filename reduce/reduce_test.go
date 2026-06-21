@@ -700,8 +700,9 @@ func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 }
 
 func TestSourceRank(t *testing.T) {
-	assert.Equal(t, 1, sourceRank(model.SourceOTel))
-	assert.Equal(t, 0, sourceRank(model.SourceHook))
+	assert.Equal(t, 3, sourceRank(model.SourceOTel))
+	assert.Equal(t, 2, sourceRank(model.SourceHook))
+	assert.Equal(t, 1, sourceRank(model.SourceStreamJSON))
 	assert.Equal(t, 0, sourceRank(model.SourceJSONL))
 }
 
@@ -843,15 +844,16 @@ func TestReductionCommutativity(t *testing.T) {
 
 func canonGraph(g *Graph) string {
 	type nodeView struct {
-		ID     string
-		Type   model.NodeType
-		Name   string
-		Status model.Status
-		Rev    uint64
-		TStart string
-		TIn    string
-		TOut   string
-		Cause  string
+		ID          string
+		Type        model.NodeType
+		Name        string
+		Status      model.Status
+		Rev         uint64
+		TStart      string
+		TIn         string
+		TOut        string
+		Cause       string
+		PayloadHash string
 	}
 	var nv []nodeView
 	for id, n := range g.Nodes {
@@ -870,6 +872,7 @@ func canonGraph(g *Graph) string {
 				v.Cause = c
 			}
 		}
+		v.PayloadHash = n.PayloadHash
 		nv = append(nv, v)
 	}
 	sort.Slice(nv, func(i, j int) bool { return nv[i].ID < nv[j].ID })
@@ -1024,4 +1027,138 @@ func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
 	g.cascadeStatus("root", model.StatusCancelled, 9)
 	ds := g.DrainDeltas()
 	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
+}
+
+func TestSourceRankThreeLiveTiers(t *testing.T) {
+	assert.Equal(t, 3, sourceRank(model.SourceOTel))
+	assert.Equal(t, 2, sourceRank(model.SourceHook))
+	assert.Equal(t, 1, sourceRank(model.SourceStreamJSON))
+}
+
+func TestTimingHookBeatsStreamJSON(t *testing.T) {
+	t0 := time.Unix(100, 0).UTC()
+	hookEarly := hookTurn("e1", "s1", "m1", 0, 0, t0.Add(time.Hour), 1)
+	sjLate := model.Observation{
+		RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
+		Attrs: map[string]any{}, EventTime: t0, ObservedAt: t0, Seq: 2,
+	}
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{sjLate, hookEarly})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{hookEarly, sjLate})
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, fwd.Nodes[id].TStart)
+	assert.Equal(t, t0.Add(time.Hour), fwd.Nodes[id].TStart.UTC())
+	assert.Equal(t, fwd.Nodes[id].TStart.UTC(), rev.Nodes[id].TStart.UTC())
+}
+
+func sjTurn(execID, runID, msgID string, tin, tout int64, seq uint64) model.Observation {
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: runID, MessageID: msgID},
+		Attrs:     map[string]any{"tokens_in": tin, "tokens_out": tout},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestTokenRankOTelBeatsStreamJSON(t *testing.T) {
+	otel := otelTurn("e1", "s1", "m1", 50, 20, time.Unix(100, 0).UTC(), 1)
+	sj := sjTurn("e1", "s1", "m1", 7, 9, 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{otel, sj})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sj, otel})
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, fwd.Nodes[id].TokensIn)
+	assert.Equal(t, int64(50), *fwd.Nodes[id].TokensIn)
+	assert.Equal(t, int64(50), *rev.Nodes[id].TokensIn)
+}
+
+func TestTokenStreamJSONSetsWhenNoOTel(t *testing.T) {
+	sj := sjTurn("e1", "s1", "m1", 7, 9, 1)
+	g := NewGraph()
+	g.Apply(sj)
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, g.Nodes[id].TokensIn)
+	assert.Equal(t, int64(7), *g.Nodes[id].TokensIn)
+}
+
+func TestTokenRankDefaultIsZero(t *testing.T) {
+	assert.Equal(t, 0, tokenRank(model.SourceHook))
+	assert.Equal(t, 0, tokenRank(model.SourceJSONL))
+}
+
+func sjToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
+	pl := &model.Payload{Input: json.RawMessage(input)}
+	pl.Hash = model.HashPayload(pl)
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
+		Attrs:     map[string]any{"name": name},
+		Payload:   pl,
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func hookToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
+	pl := &model.Payload{Input: json.RawMessage(input)}
+	pl.Hash = model.HashPayload(pl)
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceHook,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
+		Attrs:     map[string]any{"name": name, "status": "running"},
+		Payload:   pl,
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestPayloadHookBeatsStreamJSONDelta(t *testing.T) {
+	hookFull := hookToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
+	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{hookFull, sjDelta})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sjDelta, hookFull})
+	id := model.ToolCallID("e1", "t1")
+	require.NotNil(t, fwd.Nodes[id].Payload)
+	assert.JSONEq(t, `{"command":"ls -la"}`, string(fwd.Nodes[id].Payload.Input))
+	assert.Equal(t, string(fwd.Nodes[id].Payload.Input), string(rev.Nodes[id].Payload.Input))
+}
+
+func TestPayloadStreamJSONSetsWhenAlone(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 1))
+	id := model.ToolCallID("e1", "t1")
+	require.NotNil(t, g.Nodes[id].Payload)
+	assert.JSONEq(t, `{"command":"l"}`, string(g.Nodes[id].Payload.Input))
+}
+
+func TestPayloadRankStreamJSONIsDefault(t *testing.T) {
+	assert.Equal(t, 0, payloadRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, payloadRank(model.SourceOTel))
+}
+
+func TestReductionCommutativityThreeSources(t *testing.T) {
+	t0 := time.Unix(200, 0).UTC()
+	obs := []model.Observation{
+		sessionStartObs("e2", "s2", 1),
+		hookTurn("e2", "s2", "m2", 5, 2, t0.Add(time.Minute), 2),
+		otelTurn("e2", "s2", "m2", 50, 20, t0.Add(time.Second), 3),
+		sjTurn("e2", "s2", "m2", 7, 9, 4),
+		hookToolInput("e2", "s2", "t9", "Bash", `{"command":"ls -la"}`, 5),
+		sjToolInput("e2", "s2", "t9", "Bash", `{"command":"l"}`, 6),
+	}
+	perms := permute(obs)
+	var want string
+	for i, p := range perms {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
 }
