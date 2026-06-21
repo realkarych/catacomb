@@ -27,17 +27,19 @@ var (
 )
 
 type Daemon struct {
-	store         store.Store
-	newExecID     func() string
-	mu            sync.Mutex
-	seq           uint64
-	graphs        map[string]*reduce.Graph
-	execBySession map[string]string
-	quarantined   int64
-	evicted       int64
-	reaperWindow  time.Duration
-	maxShards     int
-	lastSeen      map[string]time.Time
+	store            store.Store
+	newExecID        func() string
+	mu               sync.Mutex
+	seq              uint64
+	graphs           map[string]*reduce.Graph
+	execBySession    map[string]string
+	quarantined      int64
+	evicted          int64
+	reaperWindow     time.Duration
+	maxShards        int
+	lastSeen         map[string]time.Time
+	startedAt        time.Time
+	storeWriteErrors int64
 }
 
 func New(s store.Store) *Daemon {
@@ -49,6 +51,7 @@ func New(s store.Store) *Daemon {
 		lastSeen:      map[string]time.Time{},
 		reaperWindow:  defaultReaperWindow,
 		maxShards:     defaultMaxShards,
+		startedAt:     nowFn(),
 	}
 }
 
@@ -150,9 +153,48 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
 	nodes, edges := g.Snapshot()
 	if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+		d.storeWriteErrors++
 		return err
 	}
-	return d.store.UpsertRun(*g.Runs[o.RunID])
+	if err := d.store.UpsertRun(*g.Runs[o.RunID]); err != nil {
+		d.storeWriteErrors++
+		return err
+	}
+	return nil
+}
+
+type Metrics struct {
+	UptimeSeconds       int64  `json:"uptime_seconds"`
+	OpenRuns            int    `json:"open_runs"`
+	Shards              int    `json:"shards"`
+	MaxSeq              uint64 `json:"max_seq"`
+	Quarantined         int64  `json:"quarantined"`
+	Evicted             int64  `json:"evicted"`
+	StoreWriteErrors    int64  `json:"store_write_errors"`
+	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
+}
+
+func (d *Daemon) metricsSnapshot() Metrics {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	open := 0
+	for _, g := range d.graphs {
+		for _, r := range g.Runs {
+			if r.Status == model.StatusRunning {
+				open++
+			}
+		}
+	}
+	return Metrics{
+		UptimeSeconds:       int64(nowFn().Sub(d.startedAt).Seconds()),
+		OpenRuns:            open,
+		Shards:              len(d.graphs),
+		MaxSeq:              d.seq,
+		Quarantined:         d.quarantined,
+		Evicted:             d.evicted,
+		StoreWriteErrors:    d.storeWriteErrors,
+		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
+	}
 }
 
 func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {

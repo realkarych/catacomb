@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -16,6 +17,10 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(d.metricsSnapshot())
 	})
 	return mux
 }

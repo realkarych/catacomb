@@ -419,3 +419,28 @@ func TestEvictTerminalSoftCap(t *testing.T) {
 	d.evictTerminal(time.Now())
 	assert.LessOrEqual(t, len(d.GraphsForTest()), 1)
 }
+
+func TestMetricsSnapshot(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"open1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"done1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"done1"}`)))
+	m := d.metricsSnapshot()
+	assert.Equal(t, 1, m.OpenRuns)
+	assert.Equal(t, 2, m.Shards)
+	assert.GreaterOrEqual(t, m.MaxSeq, uint64(3))
+	assert.GreaterOrEqual(t, m.ReaperWindowSeconds, int64(1))
+}
+
+func TestMetricsStoreWriteErrors(t *testing.T) {
+	d := New(&appendErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, int64(1), d.metricsSnapshot().StoreWriteErrors)
+}
+
+func TestMetricsUpsertWriteError(t *testing.T) {
+	d := New(&runUpsertErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, int64(1), d.metricsSnapshot().StoreWriteErrors)
+}
