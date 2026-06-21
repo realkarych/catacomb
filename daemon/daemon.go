@@ -40,6 +40,8 @@ func New(s store.Store) *Daemon {
 }
 
 func (d *Daemon) Recover() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	obs, err := d.store.ObservationsSince(0)
 	if err != nil {
 		return err
