@@ -46,6 +46,8 @@ type Daemon struct {
 	lastSeen         map[string]time.Time
 	startedAt        time.Time
 	storeWriteErrors int64
+	otlpEndpoint     string
+	exporterConsumer *cdc.Consumer
 }
 
 func New(s store.Store) *Daemon {
@@ -79,6 +81,12 @@ func (d *Daemon) SetReaperWindow(w time.Duration) {
 		w = defaultReaperWindow
 	}
 	d.reaperWindow = w
+}
+
+func (d *Daemon) SetOTLPEndpoint(s string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.otlpEndpoint = s
 }
 
 func (d *Daemon) Recover() error {
@@ -260,6 +268,7 @@ type Metrics struct {
 	Evicted             int64  `json:"evicted"`
 	StoreWriteErrors    int64  `json:"store_write_errors"`
 	DeltasDropped       int64  `json:"deltas_dropped"`
+	ExporterLag         int64  `json:"exporter_lag"`
 	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
 }
 
@@ -274,6 +283,10 @@ func (d *Daemon) metricsSnapshot() Metrics {
 			}
 		}
 	}
+	var lag int64
+	if d.exporterConsumer != nil {
+		lag = d.exporterConsumer.Dropped()
+	}
 	return Metrics{
 		UptimeSeconds:       int64(nowFn().Sub(d.startedAt).Seconds()),
 		OpenRuns:            open,
@@ -283,6 +296,7 @@ func (d *Daemon) metricsSnapshot() Metrics {
 		Evicted:             d.evicted,
 		StoreWriteErrors:    d.storeWriteErrors,
 		DeltasDropped:       d.bus.TotalDropped(),
+		ExporterLag:         lag,
 		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
 	}
 }

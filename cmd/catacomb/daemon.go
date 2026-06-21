@@ -15,7 +15,7 @@ import (
 )
 
 func newDaemonCmd() *cobra.Command {
-	var dbPath, discoveryPath string
+	var dbPath, discoveryPath, otlpEndpoint string
 	var reaperWindow time.Duration
 	var maxShards int
 	cmd := &cobra.Command{
@@ -27,13 +27,14 @@ func newDaemonCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
 	cmd.Flags().StringVar(&discoveryPath, "discovery", "", "discovery file path (default: resolved CATACOMB_DISCOVERY)")
 	cmd.Flags().DurationVar(&reaperWindow, "reaper-window", 30*time.Minute, "idle window before a run is marked abandoned")
 	cmd.Flags().IntVar(&maxShards, "max-shards", 4096, "soft cap on in-memory execution shards")
+	cmd.Flags().StringVar(&otlpEndpoint, "otlp-export-endpoint", "", "downstream OTLP endpoint to export the reconstructed trace tree (empty = disabled)")
 	return cmd
 }
 
@@ -46,6 +47,7 @@ func runDaemonWith(
 	dbPath, discoveryPath string,
 	reaperWindow time.Duration,
 	maxShards int,
+	otlpEndpoint string,
 ) error {
 	s, err := open(dbPath)
 	if err != nil {
@@ -56,6 +58,7 @@ func runDaemonWith(
 	d := daemon.New(s)
 	d.SetReaperWindow(reaperWindow)
 	d.SetMaxShards(maxShards)
+	d.SetOTLPEndpoint(otlpEndpoint)
 	err = d.Recover()
 	if err != nil {
 		return err
