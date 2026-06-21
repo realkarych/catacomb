@@ -15,6 +15,8 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
+const defaultReaperWindow = 30 * time.Minute
+
 var (
 	nowFn   = time.Now
 	applyFn = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
@@ -39,13 +41,16 @@ func New(s store.Store) *Daemon {
 		graphs:        map[string]*reduce.Graph{},
 		execBySession: map[string]string{},
 		lastSeen:      map[string]time.Time{},
-		reaperWindow:  30 * time.Minute,
+		reaperWindow:  defaultReaperWindow,
 	}
 }
 
 func (d *Daemon) SetReaperWindow(w time.Duration) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if w <= 0 {
+		w = defaultReaperWindow
+	}
 	d.reaperWindow = w
 }
 

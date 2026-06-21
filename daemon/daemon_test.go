@@ -320,6 +320,17 @@ func TestReapIdlePersistError(t *testing.T) {
 	assert.Error(t, d.reapIdle(time.Now().Add(time.Hour)))
 }
 
+func TestSetReaperWindowClampsNonPositive(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(0)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now()))
+	open, err := s.ListOpenRuns()
+	require.NoError(t, err)
+	assert.Len(t, open, 1)
+}
+
 type errStore struct {
 	failSince bool
 }
