@@ -43,6 +43,15 @@ func TestHandlerHookUnauthorized(t *testing.T) {
 	rec := httptest.NewRecorder()
 	d.Handler("tok").ServeHTTP(rec, authedReq("/hook/SessionStart", "wrong", strings.NewReader(`{}`)))
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Empty(t, d.graphs)
+}
+
+func TestHandlerHookMissingToken(t *testing.T) {
+	d := New(tempStore(t))
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, authedReq("/hook/SessionStart", "", strings.NewReader(`{}`)))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Empty(t, d.graphs)
 }
 
 func TestHandlerHealthzOpen(t *testing.T) {
