@@ -737,3 +737,13 @@ assert the partial line is buffered then ingested once. Plus: a subagent transcr
   a real transcript at end-of-roadmap, the same treatment the hook envelope got. The
   fixtures validate the pipeline + the fixtured contract today; Step 7 validates the
   contract against the live wire.
+
+## 12. M2a implementation status
+
+M2a (stream-json source + reducer three-live-source precedence generalization) is
+implemented and merged across `ingest/streamjson`, `reduce`, `daemon`, and
+`cmd/catacomb`. The §4.3 envelope→kind mapping and the §4.5 field names are coded
+against the best-known stream-json schema but **remain [VERIFY] pending an operator
+capture in Step 7** (`claude -p --output-format stream-json --verbose
+--include-partial-messages`). The reducer precedence generalization landed for the
+three live sources (OTel, hook, stream-json); the JSONL tier (§6.2) is inserted by M2b.
