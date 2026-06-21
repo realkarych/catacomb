@@ -504,6 +504,28 @@ func TestCloseOpenDescendantsIgnoresNonParentChild(t *testing.T) {
 	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }
 
+func TestSessionEndLeavesPointInTimeNodes(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		{ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceHook, Kind: "user_prompt", Correlation: model.Correlation{SessionID: "s1", UUID: "u1"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2},
+		sessionEndObs("e1", "s1", 3),
+	})
+	up := g.Nodes[model.UserPromptID("e1", "u1")]
+	require.NotNil(t, up)
+	assert.NotEqual(t, model.StatusUnknown, up.Status)
+}
+
+func TestRunEndedClosesSessionNode(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+	})
+	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
+	assert.Equal(t, model.StatusUnknown, g.Nodes[model.SessionNodeID("e1")].Status)
+}
+
 func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 	g := NewGraph()
 	o := model.Observation{
