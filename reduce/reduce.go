@@ -15,6 +15,9 @@ func (g *Graph) ApplyAll(obs []model.Observation) {
 
 func (g *Graph) Apply(o model.Observation) {
 	g.ensureRun(o)
+	if o.Correlation.ParentSpanID != "" {
+		g.spanChildren[o.Correlation.ParentSpanID] = true
+	}
 	g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 	switch o.Kind {
 	case "session_start":
@@ -27,7 +30,7 @@ func (g *Graph) Apply(o model.Observation) {
 		ts := o.EventTime
 		n.TEnd = &ts
 		n.Status = resolveStatus(n.Status, model.StatusOK)
-		g.closeOpenDescendants(n.ID)
+		g.cascadeStatus(n.ID, model.StatusUnknown)
 		r := g.Runs[o.RunID]
 		r.Status = model.StatusOK
 		ended := o.EventTime
@@ -36,11 +39,11 @@ func (g *Graph) Apply(o model.Observation) {
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
-		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
-		applyTokens(n, o.Attrs)
+		g.applyTokens(n, o.Attrs, o.Source)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
 	case "subagent_stop":
@@ -49,10 +52,19 @@ func (g *Graph) Apply(o model.Observation) {
 		n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
 		g.stamp(n, o)
 		n.Attrs = o.Attrs
-		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "run_ended":
 		g.applyRunEnded(o)
 	}
+}
+
+func (g *Graph) upsertEdgeGated(o model.Observation, src, dst string) {
+	if o.Source == model.SourceOTel && o.Correlation.ParentSpanID != "" {
+		if !g.spanChildren[o.Correlation.SpanID] && o.Correlation.ToolUseID == "" {
+			return
+		}
+	}
+	g.upsertEdge(o.ExecutionID, o.RunID, src, dst, o.Seq)
 }
 
 func (g *Graph) applyTool(o model.Observation) {
@@ -66,18 +78,21 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Type = model.NodeMCPCall
 	}
 	g.stamp(n, o)
-	if name, ok := o.Attrs["name"].(string); ok && n.Name == "" {
-		n.Name = name
+	if name, ok := o.Attrs["name"].(string); ok {
+		g.setName(n, o, name)
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
+		if n.Status == model.StatusCancelled || n.Status == model.StatusSuperseded {
+			g.cascadeStatus(n.ID, n.Status)
+		}
 	}
 	mergePayload(n, o.Payload)
 	parent := model.SessionNodeID(o.ExecutionID)
 	if o.Correlation.MessageID != "" {
 		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
 	}
-	g.upsertEdge(o.ExecutionID, o.RunID, parent, id)
+	g.upsertEdgeGated(o, parent, id)
 }
 
 func (g *Graph) applySubagent(o model.Observation) {
@@ -92,15 +107,61 @@ func (g *Graph) applySubagent(o model.Observation) {
 	ts := o.EventTime
 	n.TEnd = &ts
 	n.Status = resolveStatus(n.Status, model.StatusOK)
-	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
+}
+
+func sourceRank(s model.Source) int {
+	if s == model.SourceOTel {
+		return 1
+	}
+	return 0
+}
+
+type fieldStamps struct {
+	timingRank     int
+	haveTiming     bool
+	nameSeq        uint64
+	haveName       bool
+	haveOTelTokens bool
+}
+
+func (g *Graph) stampsFor(id string) *fieldStamps {
+	fs, ok := g.stamps[id]
+	if !ok {
+		fs = &fieldStamps{}
+		g.stamps[id] = fs
+	}
+	return fs
 }
 
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
-	if n.TStart == nil || o.EventTime.Before(*n.TStart) {
+	fs := g.stampsFor(n.ID)
+	r := sourceRank(o.Source)
+	if !fs.haveTiming || r > fs.timingRank {
+		ts := o.EventTime
+		n.TStart = &ts
+		fs.timingRank = r
+		fs.haveTiming = true
+	} else if r == fs.timingRank && (n.TStart == nil || o.EventTime.Before(*n.TStart)) {
 		ts := o.EventTime
 		n.TStart = &ts
 	}
+	if o.Seq > n.Rev {
+		n.Rev = o.Seq
+	}
 	n.Sources = append(n.Sources, model.SourceRef{Source: o.Source, ObsID: o.ObsID, ObservedAt: o.ObservedAt})
+}
+
+func (g *Graph) setName(n *model.Node, o model.Observation, name string) {
+	if name == "" {
+		return
+	}
+	fs := g.stampsFor(n.ID)
+	if !fs.haveName || o.Seq < fs.nameSeq {
+		n.Name = name
+		fs.nameSeq = o.Seq
+		fs.haveName = true
+	}
 }
 
 func mergePayload(n *model.Node, p *model.Payload) {
@@ -120,7 +181,14 @@ func mergePayload(n *model.Node, p *model.Payload) {
 	n.PayloadHash = n.Payload.Hash
 }
 
-func applyTokens(n *model.Node, attrs map[string]any) {
+func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) {
+	fs := g.stampsFor(n.ID)
+	if src != model.SourceOTel && fs.haveOTelTokens {
+		return
+	}
+	if src == model.SourceOTel {
+		fs.haveOTelTokens = true
+	}
 	if v, ok := toInt64(attrs["tokens_in"]); ok {
 		n.TokensIn = &v
 	}
@@ -177,7 +245,7 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 		r.EndReason = reason
 	}
 	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
-	g.closeOpenDescendants(model.SessionNodeID(o.ExecutionID))
+	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
 }
 
 func appendUnique(xs []string, x string) []string {
@@ -190,7 +258,7 @@ func appendUnique(xs []string, x string) []string {
 	return append(xs, x)
 }
 
-func (g *Graph) closeOpenDescendants(rootID string) {
+func (g *Graph) cascadeStatus(rootID string, status model.Status) {
 	children := map[string][]string{}
 	for _, e := range g.Edges {
 		if e.Type == model.EdgeParentChild {
@@ -208,9 +276,25 @@ func (g *Graph) closeOpenDescendants(rootID string) {
 			}
 			seen[c] = true
 			queue = append(queue, c)
-			g.closeIfOpen(c, model.StatusUnknown)
+			g.applyCascade(c, rootID, status)
 		}
 	}
+}
+
+func (g *Graph) applyCascade(id, rootID string, status model.Status) {
+	if status == model.StatusUnknown {
+		g.closeIfOpen(id, status)
+		return
+	}
+	n := g.Nodes[id]
+	if n == nil || rank(n.Status) >= 3 {
+		return
+	}
+	n.Status = resolveStatus(n.Status, status)
+	if n.Attrs == nil {
+		n.Attrs = map[string]any{}
+	}
+	n.Attrs["cancel_cause"] = rootID
 }
 
 func (g *Graph) closeIfOpen(id string, status model.Status) {
@@ -227,7 +311,7 @@ func rank(s model.Status) int {
 	switch s {
 	case model.StatusOK, model.StatusError, model.StatusBlocked:
 		return 3
-	case model.StatusCancelled, model.StatusUnknown:
+	case model.StatusCancelled, model.StatusUnknown, model.StatusSuperseded, model.StatusAbandoned:
 		return 2
 	case model.StatusRunning:
 		return 1

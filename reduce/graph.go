@@ -3,13 +3,21 @@ package reduce
 import "github.com/realkarych/catacomb/model"
 
 type Graph struct {
-	Nodes map[string]*model.Node
-	Edges map[string]*model.Edge
-	Runs  map[string]*model.Run
+	Nodes        map[string]*model.Node
+	Edges        map[string]*model.Edge
+	Runs         map[string]*model.Run
+	spanChildren map[string]bool
+	stamps       map[string]*fieldStamps
 }
 
 func NewGraph() *Graph {
-	return &Graph{Nodes: map[string]*model.Node{}, Edges: map[string]*model.Edge{}, Runs: map[string]*model.Run{}}
+	return &Graph{
+		Nodes:        map[string]*model.Node{},
+		Edges:        map[string]*model.Edge{},
+		Runs:         map[string]*model.Run{},
+		spanChildren: map[string]bool{},
+		stamps:       map[string]*fieldStamps{},
+	}
 }
 
 func (g *Graph) RunsSnapshot() []model.Run {
@@ -29,13 +37,18 @@ func (g *Graph) node(id, runID string, t model.NodeType) *model.Node {
 	return n
 }
 
-func (g *Graph) upsertEdge(executionID, runID, src, dst string) {
+func (g *Graph) upsertEdge(executionID, runID, src, dst string, seq uint64) {
 	if src == "" || dst == "" {
 		return
 	}
 	id := model.EdgeID(executionID, model.EdgeParentChild, src, dst)
-	if _, ok := g.Edges[id]; !ok {
-		g.Edges[id] = &model.Edge{ID: id, RunID: runID, Type: model.EdgeParentChild, Src: src, Dst: dst}
+	e, ok := g.Edges[id]
+	if !ok {
+		g.Edges[id] = &model.Edge{ID: id, RunID: runID, Type: model.EdgeParentChild, Src: src, Dst: dst, Rev: seq}
+		return
+	}
+	if seq > e.Rev {
+		e.Rev = seq
 	}
 }
 
