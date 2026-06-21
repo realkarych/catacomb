@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"crypto/subtle"
+	"net"
+	"time"
 
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
@@ -33,5 +35,54 @@ func bearerInterceptor(token string) grpc.UnaryServerInterceptor {
 			return nil, status.Error(codes.Unauthenticated, "invalid token")
 		}
 		return handler(ctx, req)
+	}
+}
+
+const (
+	grpcBackoffBase   = 100 * time.Millisecond
+	grpcBackoffFactor = 2
+	grpcBackoffCap    = 30 * time.Second
+)
+
+func (d *Daemon) newGRPCServer(token string) *grpc.Server {
+	srv := grpc.NewServer(grpc.UnaryInterceptor(bearerInterceptor(token)))
+	collectorv1.RegisterTraceServiceServer(srv, &traceServer{d: d})
+	return srv
+}
+
+func (d *Daemon) serveGRPC(
+	ctx context.Context,
+	srv *grpc.Server,
+	ln net.Listener,
+	serveFn func(*grpc.Server, net.Listener) error,
+	waitFn func(ctx context.Context, d time.Duration) bool,
+) {
+	backoff := grpcBackoffBase
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		var serveErr error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					serveErr = status.Errorf(codes.Internal, "panic: %v", r)
+				}
+			}()
+			serveErr = serveFn(srv, ln)
+		}()
+		if ctx.Err() != nil {
+			return
+		}
+		if serveErr != nil {
+			if !waitFn(ctx, backoff) {
+				return
+			}
+			if backoff*grpcBackoffFactor < grpcBackoffCap {
+				backoff *= grpcBackoffFactor
+			} else {
+				backoff = grpcBackoffCap
+			}
+		}
 	}
 }
