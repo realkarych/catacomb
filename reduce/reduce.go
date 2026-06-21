@@ -163,6 +163,7 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 	r.Status = model.StatusAbandoned
 	ended := o.EventTime
 	r.EndedAt = &ended
+	r.EndReason = ""
 	if reason, ok := o.Attrs["reason"].(string); ok {
 		r.EndReason = reason
 	}
