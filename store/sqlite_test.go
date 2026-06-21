@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -317,5 +318,33 @@ func TestRunsDecodeError(t *testing.T) {
 	_, err := s.db.Exec(`INSERT INTO runs(run_id, status, body) VALUES('bad','running','{not json}')`)
 	require.NoError(t, err)
 	_, err = s.Runs()
+	assert.Error(t, err)
+}
+
+func TestQuarantineRoundTrip(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.Quarantine(model.QuarantineRecord{Raw: []byte("{bad"), HookType: "PreToolUse", Err: "boom", At: time.Unix(1, 0).UTC()}))
+	require.NoError(t, s.Quarantine(model.QuarantineRecord{Raw: []byte("x"), HookType: "Stop", Err: "panic", At: time.Unix(2, 0).UTC()}))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), n)
+}
+
+func TestQuarantineMarshalError(t *testing.T) {
+	s := fileStore(t)
+	s.marshal = func(any) ([]byte, error) { return nil, errors.New("marshal") }
+	assert.Error(t, s.Quarantine(model.QuarantineRecord{}))
+}
+
+func TestQuarantineExecError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	assert.Error(t, s.Quarantine(model.QuarantineRecord{}))
+}
+
+func TestQuarantineCountQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.QuarantineCount()
 	assert.Error(t, err)
 }

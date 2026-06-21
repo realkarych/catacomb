@@ -36,6 +36,8 @@ func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error) { ret
 func (f *fakeStore) UpsertRun(model.Run) error                             { return nil }
 func (f *fakeStore) ListOpenRuns() ([]model.Run, error)                    { return nil, nil }
 func (f *fakeStore) Runs() ([]model.Run, error)                            { return nil, nil }
+func (f *fakeStore) Quarantine(model.QuarantineRecord) error               { return nil }
+func (f *fakeStore) QuarantineCount() (int64, error)                       { return 0, nil }
 
 func openFake(f *fakeStore) storeOpener {
 	return func(string) (store.Store, error) { return f, nil }
