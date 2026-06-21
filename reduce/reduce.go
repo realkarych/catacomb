@@ -13,6 +13,7 @@ func (g *Graph) ApplyAll(obs []model.Observation) {
 }
 
 func (g *Graph) Apply(o model.Observation) {
+	g.ensureRun(o)
 	g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 	switch o.Kind {
 	case "session_start":
@@ -26,6 +27,11 @@ func (g *Graph) Apply(o model.Observation) {
 		n.TEnd = &ts
 		n.Status = resolveStatus(n.Status, model.StatusOK)
 		g.closeOpenDescendants(n.ID)
+		r := g.Runs[o.RunID]
+		r.Status = model.StatusOK
+		ended := o.EventTime
+		r.EndedAt = &ended
+		r.EndReason = "session_ended"
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
@@ -38,6 +44,8 @@ func (g *Graph) Apply(o model.Observation) {
 		g.applyTool(o)
 	case "subagent_stop":
 		g.applySubagent(o)
+	case "run_ended":
+		g.applyRunEnded(o)
 	}
 }
 
@@ -130,6 +138,47 @@ func toInt64(v any) (int64, bool) {
 
 func isMCP(name string) bool {
 	return strings.HasPrefix(name, "mcp__")
+}
+
+func (g *Graph) ensureRun(o model.Observation) {
+	r, ok := g.Runs[o.RunID]
+	if !ok {
+		started := o.EventTime
+		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
+		g.Runs[o.RunID] = r
+	}
+	if r.Status == model.StatusAbandoned {
+		r.Status = model.StatusRunning
+		r.EndedAt = nil
+		r.EndReason = ""
+	}
+	if o.Seq > r.LastSeq {
+		r.LastSeq = o.Seq
+	}
+	r.SessionIDs = appendUnique(r.SessionIDs, o.Correlation.SessionID)
+}
+
+func (g *Graph) applyRunEnded(o model.Observation) {
+	r := g.Runs[o.RunID]
+	r.Status = model.StatusAbandoned
+	ended := o.EventTime
+	r.EndedAt = &ended
+	if reason, ok := o.Attrs["reason"].(string); ok {
+		r.EndReason = reason
+	}
+	g.closeOpenDescendants(model.SessionNodeID(o.ExecutionID))
+}
+
+func appendUnique(xs []string, x string) []string {
+	if x == "" {
+		return xs
+	}
+	for _, e := range xs {
+		if e == x {
+			return xs
+		}
+	}
+	return append(xs, x)
 }
 
 func (g *Graph) closeOpenDescendants(rootID string) {

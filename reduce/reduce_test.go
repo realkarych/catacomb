@@ -297,6 +297,109 @@ func TestResolveStatusTieTakesNext(t *testing.T) {
 	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusRunning, model.StatusRunning))
 }
 
+func sessionStartObs(exec, runID string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "session_start",
+		Correlation: model.Correlation{SessionID: runID},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func runEndedObs(exec, runID, reason string, seq uint64) model.Observation {
+	attrs := map[string]any{}
+	if reason != "" {
+		attrs["reason"] = reason
+	}
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "run_ended",
+		Correlation: model.Correlation{}, Attrs: attrs,
+		EventTime: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestRunOpensOnFirstObs(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, model.StatusRunning, r.Status)
+	require.NotNil(t, r.StartedAt)
+	assert.Equal(t, []string{"s1"}, r.SessionIDs)
+}
+
+func TestRunLastSeqTracksMaxIgnoringOutOfOrder(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 5),
+		toolObs("e1", "s1", "t1", "Bash", "running", 3),
+	})
+	assert.Equal(t, uint64(5), g.Runs["s1"].LastSeq)
+}
+
+func TestSessionEndEndsRunOK(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		sessionEndObs("e1", "s1", 2),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusOK, r.Status)
+	assert.Equal(t, "session_ended", r.EndReason)
+	require.NotNil(t, r.EndedAt)
+}
+
+func TestRunEndedAbandonsRunAndClosesDescendants(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t1", "Bash", "running", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+	})
+	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
+	assert.Equal(t, "timeout", g.Runs["s1"].EndReason)
+	assert.Equal(t, model.StatusUnknown, g.Nodes[model.ToolCallID("e1", "t1")].Status)
+}
+
+func TestRunEndedNoReason(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "", 2),
+	})
+	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
+	assert.Equal(t, "", g.Runs["s1"].EndReason)
+}
+
+func TestRunReawakenFromAbandoned(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+		toolObs("e1", "s1", "t1", "Bash", "running", 3),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusRunning, r.Status)
+	assert.Nil(t, r.EndedAt)
+	assert.Equal(t, "", r.EndReason)
+}
+
+func TestRunsSnapshot(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	snap := g.RunsSnapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, "s1", snap[0].ID)
+}
+
+func TestRunsSnapshotMultipleRuns(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(sessionStartObs("e2", "s2", 2))
+	snap := g.RunsSnapshot()
+	require.Len(t, snap, 2)
+}
+
 func toolObs(exec, runID, toolUseID, name, status string, seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
