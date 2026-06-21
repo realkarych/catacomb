@@ -103,8 +103,8 @@ func (d *Daemon) Ingest(hookType string, payload []byte) (err error) {
 
 func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	sessionID := sessionIDOf(payload)
-	execID, ok := d.execBySession[sessionID]
-	if !ok {
+	execID, known := d.execBySession[sessionID]
+	if !known {
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
@@ -112,9 +112,16 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	g, ok := d.graphs[execID]
-	if !ok {
+	g, inMem := d.graphs[execID]
+	if !inMem {
 		g = reduce.NewGraph()
+		if known {
+			prior, err := d.store.ObservationsForExecution(execID)
+			if err != nil {
+				return err
+			}
+			g.ApplyAll(prior)
+		}
 		d.graphs[execID] = g
 	}
 	for _, o := range obs {

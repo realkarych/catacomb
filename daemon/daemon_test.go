@@ -331,6 +331,34 @@ func TestSetReaperWindowClampsNonPositive(t *testing.T) {
 	assert.Len(t, open, 1)
 }
 
+type reloadErrStore struct{ store.Store }
+
+func (s *reloadErrStore) ObservationsForExecution(string) ([]model.Observation, error) {
+	return nil, errors.New("reload")
+}
+
+func TestIngestReloadsEvictedShard(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1"}`)))
+	d.dropShardForTest("s1")
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{"ok":true}}`)))
+	g := d.GraphsForTest()[d.execForTest("s1")]
+	require.NotNil(t, g)
+	n := g.Nodes[model.ToolCallID(d.execForTest("s1"), "t1")]
+	require.NotNil(t, n)
+	assert.Equal(t, model.StatusOK, n.Status)
+}
+
+func TestIngestReloadError(t *testing.T) {
+	d := New(&reloadErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	d.dropShardForTest("s1")
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1"}`)))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
 type errStore struct {
 	failSince bool
 }
