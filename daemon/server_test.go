@@ -402,3 +402,90 @@ func TestOTLPHTTPBodyReadError(t *testing.T) {
 	d.Handler("tok").ServeHTTP(rec, r)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestStreamJSONHTTPEndpoint(t *testing.T) {
+	d := New(tempStore(t))
+	body := strings.NewReader(`{"type":"system","subtype":"init","session_id":"s1","model":"m"}
+{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}
+`)
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", body)
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, time.Second, 10*time.Millisecond)
+}
+
+func TestStreamJSONHTTPUnauthorized(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestStreamJSONHTTPBlankLinesSkipped(t *testing.T) {
+	d := New(tempStore(t))
+	body := strings.NewReader("\n\n{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\"}\n\n")
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", body)
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Len(t, d.GraphsForTest(), 1)
+}
+
+func TestStreamJSONHTTPBodyReadError(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", errReadCloser{})
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestStreamJSONHTTPNonJSONLineSessionID(t *testing.T) {
+	d := New(tempStore(t))
+	body := strings.NewReader("not-json\n")
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", body)
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestStreamJSONHTTPThreadsSessionAcrossLines(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	body := strings.NewReader(`{"type":"system","subtype":"init","session_id":"s1","model":"m"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"result","total_cost_usd":0.01}
+`)
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", body)
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, time.Second, 10*time.Millisecond)
+	execID := d.execForTest("s1")
+	assert.Equal(t, "exec1", execID)
+	assert.Empty(t, d.execForTest(""))
+	g := d.GraphsForTest()[execID]
+	require.NotNil(t, g)
+	require.NotNil(t, g.Nodes[model.SessionNodeID(execID)])
+	require.NotNil(t, g.Nodes[model.ToolCallID(execID, "t1")])
+}
+
+type panicWriter struct{ http.ResponseWriter }
+
+func (panicWriter) WriteHeader(int) { panic("write-header-panic") }
+
+func TestStreamJSONHTTPHandlerPanicRecovered(t *testing.T) {
+	d := New(tempStore(t))
+	body := strings.NewReader("")
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", body)
+	r.Header.Set("Authorization", "Bearer tok")
+	pw := panicWriter{httptest.NewRecorder()}
+	d.handleStreamJSON(pw, r)
+}

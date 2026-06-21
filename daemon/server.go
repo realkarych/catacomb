@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -24,6 +26,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
 	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
+	mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -50,6 +53,44 @@ func (d *Daemon) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp)
+}
+
+func (d *Daemon) handleStreamJSON(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("catacomb: stream-json handler recovered: %v", rec)
+		}
+	}()
+	sc := bufio.NewScanner(r.Body)
+	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+	var currentSession string
+	for sc.Scan() {
+		line := sc.Bytes()
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			continue
+		}
+		buf := make([]byte, len(trimmed))
+		copy(buf, trimmed)
+		if s := streamSessionID(buf); s != "" {
+			currentSession = s
+		}
+		_ = d.IngestStreamJSON(buf, currentSession)
+	}
+	if err := sc.Err(); err != nil {
+		log.Printf("catacomb: stream-json scan: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func streamSessionID(line []byte) string {
+	var e struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(line, &e); err != nil {
+		return ""
+	}
+	return e.SessionID
 }
 
 func (d *Daemon) authed(token string, next http.HandlerFunc) http.HandlerFunc {

@@ -15,6 +15,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/hook"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
+	streamjsoningest "github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
@@ -26,9 +27,10 @@ const (
 )
 
 var (
-	nowFn   = time.Now
-	applyFn = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
-	parseFn = otelingest.Parse
+	nowFn         = time.Now
+	applyFn       = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
+	parseFn       = otelingest.Parse
+	streamParseFn = streamjsoningest.Parse
 )
 
 type Daemon struct {
@@ -221,6 +223,49 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 			var raw []byte
 			raw, _ = proto.Marshal(req)
 			d.quarantine("otel", raw, err.Error())
+			return nil
+		}
+		d.lastSeen[o.RunID] = o.ObservedAt
+	}
+	return nil
+}
+
+func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) (err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			d.quarantine("stream-json", line, fmt.Sprintf("panic: %v", r))
+			err = nil
+		}
+	}()
+	execID, known := d.execBySession[sessionID]
+	if !known {
+		execID = d.newExecID()
+		d.execBySession[sessionID] = execID
+	}
+	obs, err := streamParseFn(line, execID, d.next)
+	if err != nil {
+		d.quarantine("stream-json", line, err.Error())
+		return nil
+	}
+	g, inMem := d.graphs[execID]
+	if !inMem {
+		g = reduce.NewGraph()
+		if known {
+			prior, loadErr := d.store.ObservationsForExecution(execID)
+			if loadErr != nil {
+				d.quarantine("stream-json", line, loadErr.Error())
+				return nil
+			}
+			g.ApplyAll(prior)
+			_ = g.DrainDeltas()
+		}
+		d.graphs[execID] = g
+	}
+	for _, o := range obs {
+		if err := d.applyAndPersist(g, o); err != nil {
+			d.quarantine("stream-json", line, err.Error())
 			return nil
 		}
 		d.lastSeen[o.RunID] = o.ObservedAt
