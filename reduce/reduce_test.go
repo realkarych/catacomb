@@ -1162,3 +1162,85 @@ func TestReductionCommutativityThreeSources(t *testing.T) {
 		assert.Equal(t, want, got, "permutation %d diverged", i)
 	}
 }
+
+func sjStreamEvent(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestParentToolUseEdgeCreated(t *testing.T) {
+	parent := sjToolInput("e1", "s1", "tparent", "Task", `{}`, 1)
+	child := sjStreamEvent("e1", "s1", "tchild", "tparent", 2)
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{parent, child})
+	id := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparent"), model.ToolCallID("e1", "tchild"))
+	require.NotNil(t, g.Edges[id])
+	assert.Equal(t, model.ToolCallID("e1", "tparent"), g.Edges[id].Src)
+	assert.Equal(t, model.ToolCallID("e1", "tchild"), g.Edges[id].Dst)
+}
+
+func otelChildEdge(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceOTel,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
+		Attrs:     map[string]any{"name": "Task"},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestParentToolUseStreamJSONDoesNotOverwriteOTelEdge(t *testing.T) {
+	otelEdge := otelChildEdge("e1", "s1", "tchild", "tparentA", 1)
+	sjEdge := sjStreamEvent("e1", "s1", "tchild", "tparentB", 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{otelEdge, sjEdge})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sjEdge, otelEdge})
+	wantID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentA"), model.ToolCallID("e1", "tchild"))
+	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentB"), model.ToolCallID("e1", "tchild"))
+	require.NotNil(t, fwd.Edges[wantID])
+	require.NotNil(t, rev.Edges[wantID])
+	assert.Nil(t, fwd.Edges[loseID])
+	assert.Nil(t, rev.Edges[loseID])
+}
+
+func TestParentToolUseNoChildID(t *testing.T) {
+	o := model.Observation{
+		RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: "s1", ParentToolUseID: "tparent"},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: 1,
+	}
+	g := NewGraph()
+	g.Apply(o)
+	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparent"), model.ToolCallID("e1", ""))
+	assert.Nil(t, g.Edges[loseID])
+}
+
+func TestStructureRankValues(t *testing.T) {
+	assert.Equal(t, 2, structureRank(model.SourceOTel))
+	assert.Equal(t, 1, structureRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, structureRank(model.SourceHook))
+}
+
+func TestReductionCommutativityWithParentToolEdge(t *testing.T) {
+	obs := []model.Observation{
+		sessionStartObs("e3", "s3", 1),
+		sjToolInput("e3", "s3", "tp", "Task", `{}`, 2),
+		sjStreamEvent("e3", "s3", "tc", "tp", 3),
+		otelChildEdge("e3", "s3", "tc", "tp", 4),
+	}
+	perms := permute(obs)
+	var want string
+	for i, p := range perms {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}

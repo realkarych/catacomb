@@ -105,6 +105,7 @@ func (g *Graph) applyTool(o model.Observation) {
 		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
 	}
 	g.upsertEdgeGated(o, parent, id)
+	g.upsertParentToolEdge(o)
 }
 
 func (g *Graph) applySubagent(o model.Observation) {
@@ -156,6 +157,38 @@ func payloadRank(s model.Source) int {
 	}
 }
 
+func structureRank(s model.Source) int {
+	switch s {
+	case model.SourceOTel:
+		return 2
+	case model.SourceStreamJSON:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (g *Graph) upsertParentToolEdge(o model.Observation) {
+	if o.Correlation.ParentToolUseID == "" || o.Correlation.ToolUseID == "" {
+		return
+	}
+	src := model.ToolCallID(o.ExecutionID, o.Correlation.ParentToolUseID)
+	dst := model.ToolCallID(o.ExecutionID, o.Correlation.ToolUseID)
+	fs := g.stampsFor(dst)
+	r := structureRank(o.Source)
+	if fs.haveStruct && r < fs.structRank {
+		return
+	}
+	if fs.haveStruct && fs.structSrc != src {
+		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, fs.structSrc, dst)
+		delete(g.Edges, oldID)
+	}
+	fs.structRank = r
+	fs.haveStruct = true
+	fs.structSrc = src
+	g.upsertEdge(o.ExecutionID, o.RunID, src, dst, o.Seq)
+}
+
 type fieldStamps struct {
 	timingRank  int
 	haveTiming  bool
@@ -165,6 +198,9 @@ type fieldStamps struct {
 	haveToken   bool
 	payloadRank int
 	havePayload bool
+	structRank  int
+	haveStruct  bool
+	structSrc   string
 }
 
 func (g *Graph) stampsFor(id string) *fieldStamps {
