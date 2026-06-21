@@ -31,10 +31,12 @@ func (f *failSinceStore) MaxSeq() (uint64, error) { return 0, nil }
 func (f *failSinceStore) ObservationsSince(uint64) ([]model.Observation, error) {
 	return nil, errors.New("since")
 }
-func (f *failSinceStore) UpsertRun(model.Run) error          { return nil }
-func (f *failSinceStore) ListOpenRuns() ([]model.Run, error) { return nil, nil }
-func (f *failSinceStore) Runs() ([]model.Run, error)         { return nil, nil }
-func (f *failSinceStore) Close() error                       { return nil }
+func (f *failSinceStore) UpsertRun(model.Run) error               { return nil }
+func (f *failSinceStore) ListOpenRuns() ([]model.Run, error)      { return nil, nil }
+func (f *failSinceStore) Runs() ([]model.Run, error)              { return nil, nil }
+func (f *failSinceStore) Quarantine(model.QuarantineRecord) error { return nil }
+func (f *failSinceStore) QuarantineCount() (int64, error)         { return 0, nil }
+func (f *failSinceStore) Close() error                            { return nil }
 
 func openFailSince(string) (store.Store, error) {
 	return &failSinceStore{}, nil
@@ -42,13 +44,13 @@ func openFailSince(string) (store.Store, error) {
 
 func TestRunDaemonOpenError(t *testing.T) {
 	open := func(string) (store.Store, error) { return nil, errors.New("open") }
-	err := runDaemonWith(context.Background(), open, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"))
+	err := runDaemonWith(context.Background(), open, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute)
 	require.Error(t, err)
 }
 
 func TestRunDaemonListenError(t *testing.T) {
 	listen := func() (net.Listener, error) { return nil, errors.New("listen") }
-	err := runDaemonWith(context.Background(), store.OpenSQLite, listen, daemon.NewToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"))
+	err := runDaemonWith(context.Background(), store.OpenSQLite, listen, daemon.NewToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute)
 	require.Error(t, err)
 }
 
@@ -56,18 +58,18 @@ func TestRunDaemonDiscoveryError(t *testing.T) {
 	dir := t.TempDir()
 	badDiscovery := filepath.Join(dir, "afile", "d.json")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o600))
-	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), badDiscovery)
+	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), badDiscovery, 30*time.Minute)
 	require.Error(t, err)
 }
 
 func TestRunDaemonRecoverError(t *testing.T) {
-	err := runDaemonWith(context.Background(), openFailSince, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"))
+	err := runDaemonWith(context.Background(), openFailSince, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute)
 	require.Error(t, err)
 }
 
 func TestRunDaemonNewTokenError(t *testing.T) {
 	failToken := func() (string, error) { return "", errors.New("token") }
-	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, failToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"))
+	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, failToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute)
 	require.Error(t, err)
 }
 
@@ -104,7 +106,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.NewToken, dbPath, discovery)
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.NewToken, dbPath, discovery, 30*time.Minute)
 	}()
 	awaitHealthz(t, readAddr(t, discovery))
 
@@ -154,6 +156,19 @@ func TestDaemonCommandDefaultDiscovery(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- root.ExecuteContext(ctx) }()
 	awaitHealthz(t, readAddr(t, filepath.Join(dir, "d.json")))
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestDaemonCommandReaperWindowFlag(t *testing.T) {
+	dir := t.TempDir()
+	discovery := filepath.Join(dir, "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	root := newRootCmd()
+	root.SetArgs([]string{"daemon", "--db", filepath.Join(dir, "g.db"), "--discovery", discovery, "--reaper-window", "1h"})
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+	awaitHealthz(t, readAddr(t, discovery))
 	cancel()
 	require.NoError(t, <-done)
 }

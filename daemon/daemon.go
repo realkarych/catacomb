@@ -2,13 +2,24 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 
 	"github.com/realkarych/catacomb/ingest/hook"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
+)
+
+const defaultReaperWindow = 30 * time.Minute
+
+var (
+	nowFn   = time.Now
+	applyFn = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
 )
 
 type Daemon struct {
@@ -18,6 +29,9 @@ type Daemon struct {
 	seq           uint64
 	graphs        map[string]*reduce.Graph
 	execBySession map[string]string
+	quarantined   int64
+	reaperWindow  time.Duration
+	lastSeen      map[string]time.Time
 }
 
 func New(s store.Store) *Daemon {
@@ -26,10 +40,23 @@ func New(s store.Store) *Daemon {
 		newExecID:     func() string { return ulid.Make().String() },
 		graphs:        map[string]*reduce.Graph{},
 		execBySession: map[string]string{},
+		lastSeen:      map[string]time.Time{},
+		reaperWindow:  defaultReaperWindow,
 	}
 }
 
+func (d *Daemon) SetReaperWindow(w time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if w <= 0 {
+		w = defaultReaperWindow
+	}
+	d.reaperWindow = w
+}
+
 func (d *Daemon) Recover() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	obs, err := d.store.ObservationsSince(0)
 	if err != nil {
 		return err
@@ -43,18 +70,38 @@ func (d *Daemon) Recover() error {
 		}
 		g.Apply(o)
 		d.execBySession[o.RunID] = o.ExecutionID
+		d.lastSeen[o.RunID] = o.ObservedAt
 		if o.Seq > max {
 			max = o.Seq
 		}
 	}
 	d.seq = max
+	for _, g := range d.graphs {
+		for _, r := range g.RunsSnapshot() {
+			if err := d.store.UpsertRun(r); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
-func (d *Daemon) Ingest(hookType string, payload []byte) error {
+func (d *Daemon) Ingest(hookType string, payload []byte) (err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			d.quarantine(hookType, payload, fmt.Sprintf("panic: %v", r))
+			err = nil
+		}
+	}()
+	if e := d.ingestLocked(hookType, payload); e != nil {
+		d.quarantine(hookType, payload, e.Error())
+	}
+	return nil
+}
 
+func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	sessionID := sessionIDOf(payload)
 	execID, ok := d.execBySession[sessionID]
 	if !ok {
@@ -71,13 +118,29 @@ func (d *Daemon) Ingest(hookType string, payload []byte) error {
 		d.graphs[execID] = g
 	}
 	for _, o := range obs {
-		g.Apply(o)
-		nodes, edges := g.Snapshot()
-		if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+		if err := d.applyAndPersist(g, o); err != nil {
 			return err
 		}
+		d.lastSeen[o.RunID] = o.ObservedAt
 	}
 	return nil
+}
+
+func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
+	applyFn(g, o)
+	nodes, edges := g.Snapshot()
+	if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+		return err
+	}
+	return d.store.UpsertRun(*g.Runs[o.RunID])
+}
+
+func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {
+	d.quarantined++
+	rec := model.QuarantineRecord{Raw: payload, HookType: hookType, Err: msg, At: nowFn().UTC()}
+	if err := d.store.Quarantine(rec); err != nil {
+		log.Printf("catacomb: quarantine write failed: %v", err)
+	}
 }
 
 func (d *Daemon) next() uint64 {
@@ -93,4 +156,35 @@ func sessionIDOf(payload []byte) string {
 		return ""
 	}
 	return e.SessionID
+}
+
+func (d *Daemon) reapIdle(now time.Time) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for execID, g := range d.graphs {
+		for runID, r := range g.Runs {
+			if r.Status != model.StatusRunning {
+				continue
+			}
+			last := d.lastSeen[runID]
+			if now.Sub(last) < d.reaperWindow {
+				continue
+			}
+			o := model.Observation{
+				ObsID:       ulid.Make().String(),
+				RunID:       runID,
+				ExecutionID: execID,
+				Source:      model.SourceHook,
+				Kind:        "run_ended",
+				Attrs:       map[string]any{"reason": "timeout"},
+				EventTime:   now.UTC(),
+				ObservedAt:  now.UTC(),
+				Seq:         d.next(),
+			}
+			if err := d.applyAndPersist(g, o); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

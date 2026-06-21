@@ -69,10 +69,14 @@ func TestHandlerBodyReadError(t *testing.T) {
 }
 
 func TestHandlerIngestError(t *testing.T) {
-	d := New(tempStore(t))
+	s := tempStore(t)
+	d := New(s)
 	rec := httptest.NewRecorder()
 	d.Handler("tok").ServeHTTP(rec, authedReq("/hook/PreToolUse", "tok", strings.NewReader("{not json}")))
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
 }
 
 func TestServeGraceful(t *testing.T) {
@@ -112,4 +116,41 @@ func TestServeListenerError(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ln.Close())
 	require.Error(t, d.Serve(context.Background(), ln, "tok"))
+}
+
+func TestReapLoopStopsOnContextCancel(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Millisecond)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { d.reapLoop(ctx); close(done) }()
+	require.Eventually(t, func() bool {
+		open, err := s.ListOpenRuns()
+		return err == nil && len(open) == 0
+	}, 2*time.Second, 5*time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reapLoop did not stop")
+	}
+}
+
+func TestReapLoopLogsReapError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	d.SetReaperWindow(time.Millisecond)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { d.reapLoop(ctx); close(done) }()
+	require.Eventually(t, func() bool { return s.appendCount() >= 2 }, 2*time.Second, 5*time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reapLoop did not stop")
+	}
 }

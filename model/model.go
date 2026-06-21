@@ -131,3 +131,10 @@ type Run struct {
 	EndedAt    *time.Time     `json:"ended_at,omitempty"`
 	Meta       map[string]any `json:"meta,omitempty"`
 }
+
+type QuarantineRecord struct {
+	Raw      []byte    `json:"raw,omitempty"`
+	HookType string    `json:"hook_type,omitempty"`
+	Err      string    `json:"err,omitempty"`
+	At       time.Time `json:"at"`
+}

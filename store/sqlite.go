@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS observations (obs_id TEXT PRIMARY KEY, run_id TEXT, e
 CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, status TEXT, body TEXT);
+CREATE TABLE IF NOT EXISTS quarantine (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
 CREATE INDEX IF NOT EXISTS idx_observations_run_seq ON observations(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
 CREATE INDEX IF NOT EXISTS idx_edges_run ON edges(run_id);
@@ -31,6 +32,7 @@ const (
 	upsertNode        = `INSERT INTO nodes(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	upsertEdge        = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	upsertRun         = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
+	insertQuarantine  = `INSERT INTO quarantine(body) VALUES(?)`
 )
 
 func OpenSQLite(path string) (Store, error) {
@@ -216,6 +218,25 @@ func (s *sqliteStore) write(tx *sql.Tx, query string, value any, keys ...any) er
 		return fmt.Errorf("store.write exec: %w", err)
 	}
 	return nil
+}
+
+func (s *sqliteStore) Quarantine(rec model.QuarantineRecord) error {
+	body, err := s.marshal(rec)
+	if err != nil {
+		return fmt.Errorf("store.Quarantine marshal: %w", err)
+	}
+	if _, err := s.db.Exec(insertQuarantine, string(body)); err != nil {
+		return fmt.Errorf("store.Quarantine: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteStore) QuarantineCount() (int64, error) {
+	var n int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM quarantine").Scan(&n); err != nil {
+		return 0, fmt.Errorf("store.QuarantineCount: %w", err)
+	}
+	return n, nil
 }
 
 func (s *sqliteStore) Close() error { return s.db.Close() }

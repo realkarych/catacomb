@@ -3,12 +3,15 @@ package daemon
 import (
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -64,8 +67,12 @@ func TestIngestUnknownTypeNoError(t *testing.T) {
 }
 
 func TestIngestMalformedPayload(t *testing.T) {
-	d := New(tempStore(t))
-	require.Error(t, d.Ingest("PreToolUse", []byte("{not json}")))
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{not json}")))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
 }
 
 func TestIngestSeqMonotonic(t *testing.T) {
@@ -77,8 +84,12 @@ func TestIngestSeqMonotonic(t *testing.T) {
 }
 
 func TestIngestStoreError(t *testing.T) {
-	d := New(&errStore{failAppend: true})
-	require.Error(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
 }
 
 func TestRecoverRebuildsGraphsAndSeq(t *testing.T) {
@@ -122,17 +133,211 @@ func TestNewDefaultExecIDIsULID(t *testing.T) {
 	}
 }
 
+type appendErrStore struct {
+	store.Store
+	mu          sync.Mutex
+	appends     int64
+	quarantined int64
+}
+
+func (s *appendErrStore) AppendAndApply(model.Observation, []*model.Node, []*model.Edge) error {
+	s.mu.Lock()
+	s.appends++
+	s.mu.Unlock()
+	return errors.New("append")
+}
+
+func (s *appendErrStore) appendCount() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appends
+}
+
+func (s *appendErrStore) Quarantine(model.QuarantineRecord) error {
+	s.mu.Lock()
+	s.quarantined++
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *appendErrStore) QuarantineCount() (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.quarantined, nil
+}
+
+type quarantineErrStore struct{ store.Store }
+
+func (s *quarantineErrStore) Quarantine(model.QuarantineRecord) error { return errors.New("q") }
+
+func TestIngestQuarantinesParseError(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{not json")))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestQuarantinesPersistError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestRecoversPanic(t *testing.T) {
+	orig := applyFn
+	applyFn = func(*reduce.Graph, model.Observation) { panic("boom") }
+	t.Cleanup(func() { applyFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestQuarantineWriteErrorLogged(t *testing.T) {
+	d := New(&quarantineErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{not json")))
+}
+
+func TestIngestPoisonDoesNotStopOtherRuns(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"good"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{poison")))
+	require.NoError(t, d.Ingest("UserPromptSubmit", []byte(`{"session_id":"good","prompt":"hi"}`)))
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	assert.NotEmpty(t, obs)
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+type runUpsertErrStore struct{ store.Store }
+
+func (s *runUpsertErrStore) UpsertRun(model.Run) error { return errors.New("upsert") }
+
+func TestIngestPersistsRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "s1", runs[0].ID)
+	assert.Equal(t, model.StatusRunning, runs[0].Status)
+}
+
+func TestRecoverRepersistsRuns(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "g.db")
+	s1, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	d1 := New(s1)
+	require.NoError(t, d1.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s1.Close())
+
+	s2, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	runs, err := s2.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "s1", runs[0].ID)
+}
+
+func TestRecoverRunUpsertError(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "g.db")
+	s1, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	d1 := New(s1)
+	require.NoError(t, d1.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s1.Close())
+
+	s2, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(&runUpsertErrStore{Store: s2})
+	assert.Error(t, d2.Recover())
+}
+
+func TestIngestRunUpsertError(t *testing.T) {
+	d := New(&runUpsertErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestReapIdleAbandonsQuiescentRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now().Add(time.Hour)))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, model.StatusAbandoned, runs[0].Status)
+	assert.Equal(t, "timeout", runs[0].EndReason)
+}
+
+func TestReapIdleSkipsActiveRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Hour)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now()))
+	open, err := s.ListOpenRuns()
+	require.NoError(t, err)
+	assert.Len(t, open, 1)
+}
+
+func TestReapIdleSkipsAlreadyEndedRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now().Add(time.Hour)))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, model.StatusOK, runs[0].Status)
+}
+
+func TestReapIdlePersistError(t *testing.T) {
+	d := New(&appendErrStore{Store: tempStore(t)})
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Error(t, d.reapIdle(time.Now().Add(time.Hour)))
+}
+
+func TestSetReaperWindowClampsNonPositive(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(0)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now()))
+	open, err := s.ListOpenRuns()
+	require.NoError(t, err)
+	assert.Len(t, open, 1)
+}
+
 type errStore struct {
-	failAppend bool
-	failSince  bool
+	failSince bool
 }
 
 func (e *errStore) Persist([]model.Observation, []*model.Node, []*model.Edge) error { return nil }
 
 func (e *errStore) AppendAndApply(model.Observation, []*model.Node, []*model.Edge) error {
-	if e.failAppend {
-		return errors.New("append")
-	}
 	return nil
 }
 
@@ -145,7 +350,9 @@ func (e *errStore) ObservationsSince(uint64) ([]model.Observation, error) {
 	return nil, nil
 }
 
-func (e *errStore) UpsertRun(model.Run) error          { return nil }
-func (e *errStore) ListOpenRuns() ([]model.Run, error) { return nil, nil }
-func (e *errStore) Runs() ([]model.Run, error)         { return nil, nil }
-func (e *errStore) Close() error                       { return nil }
+func (e *errStore) UpsertRun(model.Run) error               { return nil }
+func (e *errStore) ListOpenRuns() ([]model.Run, error)      { return nil, nil }
+func (e *errStore) Runs() ([]model.Run, error)              { return nil, nil }
+func (e *errStore) Quarantine(model.QuarantineRecord) error { return nil }
+func (e *errStore) QuarantineCount() (int64, error)         { return 0, nil }
+func (e *errStore) Close() error                            { return nil }

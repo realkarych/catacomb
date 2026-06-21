@@ -10,5 +10,7 @@ type Store interface {
 	UpsertRun(r model.Run) error
 	ListOpenRuns() ([]model.Run, error)
 	Runs() ([]model.Run, error)
+	Quarantine(rec model.QuarantineRecord) error
+	QuarantineCount() (int64, error)
 	Close() error
 }
