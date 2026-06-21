@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -1243,4 +1244,50 @@ func TestReductionCommutativityWithParentToolEdge(t *testing.T) {
 		}
 		assert.Equal(t, want, got, "permutation %d diverged", i)
 	}
+}
+
+func seq() func() uint64 {
+	var n uint64
+	return func() uint64 {
+		n++
+		return n
+	}
+}
+
+func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
+	parentLine := []byte(`{"type":"assistant","session_id":"s1","message":{"id":"msg_parent","content":[{"type":"tool_use","id":"toolu_parent","name":"Task","input":{}}]}}`)
+	childLine := []byte(`{"type":"assistant","session_id":"s1","parent_tool_use_id":"toolu_parent","message":{"id":"msg_child","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}`)
+
+	sq := seq()
+	parentObs, err := streamjson.Parse(parentLine, "exec_i1", sq)
+	require.NoError(t, err)
+	childObs, err := streamjson.Parse(childLine, "exec_i1", sq)
+	require.NoError(t, err)
+
+	g := NewGraph()
+	g.ApplyAll(parentObs)
+	g.ApplyAll(childObs)
+
+	childToolObs := childObs[1]
+	assert.Equal(t, "toolu_parent", childToolObs.Correlation.ParentToolUseID)
+	assert.Equal(t, "toolu_child", childToolObs.Correlation.ToolUseID)
+
+	edgeID := model.EdgeID("exec_i1", model.EdgeParentChild, model.ToolCallID("exec_i1", "toolu_parent"), model.ToolCallID("exec_i1", "toolu_child"))
+	require.NotNil(t, g.Edges[edgeID], "parent_child edge must be created from real assistant envelope")
+	assert.Equal(t, model.ToolCallID("exec_i1", "toolu_parent"), g.Edges[edgeID].Src)
+	assert.Equal(t, model.ToolCallID("exec_i1", "toolu_child"), g.Edges[edgeID].Dst)
+}
+
+func TestStreamEventCreatesNoJunkEmptyToolNode(t *testing.T) {
+	line := []byte(`{"type":"stream_event","session_id":"s1","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
+
+	sq := seq()
+	obs, err := streamjson.Parse(line, "exec_i2", sq)
+	require.NoError(t, err)
+	require.Empty(t, obs, "stream_event must yield zero observations")
+
+	g := NewGraph()
+	g.ApplyAll(obs)
+	junkID := model.ToolCallID("exec_i2", "")
+	assert.NotContains(t, g.Nodes, junkID, "no junk empty-tool node must exist after stream_event")
 }

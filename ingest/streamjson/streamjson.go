@@ -86,7 +86,7 @@ func Parse(line []byte, executionID string, nextSeq func() uint64) ([]model.Obse
 }
 
 func build(e envelope) ([]partial, error) {
-	base := model.Correlation{SessionID: e.SessionID}
+	base := model.Correlation{SessionID: e.SessionID, ParentToolUseID: e.ParentToolUseID}
 	switch e.Type {
 	case "system":
 		if e.Subtype != "init" {
@@ -118,10 +118,7 @@ func build(e envelope) ([]partial, error) {
 		}
 		return userParts(base, text, blocks), nil
 	case "stream_event":
-		c := base
-		c.ParentToolUseID = e.ParentToolUseID
-		c.UUID = e.UUID
-		return []partial{{kind: "assistant_tool_use", correlation: c}}, nil
+		return nil, nil
 	case "result":
 		attrs := map[string]any{}
 		if e.Usage != nil {

@@ -203,7 +203,7 @@ The parser reuses the **existing** observation kinds the reducer already switche
 | `system` (subtype `init`) | `session_start` | `session_id`, `model` (→ `Attrs["model"]`) | anchors `session_id`→execID; enriches the session node |
 | `assistant` (+ `tool_use` blocks) | `assistant_turn` + one `assistant_tool_use` per `tool_use` block | `message.id`→`MessageID`; per block `tool_use_id`→`ToolUseID`, `name`→`Attrs["name"]`, `input`→`Payload.Input`; `usage`→`Attrs["tokens_in"/"tokens_out"]` | same shape as JSONL `assistantParts`; `tool_use_id` is the linchpin |
 | `user` (+ `tool_result` blocks) | one `tool_result` per `tool_result` block (+ `user_prompt` if text present) | `tool_use_id`→`ToolUseID`, `content`→`Payload.Output`, `is_error`→`Attrs["status"]` (`ok`/`error`) | same shape as JSONL `userParts` |
-| `stream_event` | (structural) `assistant_tool_use` carrying only `Correlation.ParentToolUseID` (+ `ToolUseID`/`UUID` when present) | `parent_tool_use_id`→`ParentToolUseID`, `uuid`→`UUID` | the subagent-boundary signal; consumed by the new structure path (§6.4) |
+| `stream_event` | (none — zero observations emitted) | — | streaming partial delta; no `tool_use_id` so no valid node or edge; `parent_tool_use_id` is threaded onto the enclosing `assistant` envelope's `tool_use` blocks instead (see §4.3 `assistant` row) |
 | `result` | `assistant_turn` enrichment | `usage`→`Attrs["tokens_in"/"tokens_out"]`, cost→`Attrs["cost_usd"]` | mid-tier tokens (below OTel, above JSONL) — §6 |
 
 `mcp_call` typing is automatic: a `tool_use` whose `name` matches `mcp__<server>__<tool>`
@@ -241,7 +241,7 @@ marked **[VERIFY]** for operator capture (`claude -p --output-format stream-json
 |---|---|---|
 | envelope discriminator | top-level `type` ∈ {`system`,`assistant`,`user`,`stream_event`,`result`} | exact set; whether `--include-partial-messages` adds types **[VERIFY]** |
 | `system.init` session | `session_id` (top-level) | top-level vs nested under `system` **[VERIFY]** |
-| `parent_tool_use_id` placement | on `stream_event`; also checked on `assistant`/`user` | whether it rides only on `stream_event`; snake-case spelling **[VERIFY]** |
+| `parent_tool_use_id` placement | top-level on `assistant` (and `user`) envelopes; threaded onto each `tool_use` / `tool_result` block in that envelope | whether it also appears on `stream_event` (now ignored); snake-case spelling **[VERIFY]** |
 | assistant message id | `message.id` (the `msg_*`) | nesting under `message` **[VERIFY]** |
 | token usage | `result.usage.input_tokens` / `output_tokens` (+ `assistant` `message.usage`) | field names; cache fields presence **[VERIFY]** |
 | cost | `result.usage.cost_usd` or `result.total_cost_usd` | whether cost is present at all; key name **[VERIFY]** |
@@ -491,7 +491,7 @@ set produce the identical final node (the M1b commutativity property-test patter
 This is the JSONL/stream-json payoff and the only genuinely new reducer logic. Two
 producers feed it:
 
-- **stream-json `stream_event`** carries `parent_tool_use_id` (the SDK subagent boundary).
+- **stream-json `assistant` envelope** carries `parent_tool_use_id` at the top level; the parser threads it onto every `tool_use` and `tool_result` block in that envelope so each block observation has both `ToolUseID` (its own) and `ParentToolUseID` (the spawning Task's). `stream_event` envelopes (streaming partial deltas with no `tool_use_id`) yield zero observations and are ignored. **[VERIFY]** placement — see §4.5.
 - **JSONL** carries the subagent structure on disk: `parent_tool_use_id` (when present),
   `isSidechain:true` inline records, and separate `subagents/agent-<agentId>.jsonl`
   transcript records.

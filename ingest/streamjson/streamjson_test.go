@@ -100,16 +100,12 @@ func TestParseUserPromptText(t *testing.T) {
 	assert.Equal(t, "hello there", obs[0].Attrs["prompt"])
 }
 
-func TestParseStreamEventParentToolUseID(t *testing.T) {
+func TestParseStreamEventYieldsNoObs(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"stream_event","session_id":"s","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
 	obs, err := Parse(line, "e", seq())
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
-	o := obs[0]
-	assert.Equal(t, "assistant_tool_use", o.Kind)
-	assert.Equal(t, "toolu_parent", o.Correlation.ParentToolUseID)
-	assert.Equal(t, "u1", o.Correlation.UUID)
+	assert.Empty(t, obs)
 }
 
 func TestParseResultEnrichment(t *testing.T) {
