@@ -52,6 +52,16 @@ func TestInstallHooksIdempotent(t *testing.T) {
 	assert.Len(t, pre, 1)
 }
 
+func TestInstallHooksReinstallDifferentExeNoDuplicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	require.NoError(t, installHooks(path, "/run/d.json", "/old/path/catacomb", false))
+	require.NoError(t, installHooks(path, "/run/d.json", "/new/path/catacomb", false))
+	pre := readHooks(t, path)["PreToolUse"].([]any)
+	require.Len(t, pre, 1)
+	cmd := pre[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	assert.Contains(t, cmd, "/new/path/catacomb")
+}
+
 func TestInstallHooksUninstall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"other"}]}]}}`), 0o644))
@@ -69,7 +79,7 @@ func TestInstallHooksMalformedSettings(t *testing.T) {
 	require.Error(t, installHooks(path, "/run/d.json", "/usr/bin/catacomb", false))
 }
 
-func TestInstallHooksWriteError(t *testing.T) {
+func TestInstallHooksReadError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "afile")
 	require.NoError(t, os.WriteFile(dir, []byte("x"), 0o600))
 	require.Error(t, installHooks(filepath.Join(dir, "settings.json"), "/run/d.json", "/usr/bin/catacomb", false))

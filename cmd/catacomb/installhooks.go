@@ -65,7 +65,7 @@ func installHooks(path, discoveryPath, exe string, uninstall bool) error {
 		return err
 	}
 	hooks := asMap(settings["hooks"])
-	marker := exe + " hook "
+	marker := "CATACOMB_DISCOVERY="
 	for _, ev := range hookEvents {
 		entries := pruneCatacomb(asSlice(hooks[ev]), marker)
 		if !uninstall {
