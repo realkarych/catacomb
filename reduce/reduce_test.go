@@ -1,6 +1,7 @@
 package reduce
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -294,4 +295,89 @@ func TestResolveStatusRunningOverPending(t *testing.T) {
 func TestResolveStatusTieTakesNext(t *testing.T) {
 	assert.Equal(t, model.StatusError, resolveStatus(model.StatusOK, model.StatusError))
 	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusRunning, model.StatusRunning))
+}
+
+func toolObs(exec, runID, toolUseID, name, status string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUseID},
+		Attrs:       map[string]any{"name": name, "status": status},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func sessionEndObs(exec, runID string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "session_end",
+		Correlation: model.Correlation{SessionID: runID},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestSessionEndClosesRunningDescendant(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t1", "Bash", "running", 1),
+		sessionEndObs("e1", "s1", 2),
+	})
+	assert.Equal(t, model.StatusUnknown, g.Nodes[model.ToolCallID("e1", "t1")].Status)
+}
+
+func TestSessionEndLeavesGenuineTerminal(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		toolObs("e2", "s2", "t1", "Read", "ok", 1),
+		sessionEndObs("e2", "s2", 2),
+	})
+	assert.Equal(t, model.StatusOK, g.Nodes[model.ToolCallID("e2", "t1")].Status)
+}
+
+func TestSessionEndLateGenuineSupersedesUnknown(t *testing.T) {
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t2", "Bash", "running", 1),
+		sessionEndObs("e1", "s1", 4),
+		toolObs("e1", "s1", "t2", "Bash", "ok", 5),
+	})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t2", "Bash", "ok", 5),
+		toolObs("e1", "s1", "t2", "Bash", "running", 1),
+		sessionEndObs("e1", "s1", 4),
+	})
+	assert.Equal(t, model.StatusOK, fwd.Nodes[model.ToolCallID("e1", "t2")].Status)
+	assert.Equal(t, model.StatusOK, rev.Nodes[model.ToolCallID("e1", "t2")].Status)
+}
+
+func TestCloseOpenDescendantsHandlesDiamond(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("a", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("b", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("c", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "a")
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b")
+	g.upsertEdge("e1", "s1", "a", "c")
+	g.upsertEdge("e1", "s1", "b", "c")
+	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
+}
+
+func TestCloseOpenDescendantsSkipsMissingNode(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost")
+	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	assert.NotContains(t, g.Nodes, "ghost")
+}
+
+func TestCloseOpenDescendantsIgnoresNonParentChild(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeSequence, Src: model.SessionNodeID("e1"), Dst: "x"}
+	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }

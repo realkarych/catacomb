@@ -25,6 +25,7 @@ func (g *Graph) Apply(o model.Observation) {
 		ts := o.EventTime
 		n.TEnd = &ts
 		n.Status = resolveStatus(n.Status, model.StatusOK)
+		g.closeOpenDescendants(n.ID)
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
@@ -129,6 +130,35 @@ func toInt64(v any) (int64, bool) {
 
 func isMCP(name string) bool {
 	return strings.HasPrefix(name, "mcp__")
+}
+
+func (g *Graph) closeOpenDescendants(rootID string) {
+	children := map[string][]string{}
+	for _, e := range g.Edges {
+		if e.Type == model.EdgeParentChild {
+			children[e.Src] = append(children[e.Src], e.Dst)
+		}
+	}
+	seen := map[string]bool{rootID: true}
+	queue := []string{rootID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, c := range children[cur] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			queue = append(queue, c)
+			n := g.Nodes[c]
+			if n == nil {
+				continue
+			}
+			if rank(n.Status) < 2 {
+				n.Status = resolveStatus(n.Status, model.StatusUnknown)
+			}
+		}
+	}
 }
 
 func rank(s model.Status) int {
