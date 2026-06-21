@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -547,7 +548,7 @@ func TestCascadeStatusHandlesDiamond(t *testing.T) {
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b", 2)
 	g.upsertEdge("e1", "s1", "a", "c", 3)
 	g.upsertEdge("e1", "s1", "b", "c", 9)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 1)
 	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
 }
 
@@ -555,7 +556,7 @@ func TestCascadeStatusSkipsMissingNode(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost", 2)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 2)
 	assert.NotContains(t, g.Nodes, "ghost")
 }
 
@@ -564,7 +565,7 @@ func TestCascadeStatusIgnoresNonParentChild(t *testing.T) {
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeSequence, Src: model.SessionNodeID("e1"), Dst: "x"}
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 3)
 	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }
 
@@ -637,7 +638,7 @@ func TestCascadeStatusCancelsNonTerminalDescendants(t *testing.T) {
 	g.node("childDone", "s1", model.NodeToolCall).Status = model.StatusOK
 	g.upsertEdge("e1", "s1", "root", "childRun", 1)
 	g.upsertEdge("e1", "s1", "root", "childDone", 2)
-	g.cascadeStatus("root", model.StatusCancelled)
+	g.cascadeStatus("root", model.StatusCancelled, 42)
 	assert.Equal(t, model.StatusCancelled, g.Nodes["childRun"].Status)
 	assert.Equal(t, "root", g.Nodes["childRun"].Attrs["cancel_cause"])
 	assert.Equal(t, model.StatusOK, g.Nodes["childDone"].Status)
@@ -650,7 +651,7 @@ func TestCascadeStatusSupersededSetsCause(t *testing.T) {
 	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.upsertEdge("e1", "s1", "root", "child", 1)
-	g.cascadeStatus("root", model.StatusSuperseded)
+	g.cascadeStatus("root", model.StatusSuperseded, 5)
 	assert.Equal(t, model.StatusSuperseded, g.Nodes["child"].Status)
 	assert.Equal(t, "root", g.Nodes["child"].Attrs["cancel_cause"])
 }
@@ -660,7 +661,7 @@ func TestCascadeUnknownPathHasNoCancelCause(t *testing.T) {
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "child", 1)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 7)
 	assert.Equal(t, model.StatusUnknown, g.Nodes["child"].Status)
 	_, hasCause := g.Nodes["child"].Attrs["cancel_cause"]
 	assert.False(t, hasCause)
@@ -886,4 +887,141 @@ func canonGraph(g *Graph) string {
 		Edges []edgeView
 	}{nv, ev})
 	return string(b)
+}
+
+func deltaByKind(ds []cdc.GraphDelta, k cdc.GraphDeltaKind) []cdc.GraphDelta {
+	var out []cdc.GraphDelta
+	for _, d := range ds {
+		if d.Kind == k {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func TestEmitNodeUpsertOnSessionStart(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	ds := g.DrainDeltas()
+	ups := deltaByKind(ds, cdc.DeltaNodeUpsert)
+	require.NotEmpty(t, ups)
+	found := false
+	for _, d := range ups {
+		if d.Node != nil && d.Node.ID == model.SessionNodeID("e1") {
+			found = true
+			assert.Equal(t, uint64(1), d.Rev)
+			assert.Equal(t, "e1", d.ExecutionID)
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestDrainDeltasClearsBuffer(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	first := g.DrainDeltas()
+	require.NotEmpty(t, first)
+	second := g.DrainDeltas()
+	assert.Empty(t, second)
+}
+
+func TestEmitRunStartedOnceOnFirstObs(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 2))
+	ds := g.DrainDeltas()
+	starts := deltaByKind(ds, cdc.DeltaRunStarted)
+	require.Len(t, starts, 1)
+	assert.Equal(t, "s1", starts[0].RunID)
+}
+
+func TestEmitEdgeUpsertOnNewEdge(t *testing.T) {
+	g := NewGraph()
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
+	ds := g.DrainDeltas()
+	edges := deltaByKind(ds, cdc.DeltaEdgeUpsert)
+	require.NotEmpty(t, edges)
+	assert.Equal(t, uint64(1), edges[0].Rev)
+	assert.NotNil(t, edges[0].Edge)
+}
+
+func TestEmitSessionEndedOnSessionEnd(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	_ = g.DrainDeltas()
+	g.Apply(sessionEndObs("e1", "s1", 2))
+	ds := g.DrainDeltas()
+	require.Len(t, deltaByKind(ds, cdc.DeltaSessionEnded), 1)
+	assert.Equal(t, "s1", deltaByKind(ds, cdc.DeltaSessionEnded)[0].RunID)
+}
+
+func TestEmitRunEndedOnRunEnded(t *testing.T) {
+	g := NewGraph()
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
+	_ = g.DrainDeltas()
+	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
+	ds := g.DrainDeltas()
+	require.Len(t, deltaByKind(ds, cdc.DeltaRunEnded), 1)
+}
+
+func TestRunEndedEarlyReturnEmitsNoRunEnded(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		sessionEndObs("e1", "s1", 2),
+	})
+	_ = g.DrainDeltas()
+	g.Apply(runEndedObs("e1", "s1", "timeout", 3))
+	ds := g.DrainDeltas()
+	assert.Empty(t, deltaByKind(ds, cdc.DeltaRunEnded))
+}
+
+func TestCascadeEmitsNodeStatusWithTriggeringSeq(t *testing.T) {
+	g := NewGraph()
+	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.upsertEdge("e1", "s1", "root", "child", 1)
+	_ = g.DrainDeltas()
+	g.cascadeStatus("root", model.StatusCancelled, 42)
+	ds := g.DrainDeltas()
+	st := deltaByKind(ds, cdc.DeltaNodeStatus)
+	require.Len(t, st, 1)
+	assert.Equal(t, "child", st[0].Node.ID)
+	assert.Equal(t, model.StatusCancelled, st[0].Node.Status)
+	assert.Equal(t, uint64(42), st[0].Rev)
+}
+
+func TestCascadeUnknownCloseEmitsNodeStatus(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "child", 1)
+	_ = g.DrainDeltas()
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 7)
+	ds := g.DrainDeltas()
+	st := deltaByKind(ds, cdc.DeltaNodeStatus)
+	require.Len(t, st, 1)
+	assert.Equal(t, "child", st[0].Node.ID)
+	assert.Equal(t, model.StatusUnknown, st[0].Node.Status)
+	assert.Equal(t, uint64(7), st[0].Rev)
+}
+
+func TestCloseIfOpenNoChangeEmitsNothing(t *testing.T) {
+	g := NewGraph()
+	g.node("done", "s1", model.NodeToolCall).Status = model.StatusOK
+	_ = g.DrainDeltas()
+	g.closeIfOpen("done", model.StatusUnknown, 5)
+	ds := g.DrainDeltas()
+	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
+}
+
+func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
+	g := NewGraph()
+	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("child", "s1", model.NodeToolCall).Status = model.StatusOK
+	g.upsertEdge("e1", "s1", "root", "child", 1)
+	_ = g.DrainDeltas()
+	g.cascadeStatus("root", model.StatusCancelled, 9)
+	ds := g.DrainDeltas()
+	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
 }
