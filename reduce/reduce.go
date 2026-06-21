@@ -165,6 +165,9 @@ func (g *Graph) ensureRun(o model.Observation) {
 
 func (g *Graph) applyRunEnded(o model.Observation) {
 	r := g.Runs[o.RunID]
+	if r.Status == model.StatusOK {
+		return
+	}
 	r.Status = model.StatusAbandoned
 	ended := o.EventTime
 	r.EndedAt = &ended

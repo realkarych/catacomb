@@ -371,16 +371,23 @@ func TestRunEndedNoReason(t *testing.T) {
 	assert.Equal(t, "", g.Runs["s1"].EndReason)
 }
 
-func TestRunEndedClearsStaleEndReason(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e3", "s3", 1),
-		sessionEndObs("e3", "s3", 2),
-		runEndedObs("e3", "s3", "", 3),
+func TestRunStatusGenuineSessionEndLatchesOverRunEnded(t *testing.T) {
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+		sessionEndObs("e1", "s1", 3),
 	})
-	r := g.Runs["s3"]
-	assert.Equal(t, model.StatusAbandoned, r.Status)
-	assert.Equal(t, "", r.EndReason)
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{
+		sessionStartObs("e2", "s2", 1),
+		sessionEndObs("e2", "s2", 3),
+		runEndedObs("e2", "s2", "timeout", 4),
+	})
+	assert.Equal(t, model.StatusOK, fwd.Runs["s1"].Status)
+	assert.Equal(t, model.StatusOK, rev.Runs["s2"].Status)
+	assert.Equal(t, "session_ended", fwd.Runs["s1"].EndReason)
+	assert.Equal(t, "session_ended", rev.Runs["s2"].EndReason)
 }
 
 func TestRunReawakenFromAbandoned(t *testing.T) {
