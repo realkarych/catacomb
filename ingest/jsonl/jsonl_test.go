@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,4 +137,25 @@ func TestParseReaderMessageWithoutContent(t *testing.T) {
 	obs, err := ParseReader(strings.NewReader(`{"type":"user","message":{"role":"user"}}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
+}
+
+func TestParseUsesInjectedSeqAndObservedAt(t *testing.T) {
+	var n uint64 = 40
+	next := func() uint64 { n++; return n }
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	obs, err := Parse(strings.NewReader(
+		`{"type":"assistant","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"),
+		"exec-Z", next, func(time.Time) time.Time { return at })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, uint64(41), obs[0].Seq)
+	assert.Equal(t, at, obs[0].ObservedAt)
+	assert.Equal(t, "2026-06-22T10:00:00Z", obs[0].EventTime.Format(time.RFC3339))
+	assert.Equal(t, model.SourceJSONL, obs[0].Source)
+}
+
+func TestNowFnSeamDefaultsToTimeNow(t *testing.T) {
+	before := time.Now().Add(-time.Second)
+	got := nowFn()
+	assert.False(t, got.Before(before))
 }

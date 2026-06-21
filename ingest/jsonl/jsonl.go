@@ -51,12 +51,23 @@ type partial struct {
 	payload     *model.Payload
 }
 
+var nowFn = time.Now
+
 func ParseReader(r io.Reader, executionID string) ([]model.Observation, error) {
+	var seq uint64
+	next := func() uint64 {
+		s := seq
+		seq++
+		return s
+	}
+	return Parse(r, executionID, next, func(eventTime time.Time) time.Time { return eventTime })
+}
+
+func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 
 	var out []model.Observation
-	var seq uint64
 	for sc.Scan() {
 		raw := strings.TrimSpace(sc.Text())
 		if raw == "" {
@@ -78,10 +89,9 @@ func ParseReader(r io.Reader, executionID string) ([]model.Observation, error) {
 				Attrs:       p.attrs,
 				Payload:     p.payload,
 				EventTime:   ts,
-				ObservedAt:  ts,
-				Seq:         seq,
+				ObservedAt:  observedAt(ts),
+				Seq:         nextSeq(),
 			})
-			seq++
 		}
 	}
 	if err := sc.Err(); err != nil {
