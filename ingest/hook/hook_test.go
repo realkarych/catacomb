@@ -94,7 +94,9 @@ func TestParseSubagentStop(t *testing.T) {
 func TestParseStop(t *testing.T) {
 	obs := parseFixture(t, "Stop", "stop.json")
 	require.Len(t, obs, 1)
-	assert.Equal(t, "session_end", obs[0].Kind)
+	assert.Equal(t, "stop", obs[0].Kind)
+	assert.Equal(t, "s1", obs[0].Correlation.SessionID)
+	assert.Empty(t, obs[0].Attrs)
 }
 
 func TestParsePreCompactIsMarker(t *testing.T) {
