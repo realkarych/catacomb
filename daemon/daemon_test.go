@@ -804,3 +804,94 @@ func TestSetOTLPEndpoint(t *testing.T) {
 	d.mu.Unlock()
 	assert.Equal(t, "grpc://collector:4317", got)
 }
+
+func TestIngestStreamJSONSessionInit(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-8"}`), "s1"))
+	execID := d.execForTest("s1")
+	require.Equal(t, "exec1", execID)
+	n := d.GraphsForTest()[execID].Nodes[model.SessionNodeID(execID)]
+	require.NotNil(t, n)
+	assert.Equal(t, model.StatusRunning, n.Status)
+}
+
+func TestIngestStreamJSONMergesByToolUseIDWithHook(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"toolu_x","tool_input":{}}`)))
+	line := []byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"toolu_x","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestStreamJSON(line, "s1"))
+	execID := d.execForTest("s1")
+	n := d.GraphsForTest()[execID].Nodes[model.ToolCallID(execID, "toolu_x")]
+	require.NotNil(t, n)
+	assert.Len(t, n.Sources, 2)
+}
+
+func TestIngestStreamJSONParseErrorViaSeam(t *testing.T) {
+	orig := streamParseFn
+	streamParseFn = func(_ []byte, _ string, _ func() uint64) ([]model.Observation, error) {
+		return nil, errors.New("parse fail")
+	}
+	t.Cleanup(func() { streamParseFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`), "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestStreamJSONBadJSONQuarantines(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{not json`), "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestStreamJSONPanic(t *testing.T) {
+	orig := applyFn
+	applyFn = func(*reduce.Graph, model.Observation) { panic("sj-boom") }
+	t.Cleanup(func() { applyFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`), "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestStreamJSONPersistError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`), "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestStreamJSONReloadsEvictedShard(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`), "s1"))
+	execID := d.execForTest("s1")
+	d.dropShardForTest("s1")
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}`), "s1"))
+	g := d.GraphsForTest()[execID]
+	require.NotNil(t, g)
+	require.NotNil(t, g.Nodes[model.SessionNodeID(execID)])
+	require.NotNil(t, g.Nodes[model.ToolCallID(execID, "t1")])
+}
+
+func TestIngestStreamJSONReloadError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	fixedExecID(d)
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`), "s1"))
+	d.dropShardForTest("s1")
+	d.store = &reloadErrStore{Store: base}
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1"}}`), "s1"))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}

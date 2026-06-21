@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -700,8 +701,9 @@ func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 }
 
 func TestSourceRank(t *testing.T) {
-	assert.Equal(t, 1, sourceRank(model.SourceOTel))
-	assert.Equal(t, 0, sourceRank(model.SourceHook))
+	assert.Equal(t, 3, sourceRank(model.SourceOTel))
+	assert.Equal(t, 2, sourceRank(model.SourceHook))
+	assert.Equal(t, 1, sourceRank(model.SourceStreamJSON))
 	assert.Equal(t, 0, sourceRank(model.SourceJSONL))
 }
 
@@ -843,15 +845,16 @@ func TestReductionCommutativity(t *testing.T) {
 
 func canonGraph(g *Graph) string {
 	type nodeView struct {
-		ID     string
-		Type   model.NodeType
-		Name   string
-		Status model.Status
-		Rev    uint64
-		TStart string
-		TIn    string
-		TOut   string
-		Cause  string
+		ID          string
+		Type        model.NodeType
+		Name        string
+		Status      model.Status
+		Rev         uint64
+		TStart      string
+		TIn         string
+		TOut        string
+		Cause       string
+		PayloadHash string
 	}
 	var nv []nodeView
 	for id, n := range g.Nodes {
@@ -870,6 +873,7 @@ func canonGraph(g *Graph) string {
 				v.Cause = c
 			}
 		}
+		v.PayloadHash = n.PayloadHash
 		nv = append(nv, v)
 	}
 	sort.Slice(nv, func(i, j int) bool { return nv[i].ID < nv[j].ID })
@@ -1024,4 +1028,266 @@ func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
 	g.cascadeStatus("root", model.StatusCancelled, 9)
 	ds := g.DrainDeltas()
 	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
+}
+
+func TestSourceRankThreeLiveTiers(t *testing.T) {
+	assert.Equal(t, 3, sourceRank(model.SourceOTel))
+	assert.Equal(t, 2, sourceRank(model.SourceHook))
+	assert.Equal(t, 1, sourceRank(model.SourceStreamJSON))
+}
+
+func TestTimingHookBeatsStreamJSON(t *testing.T) {
+	t0 := time.Unix(100, 0).UTC()
+	hookEarly := hookTurn("e1", "s1", "m1", 0, 0, t0.Add(time.Hour), 1)
+	sjLate := model.Observation{
+		RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
+		Attrs: map[string]any{}, EventTime: t0, ObservedAt: t0, Seq: 2,
+	}
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{sjLate, hookEarly})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{hookEarly, sjLate})
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, fwd.Nodes[id].TStart)
+	assert.Equal(t, t0.Add(time.Hour), fwd.Nodes[id].TStart.UTC())
+	assert.Equal(t, fwd.Nodes[id].TStart.UTC(), rev.Nodes[id].TStart.UTC())
+}
+
+func sjTurn(execID, runID, msgID string, tin, tout int64, seq uint64) model.Observation {
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: runID, MessageID: msgID},
+		Attrs:     map[string]any{"tokens_in": tin, "tokens_out": tout},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestTokenRankOTelBeatsStreamJSON(t *testing.T) {
+	otel := otelTurn("e1", "s1", "m1", 50, 20, time.Unix(100, 0).UTC(), 1)
+	sj := sjTurn("e1", "s1", "m1", 7, 9, 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{otel, sj})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sj, otel})
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, fwd.Nodes[id].TokensIn)
+	assert.Equal(t, int64(50), *fwd.Nodes[id].TokensIn)
+	assert.Equal(t, int64(50), *rev.Nodes[id].TokensIn)
+}
+
+func TestTokenStreamJSONSetsWhenNoOTel(t *testing.T) {
+	sj := sjTurn("e1", "s1", "m1", 7, 9, 1)
+	g := NewGraph()
+	g.Apply(sj)
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, g.Nodes[id].TokensIn)
+	assert.Equal(t, int64(7), *g.Nodes[id].TokensIn)
+}
+
+func TestTokenRankDefaultIsZero(t *testing.T) {
+	assert.Equal(t, 0, tokenRank(model.SourceHook))
+	assert.Equal(t, 0, tokenRank(model.SourceJSONL))
+}
+
+func sjToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
+	pl := &model.Payload{Input: json.RawMessage(input)}
+	pl.Hash = model.HashPayload(pl)
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
+		Attrs:     map[string]any{"name": name},
+		Payload:   pl,
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func hookToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
+	pl := &model.Payload{Input: json.RawMessage(input)}
+	pl.Hash = model.HashPayload(pl)
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceHook,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
+		Attrs:     map[string]any{"name": name, "status": "running"},
+		Payload:   pl,
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestPayloadHookBeatsStreamJSONDelta(t *testing.T) {
+	hookFull := hookToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
+	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{hookFull, sjDelta})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sjDelta, hookFull})
+	id := model.ToolCallID("e1", "t1")
+	require.NotNil(t, fwd.Nodes[id].Payload)
+	assert.JSONEq(t, `{"command":"ls -la"}`, string(fwd.Nodes[id].Payload.Input))
+	assert.Equal(t, string(fwd.Nodes[id].Payload.Input), string(rev.Nodes[id].Payload.Input))
+}
+
+func TestPayloadStreamJSONSetsWhenAlone(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 1))
+	id := model.ToolCallID("e1", "t1")
+	require.NotNil(t, g.Nodes[id].Payload)
+	assert.JSONEq(t, `{"command":"l"}`, string(g.Nodes[id].Payload.Input))
+}
+
+func TestPayloadRankStreamJSONIsDefault(t *testing.T) {
+	assert.Equal(t, 0, payloadRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, payloadRank(model.SourceOTel))
+}
+
+func TestReductionCommutativityThreeSources(t *testing.T) {
+	t0 := time.Unix(200, 0).UTC()
+	obs := []model.Observation{
+		sessionStartObs("e2", "s2", 1),
+		hookTurn("e2", "s2", "m2", 5, 2, t0.Add(time.Minute), 2),
+		otelTurn("e2", "s2", "m2", 50, 20, t0.Add(time.Second), 3),
+		sjTurn("e2", "s2", "m2", 7, 9, 4),
+		hookToolInput("e2", "s2", "t9", "Bash", `{"command":"ls -la"}`, 5),
+		sjToolInput("e2", "s2", "t9", "Bash", `{"command":"l"}`, 6),
+	}
+	perms := permute(obs)
+	var want string
+	for i, p := range perms {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}
+
+func sjStreamEvent(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestParentToolUseEdgeCreated(t *testing.T) {
+	parent := sjToolInput("e1", "s1", "tparent", "Task", `{}`, 1)
+	child := sjStreamEvent("e1", "s1", "tchild", "tparent", 2)
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{parent, child})
+	id := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparent"), model.ToolCallID("e1", "tchild"))
+	require.NotNil(t, g.Edges[id])
+	assert.Equal(t, model.ToolCallID("e1", "tparent"), g.Edges[id].Src)
+	assert.Equal(t, model.ToolCallID("e1", "tchild"), g.Edges[id].Dst)
+}
+
+func otelChildEdge(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
+	return model.Observation{
+		RunID: runID, ExecutionID: execID, Source: model.SourceOTel,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
+		Attrs:     map[string]any{"name": "Task"},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
+	}
+}
+
+func TestParentToolUseStreamJSONDoesNotOverwriteOTelEdge(t *testing.T) {
+	otelEdge := otelChildEdge("e1", "s1", "tchild", "tparentA", 1)
+	sjEdge := sjStreamEvent("e1", "s1", "tchild", "tparentB", 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{otelEdge, sjEdge})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sjEdge, otelEdge})
+	wantID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentA"), model.ToolCallID("e1", "tchild"))
+	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentB"), model.ToolCallID("e1", "tchild"))
+	require.NotNil(t, fwd.Edges[wantID])
+	require.NotNil(t, rev.Edges[wantID])
+	assert.Nil(t, fwd.Edges[loseID])
+	assert.Nil(t, rev.Edges[loseID])
+}
+
+func TestParentToolUseNoChildID(t *testing.T) {
+	o := model.Observation{
+		RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: "s1", ParentToolUseID: "tparent"},
+		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: 1,
+	}
+	g := NewGraph()
+	g.Apply(o)
+	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparent"), model.ToolCallID("e1", ""))
+	assert.Nil(t, g.Edges[loseID])
+}
+
+func TestStructureRankValues(t *testing.T) {
+	assert.Equal(t, 2, structureRank(model.SourceOTel))
+	assert.Equal(t, 1, structureRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, structureRank(model.SourceHook))
+}
+
+func TestReductionCommutativityWithParentToolEdge(t *testing.T) {
+	obs := []model.Observation{
+		sessionStartObs("e3", "s3", 1),
+		sjToolInput("e3", "s3", "tp", "Task", `{}`, 2),
+		sjStreamEvent("e3", "s3", "tc", "tp", 3),
+		otelChildEdge("e3", "s3", "tc", "tp", 4),
+	}
+	perms := permute(obs)
+	var want string
+	for i, p := range perms {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}
+
+func seq() func() uint64 {
+	var n uint64
+	return func() uint64 {
+		n++
+		return n
+	}
+}
+
+func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
+	parentLine := []byte(`{"type":"assistant","session_id":"s1","message":{"id":"msg_parent","content":[{"type":"tool_use","id":"toolu_parent","name":"Task","input":{}}]}}`)
+	childLine := []byte(`{"type":"assistant","session_id":"s1","parent_tool_use_id":"toolu_parent","message":{"id":"msg_child","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}`)
+
+	sq := seq()
+	parentObs, err := streamjson.Parse(parentLine, "exec_i1", sq)
+	require.NoError(t, err)
+	childObs, err := streamjson.Parse(childLine, "exec_i1", sq)
+	require.NoError(t, err)
+
+	g := NewGraph()
+	g.ApplyAll(parentObs)
+	g.ApplyAll(childObs)
+
+	childToolObs := childObs[1]
+	assert.Equal(t, "toolu_parent", childToolObs.Correlation.ParentToolUseID)
+	assert.Equal(t, "toolu_child", childToolObs.Correlation.ToolUseID)
+
+	edgeID := model.EdgeID("exec_i1", model.EdgeParentChild, model.ToolCallID("exec_i1", "toolu_parent"), model.ToolCallID("exec_i1", "toolu_child"))
+	require.NotNil(t, g.Edges[edgeID], "parent_child edge must be created from real assistant envelope")
+	assert.Equal(t, model.ToolCallID("exec_i1", "toolu_parent"), g.Edges[edgeID].Src)
+	assert.Equal(t, model.ToolCallID("exec_i1", "toolu_child"), g.Edges[edgeID].Dst)
+}
+
+func TestStreamEventCreatesNoJunkEmptyToolNode(t *testing.T) {
+	line := []byte(`{"type":"stream_event","session_id":"s1","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
+
+	sq := seq()
+	obs, err := streamjson.Parse(line, "exec_i2", sq)
+	require.NoError(t, err)
+	require.Empty(t, obs, "stream_event must yield zero observations")
+
+	g := NewGraph()
+	g.ApplyAll(obs)
+	junkID := model.ToolCallID("exec_i2", "")
+	assert.NotContains(t, g.Nodes, junkID, "no junk empty-tool node must exist after stream_event")
 }
