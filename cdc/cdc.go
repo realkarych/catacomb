@@ -73,10 +73,53 @@ func (b *Bus) Unsubscribe(c *Consumer) {
 	}
 }
 
+func coalesceKey(d GraphDelta) string {
+	switch d.Kind {
+	case DeltaNodeUpsert, DeltaNodeStatus:
+		if d.Node != nil {
+			return d.Node.ID
+		}
+		return string(d.Kind)
+	case DeltaEdgeUpsert, DeltaEdgeDelete:
+		if d.Edge != nil {
+			return "edge:" + d.Edge.ID
+		}
+		return string(d.Kind)
+	default:
+		return string(d.Kind) + ":" + d.RunID
+	}
+}
+
 func (b *Bus) Publish(d GraphDelta) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, c := range b.consumers {
-		c.ch <- d
+		c.deliver(d)
 	}
+}
+
+func (c *Consumer) deliver(d GraphDelta) {
+	for k, pending := range c.dirty {
+		select {
+		case c.ch <- pending:
+			delete(c.dirty, k)
+		default:
+		}
+	}
+	select {
+	case c.ch <- d:
+	default:
+		c.dirty[coalesceKey(d)] = d
+		c.dropped++
+	}
+}
+
+func (b *Bus) TotalDropped() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var total int64
+	for _, c := range b.consumers {
+		total += c.dropped
+	}
+	return total
 }
