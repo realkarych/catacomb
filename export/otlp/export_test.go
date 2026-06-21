@@ -11,7 +11,9 @@ import (
 
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -218,3 +220,185 @@ func TestSpanStatusMapping(t *testing.T) {
 	assert.Equal(t, codes.Ok, spanStatus(model.StatusOK).Code)
 	assert.Equal(t, codes.Unset, spanStatus(model.StatusRunning).Code)
 }
+
+func TestApplyDeltaBuffersUntilLifecycleFlush(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}}))
+	assert.Empty(t, rec.batches)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 2, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	require.Len(t, rec.batches[0], 1)
+	assert.Equal(t, spanID("n1"), rec.batches[0][0].SpanContext().SpanID())
+}
+
+func TestApplyDeltaRevGuardDropsStale(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	apply := func(rev uint64, st model.Status) {
+		require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: rev, RunID: "r1", Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: st}}))
+	}
+	apply(5, model.StatusError)
+	apply(3, model.StatusRunning)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: 9, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	require.Len(t, rec.batches[0], 1)
+	assert.Equal(t, codes.Error, rec.batches[0][0].Status().Code)
+}
+
+func TestApplyDeltaNodeStatusIsFullStateUpsert(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: 1, RunID: "r1", Node: &model.Node{ID: "only", RunID: "r1", Type: model.NodeAssistantTurn, Name: "t", Status: model.StatusOK, TokensIn: i64(7)}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 2, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	m := attrMap(rec.batches[0][0])
+	assert.Equal(t, "7", m["gen_ai.usage.input_tokens"])
+}
+
+func TestApplyDeltaProvisionalHeldThenFlushedOnClose(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: 4, RunID: "r1", Node: &model.Node{ID: "c1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusCancelled}}))
+	assert.Empty(t, rec.batches)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: 6, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	require.Len(t, rec.batches[0], 1)
+}
+
+func TestApplyDeltaEdgeUpsertLinksParent(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: &model.Node{ID: "p", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 2, RunID: "r1", Node: &model.Node{ID: "ch", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: 2, RunID: "r1", Edge: &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "p", Dst: "ch", Rev: 2}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 3, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	byID := map[trace.SpanID]sdktrace.ReadOnlySpan{}
+	for _, ro := range rec.batches[0] {
+		byID[ro.SpanContext().SpanID()] = ro
+	}
+	child := byID[spanID("ch")]
+	require.NotNil(t, child)
+	assert.Equal(t, spanID("p"), child.Parent().SpanID())
+}
+
+func TestApplyDeltaEdgeRevGuardKeepsNewerParent(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: 9, RunID: "r1", Edge: &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "newp", Dst: "ch", Rev: 9}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: 4, RunID: "r1", Edge: &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "oldp", Dst: "ch", Rev: 4}}))
+	assert.Equal(t, "newp", e.parents["ch"])
+}
+
+func TestApplyDeltaIgnoresNonParentEdge(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: 1, RunID: "r1", Edge: &model.Edge{ID: "e2", RunID: "r1", Type: model.EdgeSequence, Src: "a", Dst: "b", Rev: 1}}))
+	_, ok := e.parents["b"]
+	assert.False(t, ok)
+}
+
+func TestApplyDeltaLifecycleNoopsAndUnknownKind(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	for _, k := range []cdc.GraphDeltaKind{cdc.DeltaRunStarted, cdc.DeltaNodeMerge, cdc.DeltaEdgeDelete} {
+		require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: k, Rev: 1, RunID: "r1"}))
+	}
+	assert.Empty(t, rec.batches)
+}
+
+func TestFlushUnknownRunIsNoop(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 1, RunID: "ghost"}))
+	assert.Empty(t, rec.batches)
+}
+
+func TestFlushPropagatesExportError(t *testing.T) {
+	e := newWithExporter(&errExporter{})
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}}))
+	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 2, RunID: "r1"})
+	require.Error(t, err)
+}
+
+func TestStaleSpanAfterCloseReEmittedOnNextClose(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 2, RunID: "r1"}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: 3, RunID: "r1", Node: &model.Node{ID: "late", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusError}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: 4, RunID: "r1"}))
+	require.Len(t, rec.batches, 2)
+	assert.Equal(t, spanID("late"), rec.batches[1][0].SpanContext().SpanID())
+}
+
+func TestSnapshotMapsAndFlushesTerminalRuns(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	nodes := []*model.Node{
+		{ID: "p", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK},
+		{ID: "ch", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK},
+	}
+	edges := []*model.Edge{{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "p", Dst: "ch", Rev: 1}}
+	require.NoError(t, e.SnapshotState(context.Background(), nodes, edges))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: 9, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	require.Len(t, rec.batches[0], 2)
+}
+
+func TestSnapshotFilterByRunID(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	nodes := []*model.Node{
+		{ID: "a", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK},
+		{ID: "b", RunID: "r2", Type: model.NodeToolCall, Status: model.StatusOK},
+	}
+	require.NoError(t, e.Snapshot(context.Background(), RunFilter{RunID: "r1"}))
+	_ = nodes
+	require.NoError(t, e.SnapshotState(context.Background(), nodes, edgesNil()))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: 5, RunID: "r2"}))
+	require.Len(t, rec.batches, 1)
+	require.Len(t, rec.batches[0], 1)
+	assert.Equal(t, spanID("b"), rec.batches[0][0].SpanContext().SpanID())
+}
+
+func TestApplyDeltaNodeUpsertNilNodeIsNoop(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1"}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: 2, RunID: "r1"}))
+	assert.Empty(t, rec.batches)
+}
+
+func TestSnapshotStateSkipsNonParentEdge(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	edges := []*model.Edge{{ID: "e1", RunID: "r1", Type: model.EdgeSequence, Src: "a", Dst: "b", Rev: 1}}
+	require.NoError(t, e.SnapshotState(context.Background(), nil, edges))
+	_, ok := e.parents["b"]
+	assert.False(t, ok)
+}
+
+func TestSnapshotStateNodeRevGuardDropsStale(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	nodes := []*model.Node{
+		{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 5},
+		{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusError, Rev: 3},
+	}
+	require.NoError(t, e.SnapshotState(context.Background(), nodes, nil))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: 9, RunID: "r1"}))
+	require.Len(t, rec.batches, 1)
+	require.Len(t, rec.batches[0], 1)
+	assert.Equal(t, codes.Ok, rec.batches[0][0].Status().Code)
+}
+
+func edgesNil() []*model.Edge { return nil }
+
+type errExporter struct{}
+
+func (errExporter) ExportSpans(context.Context, []sdktrace.ReadOnlySpan) error {
+	return assert.AnError
+}
+func (errExporter) Shutdown(context.Context) error { return nil }

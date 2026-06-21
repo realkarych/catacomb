@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -25,8 +26,21 @@ type spanExporter interface {
 	Shutdown(ctx context.Context) error
 }
 
+type nodeState struct {
+	node *model.Node
+	rev  uint64
+}
+
+type RunFilter struct {
+	RunID string
+}
+
 type Exporter struct {
-	client spanExporter
+	client  spanExporter
+	runs    map[string]map[string]*nodeState
+	parents map[string]string
+	edgeRev map[string]uint64
+	filter  RunFilter
 }
 
 func New(ctx context.Context, endpoint, daemonGRPCAddr, daemonHTTPAddr string) (*Exporter, error) {
@@ -46,7 +60,12 @@ func newFull(ctx context.Context, endpoint, daemonGRPCAddr, daemonHTTPAddr strin
 }
 
 func newWithExporter(exp spanExporter) *Exporter {
-	return &Exporter{client: exp}
+	return &Exporter{
+		client:  exp,
+		runs:    map[string]map[string]*nodeState{},
+		parents: map[string]string{},
+		edgeRev: map[string]uint64{},
+	}
 }
 
 func (e *Exporter) Name() string { return "otlp" }
@@ -114,6 +133,96 @@ func spanStatus(s model.Status) sdktrace.Status {
 	default:
 		return sdktrace.Status{Code: codes.Unset}
 	}
+}
+
+func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
+	switch d.Kind {
+	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus:
+		e.upsertNode(d)
+		return nil
+	case cdc.DeltaEdgeUpsert:
+		if d.Edge != nil && d.Edge.Type == model.EdgeParentChild && d.Rev >= e.edgeRev[d.Edge.Dst] {
+			e.edgeRev[d.Edge.Dst] = d.Rev
+			e.parents[d.Edge.Dst] = d.Edge.Src
+		}
+		return nil
+	case cdc.DeltaSessionEnded, cdc.DeltaRunEnded:
+		return e.flushRun(ctx, d.RunID)
+	default:
+		return nil
+	}
+}
+
+func (e *Exporter) upsertNode(d cdc.GraphDelta) {
+	if d.Node == nil {
+		return
+	}
+	run, ok := e.runs[d.RunID]
+	if !ok {
+		run = map[string]*nodeState{}
+		e.runs[d.RunID] = run
+	}
+	st, ok := run[d.Node.ID]
+	if ok && d.Rev <= st.rev {
+		return
+	}
+	if !ok {
+		st = &nodeState{}
+		run[d.Node.ID] = st
+	}
+	st.node = d.Node
+	st.rev = d.Rev
+}
+
+func (e *Exporter) flushRun(ctx context.Context, runID string) error {
+	run, ok := e.runs[runID]
+	if !ok || len(run) == 0 {
+		return nil
+	}
+	spans := make([]sdktrace.ReadOnlySpan, 0, len(run))
+	for id, st := range run {
+		spans = append(spans, e.nodeToSpan(st.node, e.parents[id]))
+	}
+	delete(e.runs, runID)
+	return e.client.ExportSpans(ctx, spans)
+}
+
+func (e *Exporter) Snapshot(_ context.Context, filter RunFilter) error {
+	e.filter = filter
+	return nil
+}
+
+func (e *Exporter) SnapshotState(_ context.Context, nodes []*model.Node, edges []*model.Edge) error {
+	for _, edge := range edges {
+		if edge.Type != model.EdgeParentChild {
+			continue
+		}
+		if edge.Rev >= e.edgeRev[edge.Dst] {
+			e.edgeRev[edge.Dst] = edge.Rev
+			e.parents[edge.Dst] = edge.Src
+		}
+	}
+	for _, n := range nodes {
+		if e.filter.RunID != "" && n.RunID == e.filter.RunID {
+			continue
+		}
+		run, ok := e.runs[n.RunID]
+		if !ok {
+			run = map[string]*nodeState{}
+			e.runs[n.RunID] = run
+		}
+		st, ok := run[n.ID]
+		if ok && n.Rev <= st.rev {
+			continue
+		}
+		if !ok {
+			st = &nodeState{}
+			run[n.ID] = st
+		}
+		st.node = n
+		st.rev = n.Rev
+	}
+	return nil
 }
 
 func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadOnlySpan {
