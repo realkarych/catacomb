@@ -3,12 +3,14 @@ package daemon
 import (
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -64,8 +66,12 @@ func TestIngestUnknownTypeNoError(t *testing.T) {
 }
 
 func TestIngestMalformedPayload(t *testing.T) {
-	d := New(tempStore(t))
-	require.Error(t, d.Ingest("PreToolUse", []byte("{not json}")))
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{not json}")))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
 }
 
 func TestIngestSeqMonotonic(t *testing.T) {
@@ -77,8 +83,12 @@ func TestIngestSeqMonotonic(t *testing.T) {
 }
 
 func TestIngestStoreError(t *testing.T) {
-	d := New(&errStore{failAppend: true})
-	require.Error(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
 }
 
 func TestRecoverRebuildsGraphsAndSeq(t *testing.T) {
@@ -120,6 +130,86 @@ func TestNewDefaultExecIDIsULID(t *testing.T) {
 	for _, execID := range d.execBySession {
 		assert.NotEmpty(t, execID)
 	}
+}
+
+type appendErrStore struct {
+	store.Store
+	mu          sync.Mutex
+	appends     int64
+	quarantined int64
+}
+
+func (s *appendErrStore) AppendAndApply(model.Observation, []*model.Node, []*model.Edge) error {
+	s.mu.Lock()
+	s.appends++
+	s.mu.Unlock()
+	return errors.New("append")
+}
+
+func (s *appendErrStore) Quarantine(model.QuarantineRecord) error {
+	s.mu.Lock()
+	s.quarantined++
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *appendErrStore) QuarantineCount() (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.quarantined, nil
+}
+
+type quarantineErrStore struct{ store.Store }
+
+func (s *quarantineErrStore) Quarantine(model.QuarantineRecord) error { return errors.New("q") }
+
+func TestIngestQuarantinesParseError(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{not json")))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestQuarantinesPersistError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestRecoversPanic(t *testing.T) {
+	orig := applyFn
+	applyFn = func(*reduce.Graph, model.Observation) { panic("boom") }
+	t.Cleanup(func() { applyFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestQuarantineWriteErrorLogged(t *testing.T) {
+	d := New(&quarantineErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{not json")))
+}
+
+func TestIngestPoisonDoesNotStopOtherRuns(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"good"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte("{poison")))
+	require.NoError(t, d.Ingest("UserPromptSubmit", []byte(`{"session_id":"good","prompt":"hi"}`)))
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	assert.NotEmpty(t, obs)
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
 }
 
 type errStore struct {

@@ -34,10 +34,7 @@ func (d *Daemon) handleHook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err := d.Ingest(r.PathValue("type"), payload); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	_ = d.Ingest(r.PathValue("type"), payload)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -2,13 +2,22 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 
 	"github.com/realkarych/catacomb/ingest/hook"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
+)
+
+var (
+	nowFn   = time.Now
+	applyFn = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
 )
 
 type Daemon struct {
@@ -18,6 +27,7 @@ type Daemon struct {
 	seq           uint64
 	graphs        map[string]*reduce.Graph
 	execBySession map[string]string
+	quarantined   int64
 }
 
 func New(s store.Store) *Daemon {
@@ -51,10 +61,22 @@ func (d *Daemon) Recover() error {
 	return nil
 }
 
-func (d *Daemon) Ingest(hookType string, payload []byte) error {
+func (d *Daemon) Ingest(hookType string, payload []byte) (err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			d.quarantine(hookType, payload, fmt.Sprintf("panic: %v", r))
+			err = nil
+		}
+	}()
+	if e := d.ingestLocked(hookType, payload); e != nil {
+		d.quarantine(hookType, payload, e.Error())
+	}
+	return nil
+}
 
+func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	sessionID := sessionIDOf(payload)
 	execID, ok := d.execBySession[sessionID]
 	if !ok {
@@ -71,13 +93,21 @@ func (d *Daemon) Ingest(hookType string, payload []byte) error {
 		d.graphs[execID] = g
 	}
 	for _, o := range obs {
-		g.Apply(o)
+		applyFn(g, o)
 		nodes, edges := g.Snapshot()
 		if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {
+	d.quarantined++
+	rec := model.QuarantineRecord{Raw: payload, HookType: hookType, Err: msg, At: nowFn().UTC()}
+	if err := d.store.Quarantine(rec); err != nil {
+		log.Printf("catacomb: quarantine write failed: %v", err)
+	}
 }
 
 func (d *Daemon) next() uint64 {
