@@ -401,6 +401,36 @@ func TestSnapshotStateNodeRevGuardDropsStale(t *testing.T) {
 	assert.Equal(t, codes.Ok, rec.batches[0][0].Status().Code)
 }
 
+func TestFlushRunPublicMethodExportsAndPrunesMaps(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}}))
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: 1, RunID: "r1", Edge: &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "root", Dst: "n1", Rev: 1}}))
+	require.NoError(t, e.FlushRun(context.Background(), "r1"))
+	require.Len(t, rec.batches, 1)
+	_, hasParent := e.parents["n1"]
+	assert.False(t, hasParent)
+	_, hasRev := e.edgeRev["n1"]
+	assert.False(t, hasRev)
+	_, hasRun := e.runs["r1"]
+	assert.False(t, hasRun)
+}
+
+func TestFlushRunUnknownRunIsNoop(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	require.NoError(t, e.FlushRun(context.Background(), "ghost"))
+	assert.Empty(t, rec.batches)
+}
+
+func TestFlushRunEmptyRunIsNoop(t *testing.T) {
+	rec := &recordExporter{}
+	e := newWithExporter(rec)
+	e.runs["empty"] = map[string]*nodeState{}
+	require.NoError(t, e.FlushRun(context.Background(), "empty"))
+	assert.Empty(t, rec.batches)
+}
+
 func edgesNil() []*model.Edge { return nil }
 
 type errExporter struct{}

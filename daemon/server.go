@@ -93,6 +93,8 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 
 const exporterBufSize = 1024
 
+var consumerLoopExitHook func()
+
 func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	d.mu.Lock()
 	endpoint := d.otlpEndpoint
@@ -110,6 +112,13 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 		nodes, edges := g.Snapshot()
 		_ = exp.SnapshotState(ctx, nodes, edges)
 	}
+	for _, g := range d.graphs {
+		for _, r := range g.RunsSnapshot() {
+			if r.EndedAt != nil {
+				_ = exp.FlushRun(ctx, r.ID)
+			}
+		}
+	}
 	consumer := d.bus.Subscribe(exporterBufSize)
 	d.exporterConsumer = consumer
 	d.mu.Unlock()
@@ -120,7 +129,13 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 				d.bus.Unsubscribe(consumer)
 				_ = exp.Shutdown(ctx)
 				return
-			case delta := <-consumer.C:
+			case delta, ok := <-consumer.C:
+				if !ok {
+					if consumerLoopExitHook != nil {
+						consumerLoopExitHook()
+					}
+					return
+				}
 				_ = exp.ApplyDelta(ctx, delta)
 			}
 		}

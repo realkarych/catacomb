@@ -159,7 +159,7 @@ func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
 		}
 		return nil
 	case cdc.DeltaSessionEnded, cdc.DeltaRunEnded:
-		return e.flushRun(ctx, d.RunID)
+		return e.FlushRun(ctx, d.RunID)
 	default:
 		return nil
 	}
@@ -186,7 +186,7 @@ func (e *Exporter) upsertNode(d cdc.GraphDelta) {
 	st.rev = d.Rev
 }
 
-func (e *Exporter) flushRun(ctx context.Context, runID string) error {
+func (e *Exporter) FlushRun(ctx context.Context, runID string) error {
 	run, ok := e.runs[runID]
 	if !ok || len(run) == 0 {
 		return nil
@@ -194,6 +194,10 @@ func (e *Exporter) flushRun(ctx context.Context, runID string) error {
 	spans := make([]sdktrace.ReadOnlySpan, 0, len(run))
 	for id, st := range run {
 		spans = append(spans, e.nodeToSpan(st.node, e.parents[id]))
+	}
+	for id := range run {
+		delete(e.parents, id)
+		delete(e.edgeRev, id)
 	}
 	delete(e.runs, runID)
 	return e.client.ExportSpans(ctx, spans)
