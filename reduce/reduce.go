@@ -4,8 +4,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
+
+func (g *Graph) emitNode(n *model.Node, o model.Observation) {
+	g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: o.Seq, Node: n, RunID: o.RunID, ExecutionID: o.ExecutionID})
+}
 
 func (g *Graph) ApplyAll(obs []model.Observation) {
 	for _, o := range obs {
@@ -24,26 +29,31 @@ func (g *Graph) Apply(o model.Observation) {
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
 		n.Status = resolveStatus(n.Status, model.StatusRunning)
+		g.emitNode(n, o)
 	case "session_end":
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
 		ts := o.EventTime
 		n.TEnd = &ts
 		n.Status = resolveStatus(n.Status, model.StatusOK)
-		g.cascadeStatus(n.ID, model.StatusUnknown)
+		g.emitNode(n, o)
+		g.cascadeStatus(n.ID, model.StatusUnknown, o.Seq)
 		r := g.Runs[o.RunID]
 		r.Status = model.StatusOK
 		ended := o.EventTime
 		r.EndedAt = &ended
 		r.EndReason = "session_ended"
+		g.emit(cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
+		g.emitNode(n, o)
 		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
 		g.applyTokens(n, o.Attrs, o.Source)
+		g.emitNode(n, o)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
 	case "subagent_stop":
@@ -52,6 +62,7 @@ func (g *Graph) Apply(o model.Observation) {
 		n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
 		g.stamp(n, o)
 		n.Attrs = o.Attrs
+		g.emitNode(n, o)
 		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "run_ended":
 		g.applyRunEnded(o)
@@ -84,10 +95,11 @@ func (g *Graph) applyTool(o model.Observation) {
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
 		if n.Status == model.StatusCancelled || n.Status == model.StatusSuperseded {
-			g.cascadeStatus(n.ID, n.Status)
+			g.cascadeStatus(n.ID, n.Status, o.Seq)
 		}
 	}
 	mergePayload(n, o.Payload)
+	g.emitNode(n, o)
 	parent := model.SessionNodeID(o.ExecutionID)
 	if o.Correlation.MessageID != "" {
 		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
@@ -107,6 +119,7 @@ func (g *Graph) applySubagent(o model.Observation) {
 	ts := o.EventTime
 	n.TEnd = &ts
 	n.Status = resolveStatus(n.Status, model.StatusOK)
+	g.emitNode(n, o)
 	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 }
 
@@ -220,6 +233,7 @@ func (g *Graph) ensureRun(o model.Observation) {
 		started := o.EventTime
 		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
 		g.Runs[o.RunID] = r
+		g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunStarted, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
 	}
 	if r.Status == model.StatusAbandoned {
 		r.Status = model.StatusRunning
@@ -244,8 +258,9 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 	if reason, ok := o.Attrs["reason"].(string); ok {
 		r.EndReason = reason
 	}
-	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
-	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
+	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
+	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
+	g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
 }
 
 func appendUnique(xs []string, x string) []string {
@@ -258,7 +273,7 @@ func appendUnique(xs []string, x string) []string {
 	return append(xs, x)
 }
 
-func (g *Graph) cascadeStatus(rootID string, status model.Status) {
+func (g *Graph) cascadeStatus(rootID string, status model.Status, seq uint64) {
 	children := map[string][]string{}
 	for _, e := range g.Edges {
 		if e.Type == model.EdgeParentChild {
@@ -276,14 +291,14 @@ func (g *Graph) cascadeStatus(rootID string, status model.Status) {
 			}
 			seen[c] = true
 			queue = append(queue, c)
-			g.applyCascade(c, rootID, status)
+			g.applyCascade(c, rootID, status, seq)
 		}
 	}
 }
 
-func (g *Graph) applyCascade(id, rootID string, status model.Status) {
+func (g *Graph) applyCascade(id, rootID string, status model.Status, seq uint64) {
 	if status == model.StatusUnknown {
-		g.closeIfOpen(id, status)
+		g.closeIfOpen(id, status, seq)
 		return
 	}
 	n := g.Nodes[id]
@@ -295,15 +310,17 @@ func (g *Graph) applyCascade(id, rootID string, status model.Status) {
 		n.Attrs = map[string]any{}
 	}
 	n.Attrs["cancel_cause"] = rootID
+	g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
 }
 
-func (g *Graph) closeIfOpen(id string, status model.Status) {
+func (g *Graph) closeIfOpen(id string, status model.Status, seq uint64) {
 	n := g.Nodes[id]
 	if n == nil {
 		return
 	}
 	if n.Status == model.StatusRunning || n.Status == model.StatusPending {
 		n.Status = resolveStatus(n.Status, status)
+		g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
 	}
 }
 

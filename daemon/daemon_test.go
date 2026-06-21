@@ -14,6 +14,7 @@ import (
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 
+	"github.com/realkarych/catacomb/cdc"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
@@ -661,4 +662,118 @@ func TestIngestOTLPShardsByGenAIConversationID(t *testing.T) {
 	runs := g.RunsSnapshot()
 	require.Len(t, runs, 1)
 	assert.Equal(t, "conv-1", runs[0].ID)
+}
+
+func drainDeltas(t *testing.T, c *cdc.Consumer, want int) []cdc.GraphDelta {
+	t.Helper()
+	var got []cdc.GraphDelta
+	require.Eventually(t, func() bool {
+		for {
+			select {
+			case d := <-c.C:
+				got = append(got, d)
+			default:
+				return len(got) >= want
+			}
+		}
+	}, time.Second, time.Millisecond)
+	return got
+}
+
+func hasKind(ds []cdc.GraphDelta, k cdc.GraphDeltaKind) bool {
+	for _, d := range ds {
+		if d.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+func TestLiveDeltasFlowToConsumer(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	c := d.Subscribe(64)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	ds := drainDeltas(t, c, 2)
+	assert.True(t, hasKind(ds, cdc.DeltaRunStarted))
+	assert.True(t, hasKind(ds, cdc.DeltaNodeUpsert))
+}
+
+func TestDeltasDroppedReportedInMetrics(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	c := d.Subscribe(0)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	_ = c
+	m := d.metricsSnapshot()
+	assert.Positive(t, m.DeltasDropped)
+}
+
+func TestReloadDoesNotRepublishHistory(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	d.dropShardForTest("s1")
+	c := d.Subscribe(64)
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
+	ds := drainDeltas(t, c, 1)
+	assert.False(t, hasKind(ds, cdc.DeltaRunStarted))
+	for _, x := range ds {
+		assert.NotEqual(t, uint64(1), x.Rev, "historical seq=1 delta was republished")
+	}
+}
+
+func TestRecoverDoesNotPublish(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	d2 := New(s)
+	c := d2.Subscribe(64)
+	require.NoError(t, d2.Recover())
+	select {
+	case got := <-c.C:
+		t.Fatalf("Recover republished a delta: %+v", got)
+	default:
+	}
+}
+
+func TestIngestOTLPReloadDoesNotRepublish(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	d.dropShardForTest("s1")
+	c := d.Subscribe(64)
+	req := makeOTLPToolReq("s1", "t1", "Bash")
+	require.NoError(t, d.IngestOTLP(req))
+	ds := drainDeltas(t, c, 1)
+	assert.False(t, hasKind(ds, cdc.DeltaRunStarted))
+	for _, x := range ds {
+		assert.NotEqual(t, uint64(1), x.Rev, "historical seq=1 delta was republished via OTLP reload")
+	}
+}
+
+func TestPublishedDeltaIsIndependentSnapshot(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	c := d.Subscribe(64)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	ds := drainDeltas(t, c, 1)
+	var toolDelta *cdc.GraphDelta
+	for i := range ds {
+		if ds[i].Kind == cdc.DeltaNodeUpsert && ds[i].Node != nil {
+			toolDelta = &ds[i]
+			break
+		}
+	}
+	require.NotNil(t, toolDelta)
+	statusAtDrain := toolDelta.Node.Status
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
+	assert.Equal(t, statusAtDrain, toolDelta.Node.Status, "published delta node was mutated by a later apply")
 }
