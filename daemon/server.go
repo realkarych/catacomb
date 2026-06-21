@@ -5,8 +5,10 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
+	"time"
 )
 
 func (d *Daemon) Handler(token string) http.Handler {
@@ -38,10 +40,26 @@ func (d *Daemon) handleHook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (d *Daemon) reapLoop(ctx context.Context) {
+	ticker := time.NewTicker(d.reaperWindow)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := d.reapIdle(nowFn()); err != nil {
+				log.Printf("catacomb: reaper: %v", err)
+			}
+		}
+	}
+}
+
 func (d *Daemon) Serve(ctx context.Context, ln net.Listener, token string) error {
 	srv := &http.Server{Handler: d.Handler(token)}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go d.reapLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()

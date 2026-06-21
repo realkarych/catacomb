@@ -28,6 +28,8 @@ type Daemon struct {
 	graphs        map[string]*reduce.Graph
 	execBySession map[string]string
 	quarantined   int64
+	reaperWindow  time.Duration
+	lastSeen      map[string]time.Time
 }
 
 func New(s store.Store) *Daemon {
@@ -36,8 +38,12 @@ func New(s store.Store) *Daemon {
 		newExecID:     func() string { return ulid.Make().String() },
 		graphs:        map[string]*reduce.Graph{},
 		execBySession: map[string]string{},
+		lastSeen:      map[string]time.Time{},
+		reaperWindow:  30 * time.Minute,
 	}
 }
+
+func (d *Daemon) SetReaperWindow(w time.Duration) { d.reaperWindow = w }
 
 func (d *Daemon) Recover() error {
 	d.mu.Lock()
@@ -55,6 +61,7 @@ func (d *Daemon) Recover() error {
 		}
 		g.Apply(o)
 		d.execBySession[o.RunID] = o.ExecutionID
+		d.lastSeen[o.RunID] = o.ObservedAt
 		if o.Seq > max {
 			max = o.Seq
 		}
@@ -105,6 +112,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 		if err := d.applyAndPersist(g, o); err != nil {
 			return err
 		}
+		d.lastSeen[o.RunID] = o.ObservedAt
 	}
 	return nil
 }
@@ -139,4 +147,35 @@ func sessionIDOf(payload []byte) string {
 		return ""
 	}
 	return e.SessionID
+}
+
+func (d *Daemon) reapIdle(now time.Time) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for execID, g := range d.graphs {
+		for runID, r := range g.Runs {
+			if r.Status != model.StatusRunning {
+				continue
+			}
+			last := d.lastSeen[runID]
+			if now.Sub(last) < d.reaperWindow {
+				continue
+			}
+			o := model.Observation{
+				ObsID:       ulid.Make().String(),
+				RunID:       runID,
+				ExecutionID: execID,
+				Source:      model.SourceHook,
+				Kind:        "run_ended",
+				Attrs:       map[string]any{"reason": "timeout"},
+				EventTime:   now.UTC(),
+				ObservedAt:  now.UTC(),
+				Seq:         d.next(),
+			}
+			if err := d.applyAndPersist(g, o); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

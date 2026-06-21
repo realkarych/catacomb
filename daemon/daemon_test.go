@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,6 +147,12 @@ func (s *appendErrStore) AppendAndApply(model.Observation, []*model.Node, []*mod
 	return errors.New("append")
 }
 
+func (s *appendErrStore) appendCount() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appends
+}
+
 func (s *appendErrStore) Quarantine(model.QuarantineRecord) error {
 	s.mu.Lock()
 	s.quarantined++
@@ -267,6 +274,50 @@ func TestIngestRunUpsertError(t *testing.T) {
 	d := New(&runUpsertErrStore{Store: tempStore(t)})
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestReapIdleAbandonsQuiescentRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now().Add(time.Hour)))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, model.StatusAbandoned, runs[0].Status)
+	assert.Equal(t, "timeout", runs[0].EndReason)
+}
+
+func TestReapIdleSkipsActiveRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Hour)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now()))
+	open, err := s.ListOpenRuns()
+	require.NoError(t, err)
+	assert.Len(t, open, 1)
+}
+
+func TestReapIdleSkipsAlreadyEndedRun(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.reapIdle(time.Now().Add(time.Hour)))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, model.StatusOK, runs[0].Status)
+}
+
+func TestReapIdlePersistError(t *testing.T) {
+	d := New(&appendErrStore{Store: tempStore(t)})
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Error(t, d.reapIdle(time.Now().Add(time.Hour)))
 }
 
 type errStore struct {
