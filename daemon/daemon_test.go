@@ -350,9 +350,10 @@ func (e *errStore) ObservationsSince(uint64) ([]model.Observation, error) {
 	return nil, nil
 }
 
-func (e *errStore) UpsertRun(model.Run) error               { return nil }
-func (e *errStore) ListOpenRuns() ([]model.Run, error)      { return nil, nil }
-func (e *errStore) Runs() ([]model.Run, error)              { return nil, nil }
-func (e *errStore) Quarantine(model.QuarantineRecord) error { return nil }
-func (e *errStore) QuarantineCount() (int64, error)         { return 0, nil }
-func (e *errStore) Close() error                            { return nil }
+func (e *errStore) UpsertRun(model.Run) error                                    { return nil }
+func (e *errStore) ListOpenRuns() ([]model.Run, error)                           { return nil, nil }
+func (e *errStore) Runs() ([]model.Run, error)                                   { return nil, nil }
+func (e *errStore) Quarantine(model.QuarantineRecord) error                      { return nil }
+func (e *errStore) QuarantineCount() (int64, error)                              { return 0, nil }
+func (e *errStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
+func (e *errStore) Close() error                                                 { return nil }

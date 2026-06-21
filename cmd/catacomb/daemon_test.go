@@ -36,7 +36,10 @@ func (f *failSinceStore) ListOpenRuns() ([]model.Run, error)      { return nil, 
 func (f *failSinceStore) Runs() ([]model.Run, error)              { return nil, nil }
 func (f *failSinceStore) Quarantine(model.QuarantineRecord) error { return nil }
 func (f *failSinceStore) QuarantineCount() (int64, error)         { return 0, nil }
-func (f *failSinceStore) Close() error                            { return nil }
+func (f *failSinceStore) ObservationsForExecution(string) ([]model.Observation, error) {
+	return nil, nil
+}
+func (f *failSinceStore) Close() error { return nil }
 
 func openFailSince(string) (store.Store, error) {
 	return &failSinceStore{}, nil

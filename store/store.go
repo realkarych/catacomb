@@ -7,6 +7,7 @@ type Store interface {
 	AppendAndApply(obs model.Observation, nodes []*model.Node, edges []*model.Edge) error
 	MaxSeq() (uint64, error)
 	ObservationsSince(seq uint64) ([]model.Observation, error)
+	ObservationsForExecution(executionID string) ([]model.Observation, error)
 	UpsertRun(r model.Run) error
 	ListOpenRuns() ([]model.Run, error)
 	Runs() ([]model.Run, error)

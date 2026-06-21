@@ -348,3 +348,30 @@ func TestQuarantineCountQueryError(t *testing.T) {
 	_, err := s.QuarantineCount()
 	assert.Error(t, err)
 }
+
+func TestObservationsForExecution(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "a", RunID: "s1", ExecutionID: "e1", Seq: 1, Kind: "session_start"}, nil, nil))
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "b", RunID: "s2", ExecutionID: "e2", Seq: 2, Kind: "session_start"}, nil, nil))
+	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "c", RunID: "s1", ExecutionID: "e1", Seq: 3, Kind: "session_end"}, nil, nil))
+	obs, err := s.ObservationsForExecution("e1")
+	require.NoError(t, err)
+	require.Len(t, obs, 2)
+	assert.Equal(t, uint64(1), obs[0].Seq)
+	assert.Equal(t, uint64(3), obs[1].Seq)
+}
+
+func TestObservationsForExecutionQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.ObservationsForExecution("e1")
+	assert.Error(t, err)
+}
+
+func TestObservationsForExecutionDecodeError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('bad','s1','e1',1,'{not json}')`)
+	require.NoError(t, err)
+	_, err = s.ObservationsForExecution("e1")
+	assert.Error(t, err)
+}
