@@ -536,6 +536,17 @@ func TestStopDoesNotTerminateRun(t *testing.T) {
 	assert.Equal(t, model.StatusRunning, g.Nodes[model.SessionNodeID("e1")].Status)
 }
 
+func TestRankSupersededAndAbandonedAreProvisional(t *testing.T) {
+	assert.Equal(t, 2, rank(model.StatusSuperseded))
+	assert.Equal(t, 2, rank(model.StatusAbandoned))
+}
+
+func TestResolveStatusSupersededOverRunningButUnderTerminal(t *testing.T) {
+	assert.Equal(t, model.StatusSuperseded, resolveStatus(model.StatusRunning, model.StatusSuperseded))
+	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusSuperseded, model.StatusOK))
+	assert.Equal(t, model.StatusSuperseded, resolveStatus(model.StatusUnknown, model.StatusSuperseded))
+}
+
 func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 	g := NewGraph()
 	o := model.Observation{

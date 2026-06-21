@@ -227,7 +227,7 @@ func rank(s model.Status) int {
 	switch s {
 	case model.StatusOK, model.StatusError, model.StatusBlocked:
 		return 3
-	case model.StatusCancelled, model.StatusUnknown:
+	case model.StatusCancelled, model.StatusUnknown, model.StatusSuperseded, model.StatusAbandoned:
 		return 2
 	case model.StatusRunning:
 		return 1

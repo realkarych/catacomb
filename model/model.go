@@ -39,14 +39,15 @@ const (
 type Status string
 
 const (
-	StatusPending   Status = "pending"
-	StatusRunning   Status = "running"
-	StatusOK        Status = "ok"
-	StatusError     Status = "error"
-	StatusBlocked   Status = "blocked"
-	StatusCancelled Status = "cancelled"
-	StatusUnknown   Status = "unknown"
-	StatusAbandoned Status = "abandoned"
+	StatusPending    Status = "pending"
+	StatusRunning    Status = "running"
+	StatusOK         Status = "ok"
+	StatusError      Status = "error"
+	StatusBlocked    Status = "blocked"
+	StatusCancelled  Status = "cancelled"
+	StatusUnknown    Status = "unknown"
+	StatusSuperseded Status = "superseded"
+	StatusAbandoned  Status = "abandoned"
 )
 
 type Correlation struct {
