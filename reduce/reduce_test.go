@@ -1,6 +1,8 @@
 package reduce
 
 import (
+	"encoding/json"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -460,6 +462,12 @@ func TestGateAcceptsOTelEdgeWhenToolUseIDPresent(t *testing.T) {
 	g.Apply(o)
 	tool := model.ToolCallID("e1", "tA")
 	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
+
+	g2 := NewGraph()
+	o2 := otelTool("e2", "s2", "tB", "spanB", "spanRoot2", 1)
+	g2.Apply(o2)
+	tool2 := model.ToolCallID("e2", "tB")
+	require.Contains(t, g2.Edges, model.EdgeID("e2", model.EdgeParentChild, model.SessionNodeID("e2"), tool2))
 }
 
 func TestGateSkipsOTelEdgeWhenNoChildrenAndNoToolUseID(t *testing.T) {
@@ -688,4 +696,194 @@ func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 	assert.Equal(t, model.NodeMarker, n.Type)
 	assert.Equal(t, "auto", n.Attrs["trigger"])
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), n.ID))
+}
+
+func TestSourceRank(t *testing.T) {
+	assert.Equal(t, 1, sourceRank(model.SourceOTel))
+	assert.Equal(t, 0, sourceRank(model.SourceHook))
+	assert.Equal(t, 0, sourceRank(model.SourceJSONL))
+}
+
+func TestSetNameEmptyIsNoOp(t *testing.T) {
+	g := NewGraph()
+	o := toolObs("e1", "s1", "t1", "Bash", "running", 1)
+	g.Apply(o)
+	id := model.ToolCallID("e1", "t1")
+	n := g.Nodes[id]
+	o2 := toolObs("e1", "s1", "t1", "", "running", 2)
+	o2.Attrs["name"] = ""
+	g.Apply(o2)
+	assert.Equal(t, "Bash", n.Name)
+}
+
+func otelTurn(exec, runID, msg string, tIn, tOut int64, ts time.Time, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceOTel, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: msg},
+		Attrs:       map[string]any{"tokens_in": tIn, "tokens_out": tOut},
+		EventTime:   ts, ObservedAt: ts, Seq: seq,
+	}
+}
+
+func hookTurn(exec, runID, msg string, tIn, tOut int64, ts time.Time, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: msg},
+		Attrs:       map[string]any{"tokens_in": tIn, "tokens_out": tOut},
+		EventTime:   ts, ObservedAt: ts, Seq: seq,
+	}
+}
+
+func TestTokensOTelWinsRegardlessOfOrder(t *testing.T) {
+	t0 := time.Unix(10, 0).UTC()
+	h := hookTurn("e1", "s1", "m1", 1, 1, t0, 1)
+	o := otelTurn("e1", "s1", "m1", 99, 88, t0, 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{h, o})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{o, h})
+	id := model.AssistantTurnID("e1", "m1")
+	assert.Equal(t, int64(99), *fwd.Nodes[id].TokensIn)
+	assert.Equal(t, int64(99), *rev.Nodes[id].TokensIn)
+	assert.Equal(t, int64(88), *rev.Nodes[id].TokensOut)
+
+	h2 := hookTurn("e2", "s2", "m2", 3, 4, t0, 1)
+	g2 := NewGraph()
+	g2.Apply(h2)
+	id2 := model.AssistantTurnID("e2", "m2")
+	assert.Equal(t, int64(3), *g2.Nodes[id2].TokensIn)
+}
+
+func TestTokensHookKeptWhenNoOTel(t *testing.T) {
+	g := NewGraph()
+	g.Apply(hookTurn("e1", "s1", "m1", 7, 3, time.Unix(1, 0).UTC(), 1))
+	id := model.AssistantTurnID("e1", "m1")
+	assert.Equal(t, int64(7), *g.Nodes[id].TokensIn)
+}
+
+func TestTimingOTelOutranksHookEitherOrder(t *testing.T) {
+	tHook := time.Unix(100, 0).UTC()
+	tOTel := time.Unix(200, 0).UTC()
+	h := hookTurn("e1", "s1", "m1", 0, 0, tHook, 5)
+	o := otelTurn("e1", "s1", "m1", 0, 0, tOTel, 1)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{h, o})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{o, h})
+	id := model.AssistantTurnID("e1", "m1")
+	assert.Equal(t, tOTel, *fwd.Nodes[id].TStart)
+	assert.Equal(t, tOTel, *rev.Nodes[id].TStart)
+}
+
+func TestTimingEqualRankKeepsEarliest(t *testing.T) {
+	early := time.Unix(100, 0).UTC()
+	late := time.Unix(200, 0).UTC()
+	a := hookTurn("e1", "s1", "m1", 0, 0, late, 1)
+	b := hookTurn("e1", "s1", "m1", 0, 0, early, 2)
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{a, b})
+	id := model.AssistantTurnID("e1", "m1")
+	assert.Equal(t, early, *g.Nodes[id].TStart)
+}
+
+func TestNameLowestSeqWinsRegardlessOfOrder(t *testing.T) {
+	t0 := time.Unix(1, 0).UTC()
+	lo := toolObs("e1", "s1", "t1", "EarlyName", "running", 2)
+	hi := toolObs("e1", "s1", "t1", "LateName", "running", 9)
+	_ = t0
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{hi, lo})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{lo, hi})
+	id := model.ToolCallID("e1", "t1")
+	assert.Equal(t, "EarlyName", fwd.Nodes[id].Name)
+	assert.Equal(t, "EarlyName", rev.Nodes[id].Name)
+}
+
+func permute(obs []model.Observation) [][]model.Observation {
+	if len(obs) <= 1 {
+		return [][]model.Observation{append([]model.Observation(nil), obs...)}
+	}
+	var out [][]model.Observation
+	for i := range obs {
+		rest := append(append([]model.Observation(nil), obs[:i]...), obs[i+1:]...)
+		for _, p := range permute(rest) {
+			out = append(out, append([]model.Observation{obs[i]}, p...))
+		}
+	}
+	return out
+}
+
+func TestReductionCommutativity(t *testing.T) {
+	t0 := time.Unix(100, 0).UTC()
+	obs := []model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		hookTurn("e1", "s1", "m1", 5, 2, t0, 2),
+		otelTurn("e1", "s1", "m1", 50, 20, t0.Add(time.Second), 3),
+		toolObs("e1", "s1", "t1", "Bash", "running", 4),
+		toolObs("e1", "s1", "t1", "Bash", string(model.StatusCancelled), 6),
+		otelTool("e1", "s1", "t2", "spanLeaf", "spanRoot", 7),
+	}
+	perms := permute(obs)
+	var want string
+	for i, p := range perms {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}
+
+func canonGraph(g *Graph) string {
+	type nodeView struct {
+		ID     string
+		Type   model.NodeType
+		Name   string
+		Status model.Status
+		Rev    uint64
+		TStart string
+		TIn    string
+		TOut   string
+		Cause  string
+	}
+	var nv []nodeView
+	for id, n := range g.Nodes {
+		v := nodeView{ID: id, Type: n.Type, Name: n.Name, Status: n.Status, Rev: n.Rev}
+		if n.TStart != nil {
+			v.TStart = n.TStart.UTC().Format(time.RFC3339Nano)
+		}
+		if n.TokensIn != nil {
+			v.TIn = strconv.FormatInt(*n.TokensIn, 10)
+		}
+		if n.TokensOut != nil {
+			v.TOut = strconv.FormatInt(*n.TokensOut, 10)
+		}
+		if n.Attrs != nil {
+			if c, ok := n.Attrs["cancel_cause"].(string); ok {
+				v.Cause = c
+			}
+		}
+		nv = append(nv, v)
+	}
+	sort.Slice(nv, func(i, j int) bool { return nv[i].ID < nv[j].ID })
+	type edgeView struct {
+		ID  string
+		Rev uint64
+	}
+	var ev []edgeView
+	for id, e := range g.Edges {
+		ev = append(ev, edgeView{ID: id, Rev: e.Rev})
+	}
+	sort.Slice(ev, func(i, j int) bool { return ev[i].ID < ev[j].ID })
+	b, _ := json.Marshal(struct {
+		Nodes []nodeView
+		Edges []edgeView
+	}{nv, ev})
+	return string(b)
 }

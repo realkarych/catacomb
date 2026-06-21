@@ -7,10 +7,17 @@ type Graph struct {
 	Edges        map[string]*model.Edge
 	Runs         map[string]*model.Run
 	spanChildren map[string]bool
+	stamps       map[string]*fieldStamps
 }
 
 func NewGraph() *Graph {
-	return &Graph{Nodes: map[string]*model.Node{}, Edges: map[string]*model.Edge{}, Runs: map[string]*model.Run{}, spanChildren: map[string]bool{}}
+	return &Graph{
+		Nodes:        map[string]*model.Node{},
+		Edges:        map[string]*model.Edge{},
+		Runs:         map[string]*model.Run{},
+		spanChildren: map[string]bool{},
+		stamps:       map[string]*fieldStamps{},
+	}
 }
 
 func (g *Graph) RunsSnapshot() []model.Run {

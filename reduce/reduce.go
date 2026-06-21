@@ -43,7 +43,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
-		applyTokens(n, o.Attrs)
+		g.applyTokens(n, o.Attrs, o.Source)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
 	case "subagent_stop":
@@ -78,8 +78,8 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Type = model.NodeMCPCall
 	}
 	g.stamp(n, o)
-	if name, ok := o.Attrs["name"].(string); ok && n.Name == "" {
-		n.Name = name
+	if name, ok := o.Attrs["name"].(string); ok {
+		g.setName(n, o, name)
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
@@ -110,8 +110,39 @@ func (g *Graph) applySubagent(o model.Observation) {
 	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 }
 
+func sourceRank(s model.Source) int {
+	if s == model.SourceOTel {
+		return 1
+	}
+	return 0
+}
+
+type fieldStamps struct {
+	timingRank     int
+	haveTiming     bool
+	nameSeq        uint64
+	haveName       bool
+	haveOTelTokens bool
+}
+
+func (g *Graph) stampsFor(id string) *fieldStamps {
+	fs, ok := g.stamps[id]
+	if !ok {
+		fs = &fieldStamps{}
+		g.stamps[id] = fs
+	}
+	return fs
+}
+
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
-	if n.TStart == nil || o.EventTime.Before(*n.TStart) {
+	fs := g.stampsFor(n.ID)
+	r := sourceRank(o.Source)
+	if !fs.haveTiming || r > fs.timingRank {
+		ts := o.EventTime
+		n.TStart = &ts
+		fs.timingRank = r
+		fs.haveTiming = true
+	} else if r == fs.timingRank && (n.TStart == nil || o.EventTime.Before(*n.TStart)) {
 		ts := o.EventTime
 		n.TStart = &ts
 	}
@@ -119,6 +150,18 @@ func (g *Graph) stamp(n *model.Node, o model.Observation) {
 		n.Rev = o.Seq
 	}
 	n.Sources = append(n.Sources, model.SourceRef{Source: o.Source, ObsID: o.ObsID, ObservedAt: o.ObservedAt})
+}
+
+func (g *Graph) setName(n *model.Node, o model.Observation, name string) {
+	if name == "" {
+		return
+	}
+	fs := g.stampsFor(n.ID)
+	if !fs.haveName || o.Seq < fs.nameSeq {
+		n.Name = name
+		fs.nameSeq = o.Seq
+		fs.haveName = true
+	}
 }
 
 func mergePayload(n *model.Node, p *model.Payload) {
@@ -138,7 +181,14 @@ func mergePayload(n *model.Node, p *model.Payload) {
 	n.PayloadHash = n.Payload.Hash
 }
 
-func applyTokens(n *model.Node, attrs map[string]any) {
+func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) {
+	fs := g.stampsFor(n.ID)
+	if src != model.SourceOTel && fs.haveOTelTokens {
+		return
+	}
+	if src == model.SourceOTel {
+		fs.haveOTelTokens = true
+	}
 	if v, ok := toInt64(attrs["tokens_in"]); ok {
 		n.TokensIn = &v
 	}
