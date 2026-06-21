@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"io"
 	"net"
@@ -19,7 +20,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 
 func (d *Daemon) authed(token string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
