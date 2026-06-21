@@ -32,3 +32,7 @@ Adopt an explicit **threat model and trust boundary** for the daemon; "single-op
 - **+** Composes with redaction (ADR-0020) for defense in depth.
 - **−** Unix-socket-first adds platform nuance (Windows named pipes; TCP fallback with token); the forwarder and receivers must support both.
 - **−** A token to generate, store, and rotate; residual same-user risk remains and is documented rather than solved.
+
+## Amendments
+
+- **2026-06-21 — cross-platform transport (M0.2b):** the daemon's hook ingress uses **loopback TCP (`127.0.0.1:0`) + a per-daemon bearer token** (clause 2's TCP path), not the unix-domain socket of clause 1, so the daemon supports Linux/macOS/Windows uniformly. The token (32 random bytes from `crypto/rand`, hex) lives with the dynamic address in a `0600` **discovery file** (`$XDG_RUNTIME_DIR/catacomb/daemon.json` → `~/.catacomb/run/daemon.json` → temp); the forwarder reads it and sends `Authorization: Bearer <token>`, which the daemon verifies (401 otherwise). Clause 1 (unix socket) stays valid on unix but is unused in v1 — one transport keeps the forwarder and receiver simple and sidesteps the "Windows named pipes" nuance flagged in Consequences. Clause 5's residual same-user risk (the token is readable by same-user processes via the discovery file) stands; binding to `127.0.0.1` keeps it off the network.
