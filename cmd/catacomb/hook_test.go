@@ -56,6 +56,16 @@ func TestForwardDelivers(t *testing.T) {
 	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 2*time.Second, 10*time.Millisecond)
 }
 
+func TestForwardNon2xx(t *testing.T) {
+	_, discovery := runTestDaemon(t)
+	d, err := daemon.ReadDiscovery(discovery)
+	require.NoError(t, err)
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: d.Addr, Token: "wrong"}))
+	var warn bytes.Buffer
+	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{"session_id":"s1"}`)))
+	assert.Contains(t, warn.String(), "status 401")
+}
+
 func TestForwardStdinReadError(t *testing.T) {
 	var warn bytes.Buffer
 	forward(&warn, filepath.Join(t.TempDir(), "d.json"), "X", errReader{})

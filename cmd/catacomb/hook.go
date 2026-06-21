@@ -50,4 +50,7 @@ func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader) {
 		return
 	}
 	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Fprintf(warn, "catacomb hook: forward to %s: status %d\n", d.Addr, resp.StatusCode)
+	}
 }
