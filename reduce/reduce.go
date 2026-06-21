@@ -175,6 +175,7 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 	if reason, ok := o.Attrs["reason"].(string); ok {
 		r.EndReason = reason
 	}
+	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown)
 	g.closeOpenDescendants(model.SessionNodeID(o.ExecutionID))
 }
 
@@ -208,14 +209,18 @@ func (g *Graph) closeOpenDescendants(rootID string) {
 			}
 			seen[c] = true
 			queue = append(queue, c)
-			n := g.Nodes[c]
-			if n == nil {
-				continue
-			}
-			if rank(n.Status) < 2 {
-				n.Status = resolveStatus(n.Status, model.StatusUnknown)
-			}
+			g.closeIfOpen(c, model.StatusUnknown)
 		}
+	}
+}
+
+func (g *Graph) closeIfOpen(id string, status model.Status) {
+	n := g.Nodes[id]
+	if n == nil {
+		return
+	}
+	if n.Status == model.StatusRunning || n.Status == model.StatusPending {
+		n.Status = resolveStatus(n.Status, status)
 	}
 }
 
