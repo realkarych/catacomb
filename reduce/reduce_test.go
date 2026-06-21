@@ -1,6 +1,7 @@
 package reduce
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -269,11 +270,252 @@ func TestSnapshotReturnsAllNodesAndEdges(t *testing.T) {
 	assert.Len(t, edges, 1)
 }
 
-func TestIsTerminal(t *testing.T) {
-	assert.True(t, isTerminal(model.StatusOK))
-	assert.True(t, isTerminal(model.StatusError))
-	assert.True(t, isTerminal(model.StatusBlocked))
-	assert.True(t, isTerminal(model.StatusCancelled))
-	assert.False(t, isTerminal(model.StatusRunning))
-	assert.False(t, isTerminal(model.StatusPending))
+func TestResolveStatusGenuineLatches(t *testing.T) {
+	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusOK, model.StatusRunning))
+	assert.Equal(t, model.StatusError, resolveStatus(model.StatusError, model.StatusPending))
+}
+
+func TestResolveStatusGenuineSupersedesProvisional(t *testing.T) {
+	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusUnknown, model.StatusOK))
+	assert.Equal(t, model.StatusError, resolveStatus(model.StatusCancelled, model.StatusError))
+}
+
+func TestResolveStatusProvisionalOverRunning(t *testing.T) {
+	assert.Equal(t, model.StatusUnknown, resolveStatus(model.StatusRunning, model.StatusUnknown))
+}
+
+func TestResolveStatusProvisionalNotRevertedByRunning(t *testing.T) {
+	assert.Equal(t, model.StatusUnknown, resolveStatus(model.StatusUnknown, model.StatusRunning))
+}
+
+func TestResolveStatusRunningOverPending(t *testing.T) {
+	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusPending, model.StatusRunning))
+}
+
+func TestResolveStatusTieTakesNext(t *testing.T) {
+	assert.Equal(t, model.StatusError, resolveStatus(model.StatusOK, model.StatusError))
+	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusRunning, model.StatusRunning))
+}
+
+func sessionStartObs(exec, runID string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "session_start",
+		Correlation: model.Correlation{SessionID: runID},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func runEndedObs(exec, runID, reason string, seq uint64) model.Observation {
+	attrs := map[string]any{}
+	if reason != "" {
+		attrs["reason"] = reason
+	}
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "run_ended",
+		Correlation: model.Correlation{}, Attrs: attrs,
+		EventTime: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestRunOpensOnFirstObs(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, model.StatusRunning, r.Status)
+	require.NotNil(t, r.StartedAt)
+	assert.Equal(t, []string{"s1"}, r.SessionIDs)
+}
+
+func TestRunLastSeqTracksMaxIgnoringOutOfOrder(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 5),
+		toolObs("e1", "s1", "t1", "Bash", "running", 3),
+	})
+	assert.Equal(t, uint64(5), g.Runs["s1"].LastSeq)
+}
+
+func TestSessionEndEndsRunOK(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		sessionEndObs("e1", "s1", 2),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusOK, r.Status)
+	assert.Equal(t, "session_ended", r.EndReason)
+	require.NotNil(t, r.EndedAt)
+}
+
+func TestRunEndedAbandonsRunAndClosesDescendants(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t1", "Bash", "running", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+	})
+	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
+	assert.Equal(t, "timeout", g.Runs["s1"].EndReason)
+	assert.Equal(t, model.StatusUnknown, g.Nodes[model.ToolCallID("e1", "t1")].Status)
+}
+
+func TestRunEndedNoReason(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "", 2),
+	})
+	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
+	assert.Equal(t, "", g.Runs["s1"].EndReason)
+}
+
+func TestRunStatusGenuineSessionEndLatchesOverRunEnded(t *testing.T) {
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+		sessionEndObs("e1", "s1", 3),
+	})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{
+		sessionStartObs("e2", "s2", 1),
+		sessionEndObs("e2", "s2", 3),
+		runEndedObs("e2", "s2", "timeout", 4),
+	})
+	assert.Equal(t, model.StatusOK, fwd.Runs["s1"].Status)
+	assert.Equal(t, model.StatusOK, rev.Runs["s2"].Status)
+	assert.Equal(t, "session_ended", fwd.Runs["s1"].EndReason)
+	assert.Equal(t, "session_ended", rev.Runs["s2"].EndReason)
+}
+
+func TestRunReawakenFromAbandoned(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		runEndedObs("e1", "s1", "timeout", 2),
+		toolObs("e1", "s1", "t1", "Bash", "running", 3),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusRunning, r.Status)
+	assert.Nil(t, r.EndedAt)
+	assert.Equal(t, "", r.EndReason)
+}
+
+func TestRunsSnapshot(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	snap := g.RunsSnapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, "s1", snap[0].ID)
+}
+
+func TestRunsSnapshotMultipleRuns(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(sessionStartObs("e2", "s2", 2))
+	snap := g.RunsSnapshot()
+	require.Len(t, snap, 2)
+}
+
+func toolObs(exec, runID, toolUseID, name, status string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUseID},
+		Attrs:       map[string]any{"name": name, "status": status},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func sessionEndObs(exec, runID string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceHook, Kind: "session_end",
+		Correlation: model.Correlation{SessionID: runID},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestSessionEndClosesRunningDescendant(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t1", "Bash", "running", 1),
+		sessionEndObs("e1", "s1", 2),
+	})
+	assert.Equal(t, model.StatusUnknown, g.Nodes[model.ToolCallID("e1", "t1")].Status)
+}
+
+func TestSessionEndLeavesGenuineTerminal(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		toolObs("e2", "s2", "t1", "Read", "ok", 1),
+		sessionEndObs("e2", "s2", 2),
+	})
+	assert.Equal(t, model.StatusOK, g.Nodes[model.ToolCallID("e2", "t1")].Status)
+}
+
+func TestSessionEndLateGenuineSupersedesUnknown(t *testing.T) {
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t2", "Bash", "running", 1),
+		sessionEndObs("e1", "s1", 4),
+		toolObs("e1", "s1", "t2", "Bash", "ok", 5),
+	})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{
+		toolObs("e1", "s1", "t2", "Bash", "ok", 5),
+		toolObs("e1", "s1", "t2", "Bash", "running", 1),
+		sessionEndObs("e1", "s1", 4),
+	})
+	assert.Equal(t, model.StatusOK, fwd.Nodes[model.ToolCallID("e1", "t2")].Status)
+	assert.Equal(t, model.StatusOK, rev.Nodes[model.ToolCallID("e1", "t2")].Status)
+}
+
+func TestCloseOpenDescendantsHandlesDiamond(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("a", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("b", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.node("c", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "a")
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b")
+	g.upsertEdge("e1", "s1", "a", "c")
+	g.upsertEdge("e1", "s1", "b", "c")
+	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
+}
+
+func TestCloseOpenDescendantsSkipsMissingNode(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost")
+	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	assert.NotContains(t, g.Nodes, "ghost")
+}
+
+func TestCloseOpenDescendantsIgnoresNonParentChild(t *testing.T) {
+	g := NewGraph()
+	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
+	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
+	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeSequence, Src: model.SessionNodeID("e1"), Dst: "x"}
+	g.closeOpenDescendants(model.SessionNodeID("e1"))
+	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
+}
+
+func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "m1", RunID: "s1", ExecutionID: "e1", Source: model.SourceHook, Kind: "marker",
+		Correlation: model.Correlation{SessionID: "s1"},
+		Attrs:       map[string]any{"hook_event": "PreCompact", "trigger": "auto"},
+		EventTime:   time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	g.Apply(o)
+	n := g.Nodes[model.MarkerID("e1", "m1")]
+	require.NotNil(t, n)
+	assert.Equal(t, model.NodeMarker, n.Type)
+	assert.Equal(t, "auto", n.Attrs["trigger"])
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), n.ID))
 }

@@ -13,18 +13,25 @@ func (g *Graph) ApplyAll(obs []model.Observation) {
 }
 
 func (g *Graph) Apply(o model.Observation) {
+	g.ensureRun(o)
 	g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 	switch o.Kind {
 	case "session_start":
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
-		n.Status = strongerStatus(n.Status, model.StatusRunning)
+		n.Status = resolveStatus(n.Status, model.StatusRunning)
 	case "session_end":
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
 		ts := o.EventTime
 		n.TEnd = &ts
-		n.Status = strongerStatus(n.Status, model.StatusOK)
+		n.Status = resolveStatus(n.Status, model.StatusOK)
+		g.closeOpenDescendants(n.ID)
+		r := g.Runs[o.RunID]
+		r.Status = model.StatusOK
+		ended := o.EventTime
+		r.EndedAt = &ended
+		r.EndReason = "session_ended"
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
@@ -37,6 +44,13 @@ func (g *Graph) Apply(o model.Observation) {
 		g.applyTool(o)
 	case "subagent_stop":
 		g.applySubagent(o)
+	case "marker":
+		n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
+		g.stamp(n, o)
+		n.Attrs = o.Attrs
+		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
+	case "run_ended":
+		g.applyRunEnded(o)
 	}
 }
 
@@ -55,7 +69,7 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Name = name
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
-		n.Status = strongerStatus(n.Status, model.Status(s))
+		n.Status = resolveStatus(n.Status, model.Status(s))
 	}
 	mergePayload(n, o.Payload)
 	parent := model.SessionNodeID(o.ExecutionID)
@@ -76,7 +90,7 @@ func (g *Graph) applySubagent(o model.Observation) {
 	}
 	ts := o.EventTime
 	n.TEnd = &ts
-	n.Status = strongerStatus(n.Status, model.StatusOK)
+	n.Status = resolveStatus(n.Status, model.StatusOK)
 	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID)
 }
 
@@ -131,18 +145,100 @@ func isMCP(name string) bool {
 	return strings.HasPrefix(name, "mcp__")
 }
 
-func isTerminal(s model.Status) bool {
-	switch s {
-	case model.StatusOK, model.StatusError, model.StatusBlocked, model.StatusCancelled:
-		return true
-	default:
-		return false
+func (g *Graph) ensureRun(o model.Observation) {
+	r, ok := g.Runs[o.RunID]
+	if !ok {
+		started := o.EventTime
+		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
+		g.Runs[o.RunID] = r
+	}
+	if r.Status == model.StatusAbandoned {
+		r.Status = model.StatusRunning
+		r.EndedAt = nil
+		r.EndReason = ""
+	}
+	if o.Seq > r.LastSeq {
+		r.LastSeq = o.Seq
+	}
+	r.SessionIDs = appendUnique(r.SessionIDs, o.Correlation.SessionID)
+}
+
+func (g *Graph) applyRunEnded(o model.Observation) {
+	r := g.Runs[o.RunID]
+	if r.Status == model.StatusOK {
+		return
+	}
+	r.Status = model.StatusAbandoned
+	ended := o.EventTime
+	r.EndedAt = &ended
+	r.EndReason = ""
+	if reason, ok := o.Attrs["reason"].(string); ok {
+		r.EndReason = reason
+	}
+	g.closeOpenDescendants(model.SessionNodeID(o.ExecutionID))
+}
+
+func appendUnique(xs []string, x string) []string {
+	if x == "" {
+		return xs
+	}
+	for _, e := range xs {
+		if e == x {
+			return xs
+		}
+	}
+	return append(xs, x)
+}
+
+func (g *Graph) closeOpenDescendants(rootID string) {
+	children := map[string][]string{}
+	for _, e := range g.Edges {
+		if e.Type == model.EdgeParentChild {
+			children[e.Src] = append(children[e.Src], e.Dst)
+		}
+	}
+	seen := map[string]bool{rootID: true}
+	queue := []string{rootID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, c := range children[cur] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			queue = append(queue, c)
+			n := g.Nodes[c]
+			if n == nil {
+				continue
+			}
+			if rank(n.Status) < 2 {
+				n.Status = resolveStatus(n.Status, model.StatusUnknown)
+			}
+		}
 	}
 }
 
-func strongerStatus(cur, next model.Status) model.Status {
-	if isTerminal(cur) && !isTerminal(next) {
+func rank(s model.Status) int {
+	switch s {
+	case model.StatusOK, model.StatusError, model.StatusBlocked:
+		return 3
+	case model.StatusCancelled, model.StatusUnknown:
+		return 2
+	case model.StatusRunning:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func resolveStatus(cur, next model.Status) model.Status {
+	rc, rn := rank(cur), rank(next)
+	if rc == 3 && rn < 3 {
 		return cur
 	}
-	return next
+	if rn >= rc {
+		return next
+	}
+	return cur
 }

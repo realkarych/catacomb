@@ -5,10 +5,19 @@ import "github.com/realkarych/catacomb/model"
 type Graph struct {
 	Nodes map[string]*model.Node
 	Edges map[string]*model.Edge
+	Runs  map[string]*model.Run
 }
 
 func NewGraph() *Graph {
-	return &Graph{Nodes: map[string]*model.Node{}, Edges: map[string]*model.Edge{}}
+	return &Graph{Nodes: map[string]*model.Node{}, Edges: map[string]*model.Edge{}, Runs: map[string]*model.Run{}}
+}
+
+func (g *Graph) RunsSnapshot() []model.Run {
+	out := make([]model.Run, 0, len(g.Runs))
+	for _, r := range g.Runs {
+		out = append(out, *r)
+	}
+	return out
 }
 
 func (g *Graph) node(id, runID string, t model.NodeType) *model.Node {

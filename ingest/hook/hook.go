@@ -96,7 +96,14 @@ func build(hookType string, e envelope) *partial {
 		c.AgentID = e.AgentID
 		return &partial{kind: "subagent_stop", correlation: c, attrs: map[string]any{"subagent_type": e.AgentType}}
 	case "PreCompact", "Notification":
-		return &partial{kind: "marker", correlation: base, attrs: map[string]any{"hook_event": hookType}}
+		attrs := map[string]any{"hook_event": hookType}
+		if e.Trigger != "" {
+			attrs["trigger"] = e.Trigger
+		}
+		if e.Message != "" {
+			attrs["message"] = e.Message
+		}
+		return &partial{kind: "marker", correlation: base, attrs: attrs}
 	default:
 		return nil
 	}

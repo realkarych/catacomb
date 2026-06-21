@@ -19,15 +19,18 @@ const schema = `
 CREATE TABLE IF NOT EXISTS observations (obs_id TEXT PRIMARY KEY, run_id TEXT, execution_id TEXT, seq INTEGER, body TEXT);
 CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
+CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, status TEXT, body TEXT);
 CREATE INDEX IF NOT EXISTS idx_observations_run_seq ON observations(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
 CREATE INDEX IF NOT EXISTS idx_edges_run ON edges(run_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 `
 
 const (
 	insertObservation = `INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES(?,?,?,?,?)`
 	upsertNode        = `INSERT INTO nodes(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	upsertEdge        = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
+	upsertRun         = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
 )
 
 func OpenSQLite(path string) (Store, error) {
@@ -142,6 +145,61 @@ func scanObservations(rows rowScanner) ([]model.Observation, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store.ObservationsSince rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *sqliteStore) UpsertRun(r model.Run) error {
+	body, err := s.marshal(r)
+	if err != nil {
+		return fmt.Errorf("store.UpsertRun marshal: %w", err)
+	}
+	if _, err := s.db.Exec(upsertRun, r.ID, string(r.Status), string(body)); err != nil {
+		return fmt.Errorf("store.UpsertRun: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteStore) ListOpenRuns() ([]model.Run, error) {
+	rows, err := s.db.Query("SELECT body FROM runs WHERE status = ? ORDER BY run_id", string(model.StatusRunning))
+	if err != nil {
+		return nil, fmt.Errorf("store.ListOpenRuns: %w", err)
+	}
+	out, err := scanRuns(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) Runs() ([]model.Run, error) {
+	rows, err := s.db.Query("SELECT body FROM runs ORDER BY run_id")
+	if err != nil {
+		return nil, fmt.Errorf("store.Runs: %w", err)
+	}
+	out, err := scanRuns(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func scanRuns(rows rowScanner) ([]model.Run, error) {
+	defer func() { _ = rows.Close() }()
+	var out []model.Run
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return nil, fmt.Errorf("store.scanRuns scan: %w", err)
+		}
+		var r model.Run
+		if err := json.Unmarshal([]byte(body), &r); err != nil {
+			return nil, fmt.Errorf("store.scanRuns decode: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.scanRuns rows: %w", err)
 	}
 	return out, nil
 }
