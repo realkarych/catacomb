@@ -77,7 +77,7 @@ func (d *Daemon) Recover() error {
 	if err != nil {
 		return err
 	}
-	var max uint64
+	var maxSeq uint64
 	for _, o := range obs {
 		g, ok := d.graphs[o.ExecutionID]
 		if !ok {
@@ -87,11 +87,11 @@ func (d *Daemon) Recover() error {
 		g.Apply(o)
 		d.execBySession[o.RunID] = o.ExecutionID
 		d.lastSeen[o.RunID] = o.ObservedAt
-		if o.Seq > max {
-			max = o.Seq
+		if o.Seq > maxSeq {
+			maxSeq = o.Seq
 		}
 	}
-	d.seq = max
+	d.seq = maxSeq
 	for _, g := range d.graphs {
 		for _, r := range g.RunsSnapshot() {
 			if err := d.store.UpsertRun(r); err != nil {
