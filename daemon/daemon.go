@@ -12,6 +12,7 @@ import (
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/hook"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
@@ -37,6 +38,7 @@ type Daemon struct {
 	seq              uint64
 	graphs           map[string]*reduce.Graph
 	execBySession    map[string]string
+	bus              *cdc.Bus
 	quarantined      int64
 	evicted          int64
 	reaperWindow     time.Duration
@@ -52,11 +54,16 @@ func New(s store.Store) *Daemon {
 		newExecID:     func() string { return ulid.Make().String() },
 		graphs:        map[string]*reduce.Graph{},
 		execBySession: map[string]string{},
+		bus:           cdc.NewBus(),
 		lastSeen:      map[string]time.Time{},
 		reaperWindow:  defaultReaperWindow,
 		maxShards:     defaultMaxShards,
 		startedAt:     nowFn(),
 	}
+}
+
+func (d *Daemon) Subscribe(bufSize int) *cdc.Consumer {
+	return d.bus.Subscribe(bufSize)
 }
 
 func (d *Daemon) SetMaxShards(n int) {
@@ -96,6 +103,9 @@ func (d *Daemon) Recover() error {
 		}
 	}
 	d.seq = maxSeq
+	for _, g := range d.graphs {
+		_ = g.DrainDeltas()
+	}
 	for _, g := range d.graphs {
 		for _, r := range g.RunsSnapshot() {
 			if err := d.store.UpsertRun(r); err != nil {
@@ -141,6 +151,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 				return err
 			}
 			g.ApplyAll(prior)
+			_ = g.DrainDeltas()
 		}
 		d.graphs[execID] = g
 	}
@@ -193,6 +204,7 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 				return nil
 			}
 			g.ApplyAll(prior)
+			_ = g.DrainDeltas()
 		}
 		d.graphs[execID] = g
 	}
@@ -213,13 +225,30 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	nodes, edges := g.Snapshot()
 	if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
 		d.storeWriteErrors++
+		_ = g.DrainDeltas()
 		return err
 	}
 	if err := d.store.UpsertRun(*g.Runs[o.RunID]); err != nil {
 		d.storeWriteErrors++
+		_ = g.DrainDeltas()
 		return err
 	}
+	for _, delta := range g.DrainDeltas() {
+		d.publishDelta(delta)
+	}
 	return nil
+}
+
+func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
+	if delta.Node != nil {
+		nc := *delta.Node
+		delta.Node = &nc
+	}
+	if delta.Edge != nil {
+		ec := *delta.Edge
+		delta.Edge = &ec
+	}
+	d.bus.Publish(delta)
 }
 
 type Metrics struct {
@@ -230,6 +259,7 @@ type Metrics struct {
 	Quarantined         int64  `json:"quarantined"`
 	Evicted             int64  `json:"evicted"`
 	StoreWriteErrors    int64  `json:"store_write_errors"`
+	DeltasDropped       int64  `json:"deltas_dropped"`
 	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
 }
 
@@ -252,6 +282,7 @@ func (d *Daemon) metricsSnapshot() Metrics {
 		Quarantined:         d.quarantined,
 		Evicted:             d.evicted,
 		StoreWriteErrors:    d.storeWriteErrors,
+		DeltasDropped:       d.bus.TotalDropped(),
 		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
 	}
 }
