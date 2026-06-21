@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -271,4 +272,39 @@ func loopbackListener(t *testing.T) net.Listener {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })
 	return ln
+}
+
+func TestServeStartsGRPC(t *testing.T) {
+	s := openTestStore(t)
+	d := New(s)
+	token := "grpctoken"
+
+	httpLn := loopbackListener(t)
+	grpcLn := loopbackListener(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, token) }()
+
+	conn, err := grpc.NewClient(grpcLn.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := collectorv1.NewTraceServiceClient(conn)
+	rpcCtx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))
+
+	require.Eventually(t, func() bool {
+		_, e := client.Export(rpcCtx, &collectorv1.ExportTraceServiceRequest{})
+		return e == nil
+	}, 3*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestDefaultWaitFn(t *testing.T) {
+	require.True(t, defaultWaitFn(context.Background(), time.Millisecond))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, defaultWaitFn(ctx, time.Hour))
 }

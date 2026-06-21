@@ -27,7 +27,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
@@ -37,7 +37,16 @@ func newDaemonCmd() *cobra.Command {
 	return cmd
 }
 
-func runDaemonWith(ctx context.Context, open func(string) (store.Store, error), listen func() (net.Listener, error), newToken func() (string, error), dbPath, discoveryPath string, reaperWindow time.Duration, maxShards int) error {
+func runDaemonWith(
+	ctx context.Context,
+	open func(string) (store.Store, error),
+	listen func() (net.Listener, error),
+	listenGRPC func() (net.Listener, error),
+	newToken func() (string, error),
+	dbPath, discoveryPath string,
+	reaperWindow time.Duration,
+	maxShards int,
+) error {
 	s, err := open(dbPath)
 	if err != nil {
 		return err
@@ -61,9 +70,19 @@ func runDaemonWith(ctx context.Context, open func(string) (store.Store, error), 
 	}
 	defer func() { _ = ln.Close() }()
 
-	err = daemon.WriteDiscovery(discoveryPath, daemon.Discovery{Addr: ln.Addr().String(), Token: token})
+	grpcLn, err := listenGRPC()
 	if err != nil {
 		return err
 	}
-	return d.Serve(ctx, ln, token)
+	defer func() { _ = grpcLn.Close() }()
+
+	disc := daemon.Discovery{
+		Addr:     ln.Addr().String(),
+		Token:    token,
+		GRPCAddr: grpcLn.Addr().String(),
+	}
+	if err := daemon.WriteDiscovery(discoveryPath, disc); err != nil {
+		return err
+	}
+	return d.Serve(ctx, ln, grpcLn, token)
 }

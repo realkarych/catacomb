@@ -13,6 +13,17 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+var defaultWaitFn = func(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 type traceServer struct {
 	collectorv1.UnimplementedTraceServiceServer
 	d *Daemon
