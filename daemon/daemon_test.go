@@ -213,16 +213,12 @@ func TestIngestPoisonDoesNotStopOtherRuns(t *testing.T) {
 }
 
 type errStore struct {
-	failAppend bool
-	failSince  bool
+	failSince bool
 }
 
 func (e *errStore) Persist([]model.Observation, []*model.Node, []*model.Edge) error { return nil }
 
 func (e *errStore) AppendAndApply(model.Observation, []*model.Node, []*model.Edge) error {
-	if e.failAppend {
-		return errors.New("append")
-	}
 	return nil
 }
 
