@@ -118,6 +118,7 @@ type Edge struct {
 	Src   string         `json:"src"`
 	Dst   string         `json:"dst"`
 	Attrs map[string]any `json:"attrs,omitempty"`
+	Rev   uint64         `json:"rev,omitempty"`
 }
 
 type Run struct {
