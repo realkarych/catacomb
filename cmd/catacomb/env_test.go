@@ -51,3 +51,66 @@ func TestEnvCmdDefaultDiscovery(t *testing.T) {
 	out := buf.String()
 	require.True(t, strings.Contains(out, "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:6000"), "missing endpoint")
 }
+
+func TestEnvCmdGRPC(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(path, daemon.Discovery{
+		Addr:     "127.0.0.1:5000",
+		Token:    "tok",
+		GRPCAddr: "127.0.0.1:5001",
+	}))
+
+	buf := &bytes.Buffer{}
+	root := newRootCmd()
+	root.SetArgs([]string{"env", "--protocol", "grpc", "--discovery", path})
+	root.SetOut(buf)
+	require.NoError(t, root.Execute())
+
+	out := buf.String()
+	require.True(t, strings.Contains(out, "CLAUDE_CODE_ENABLE_TELEMETRY=1"), "missing CLAUDE_CODE_ENABLE_TELEMETRY=1")
+	require.True(t, strings.Contains(out, "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1"), "missing CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1")
+	require.True(t, strings.Contains(out, "OTEL_TRACES_EXPORTER=otlp"), "missing OTEL_TRACES_EXPORTER=otlp")
+	require.True(t, strings.Contains(out, "OTEL_EXPORTER_OTLP_PROTOCOL=grpc"), "missing OTEL_EXPORTER_OTLP_PROTOCOL=grpc")
+	require.True(t, strings.Contains(out, "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:5001"), "missing gRPC endpoint")
+	require.True(t, strings.Contains(out, "OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer tok"), "missing headers")
+	require.False(t, strings.Contains(out, "http/protobuf"), "grpc output must not contain http/protobuf")
+}
+
+func TestEnvCmdGRPCMissingGRPCAddr(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(path, daemon.Discovery{
+		Addr:  "127.0.0.1:5000",
+		Token: "tok",
+	}))
+
+	root := newRootCmd()
+	root.SetArgs([]string{"env", "--protocol", "grpc", "--discovery", path})
+	require.Error(t, root.Execute())
+}
+
+func TestEnvCmdHTTPDefaultUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(path, daemon.Discovery{Addr: "127.0.0.1:5000", Token: "tok"}))
+
+	buf := &bytes.Buffer{}
+	root := newRootCmd()
+	root.SetArgs([]string{"env", "--protocol", "http", "--discovery", path})
+	root.SetOut(buf)
+	require.NoError(t, root.Execute())
+
+	out := buf.String()
+	require.True(t, strings.Contains(out, "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"), "http output must contain http/protobuf")
+}
+
+func TestEnvCmdInvalidProtocol(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(path, daemon.Discovery{Addr: "127.0.0.1:5000", Token: "tok"}))
+
+	root := newRootCmd()
+	root.SetArgs([]string{"env", "--protocol", "banana", "--discovery", path})
+	require.Error(t, root.Execute())
+}

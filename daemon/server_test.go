@@ -89,9 +89,10 @@ func TestServeGraceful(t *testing.T) {
 	ln, err := ListenLoopback()
 	require.NoError(t, err)
 	addr := ln.Addr().String()
+	grpcLn := loopbackListener(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() { errc <- d.Serve(ctx, ln, "tok") }()
+	go func() { errc <- d.Serve(ctx, ln, grpcLn, "tok") }()
 
 	require.Eventually(t, func() bool {
 		r, e := http.Get("http://" + addr + "/healthz")
@@ -119,7 +120,8 @@ func TestServeListenerError(t *testing.T) {
 	ln, err := ListenLoopback()
 	require.NoError(t, err)
 	require.NoError(t, ln.Close())
-	require.Error(t, d.Serve(context.Background(), ln, "tok"))
+	grpcLn := loopbackListener(t)
+	require.Error(t, d.Serve(context.Background(), ln, grpcLn, "tok"))
 }
 
 func TestReapLoopStopsOnContextCancel(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -86,16 +87,21 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 	}
 }
 
-func (d *Daemon) Serve(ctx context.Context, ln net.Listener, token string) error {
+func (d *Daemon) Serve(ctx context.Context, httpLn, grpcLn net.Listener, token string) error {
 	srv := &http.Server{Handler: d.Handler(token)}
+	grpcSrv := d.newGRPCServer(token)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go d.reapLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
+		grpcSrv.GracefulStop()
 	}()
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	go d.serveGRPC(ctx, grpcSrv, grpcLn, func(s *grpc.Server, l net.Listener) error {
+		return s.Serve(l)
+	}, defaultWaitFn)
+	if err := srv.Serve(httpLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

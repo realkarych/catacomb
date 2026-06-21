@@ -28,11 +28,14 @@ func runTestDaemon(t *testing.T) (*daemon.Daemon, string) {
 	d := daemon.New(s)
 	ln, err := daemon.ListenLoopback()
 	require.NoError(t, err)
+	grpcLn, err := daemon.ListenLoopback()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = grpcLn.Close() })
 	discovery := filepath.Join(t.TempDir(), "daemon.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: ln.Addr().String(), Token: "tok"}))
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() { errc <- d.Serve(ctx, ln, "tok") }()
+	go func() { errc <- d.Serve(ctx, ln, grpcLn, "tok") }()
 	t.Cleanup(func() {
 		cancel()
 		<-errc
