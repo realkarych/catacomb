@@ -144,7 +144,13 @@ func TestReapLoopLogsReapError(t *testing.T) {
 	d.SetReaperWindow(time.Millisecond)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	ctx, cancel := context.WithCancel(context.Background())
-	go d.reapLoop(ctx)
+	done := make(chan struct{})
+	go func() { d.reapLoop(ctx); close(done) }()
 	require.Eventually(t, func() bool { return s.appendCount() >= 2 }, 2*time.Second, 5*time.Millisecond)
 	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reapLoop did not stop")
+	}
 }

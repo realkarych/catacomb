@@ -43,7 +43,11 @@ func New(s store.Store) *Daemon {
 	}
 }
 
-func (d *Daemon) SetReaperWindow(w time.Duration) { d.reaperWindow = w }
+func (d *Daemon) SetReaperWindow(w time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.reaperWindow = w
+}
 
 func (d *Daemon) Recover() error {
 	d.mu.Lock()

@@ -41,7 +41,10 @@ func (d *Daemon) handleHook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) reapLoop(ctx context.Context) {
-	ticker := time.NewTicker(d.reaperWindow)
+	d.mu.Lock()
+	w := d.reaperWindow
+	d.mu.Unlock()
+	ticker := time.NewTicker(w)
 	defer ticker.Stop()
 	for {
 		select {
