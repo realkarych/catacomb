@@ -31,7 +31,10 @@ func (f *failSinceStore) MaxSeq() (uint64, error) { return 0, nil }
 func (f *failSinceStore) ObservationsSince(uint64) ([]model.Observation, error) {
 	return nil, errors.New("since")
 }
-func (f *failSinceStore) Close() error { return nil }
+func (f *failSinceStore) UpsertRun(model.Run) error          { return nil }
+func (f *failSinceStore) ListOpenRuns() ([]model.Run, error) { return nil, nil }
+func (f *failSinceStore) Runs() ([]model.Run, error)         { return nil, nil }
+func (f *failSinceStore) Close() error                       { return nil }
 
 func openFailSince(string) (store.Store, error) {
 	return &failSinceStore{}, nil

@@ -145,4 +145,7 @@ func (e *errStore) ObservationsSince(uint64) ([]model.Observation, error) {
 	return nil, nil
 }
 
-func (e *errStore) Close() error { return nil }
+func (e *errStore) UpsertRun(model.Run) error          { return nil }
+func (e *errStore) ListOpenRuns() ([]model.Run, error) { return nil, nil }
+func (e *errStore) Runs() ([]model.Run, error)         { return nil, nil }
+func (e *errStore) Close() error                       { return nil }

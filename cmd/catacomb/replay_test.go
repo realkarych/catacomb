@@ -33,6 +33,9 @@ func (f *fakeStore) AppendAndApply(model.Observation, []*model.Node, []*model.Ed
 func (f *fakeStore) MaxSeq() (uint64, error) { return 0, nil }
 
 func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error) { return nil, nil }
+func (f *fakeStore) UpsertRun(model.Run) error                             { return nil }
+func (f *fakeStore) ListOpenRuns() ([]model.Run, error)                    { return nil, nil }
+func (f *fakeStore) Runs() ([]model.Run, error)                            { return nil, nil }
 
 func openFake(f *fakeStore) storeOpener {
 	return func(string) (store.Store, error) { return f, nil }
