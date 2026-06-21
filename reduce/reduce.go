@@ -1,6 +1,7 @@
 package reduce
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/realkarych/catacomb/model"
@@ -183,10 +184,8 @@ func appendUnique(xs []string, x string) []string {
 	if x == "" {
 		return xs
 	}
-	for _, e := range xs {
-		if e == x {
-			return xs
-		}
+	if slices.Contains(xs, x) {
+		return xs
 	}
 	return append(xs, x)
 }

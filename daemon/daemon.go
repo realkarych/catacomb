@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
-const defaultReaperWindow = 30 * time.Minute
+const (
+	defaultReaperWindow = 30 * time.Minute
+	defaultMaxShards    = 4096
+)
 
 var (
 	nowFn   = time.Now
@@ -23,15 +27,19 @@ var (
 )
 
 type Daemon struct {
-	store         store.Store
-	newExecID     func() string
-	mu            sync.Mutex
-	seq           uint64
-	graphs        map[string]*reduce.Graph
-	execBySession map[string]string
-	quarantined   int64
-	reaperWindow  time.Duration
-	lastSeen      map[string]time.Time
+	store            store.Store
+	newExecID        func() string
+	mu               sync.Mutex
+	seq              uint64
+	graphs           map[string]*reduce.Graph
+	execBySession    map[string]string
+	quarantined      int64
+	evicted          int64
+	reaperWindow     time.Duration
+	maxShards        int
+	lastSeen         map[string]time.Time
+	startedAt        time.Time
+	storeWriteErrors int64
 }
 
 func New(s store.Store) *Daemon {
@@ -42,7 +50,15 @@ func New(s store.Store) *Daemon {
 		execBySession: map[string]string{},
 		lastSeen:      map[string]time.Time{},
 		reaperWindow:  defaultReaperWindow,
+		maxShards:     defaultMaxShards,
+		startedAt:     nowFn(),
 	}
+}
+
+func (d *Daemon) SetMaxShards(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.maxShards = n
 }
 
 func (d *Daemon) SetReaperWindow(w time.Duration) {
@@ -61,7 +77,7 @@ func (d *Daemon) Recover() error {
 	if err != nil {
 		return err
 	}
-	var max uint64
+	var maxSeq uint64
 	for _, o := range obs {
 		g, ok := d.graphs[o.ExecutionID]
 		if !ok {
@@ -71,11 +87,11 @@ func (d *Daemon) Recover() error {
 		g.Apply(o)
 		d.execBySession[o.RunID] = o.ExecutionID
 		d.lastSeen[o.RunID] = o.ObservedAt
-		if o.Seq > max {
-			max = o.Seq
+		if o.Seq > maxSeq {
+			maxSeq = o.Seq
 		}
 	}
-	d.seq = max
+	d.seq = maxSeq
 	for _, g := range d.graphs {
 		for _, r := range g.RunsSnapshot() {
 			if err := d.store.UpsertRun(r); err != nil {
@@ -103,8 +119,8 @@ func (d *Daemon) Ingest(hookType string, payload []byte) (err error) {
 
 func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	sessionID := sessionIDOf(payload)
-	execID, ok := d.execBySession[sessionID]
-	if !ok {
+	execID, known := d.execBySession[sessionID]
+	if !known {
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
@@ -112,9 +128,16 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	g, ok := d.graphs[execID]
-	if !ok {
+	g, inMem := d.graphs[execID]
+	if !inMem {
 		g = reduce.NewGraph()
+		if known {
+			prior, err := d.store.ObservationsForExecution(execID)
+			if err != nil {
+				return err
+			}
+			g.ApplyAll(prior)
+		}
 		d.graphs[execID] = g
 	}
 	for _, o := range obs {
@@ -130,9 +153,48 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
 	nodes, edges := g.Snapshot()
 	if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+		d.storeWriteErrors++
 		return err
 	}
-	return d.store.UpsertRun(*g.Runs[o.RunID])
+	if err := d.store.UpsertRun(*g.Runs[o.RunID]); err != nil {
+		d.storeWriteErrors++
+		return err
+	}
+	return nil
+}
+
+type Metrics struct {
+	UptimeSeconds       int64  `json:"uptime_seconds"`
+	OpenRuns            int    `json:"open_runs"`
+	Shards              int    `json:"shards"`
+	MaxSeq              uint64 `json:"max_seq"`
+	Quarantined         int64  `json:"quarantined"`
+	Evicted             int64  `json:"evicted"`
+	StoreWriteErrors    int64  `json:"store_write_errors"`
+	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
+}
+
+func (d *Daemon) metricsSnapshot() Metrics {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	open := 0
+	for _, g := range d.graphs {
+		for _, r := range g.Runs {
+			if r.Status == model.StatusRunning {
+				open++
+			}
+		}
+	}
+	return Metrics{
+		UptimeSeconds:       int64(nowFn().Sub(d.startedAt).Seconds()),
+		OpenRuns:            open,
+		Shards:              len(d.graphs),
+		MaxSeq:              d.seq,
+		Quarantined:         d.quarantined,
+		Evicted:             d.evicted,
+		StoreWriteErrors:    d.storeWriteErrors,
+		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
+	}
 }
 
 func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {
@@ -156,6 +218,49 @@ func sessionIDOf(payload []byte) string {
 		return ""
 	}
 	return e.SessionID
+}
+
+type shardRef struct {
+	execID, runID string
+	ended         time.Time
+}
+
+func (d *Daemon) terminalShards() []shardRef {
+	var out []shardRef
+	for execID, g := range d.graphs {
+		for runID, r := range g.Runs {
+			if r.Status == model.StatusOK || r.Status == model.StatusAbandoned {
+				out = append(out, shardRef{execID, runID, *r.EndedAt})
+			}
+		}
+	}
+	return out
+}
+
+func (d *Daemon) evictShard(execID, runID string) {
+	delete(d.graphs, execID)
+	delete(d.lastSeen, runID)
+	d.evicted++
+}
+
+func (d *Daemon) evictTerminal(now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, t := range d.terminalShards() {
+		if now.Sub(t.ended) > d.reaperWindow {
+			d.evictShard(t.execID, t.runID)
+		}
+	}
+	if d.maxShards > 0 && len(d.graphs) > d.maxShards {
+		rest := d.terminalShards()
+		sort.Slice(rest, func(i, j int) bool { return rest[i].ended.Before(rest[j].ended) })
+		for _, t := range rest {
+			if len(d.graphs) <= d.maxShards {
+				break
+			}
+			d.evictShard(t.execID, t.runID)
+		}
+	}
 }
 
 func (d *Daemon) reapIdle(now time.Time) error {

@@ -331,6 +331,34 @@ func TestSetReaperWindowClampsNonPositive(t *testing.T) {
 	assert.Len(t, open, 1)
 }
 
+type reloadErrStore struct{ store.Store }
+
+func (s *reloadErrStore) ObservationsForExecution(string) ([]model.Observation, error) {
+	return nil, errors.New("reload")
+}
+
+func TestIngestReloadsEvictedShard(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1"}`)))
+	d.dropShardForTest("s1")
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{"ok":true}}`)))
+	g := d.GraphsForTest()[d.execForTest("s1")]
+	require.NotNil(t, g)
+	n := g.Nodes[model.ToolCallID(d.execForTest("s1"), "t1")]
+	require.NotNil(t, n)
+	assert.Equal(t, model.StatusOK, n.Status)
+}
+
+func TestIngestReloadError(t *testing.T) {
+	d := New(&reloadErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	d.dropShardForTest("s1")
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1"}`)))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
 type errStore struct {
 	failSince bool
 }
@@ -350,9 +378,69 @@ func (e *errStore) ObservationsSince(uint64) ([]model.Observation, error) {
 	return nil, nil
 }
 
-func (e *errStore) UpsertRun(model.Run) error               { return nil }
-func (e *errStore) ListOpenRuns() ([]model.Run, error)      { return nil, nil }
-func (e *errStore) Runs() ([]model.Run, error)              { return nil, nil }
-func (e *errStore) Quarantine(model.QuarantineRecord) error { return nil }
-func (e *errStore) QuarantineCount() (int64, error)         { return 0, nil }
-func (e *errStore) Close() error                            { return nil }
+func (e *errStore) UpsertRun(model.Run) error                                    { return nil }
+func (e *errStore) ListOpenRuns() ([]model.Run, error)                           { return nil, nil }
+func (e *errStore) Runs() ([]model.Run, error)                                   { return nil, nil }
+func (e *errStore) Quarantine(model.QuarantineRecord) error                      { return nil }
+func (e *errStore) QuarantineCount() (int64, error)                              { return 0, nil }
+func (e *errStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
+func (e *errStore) Close() error                                                 { return nil }
+
+func TestEvictTerminalAfterCooldown(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Minute)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1"}`)))
+	d.evictTerminal(time.Now().Add(time.Hour))
+	assert.Empty(t, d.GraphsForTest())
+	assert.Equal(t, int64(1), d.EvictedForTest())
+}
+
+func TestEvictTerminalKeepsRunningAndWithinCooldown(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Hour)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"run1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"done"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"done"}`)))
+	d.evictTerminal(time.Now())
+	assert.Len(t, d.GraphsForTest(), 2)
+}
+
+func TestEvictTerminalSoftCap(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetMaxShards(1)
+	for _, sid := range []string{"a", "b", "c"} {
+		require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"`+sid+`"}`)))
+		require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"`+sid+`"}`)))
+	}
+	d.evictTerminal(time.Now())
+	assert.LessOrEqual(t, len(d.GraphsForTest()), 1)
+}
+
+func TestMetricsSnapshot(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"open1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"done1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"done1"}`)))
+	m := d.metricsSnapshot()
+	assert.Equal(t, 1, m.OpenRuns)
+	assert.Equal(t, 2, m.Shards)
+	assert.GreaterOrEqual(t, m.MaxSeq, uint64(3))
+	assert.GreaterOrEqual(t, m.ReaperWindowSeconds, int64(1))
+}
+
+func TestMetricsStoreWriteErrors(t *testing.T) {
+	d := New(&appendErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, int64(1), d.metricsSnapshot().StoreWriteErrors)
+}
+
+func TestMetricsUpsertWriteError(t *testing.T) {
+	d := New(&runUpsertErrStore{Store: tempStore(t)})
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, int64(1), d.metricsSnapshot().StoreWriteErrors)
+}

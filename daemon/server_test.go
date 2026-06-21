@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -153,4 +154,19 @@ func TestReapLoopLogsReapError(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("reapLoop did not stop")
 	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/metrics")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var m Metrics
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&m))
+	assert.Equal(t, 1, m.OpenRuns)
 }

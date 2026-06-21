@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, status TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS quarantine (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
 CREATE INDEX IF NOT EXISTS idx_observations_run_seq ON observations(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_observations_exec_seq ON observations(execution_id, seq);
 CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
 CREATE INDEX IF NOT EXISTS idx_edges_run ON edges(run_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
@@ -123,6 +124,18 @@ func (s *sqliteStore) ObservationsSince(seq uint64) ([]model.Observation, error)
 	rows, err := s.db.Query("SELECT body FROM observations WHERE seq > ? ORDER BY seq", seq)
 	if err != nil {
 		return nil, fmt.Errorf("store.ObservationsSince: %w", err)
+	}
+	out, err := scanObservations(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) ObservationsForExecution(executionID string) ([]model.Observation, error) {
+	rows, err := s.db.Query("SELECT body FROM observations WHERE execution_id = ? ORDER BY seq", executionID)
+	if err != nil {
+		return nil, fmt.Errorf("store.ObservationsForExecution: %w", err)
 	}
 	out, err := scanObservations(rows)
 	if err != nil {
