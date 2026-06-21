@@ -124,6 +124,9 @@ type Run struct {
 	ID         string         `json:"id"`
 	SessionIDs []string       `json:"session_ids,omitempty"`
 	ModelID    string         `json:"model_id,omitempty"`
+	Status     Status         `json:"status,omitempty"`
+	EndReason  string         `json:"end_reason,omitempty"`
+	LastSeq    uint64         `json:"last_seq,omitempty"`
 	StartedAt  *time.Time     `json:"started_at,omitempty"`
 	EndedAt    *time.Time     `json:"ended_at,omitempty"`
 	Meta       map[string]any `json:"meta,omitempty"`

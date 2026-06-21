@@ -241,3 +241,81 @@ func TestScanObservationsRowsErr(t *testing.T) {
 	_, err := scanObservations(&fakeRows{errErr: errors.New("iter")})
 	require.Error(t, err)
 }
+
+func TestUpsertRunRoundTrip(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning, LastSeq: 4}))
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusOK, LastSeq: 9}))
+	runs, err := s.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, model.StatusOK, runs[0].Status)
+	assert.Equal(t, uint64(9), runs[0].LastSeq)
+}
+
+func TestListOpenRunsFiltersByStatus(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertRun(model.Run{ID: "open", Status: model.StatusRunning}))
+	require.NoError(t, s.UpsertRun(model.Run{ID: "done", Status: model.StatusOK}))
+	open, err := s.ListOpenRuns()
+	require.NoError(t, err)
+	require.Len(t, open, 1)
+	assert.Equal(t, "open", open[0].ID)
+}
+
+func TestUpsertRunMarshalError(t *testing.T) {
+	s := fileStore(t)
+	s.marshal = func(any) ([]byte, error) { return nil, errors.New("marshal") }
+	assert.Error(t, s.UpsertRun(model.Run{ID: "r1"}))
+}
+
+func TestUpsertRunExecError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	assert.Error(t, s.UpsertRun(model.Run{ID: "r1"}))
+}
+
+func TestListOpenRunsQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.ListOpenRuns()
+	assert.Error(t, err)
+}
+
+func TestRunsQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.Runs()
+	assert.Error(t, err)
+}
+
+func TestScanRunsScanError(t *testing.T) {
+	_, err := scanRuns(&fakeRows{bodies: []string{"x"}, scanErr: errors.New("scan")})
+	assert.Error(t, err)
+}
+
+func TestScanRunsDecodeError(t *testing.T) {
+	_, err := scanRuns(&fakeRows{bodies: []string{"not-json"}})
+	assert.Error(t, err)
+}
+
+func TestScanRunsIterError(t *testing.T) {
+	_, err := scanRuns(&fakeRows{errErr: errors.New("iter")})
+	assert.Error(t, err)
+}
+
+func TestListOpenRunsDecodeError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`INSERT INTO runs(run_id, status, body) VALUES('bad','running','{not json}')`)
+	require.NoError(t, err)
+	_, err = s.ListOpenRuns()
+	assert.Error(t, err)
+}
+
+func TestRunsDecodeError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`INSERT INTO runs(run_id, status, body) VALUES('bad','running','{not json}')`)
+	require.NoError(t, err)
+	_, err = s.Runs()
+	assert.Error(t, err)
+}
