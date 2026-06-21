@@ -482,3 +482,38 @@ func TestParseToolSpanStatusUnsetCode(t *testing.T) {
 	require.Len(t, obs, 1)
 	assert.Equal(t, "running", obs[0].Attrs["status"])
 }
+
+func TestParseLLMSpanTokensWrongType(t *testing.T) {
+	fixedNow(time.Now())
+	span := &tracev1.Span{
+		SpanId: spanID(20),
+		Name:   "claude_code.llm_request",
+		Attributes: []*commonv1.KeyValue{
+			strAttr("gen_ai.usage.input_tokens", "not_an_int"),
+		},
+	}
+	req := makeReq(nil, span)
+
+	obs, err := Parse(req, "exec20", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	_, ok := obs[0].Attrs["tokens_in"]
+	assert.False(t, ok)
+}
+
+func TestParseLLMSpanResponseModelFallback(t *testing.T) {
+	fixedNow(time.Now())
+	span := &tracev1.Span{
+		SpanId: spanID(21),
+		Name:   "claude_code.llm_request",
+		Attributes: []*commonv1.KeyValue{
+			strAttr("gen_ai.response.model", "claude-opus-4-5-resp"),
+		},
+	}
+	req := makeReq(nil, span)
+
+	obs, err := Parse(req, "exec21", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "claude-opus-4-5-resp", obs[0].Attrs["model"])
+}

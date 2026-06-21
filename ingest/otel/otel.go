@@ -186,8 +186,9 @@ func lookupInt(attrs []*commonv1.KeyValue, keys ...string) (int64, bool) {
 	for _, key := range keys {
 		for _, kv := range attrs {
 			if kv.GetKey() == key {
-				v := kv.GetValue().GetIntValue()
-				return v, true
+				if _, ok := kv.GetValue().GetValue().(*commonv1.AnyValue_IntValue); ok {
+					return kv.GetValue().GetIntValue(), true
+				}
 			}
 		}
 	}
