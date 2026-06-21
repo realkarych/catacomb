@@ -15,6 +15,9 @@ func (g *Graph) ApplyAll(obs []model.Observation) {
 
 func (g *Graph) Apply(o model.Observation) {
 	g.ensureRun(o)
+	if o.Correlation.ParentSpanID != "" {
+		g.spanChildren[o.Correlation.ParentSpanID] = true
+	}
 	g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 	switch o.Kind {
 	case "session_start":
@@ -55,6 +58,15 @@ func (g *Graph) Apply(o model.Observation) {
 	}
 }
 
+func (g *Graph) upsertEdgeGated(o model.Observation, src, dst string) {
+	if o.Source == model.SourceOTel && o.Correlation.ParentSpanID != "" {
+		if !g.spanChildren[o.Correlation.SpanID] && o.Correlation.ToolUseID == "" {
+			return
+		}
+	}
+	g.upsertEdge(o.ExecutionID, o.RunID, src, dst, o.Seq)
+}
+
 func (g *Graph) applyTool(o model.Observation) {
 	id := model.ToolCallID(o.ExecutionID, o.Correlation.ToolUseID)
 	nodeType := model.NodeToolCall
@@ -77,7 +89,7 @@ func (g *Graph) applyTool(o model.Observation) {
 	if o.Correlation.MessageID != "" {
 		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
 	}
-	g.upsertEdge(o.ExecutionID, o.RunID, parent, id, o.Seq)
+	g.upsertEdgeGated(o, parent, id)
 }
 
 func (g *Graph) applySubagent(o model.Observation) {

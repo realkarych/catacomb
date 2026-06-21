@@ -438,6 +438,62 @@ func sessionEndObs(exec, runID string, seq uint64) model.Observation {
 	}
 }
 
+func otelTool(exec, runID, toolUse, span, parentSpan string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUse, SpanID: span, ParentSpanID: parentSpan},
+		Attrs:       map[string]any{"name": "Bash"},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestSpanChildrenRecordedForAnyParentSpan(t *testing.T) {
+	g := NewGraph()
+	g.Apply(otelTool("e1", "s1", "t1", "spanChild", "spanParent", 1))
+	assert.True(t, g.spanChildren["spanParent"])
+}
+
+func TestGateAcceptsOTelEdgeWhenToolUseIDPresent(t *testing.T) {
+	g := NewGraph()
+	o := otelTool("e1", "s1", "tA", "spanA", "spanRoot", 1)
+	g.Apply(o)
+	tool := model.ToolCallID("e1", "tA")
+	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
+}
+
+func TestGateSkipsOTelEdgeWhenNoChildrenAndNoToolUseID(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "", SpanID: "spanFlat", ParentSpanID: "spanRoot"},
+		Attrs:       map[string]any{"name": "Bash"}, EventTime: time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	g.Apply(o)
+	tool := model.ToolCallID("e1", "")
+	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
+}
+
+func TestGateAcceptsOTelEdgeWhenSpanHasObservedChild(t *testing.T) {
+	g := NewGraph()
+	g.Apply(otelTool("e1", "s1", "tChild", "spanInner", "spanMid", 1))
+	o := model.Observation{
+		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "", SpanID: "spanMid", ParentSpanID: "spanRoot"},
+		Attrs:       map[string]any{"name": "Read"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2,
+	}
+	g.Apply(o)
+	tool := model.ToolCallID("e1", "")
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
+}
+
+func TestGateNeverAppliesToHookEdges(t *testing.T) {
+	g := NewGraph()
+	g.Apply(toolObs("e1", "s1", "", "Bash", "running", 1))
+	tool := model.ToolCallID("e1", "")
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
+}
+
 func TestSessionEndClosesRunningDescendant(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{

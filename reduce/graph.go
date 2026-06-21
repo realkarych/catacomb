@@ -3,13 +3,14 @@ package reduce
 import "github.com/realkarych/catacomb/model"
 
 type Graph struct {
-	Nodes map[string]*model.Node
-	Edges map[string]*model.Edge
-	Runs  map[string]*model.Run
+	Nodes        map[string]*model.Node
+	Edges        map[string]*model.Edge
+	Runs         map[string]*model.Run
+	spanChildren map[string]bool
 }
 
 func NewGraph() *Graph {
-	return &Graph{Nodes: map[string]*model.Node{}, Edges: map[string]*model.Edge{}, Runs: map[string]*model.Run{}}
+	return &Graph{Nodes: map[string]*model.Node{}, Edges: map[string]*model.Edge{}, Runs: map[string]*model.Run{}, spanChildren: map[string]bool{}}
 }
 
 func (g *Graph) RunsSnapshot() []model.Run {
