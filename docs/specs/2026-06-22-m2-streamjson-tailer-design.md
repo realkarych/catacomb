@@ -747,3 +747,20 @@ against the best-known stream-json schema but **remain [VERIFY] pending an opera
 capture in Step 7** (`claude -p --output-format stream-json --verbose
 --include-partial-messages`). The reducer precedence generalization landed for the
 three live sources (OTel, hook, stream-json); the JSONL tier (§6.2) is inserted by M2b.
+
+## 13. M2b implementation status
+
+M2b (JSONL tailer + subagent tree + JSONL precedence tier) is implemented across
+`ingest/jsonl` (parser seam + subagent fields), `reduce` (JSONL precedence tier),
+`store` (`tail_cursors`), `ingest/tail` (poll watcher), and `daemon`/`cmd` (wiring).
+
+**[VERIFY] (pending Step 7 operator capture):** the transcript subagent field names —
+`parent_tool_use_id` (record-level), `isSidechain` (bool), `agentId`, and the
+`subagents/agent-*.jsonl` layout — are coded against the best-known transcript schema.
+
+**Deviation from §5.4 (portability):** the `tail_cursors` table replaces the spec's
+unix `syscall.Stat_t` inode/dev with a PORTABLE `(size, mtime, first-512-byte sha256
+fingerprint)` so `GOOS=windows go build` stays clean (no cgo, no unix-only syscalls).
+Rotation = head-fingerprint mismatch; truncation = size-shrink; both reset the cursor
+and mark the run lossy. `lossy` rides in the existing `model.Run.Meta` map (no new
+`Run` field / no migration); `lossy_runs` is surfaced in `GET /metrics`.
