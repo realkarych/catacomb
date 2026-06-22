@@ -1,0 +1,2 @@
+{"type":"assistant","uuid":"u1","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","parent_tool_use_id":"toolu_parent","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"assistant","uuid":"u2","sessionId":"s1","timestamp":"2026-06-22T10:00:01Z","isSidechain":true,"agentId":"agent_42","parent_tool_use_id":"toolu_parent","message":{"role":"assistant","id":"m2","content":[{"type":"text","text":"done"}]}}

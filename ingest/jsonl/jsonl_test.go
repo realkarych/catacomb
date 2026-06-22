@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 type errReader struct{ read bool }
@@ -158,4 +159,50 @@ func TestNowFnSeamDefaultsToTimeNow(t *testing.T) {
 	before := time.Now().Add(-time.Second)
 	got := nowFn()
 	assert.False(t, got.Before(before))
+}
+
+func TestParseThreadsParentToolUseID(t *testing.T) {
+	f, err := os.Open("testdata/subagent.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "exec-S")
+	require.NoError(t, err)
+	tu := byKind(obs, "assistant_tool_use")
+	require.Len(t, tu, 1)
+	assert.Equal(t, "toolu_child", tu[0].Correlation.ToolUseID)
+	assert.Equal(t, "toolu_parent", tu[0].Correlation.ParentToolUseID)
+}
+
+func TestParseEmitsSubagentForSidechain(t *testing.T) {
+	f, err := os.Open("testdata/subagent.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "exec-S")
+	require.NoError(t, err)
+	sa := byKind(obs, "subagent_stop")
+	require.Len(t, sa, 1)
+	assert.Equal(t, "agent_42", sa[0].Correlation.AgentID)
+	assert.Equal(t, "toolu_parent", sa[0].Correlation.ParentToolUseID)
+}
+
+func TestParseNoSidechainNoSubagent(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	assert.Empty(t, byKind(obs, "subagent_stop"))
+}
+
+func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
+	f, err := os.Open("testdata/subagent.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "e1")
+	require.NoError(t, err)
+	g := reduce.NewGraph()
+	g.ApplyAll(obs)
+	_, edges := g.Snapshot()
+	require.NotNil(t, g.Nodes[model.SubagentID("e1", "agent_42")])
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
+		model.ToolCallID("e1", "toolu_parent"), model.ToolCallID("e1", "toolu_child")))
+	_ = edges
 }

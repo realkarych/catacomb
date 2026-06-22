@@ -14,11 +14,14 @@ import (
 )
 
 type line struct {
-	Type      string          `json:"type"`
-	UUID      string          `json:"uuid"`
-	SessionID string          `json:"sessionId"`
-	Timestamp string          `json:"timestamp"`
-	Message   json.RawMessage `json:"message"`
+	Type            string          `json:"type"`
+	UUID            string          `json:"uuid"`
+	SessionID       string          `json:"sessionId"`
+	Timestamp       string          `json:"timestamp"`
+	ParentToolUseID string          `json:"parent_tool_use_id"`
+	IsSidechain     bool            `json:"isSidechain"`
+	AgentID         string          `json:"agentId"`
+	Message         json.RawMessage `json:"message"`
 }
 
 type message struct {
@@ -116,15 +119,21 @@ func decodeLine(raw []byte) (line, []partial, error) {
 	if err != nil {
 		return ln, nil, err
 	}
-	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID}
+	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID, ParentToolUseID: ln.ParentToolUseID}
+	var parts []partial
 	switch ln.Type {
 	case "user":
-		return ln, userParts(base, text, blocks), nil
+		parts = userParts(base, text, blocks)
 	case "assistant":
-		return ln, assistantParts(base, msg, blocks), nil
-	default:
-		return ln, nil, nil
+		parts = assistantParts(base, msg, blocks)
 	}
+	if ln.IsSidechain || ln.AgentID != "" {
+		parts = append(parts, partial{
+			kind:        "subagent_stop",
+			correlation: model.Correlation{AgentID: ln.AgentID, ParentToolUseID: ln.ParentToolUseID, SessionID: ln.SessionID},
+		})
+	}
+	return ln, parts, nil
 }
 
 func decodeContent(raw json.RawMessage) (string, []block, error) {
