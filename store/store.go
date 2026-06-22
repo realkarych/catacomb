@@ -13,5 +13,7 @@ type Store interface {
 	Runs() ([]model.Run, error)
 	Quarantine(rec model.QuarantineRecord) error
 	QuarantineCount() (int64, error)
+	UpsertTailCursor(c model.TailCursor) error
+	LoadTailCursors() ([]model.TailCursor, error)
 	Close() error
 }

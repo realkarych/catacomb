@@ -375,3 +375,51 @@ func TestObservationsForExecutionDecodeError(t *testing.T) {
 	_, err = s.ObservationsForExecution("e1")
 	assert.Error(t, err)
 }
+
+func TestTailCursorUpsertAndLoad(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertTailCursor(model.TailCursor{Path: "/p/a.jsonl", Offset: 10, Fingerprint: "f1", Size: 10, Mtime: 1}))
+	require.NoError(t, s.UpsertTailCursor(model.TailCursor{Path: "/p/b.jsonl", Offset: 20, Fingerprint: "f2", Size: 20, Mtime: 2}))
+	require.NoError(t, s.UpsertTailCursor(model.TailCursor{Path: "/p/a.jsonl", Offset: 30, Fingerprint: "f3", Size: 30, Mtime: 3}))
+
+	got, err := s.LoadTailCursors()
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	byPath := map[string]model.TailCursor{}
+	for _, c := range got {
+		byPath[c.Path] = c
+	}
+	assert.Equal(t, int64(30), byPath["/p/a.jsonl"].Offset)
+	assert.Equal(t, "f3", byPath["/p/a.jsonl"].Fingerprint)
+	assert.Equal(t, int64(20), byPath["/p/b.jsonl"].Offset)
+}
+
+func TestUpsertTailCursorExecError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	assert.Error(t, s.UpsertTailCursor(model.TailCursor{Path: "/p/x.jsonl", Offset: 1}))
+}
+
+func TestLoadTailCursorsQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.LoadTailCursors()
+	assert.Error(t, err)
+}
+
+func TestLoadTailCursorsScanError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE tail_cursors")
+	require.NoError(t, err)
+	_, err = s.db.Exec("CREATE TABLE tail_cursors (path TEXT PRIMARY KEY, offset TEXT, fingerprint TEXT, size INTEGER, mtime INTEGER)")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO tail_cursors VALUES('p','not-an-int','f',1,1)`)
+	require.NoError(t, err)
+	_, err = s.LoadTailCursors()
+	assert.Error(t, err)
+}
+
+func TestScanTailCursorsIterError(t *testing.T) {
+	_, err := scanTailCursors(&fakeRows{errErr: errors.New("iter")})
+	assert.Error(t, err)
+}

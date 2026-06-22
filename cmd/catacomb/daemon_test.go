@@ -39,7 +39,9 @@ func (f *failSinceStore) QuarantineCount() (int64, error)         { return 0, ni
 func (f *failSinceStore) ObservationsForExecution(string) ([]model.Observation, error) {
 	return nil, nil
 }
-func (f *failSinceStore) Close() error { return nil }
+func (f *failSinceStore) UpsertTailCursor(model.TailCursor) error      { return nil }
+func (f *failSinceStore) LoadTailCursors() ([]model.TailCursor, error) { return nil, nil }
+func (f *failSinceStore) Close() error                                 { return nil }
 
 func openFailSince(string) (store.Store, error) {
 	return &failSinceStore{}, nil

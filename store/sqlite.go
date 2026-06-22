@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, status TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS quarantine (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
+CREATE TABLE IF NOT EXISTS tail_cursors (path TEXT PRIMARY KEY, offset INTEGER, fingerprint TEXT, size INTEGER, mtime INTEGER);
 CREATE INDEX IF NOT EXISTS idx_observations_run_seq ON observations(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_observations_exec_seq ON observations(execution_id, seq);
 CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
@@ -34,6 +35,8 @@ const (
 	upsertEdge        = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	upsertRun         = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
 	insertQuarantine  = `INSERT INTO quarantine(body) VALUES(?)`
+	upsertTailCursor  = `INSERT INTO tail_cursors(path, offset, fingerprint, size, mtime) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, fingerprint=excluded.fingerprint, size=excluded.size, mtime=excluded.mtime`
+	selectTailCursors = `SELECT path, offset, fingerprint, size, mtime FROM tail_cursors ORDER BY path`
 )
 
 func OpenSQLite(path string) (Store, error) {
@@ -215,6 +218,41 @@ func scanRuns(rows rowScanner) ([]model.Run, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store.scanRuns rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *sqliteStore) UpsertTailCursor(c model.TailCursor) error {
+	if _, err := s.db.Exec(upsertTailCursor, c.Path, c.Offset, c.Fingerprint, c.Size, c.Mtime); err != nil {
+		return fmt.Errorf("store.UpsertTailCursor: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteStore) LoadTailCursors() ([]model.TailCursor, error) {
+	rows, err := s.db.Query(selectTailCursors)
+	if err != nil {
+		return nil, fmt.Errorf("store.LoadTailCursors: %w", err)
+	}
+	out, err := scanTailCursors(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func scanTailCursors(rows rowScanner) ([]model.TailCursor, error) {
+	defer func() { _ = rows.Close() }()
+	var out []model.TailCursor
+	for rows.Next() {
+		var c model.TailCursor
+		if err := rows.Scan(&c.Path, &c.Offset, &c.Fingerprint, &c.Size, &c.Mtime); err != nil {
+			return nil, fmt.Errorf("store.LoadTailCursors scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.LoadTailCursors rows: %w", err)
 	}
 	return out, nil
 }

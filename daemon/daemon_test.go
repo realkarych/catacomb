@@ -390,6 +390,8 @@ func (e *errStore) Runs() ([]model.Run, error)                                  
 func (e *errStore) Quarantine(model.QuarantineRecord) error                      { return nil }
 func (e *errStore) QuarantineCount() (int64, error)                              { return 0, nil }
 func (e *errStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
+func (e *errStore) UpsertTailCursor(model.TailCursor) error                      { return nil }
+func (e *errStore) LoadTailCursors() ([]model.TailCursor, error)                 { return nil, nil }
 func (e *errStore) Close() error                                                 { return nil }
 
 func TestEvictTerminalAfterCooldown(t *testing.T) {
