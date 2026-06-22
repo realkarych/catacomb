@@ -93,6 +93,10 @@ func (g *graphServer) Subscribe(req *catacombv1.SubscribeRequest, stream catacom
 			return err
 		}
 	}
+	return g.streamLoop(sub, f, stream)
+}
+
+func (g *graphServer) streamLoop(sub *Subscription, f SubFilter, stream catacombv1.GraphService_SubscribeServer) error {
 	for {
 		select {
 		case <-stream.Context().Done():

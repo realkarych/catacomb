@@ -627,29 +627,6 @@ func TestSubscribeFilterDropsNonMatchingRun(t *testing.T) {
 	}
 }
 
-func TestSubscribeConsumerChannelClosed(t *testing.T) {
-	client, d := newBufconnServer(t, "tok")
-
-	ctx, cancel := context.WithCancel(authCtx("tok"))
-	defer cancel()
-
-	stream, err := client.Subscribe(ctx, &catacombv1.SubscribeRequest{})
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		return d.busConsumerCountForTest() > 0
-	}, 3*time.Second, 10*time.Millisecond)
-
-	d.bus.UnsubscribeAll()
-
-	require.Eventually(t, func() bool {
-		return d.busConsumerCountForTest() == 0
-	}, 3*time.Second, 10*time.Millisecond)
-
-	_, err = stream.Recv()
-	require.Error(t, err)
-}
-
 func TestSubscribeSnapshotSendError(t *testing.T) {
 	_, d := newBufconnServer(t, "tok")
 	fixedExecID(d)
@@ -668,43 +645,6 @@ func TestSubscribeSnapshotSendError(t *testing.T) {
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 }
 
-func TestSubscribeLiveDeltaSendError(t *testing.T) {
-	s := openTestStore(t)
-	d := New(s)
-
-	gs := &graphServer{d: d}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &fakeSubscribeStream{
-		ctx:     ctx,
-		sendErr: io.ErrClosedPipe,
-	}
-
-	baseline := d.busConsumerCountForTest()
-
-	subErrCh := make(chan error, 1)
-	go func() {
-		subErrCh <- gs.Subscribe(&catacombv1.SubscribeRequest{}, stream)
-	}()
-
-	require.Eventually(t, func() bool {
-		return d.busConsumerCountForTest() > baseline
-	}, 3*time.Second, 5*time.Millisecond)
-
-	d.bus.Publish(cdc.GraphDelta{
-		Kind:  cdc.DeltaNodeUpsert,
-		RunID: "r1",
-	})
-
-	select {
-	case err := <-subErrCh:
-		require.ErrorIs(t, err, io.ErrClosedPipe)
-	case <-time.After(3 * time.Second):
-		t.Fatal("Subscribe did not exit after send error")
-	}
-}
-
 func TestEncodeAttrsJSONMarshalError(t *testing.T) {
 	attrs := map[string]any{
 		"ok":  "value",
@@ -713,6 +653,41 @@ func TestEncodeAttrsJSONMarshalError(t *testing.T) {
 	result := encodeAttrs(attrs)
 	require.Equal(t, "\"value\"", result["ok"])
 	require.Equal(t, "", result["bad"])
+}
+
+func TestStreamLoopConsumerChannelClosed(t *testing.T) {
+	s := openTestStore(t)
+	d := New(s)
+	gs := &graphServer{d: d}
+
+	sub := d.SubscribeFiltered(SubFilter{}, 4)
+	d.Unsubscribe(sub)
+
+	stream := &fakeSubscribeStream{ctx: context.Background()}
+	err := gs.streamLoop(sub, SubFilter{}, stream)
+	require.NoError(t, err)
+}
+
+func TestStreamLoopSendError(t *testing.T) {
+	s := openTestStore(t)
+	d := New(s)
+	gs := &graphServer{d: d}
+
+	sub := d.SubscribeFiltered(SubFilter{}, 4)
+	defer d.Unsubscribe(sub)
+
+	sentErr := errors.New("send failed")
+	stream := &fakeSubscribeStream{
+		ctx: context.Background(),
+		sendFn: func(_ *catacombv1.GraphDelta) error {
+			return sentErr
+		},
+	}
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	err := gs.streamLoop(sub, SubFilter{}, stream)
+	require.ErrorIs(t, err, sentErr)
 }
 
 type fakeSubscribeStream struct {
@@ -730,5 +705,3 @@ func (f *fakeSubscribeStream) Send(delta *catacombv1.GraphDelta) error {
 	}
 	return f.sendErr
 }
-
-var _ = io.EOF

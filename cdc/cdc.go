@@ -129,12 +129,3 @@ func (b *Bus) ConsumerCount() int {
 	defer b.mu.Unlock()
 	return len(b.consumers)
 }
-
-func (b *Bus) UnsubscribeAll() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, c := range b.consumers {
-		close(c.ch)
-	}
-	b.consumers = b.consumers[:0]
-}

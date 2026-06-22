@@ -152,20 +152,6 @@ func TestConsumerCountTracksSubscriptions(t *testing.T) {
 	assert.Equal(t, 0, b.ConsumerCount())
 }
 
-func TestUnsubscribeAllClosesAllChannels(t *testing.T) {
-	b := NewBus()
-	c1 := b.Subscribe(1)
-	c2 := b.Subscribe(1)
-	assert.Equal(t, 2, b.ConsumerCount())
-	b.UnsubscribeAll()
-	assert.Equal(t, 0, b.ConsumerCount())
-	_, open1 := <-c1.C
-	assert.False(t, open1)
-	_, open2 := <-c2.C
-	assert.False(t, open2)
-	b.Publish(GraphDelta{Kind: DeltaRunStarted, RunID: "r1"})
-}
-
 func TestTotalDroppedAggregatesAcrossConsumers(t *testing.T) {
 	b := NewBus()
 	c1 := b.Subscribe(0)
