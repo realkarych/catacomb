@@ -15,7 +15,7 @@ import (
 )
 
 func newDaemonCmd() *cobra.Command {
-	var dbPath, discoveryPath, otlpEndpoint string
+	var dbPath, discoveryPath, otlpEndpoint, postgresDSN string
 	var reaperWindow time.Duration
 	var maxShards int
 	var transcriptDir string
@@ -29,7 +29,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, transcriptDir, transcriptExclude)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, postgresDSN, transcriptDir, transcriptExclude)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
@@ -37,6 +37,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&reaperWindow, "reaper-window", 30*time.Minute, "idle window before a run is marked abandoned")
 	cmd.Flags().IntVar(&maxShards, "max-shards", 4096, "soft cap on in-memory execution shards")
 	cmd.Flags().StringVar(&otlpEndpoint, "otlp-export-endpoint", "", "downstream OTLP endpoint to export the reconstructed trace tree (empty = disabled)")
+	cmd.Flags().StringVar(&postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN to export the materialized graph (empty = disabled)")
 	cmd.Flags().StringVar(&transcriptDir, "transcript-dir", "", "Claude Code transcript dir to tail (empty = disabled; recommended: ~/.claude/projects)")
 	cmd.Flags().StringArrayVar(&transcriptExclude, "transcript-exclude", nil, "glob(s) of transcript paths to never tail (repeatable; the daemon db + cwd are always excluded)")
 	return cmd
@@ -52,6 +53,7 @@ func runDaemonWith(
 	reaperWindow time.Duration,
 	maxShards int,
 	otlpEndpoint string,
+	postgresDSN string,
 	transcriptDir string,
 	transcriptExclude []string,
 ) error {
@@ -65,6 +67,7 @@ func runDaemonWith(
 	d.SetReaperWindow(reaperWindow)
 	d.SetMaxShards(maxShards)
 	d.SetOTLPEndpoint(otlpEndpoint)
+	d.SetPostgresDSN(postgresDSN)
 	d.SetDBPath(dbPath)
 	d.SetTranscriptDir(transcriptDir)
 	d.SetTranscriptExclude(transcriptExclude)

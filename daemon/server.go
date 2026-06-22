@@ -20,12 +20,15 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/export/otlp"
+	pgexport "github.com/realkarych/catacomb/export/postgres"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
 )
 
 var newExporterFn = otlp.New
 
-var newPostgresFn func(ctx context.Context, dsn string) (exportiface.Exporter, error)
+var newPostgresFn = func(ctx context.Context, dsn string) (exportiface.Exporter, error) {
+	return pgexport.New(ctx, dsn)
+}
 
 var tailTick = 500 * time.Millisecond
 
