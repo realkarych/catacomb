@@ -68,6 +68,9 @@ type Daemon struct {
 	otlpEndpoint      string
 	exporterConsumers []*cdc.Consumer
 	postgresDSN       string
+	neo4jURI          string
+	neo4jUser         string
+	neo4jPassword     string
 	dbPath            string
 	transcriptDir     string
 	transcriptExclude []string
@@ -117,6 +120,14 @@ func (d *Daemon) SetPostgresDSN(s string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.postgresDSN = s
+}
+
+func (d *Daemon) SetNeo4j(uri, user, password string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.neo4jURI = uri
+	d.neo4jUser = user
+	d.neo4jPassword = password
 }
 
 func (d *Daemon) Recover() error {

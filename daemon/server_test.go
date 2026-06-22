@@ -752,3 +752,85 @@ func TestSnapshotReceivedByPostgresExporterOnAttach(t *testing.T) {
 
 	assert.Positive(t, fakeExp.snapshotCount(), "snapshot must be called at attach")
 }
+
+func TestWiringNeo4jURIAttachesExporterAndReceivesDelta(t *testing.T) {
+	fakeExp := &fakeExporter{}
+	orig := newNeo4jFn
+	newNeo4jFn = func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
+		return fakeExp, nil
+	}
+	t.Cleanup(func() { newNeo4jFn = orig })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetNeo4j("bolt://localhost:7687", "neo4j", "pw")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+
+	require.Eventually(t, func() bool {
+		return len(d.ExporterConsumersForTest()) > 0
+	}, 2*time.Second, 5*time.Millisecond)
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.Eventually(t, func() bool {
+		return fakeExp.deltaCount() > 0
+	}, 3*time.Second, 5*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestWiringEmptyNeo4jURIAttachesNothing(t *testing.T) {
+	called := false
+	orig := newNeo4jFn
+	newNeo4jFn = func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
+		called = true
+		return &fakeExporter{}, nil
+	}
+	t.Cleanup(func() { newNeo4jFn = orig })
+
+	d := New(tempStore(t))
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx := context.Background()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+
+	assert.False(t, called)
+	assert.Empty(t, d.ExporterConsumersForTest())
+}
+
+func TestNewNeo4jFnWrapperLine(t *testing.T) {
+	orig := newNeo4jFn
+	t.Cleanup(func() { newNeo4jFn = orig })
+	exp, err := newNeo4jFn(context.Background(), "bolt://localhost:7687", "neo4j", "pw")
+	require.NoError(t, err)
+	require.NotNil(t, exp)
+}
+
+func TestStartExporterNeo4jErrorDisablesOnlyNeo4j(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	origOTLP := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fake), nil
+	}
+	t.Cleanup(func() { newExporterFn = origOTLP })
+
+	origNeo4j := newNeo4jFn
+	newNeo4jFn = func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
+		return nil, errors.New("connection refused")
+	}
+	t.Cleanup(func() { newNeo4jFn = origNeo4j })
+
+	d := New(tempStore(t))
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetNeo4j("bolt://localhost:7687", "neo4j", "pw")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx := context.Background()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+
+	d.mu.Lock()
+	n := len(d.exporterConsumers)
+	d.mu.Unlock()
+	assert.Equal(t, 1, n)
+}
