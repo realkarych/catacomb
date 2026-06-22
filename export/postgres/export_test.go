@@ -181,7 +181,6 @@ func TestApplyDeltaNodeUpsertEmitsSQL(t *testing.T) {
 	require.Len(t, r.calls, 1)
 	assert.Contains(t, r.calls[0].sql, "ON CONFLICT")
 	assert.Contains(t, r.calls[0].sql, "WHERE excluded.rev > nodes.rev")
-	assert.NotContains(t, strings.ToLower(r.calls[0].sql), "payload")
 }
 
 func TestApplyDeltaNodeStatusEmitsSQL(t *testing.T) {
@@ -292,15 +291,15 @@ func TestApplyDeltaNodeUpsertPayloadNeverInSQL(t *testing.T) {
 	e.schemaReady = true
 	n := &model.Node{
 		ID: "n4", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1,
-		Payload: &model.Payload{Hash: "abc123"},
+		Payload: &model.Payload{Hash: "abc123", Input: []byte(`"UNIQUESENTINELXYZ"`)},
 	}
 	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: n,
 	}))
 	for _, call := range r.calls {
-		assert.NotContains(t, strings.ToLower(call.sql), "payload", "payload column must never appear")
+		assert.NotContains(t, call.sql, "UNIQUESENTINELXYZ", "raw payload content must never appear in SQL")
 		for _, arg := range call.args {
-			assert.NotContains(t, strings.ToLower(fmt.Sprintf("%v", arg)), "payload")
+			assert.NotContains(t, fmt.Sprintf("%v", arg), "UNIQUESENTINELXYZ", "raw payload content must never appear in args")
 		}
 	}
 }

@@ -112,7 +112,7 @@ func ensureSchema(ctx context.Context, db execer) error {
 		tokens_in BIGINT,
 		tokens_out BIGINT,
 		cost_usd DOUBLE PRECISION,
-		phash TEXT,
+		payload_hash TEXT,
 		attrs JSONB,
 		annotations JSONB,
 		rev BIGINT
@@ -226,12 +226,12 @@ func (e *Exporter) SnapshotState(ctx context.Context, nodes []*model.Node, edges
 }
 
 const nodeUpsertSQL = `INSERT INTO nodes (id, run_id, type, name, status, tier, parent_id, agent_id,
-	t_start, t_end, duration_ms, tokens_in, tokens_out, cost_usd, phash, attrs, annotations, rev)
+	t_start, t_end, duration_ms, tokens_in, tokens_out, cost_usd, payload_hash, attrs, annotations, rev)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 ON CONFLICT (id) DO UPDATE SET
 	run_id=$2, type=$3, name=$4, status=$5, tier=$6, parent_id=$7, agent_id=$8,
 	t_start=$9, t_end=$10, duration_ms=$11, tokens_in=$12, tokens_out=$13, cost_usd=$14,
-	phash=$15, attrs=$16, annotations=$17, rev=$18
+	payload_hash=$15, attrs=$16, annotations=$17, rev=$18
 WHERE excluded.rev > nodes.rev`
 
 const edgeUpsertSQL = `INSERT INTO edges (id, run_id, type, src, dst, attrs, rev)
