@@ -904,6 +904,62 @@ func TestAuthedAllowQueryWrongParam401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+func TestStaticHandlerServesRoot(t *testing.T) {
+	d := New(tempStore(t))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+}
+
+func TestStaticHandlerDoesNotShadowHealthz(t *testing.T) {
+	d := New(tempStore(t))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/healthz")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestStaticHandlerDoesNotShadowMetrics(t *testing.T) {
+	d := New(tempStore(t))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/metrics")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestStaticHandlerDoesNotShadowSubscribe(t *testing.T) {
+	d := New(tempStore(t))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/v1/subscribe")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestStaticHandlerMissingAsset404(t *testing.T) {
+	d := New(tempStore(t))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/no-such-file.xyz")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 func TestSSEQueryTokenE2E(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
