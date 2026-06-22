@@ -19,6 +19,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
+	neo4jexport "github.com/realkarych/catacomb/export/neo4j"
 	"github.com/realkarych/catacomb/export/otlp"
 	pgexport "github.com/realkarych/catacomb/export/postgres"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
@@ -28,6 +29,10 @@ var newExporterFn = otlp.New
 
 var newPostgresFn = func(ctx context.Context, dsn string) (exportiface.Exporter, error) {
 	return pgexport.New(ctx, dsn)
+}
+
+var newNeo4jFn = func(ctx context.Context, uri, user, password string) (exportiface.Exporter, error) {
+	return neo4jexport.New(ctx, uri, user, password)
 }
 
 var tailTick = 500 * time.Millisecond
@@ -167,6 +172,9 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	d.mu.Lock()
 	otlpEndpoint := d.otlpEndpoint
 	postgresDSN := d.postgresDSN
+	neo4jURI := d.neo4jURI
+	neo4jUser := d.neo4jUser
+	neo4jPassword := d.neo4jPassword
 	d.mu.Unlock()
 
 	type exporterEntry struct {
@@ -190,6 +198,15 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 			log.Printf("catacomb: postgres exporter disabled: %v", err)
 		} else {
 			entries = append(entries, exporterEntry{exp: exp, name: "postgres"})
+		}
+	}
+
+	if neo4jURI != "" && newNeo4jFn != nil {
+		exp, err := newNeo4jFn(ctx, neo4jURI, neo4jUser, neo4jPassword)
+		if err != nil {
+			log.Printf("catacomb: neo4j exporter disabled: %v", err)
+		} else {
+			entries = append(entries, exporterEntry{exp: exp, name: "neo4j"})
 		}
 	}
 

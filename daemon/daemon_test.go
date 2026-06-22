@@ -1058,6 +1058,16 @@ func TestSetDBPath(t *testing.T) {
 	assert.Equal(t, "/data/catacomb.db", got)
 }
 
+func TestSetNeo4jStoresFields(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetNeo4j("bolt://localhost:7687", "neo4j", "secret")
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	assert.Equal(t, "bolt://localhost:7687", d.neo4jURI)
+	assert.Equal(t, "neo4j", d.neo4jUser)
+	assert.Equal(t, "secret", d.neo4jPassword)
+}
+
 type lossyUpsertErrStore struct{ store.Store }
 
 func (s *lossyUpsertErrStore) UpsertRun(model.Run) error { return errors.New("upsert lossy") }

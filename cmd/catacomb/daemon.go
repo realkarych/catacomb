@@ -16,6 +16,7 @@ import (
 
 func newDaemonCmd() *cobra.Command {
 	var dbPath, discoveryPath, otlpEndpoint, postgresDSN string
+	var neo4jURI, neo4jUser, neo4jPassword string
 	var reaperWindow time.Duration
 	var maxShards int
 	var transcriptDir string
@@ -29,7 +30,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, postgresDSN, transcriptDir, transcriptExclude)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
@@ -38,6 +39,9 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().IntVar(&maxShards, "max-shards", 4096, "soft cap on in-memory execution shards")
 	cmd.Flags().StringVar(&otlpEndpoint, "otlp-export-endpoint", "", "downstream OTLP endpoint to export the reconstructed trace tree (empty = disabled)")
 	cmd.Flags().StringVar(&postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN to export the materialized graph (empty = disabled)")
+	cmd.Flags().StringVar(&neo4jURI, "neo4j-export-uri", "", "Neo4j Bolt URI to export the materialized graph (empty = disabled)")
+	cmd.Flags().StringVar(&neo4jUser, "neo4j-export-user", "", "Neo4j username for materialized graph export")
+	cmd.Flags().StringVar(&neo4jPassword, "neo4j-export-password", "", "Neo4j password for materialized graph export")
 	cmd.Flags().StringVar(&transcriptDir, "transcript-dir", "", "Claude Code transcript dir to tail (empty = disabled; recommended: ~/.claude/projects)")
 	cmd.Flags().StringArrayVar(&transcriptExclude, "transcript-exclude", nil, "glob(s) of transcript paths to never tail (repeatable; the daemon db + cwd are always excluded)")
 	return cmd
@@ -54,6 +58,9 @@ func runDaemonWith(
 	maxShards int,
 	otlpEndpoint string,
 	postgresDSN string,
+	neo4jURI string,
+	neo4jUser string,
+	neo4jPassword string,
 	transcriptDir string,
 	transcriptExclude []string,
 ) error {
@@ -68,6 +75,7 @@ func runDaemonWith(
 	d.SetMaxShards(maxShards)
 	d.SetOTLPEndpoint(otlpEndpoint)
 	d.SetPostgresDSN(postgresDSN)
+	d.SetNeo4j(neo4jURI, neo4jUser, neo4jPassword)
 	d.SetDBPath(dbPath)
 	d.SetTranscriptDir(transcriptDir)
 	d.SetTranscriptExclude(transcriptExclude)
