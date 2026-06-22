@@ -123,3 +123,9 @@ func (b *Bus) TotalDropped() int64 {
 	}
 	return total
 }
+
+func (b *Bus) ConsumerCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.consumers)
+}

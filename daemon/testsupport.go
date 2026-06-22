@@ -42,3 +42,7 @@ func (d *Daemon) LossyForTest() int64 {
 	defer d.mu.Unlock()
 	return d.lossyRuns
 }
+
+func (d *Daemon) busConsumerCountForTest() int {
+	return d.bus.ConsumerCount()
+}
