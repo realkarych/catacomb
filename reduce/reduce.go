@@ -183,7 +183,10 @@ func (g *Graph) upsertParentToolEdge(o model.Observation) {
 	}
 	if fs.haveStruct && fs.structSrc != src {
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, fs.structSrc, dst)
-		delete(g.Edges, oldID)
+		if old, ok := g.Edges[oldID]; ok {
+			delete(g.Edges, oldID)
+			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: o.Seq, Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
+		}
 	}
 	fs.structRank = r
 	fs.haveStruct = true
