@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/hook"
+	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	streamjsoningest "github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
@@ -28,28 +32,45 @@ const (
 
 var (
 	nowFn         = time.Now
+	getwdFn       = os.Getwd
 	applyFn       = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
 	parseFn       = otelingest.Parse
 	streamParseFn = streamjsoningest.Parse
+	tailParseFn   = ijsonl.Parse
 )
 
+func cwdTranscriptExclude() string {
+	wd, err := getwdFn()
+	if err != nil || wd == "" {
+		return ""
+	}
+	enc := strings.ReplaceAll(wd, "/", "-")
+	enc = strings.ReplaceAll(enc, "\\", "-")
+	enc = strings.ReplaceAll(enc, ".", "-")
+	return enc + string(os.PathSeparator)
+}
+
 type Daemon struct {
-	store            store.Store
-	newExecID        func() string
-	mu               sync.Mutex
-	seq              uint64
-	graphs           map[string]*reduce.Graph
-	execBySession    map[string]string
-	bus              *cdc.Bus
-	quarantined      int64
-	evicted          int64
-	reaperWindow     time.Duration
-	maxShards        int
-	lastSeen         map[string]time.Time
-	startedAt        time.Time
-	storeWriteErrors int64
-	otlpEndpoint     string
-	exporterConsumer *cdc.Consumer
+	store             store.Store
+	newExecID         func() string
+	mu                sync.Mutex
+	seq               uint64
+	graphs            map[string]*reduce.Graph
+	execBySession     map[string]string
+	bus               *cdc.Bus
+	quarantined       int64
+	evicted           int64
+	reaperWindow      time.Duration
+	maxShards         int
+	lastSeen          map[string]time.Time
+	startedAt         time.Time
+	storeWriteErrors  int64
+	otlpEndpoint      string
+	exporterConsumer  *cdc.Consumer
+	dbPath            string
+	transcriptDir     string
+	transcriptExclude []string
+	lossyRuns         int64
 }
 
 func New(s store.Store) *Daemon {
@@ -273,6 +294,94 @@ func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) (err error) {
 	return nil
 }
 
+func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			d.quarantine("jsonl", line, fmt.Sprintf("panic: %v", r))
+			err = nil
+		}
+	}()
+	execID, known := d.execBySession[sessionID]
+	if !known {
+		execID = d.newExecID()
+		d.execBySession[sessionID] = execID
+	}
+	obs, err := tailParseFn(bytes.NewReader(line), execID, d.next, func(time.Time) time.Time { return nowFn().UTC() })
+	if err != nil {
+		d.quarantine("jsonl", line, err.Error())
+		return nil
+	}
+	g, inMem := d.graphs[execID]
+	if !inMem {
+		g = reduce.NewGraph()
+		if known {
+			prior, loadErr := d.store.ObservationsForExecution(execID)
+			if loadErr != nil {
+				d.quarantine("jsonl", line, loadErr.Error())
+				return nil
+			}
+			g.ApplyAll(prior)
+			_ = g.DrainDeltas()
+		}
+		d.graphs[execID] = g
+	}
+	for _, o := range obs {
+		if err := d.applyAndPersist(g, o); err != nil {
+			d.quarantine("jsonl", line, err.Error())
+			return nil
+		}
+		d.lastSeen[o.RunID] = o.ObservedAt
+	}
+	return nil
+}
+
+func (d *Daemon) MarkLossy(sessionID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	execID, ok := d.execBySession[sessionID]
+	if !ok {
+		return
+	}
+	g, ok := d.graphs[execID]
+	if !ok {
+		return
+	}
+	r, ok := g.Runs[sessionID]
+	if !ok {
+		return
+	}
+	if r.Meta == nil {
+		r.Meta = map[string]any{}
+	}
+	r.Meta["lossy"] = true
+	gaps, _ := r.Meta["lossy_gaps"].(int64)
+	r.Meta["lossy_gaps"] = gaps + 1
+	d.lossyRuns++
+	if err := d.store.UpsertRun(*r); err != nil {
+		log.Printf("catacomb: lossy run persist failed: %v", err)
+	}
+}
+
+func (d *Daemon) SetTranscriptDir(s string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.transcriptDir = s
+}
+
+func (d *Daemon) SetTranscriptExclude(globs []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.transcriptExclude = globs
+}
+
+func (d *Daemon) SetDBPath(s string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.dbPath = s
+}
+
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
 	nodes, edges := g.Snapshot()
@@ -315,6 +424,7 @@ type Metrics struct {
 	DeltasDropped       int64  `json:"deltas_dropped"`
 	ExporterLag         int64  `json:"exporter_lag"`
 	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
+	LossyRuns           int64  `json:"lossy_runs"`
 }
 
 func (d *Daemon) metricsSnapshot() Metrics {
@@ -343,6 +453,7 @@ func (d *Daemon) metricsSnapshot() Metrics {
 		DeltasDropped:       d.bus.TotalDropped(),
 		ExporterLag:         lag,
 		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
+		LossyRuns:           d.lossyRuns,
 	}
 }
 

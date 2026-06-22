@@ -141,3 +141,11 @@ type QuarantineRecord struct {
 	Err      string    `json:"err,omitempty"`
 	At       time.Time `json:"at"`
 }
+
+type TailCursor struct {
+	Path        string `json:"path"`
+	Offset      int64  `json:"offset"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Size        int64  `json:"size"`
+	Mtime       int64  `json:"mtime"`
+}

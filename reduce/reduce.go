@@ -130,7 +130,7 @@ func sourceRank(s model.Source) int {
 		return 3
 	case model.SourceHook:
 		return 2
-	case model.SourceStreamJSON:
+	case model.SourceJSONL:
 		return 1
 	default:
 		return 0
@@ -150,7 +150,7 @@ func tokenRank(s model.Source) int {
 
 func payloadRank(s model.Source) int {
 	switch s {
-	case model.SourceHook:
+	case model.SourceHook, model.SourceJSONL:
 		return 1
 	default:
 		return 0
@@ -159,6 +159,8 @@ func payloadRank(s model.Source) int {
 
 func structureRank(s model.Source) int {
 	switch s {
+	case model.SourceJSONL:
+		return 3
 	case model.SourceOTel:
 		return 2
 	case model.SourceStreamJSON:

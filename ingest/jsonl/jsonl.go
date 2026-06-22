@@ -14,11 +14,14 @@ import (
 )
 
 type line struct {
-	Type      string          `json:"type"`
-	UUID      string          `json:"uuid"`
-	SessionID string          `json:"sessionId"`
-	Timestamp string          `json:"timestamp"`
-	Message   json.RawMessage `json:"message"`
+	Type            string          `json:"type"`
+	UUID            string          `json:"uuid"`
+	SessionID       string          `json:"sessionId"`
+	Timestamp       string          `json:"timestamp"`
+	ParentToolUseID string          `json:"parent_tool_use_id"`
+	IsSidechain     bool            `json:"isSidechain"`
+	AgentID         string          `json:"agentId"`
+	Message         json.RawMessage `json:"message"`
 }
 
 type message struct {
@@ -51,12 +54,23 @@ type partial struct {
 	payload     *model.Payload
 }
 
+var nowFn = time.Now
+
 func ParseReader(r io.Reader, executionID string) ([]model.Observation, error) {
+	var seq uint64
+	next := func() uint64 {
+		s := seq
+		seq++
+		return s
+	}
+	return Parse(r, executionID, next, func(eventTime time.Time) time.Time { return eventTime })
+}
+
+func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 
 	var out []model.Observation
-	var seq uint64
 	for sc.Scan() {
 		raw := strings.TrimSpace(sc.Text())
 		if raw == "" {
@@ -78,10 +92,9 @@ func ParseReader(r io.Reader, executionID string) ([]model.Observation, error) {
 				Attrs:       p.attrs,
 				Payload:     p.payload,
 				EventTime:   ts,
-				ObservedAt:  ts,
-				Seq:         seq,
+				ObservedAt:  observedAt(ts),
+				Seq:         nextSeq(),
 			})
-			seq++
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -106,15 +119,21 @@ func decodeLine(raw []byte) (line, []partial, error) {
 	if err != nil {
 		return ln, nil, err
 	}
-	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID}
+	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID, ParentToolUseID: ln.ParentToolUseID}
+	var parts []partial
 	switch ln.Type {
 	case "user":
-		return ln, userParts(base, text, blocks), nil
+		parts = userParts(base, text, blocks)
 	case "assistant":
-		return ln, assistantParts(base, msg, blocks), nil
-	default:
-		return ln, nil, nil
+		parts = assistantParts(base, msg, blocks)
 	}
+	if ln.IsSidechain || ln.AgentID != "" {
+		parts = append(parts, partial{
+			kind:        "subagent_stop",
+			correlation: model.Correlation{AgentID: ln.AgentID, ParentToolUseID: ln.ParentToolUseID, SessionID: ln.SessionID},
+		})
+	}
+	return ln, parts, nil
 }
 
 func decodeContent(raw json.RawMessage) (string, []block, error) {

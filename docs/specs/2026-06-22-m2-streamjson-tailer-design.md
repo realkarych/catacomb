@@ -747,3 +747,40 @@ against the best-known stream-json schema but **remain [VERIFY] pending an opera
 capture in Step 7** (`claude -p --output-format stream-json --verbose
 --include-partial-messages`). The reducer precedence generalization landed for the
 three live sources (OTel, hook, stream-json); the JSONL tier (§6.2) is inserted by M2b.
+
+## 13. M2b implementation status
+
+M2b (JSONL tailer + subagent tree + JSONL precedence tier) is implemented across
+`ingest/jsonl` (parser seam + subagent fields), `reduce` (JSONL precedence tier),
+`store` (`tail_cursors`), `ingest/tail` (poll watcher), and `daemon`/`cmd` (wiring).
+
+**[VERIFY] (pending Step 7 operator capture):** the transcript subagent field names —
+`parent_tool_use_id` (record-level), `isSidechain` (bool), `agentId`, and the
+`subagents/agent-*.jsonl` layout — are coded against the best-known transcript schema.
+
+**Deviation from §5.4 (portability):** the `tail_cursors` table replaces the spec's
+unix `syscall.Stat_t` inode/dev with a PORTABLE `(size, mtime, first-512-byte sha256
+fingerprint)` so `GOOS=windows go build` stays clean (no cgo, no unix-only syscalls).
+Rotation = head-fingerprint mismatch; truncation = size-shrink; both reset the cursor
+and mark the run lossy. `lossy` rides in the existing `model.Run.Meta` map (no new
+`Run` field / no migration); `lossy_runs` is surfaced in `GET /metrics`.
+
+**Fingerprint blind spot (accepted limit of the portable scheme):** a file replaced
+by a different file of the *same size* whose first 512 bytes are *identical* is not
+detectable as a rotation (both size and head fingerprint match). This is the inherent
+cost of dropping inode/dev; Claude Code transcripts are append-only or compaction-rewritten,
+both of which change the size or the head, so the case does not arise in practice.
+
+**Correction to §5.5 (partial trailing line):** the implementation does **not** buffer the
+unterminated tail in memory and prepend it to the next read (that approach double-counted
+bytes and over-advanced the cursor across polls). Instead the cursor is only ever advanced
+past the last complete `\n`; each poll re-reads `[cursor, size)` from that boundary, so the
+short unterminated tail is re-read (never duplicated) and restart-resume stays correct (the
+persisted cursor always sits on a complete-line boundary; no in-memory state is lost).
+
+**[VERIFY] cwd self-exclusion encoding (§7.1):** the dogfooding loop-break derives the
+`<encoded-cwd>` directory name by replacing `/`, `\`, and `.` with `-` in the daemon's
+working directory and matching it as a path-segment prefix (trailing separator). The exact
+character set Claude Code uses to encode a cwd into its `~/.claude/projects/<dir>` name is
+**[VERIFY]**-marked for Step 7; a mismatch degrades to no self-exclusion (fail-open), never
+to over-exclusion of unrelated transcripts.

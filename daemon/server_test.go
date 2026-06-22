@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -488,4 +490,52 @@ func TestStreamJSONHTTPHandlerPanicRecovered(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer tok")
 	pw := panicWriter{httptest.NewRecorder()}
 	d.handleStreamJSON(pw, r)
+}
+
+type tailLoadErrStore struct{ store.Store }
+
+func (s *tailLoadErrStore) LoadTailCursors() ([]model.TailCursor, error) {
+	return nil, errors.New("load cursors failed")
+}
+
+func (s *tailLoadErrStore) UpsertTailCursor(model.TailCursor) error { return nil }
+
+func TestServeStartsTailerIngestsTranscript(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s9.jsonl")
+	require.NoError(t, os.WriteFile(p, []byte(`{"type":"assistant","sessionId":"s9","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"ls"}}]}}`+"\n"), 0o600))
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetTranscriptDir(dir)
+	origTick := tailTick
+	tailTick = 10 * time.Millisecond
+	t.Cleanup(func() { tailTick = origTick })
+	httpLn := loopbackListener(t)
+	grpcLn := loopbackListener(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+	require.Eventually(t, func() bool {
+		return d.execForTest("s9") != ""
+	}, 3*time.Second, 10*time.Millisecond)
+	exec := d.execForTest("s9")
+	require.Eventually(t, func() bool {
+		g := d.GraphsForTest()[exec]
+		return g != nil && g.Nodes[model.ToolCallID(exec, "toolu_9")] != nil
+	}, 3*time.Second, 10*time.Millisecond)
+	cancel()
+	<-errc
+}
+
+func TestTailLoopDisabledWhenNoDir(t *testing.T) {
+	d := New(tempStore(t))
+	d.tailLoop(context.Background())
+}
+
+func TestTailLoopLoadError(t *testing.T) {
+	dir := t.TempDir()
+	d := New(&tailLoadErrStore{Store: tempStore(t)})
+	d.SetTranscriptDir(dir)
+	d.tailLoop(context.Background())
 }

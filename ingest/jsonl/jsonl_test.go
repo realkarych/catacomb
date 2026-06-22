@@ -5,11 +5,13 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 type errReader struct{ read bool }
@@ -136,4 +138,71 @@ func TestParseReaderMessageWithoutContent(t *testing.T) {
 	obs, err := ParseReader(strings.NewReader(`{"type":"user","message":{"role":"user"}}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
+}
+
+func TestParseUsesInjectedSeqAndObservedAt(t *testing.T) {
+	var n uint64 = 40
+	next := func() uint64 { n++; return n }
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	obs, err := Parse(strings.NewReader(
+		`{"type":"assistant","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"),
+		"exec-Z", next, func(time.Time) time.Time { return at })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, uint64(41), obs[0].Seq)
+	assert.Equal(t, at, obs[0].ObservedAt)
+	assert.Equal(t, "2026-06-22T10:00:00Z", obs[0].EventTime.Format(time.RFC3339))
+	assert.Equal(t, model.SourceJSONL, obs[0].Source)
+}
+
+func TestNowFnSeamDefaultsToTimeNow(t *testing.T) {
+	before := time.Now().Add(-time.Second)
+	got := nowFn()
+	assert.False(t, got.Before(before))
+}
+
+func TestParseThreadsParentToolUseID(t *testing.T) {
+	f, err := os.Open("testdata/subagent.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "exec-S")
+	require.NoError(t, err)
+	tu := byKind(obs, "assistant_tool_use")
+	require.Len(t, tu, 1)
+	assert.Equal(t, "toolu_child", tu[0].Correlation.ToolUseID)
+	assert.Equal(t, "toolu_parent", tu[0].Correlation.ParentToolUseID)
+}
+
+func TestParseEmitsSubagentForSidechain(t *testing.T) {
+	f, err := os.Open("testdata/subagent.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "exec-S")
+	require.NoError(t, err)
+	sa := byKind(obs, "subagent_stop")
+	require.Len(t, sa, 1)
+	assert.Equal(t, "agent_42", sa[0].Correlation.AgentID)
+	assert.Equal(t, "toolu_parent", sa[0].Correlation.ParentToolUseID)
+}
+
+func TestParseNoSidechainNoSubagent(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	assert.Empty(t, byKind(obs, "subagent_stop"))
+}
+
+func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
+	f, err := os.Open("testdata/subagent.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "e1")
+	require.NoError(t, err)
+	g := reduce.NewGraph()
+	g.ApplyAll(obs)
+	_, edges := g.Snapshot()
+	require.NotNil(t, g.Nodes[model.SubagentID("e1", "agent_42")])
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
+		model.ToolCallID("e1", "toolu_parent"), model.ToolCallID("e1", "toolu_child")))
+	_ = edges
 }

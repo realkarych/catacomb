@@ -18,9 +18,12 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/realkarych/catacomb/export/otlp"
+	tailingest "github.com/realkarych/catacomb/ingest/tail"
 )
 
 var newExporterFn = otlp.New
+
+var tailTick = 500 * time.Millisecond
 
 func (d *Daemon) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
@@ -132,6 +135,22 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 	}
 }
 
+func (d *Daemon) tailLoop(ctx context.Context) {
+	d.mu.Lock()
+	dir := d.transcriptDir
+	excludes := append([]string{d.dbPath, cwdTranscriptExclude()}, d.transcriptExclude...)
+	d.mu.Unlock()
+	if dir == "" {
+		return
+	}
+	tl := tailingest.New(dir, excludes, d.store, d)
+	if err := tl.Load(); err != nil {
+		log.Printf("catacomb: tailer load: %v", err)
+		return
+	}
+	tl.Run(ctx, tailTick)
+}
+
 const exporterBufSize = 1024
 
 var consumerLoopExitHook func()
@@ -190,6 +209,7 @@ func (d *Daemon) Serve(ctx context.Context, httpLn, grpcLn net.Listener, token s
 	defer cancel()
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
 	go d.reapLoop(ctx)
+	go d.tailLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()

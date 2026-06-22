@@ -703,8 +703,8 @@ func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 func TestSourceRank(t *testing.T) {
 	assert.Equal(t, 3, sourceRank(model.SourceOTel))
 	assert.Equal(t, 2, sourceRank(model.SourceHook))
-	assert.Equal(t, 1, sourceRank(model.SourceStreamJSON))
-	assert.Equal(t, 0, sourceRank(model.SourceJSONL))
+	assert.Equal(t, 1, sourceRank(model.SourceJSONL))
+	assert.Equal(t, 0, sourceRank(model.SourceStreamJSON))
 }
 
 func TestSetNameEmptyIsNoOp(t *testing.T) {
@@ -1030,10 +1030,11 @@ func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
 	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
 }
 
-func TestSourceRankThreeLiveTiers(t *testing.T) {
+func TestSourceRankFourLiveTiers(t *testing.T) {
 	assert.Equal(t, 3, sourceRank(model.SourceOTel))
 	assert.Equal(t, 2, sourceRank(model.SourceHook))
-	assert.Equal(t, 1, sourceRank(model.SourceStreamJSON))
+	assert.Equal(t, 1, sourceRank(model.SourceJSONL))
+	assert.Equal(t, 0, sourceRank(model.SourceStreamJSON))
 }
 
 func TestTimingHookBeatsStreamJSON(t *testing.T) {
@@ -1140,6 +1141,19 @@ func TestPayloadRankStreamJSONIsDefault(t *testing.T) {
 	assert.Equal(t, 0, payloadRank(model.SourceOTel))
 }
 
+func TestPayloadRankJSONLIsFull(t *testing.T) {
+	assert.Equal(t, 1, payloadRank(model.SourceHook))
+	assert.Equal(t, 1, payloadRank(model.SourceJSONL))
+	assert.Equal(t, 0, payloadRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, payloadRank(model.SourceOTel))
+}
+
+func TestTokenRankJSONLIsLowest(t *testing.T) {
+	assert.Equal(t, 2, tokenRank(model.SourceOTel))
+	assert.Equal(t, 1, tokenRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, tokenRank(model.SourceJSONL))
+}
+
 func TestReductionCommutativityThreeSources(t *testing.T) {
 	t0 := time.Unix(200, 0).UTC()
 	obs := []model.Observation{
@@ -1220,9 +1234,178 @@ func TestParentToolUseNoChildID(t *testing.T) {
 }
 
 func TestStructureRankValues(t *testing.T) {
+	assert.Equal(t, 3, structureRank(model.SourceJSONL))
 	assert.Equal(t, 2, structureRank(model.SourceOTel))
 	assert.Equal(t, 1, structureRank(model.SourceStreamJSON))
 	assert.Equal(t, 0, structureRank(model.SourceHook))
+}
+
+func jsonlToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
+	pl := &model.Payload{Input: json.RawMessage(input)}
+	pl.Hash = model.HashPayload(pl)
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: execID,
+		Source: model.SourceJSONL, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
+		Attrs:       map[string]any{"name": name},
+		Payload:     pl,
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func jsonlChildEdge(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: execID,
+		Source: model.SourceJSONL, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
+		Attrs:       map[string]any{"name": "Task"},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func jsonlTurn(execID, runID, msgID string, tin, tout int64, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: execID,
+		Source: model.SourceJSONL, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: msgID},
+		Attrs:       map[string]any{"tokens_in": tin, "tokens_out": tout},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestJSONLStructureOutranksOTelEdgeBothOrders(t *testing.T) {
+	otelEdge := otelChildEdge("e1", "s1", "tchild2", "tparentOTEL", 1)
+	jsonlEdge := jsonlChildEdge("e1", "s1", "tchild2", "tparentJSONL", 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{otelEdge, jsonlEdge})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{jsonlEdge, otelEdge})
+	wantID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentJSONL"), model.ToolCallID("e1", "tchild2"))
+	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentOTEL"), model.ToolCallID("e1", "tchild2"))
+	require.NotNil(t, fwd.Edges[wantID])
+	require.NotNil(t, rev.Edges[wantID])
+	assert.Nil(t, fwd.Edges[loseID])
+	assert.Nil(t, rev.Edges[loseID])
+}
+
+func TestJSONLStructureOutranksOTelEdge(t *testing.T) {
+	g := NewGraph()
+	otel := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel,
+		Kind: "assistant_tool_use", Seq: 1, EventTime: time.Unix(1, 0).UTC(),
+		Attrs:       map[string]any{"name": "Task"},
+		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pOTEL"},
+	}
+	g.Apply(otel)
+	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
+		model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child")))
+
+	jsonl := model.Observation{
+		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
+		Kind: "assistant_tool_use", Seq: 2, EventTime: time.Unix(2, 0).UTC(),
+		Attrs:       map[string]any{"name": "Task"},
+		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pJSONL"},
+	}
+	g.Apply(jsonl)
+
+	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
+		model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child")))
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
+		model.ToolCallID("e1", "pJSONL"), model.ToolCallID("e1", "child")))
+}
+
+func TestJSONLPayloadBeatsStreamJSON(t *testing.T) {
+	jsonlFull := jsonlToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
+	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{jsonlFull, sjDelta})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{sjDelta, jsonlFull})
+	id := model.ToolCallID("e1", "t1")
+	require.NotNil(t, fwd.Nodes[id].Payload)
+	assert.JSONEq(t, `{"command":"ls -la"}`, string(fwd.Nodes[id].Payload.Input))
+	assert.Equal(t, string(fwd.Nodes[id].Payload.Input), string(rev.Nodes[id].Payload.Input))
+}
+
+func TestStreamJSONTokensOutrankJSONLTokens(t *testing.T) {
+	g := NewGraph()
+	mkTurn := func(src model.Source, in, out int64, seq uint64) model.Observation {
+		return model.Observation{
+			ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
+			Source: src, Kind: "assistant_turn", Seq: seq, EventTime: time.Unix(int64(seq), 0).UTC(),
+			Correlation: model.Correlation{MessageID: "m1"},
+			Attrs:       map[string]any{"tokens_in": in, "tokens_out": out},
+		}
+	}
+	g.Apply(mkTurn(model.SourceStreamJSON, 11, 22, 1))
+	g.Apply(mkTurn(model.SourceJSONL, 99, 99, 2))
+	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
+	require.NotNil(t, n)
+	assert.Equal(t, int64(11), *n.TokensIn)
+	assert.Equal(t, int64(22), *n.TokensOut)
+}
+
+func TestJSONLTimingBeatsStreamJSON(t *testing.T) {
+	tJSONL := time.Unix(200, 0).UTC()
+	tSJ := time.Unix(100, 0).UTC()
+	jsonlObs := jsonlTurn("e1", "s1", "m1", 0, 0, 1)
+	jsonlObs.EventTime = tJSONL
+	sjObs := sjTurn("e1", "s1", "m1", 0, 0, 2)
+	sjObs.EventTime = tSJ
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{sjObs, jsonlObs})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{jsonlObs, sjObs})
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, fwd.Nodes[id].TStart)
+	assert.Equal(t, tJSONL, *fwd.Nodes[id].TStart)
+	assert.Equal(t, tJSONL, *rev.Nodes[id].TStart)
+}
+
+func TestJSONLTimingLosesToHook(t *testing.T) {
+	tHook := time.Unix(300, 0).UTC()
+	tJSONL := time.Unix(100, 0).UTC()
+	hookObs := hookTurn("e1", "s1", "m1", 0, 0, tHook, 1)
+	jsonlObs := jsonlTurn("e1", "s1", "m1", 0, 0, 2)
+	jsonlObs.EventTime = tJSONL
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{hookObs, jsonlObs})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{jsonlObs, hookObs})
+	id := model.AssistantTurnID("e1", "m1")
+	require.NotNil(t, fwd.Nodes[id].TStart)
+	assert.Equal(t, tHook, *fwd.Nodes[id].TStart)
+	assert.Equal(t, tHook, *rev.Nodes[id].TStart)
+}
+
+func TestReductionCommutativityWithJSONL(t *testing.T) {
+	base := []model.Observation{
+		otelTool("e4", "s4", "tu1", "sp1", "", 1),
+		toolObs("e4", "s4", "tu1", "Bash", "ok", 2),
+		{
+			ObsID: "o3", RunID: "s4", ExecutionID: "e4", Source: model.SourceJSONL,
+			Kind: "assistant_tool_use", Seq: 3, EventTime: time.Unix(3, 0).UTC(),
+			Correlation: model.Correlation{ToolUseID: "tu1", ParentToolUseID: "tu0"},
+			Attrs:       map[string]any{"name": "Bash"},
+			Payload:     &model.Payload{Input: json.RawMessage(`{"command":"ls"}`)},
+		},
+		{
+			ObsID: "o4", RunID: "s4", ExecutionID: "e4", Source: model.SourceStreamJSON,
+			Kind: "assistant_turn", Seq: 4, EventTime: time.Unix(4, 0).UTC(),
+			Correlation: model.Correlation{MessageID: "m1"},
+			Attrs:       map[string]any{"tokens_in": int64(5), "tokens_out": int64(6)},
+		},
+	}
+	g0 := NewGraph()
+	g0.ApplyAll(base)
+	want := canonGraph(g0)
+	perms := permute(base)
+	for i, p := range perms {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
 }
 
 func TestReductionCommutativityWithParentToolEdge(t *testing.T) {
