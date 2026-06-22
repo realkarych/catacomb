@@ -14,3 +14,4 @@ exclude:
     - ^cmd/catacomb/main\.go$
     # Repo policy guard: a test-only package with no runtime statements.
     - ^internal/codepolicy/
+    - ^gen/
