@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,16 +32,21 @@ type sseEvent struct {
 }
 
 func deltaToSSE(d cdc.GraphDelta) sseEvent {
-	return sseEvent{
+	ev := sseEvent{
 		Kind:        string(d.Kind),
 		Rev:         d.Rev,
 		RunID:       d.RunID,
 		ExecutionID: d.ExecutionID,
-		Node:        d.Node,
 		Edge:        d.Edge,
 		OldID:       d.OldID,
 		NewID:       d.NewID,
 	}
+	if d.Node != nil {
+		n := *d.Node
+		n.Payload = nil
+		ev.Node = &n
+	}
+	return ev
 }
 
 func parseSubFilter(r *http.Request) SubFilter {
@@ -109,12 +115,23 @@ func (d *Daemon) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	d.streamSSE(r.Context(), w, flusher, sub, f, writeEvent)
+}
+
+func (d *Daemon) streamSSE(
+	ctx context.Context,
+	w http.ResponseWriter,
+	flusher http.Flusher,
+	sub *Subscription,
+	f SubFilter,
+	writeEvent func(cdc.GraphDelta) bool,
+) {
 	ticker := sseTickerFn()
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case delta, ok := <-sub.Consumer.C:
 			if !ok {

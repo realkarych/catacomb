@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/model"
 )
 
 type noFlushWriter struct {
@@ -245,8 +246,6 @@ func TestSSEClientDisconnectUnsubscribes(t *testing.T) {
 }
 
 func TestSSEQueryParamParsing(t *testing.T) {
-	d := New(tempStore(t))
-	_ = d
 	r := httptest.NewRequest(http.MethodGet,
 		"/v1/subscribe?run=r1&type=session&type=tool_call&tier=core", nil)
 	f := parseSubFilter(r)
@@ -256,8 +255,6 @@ func TestSSEQueryParamParsing(t *testing.T) {
 }
 
 func TestSSEQueryParamCommaList(t *testing.T) {
-	d := New(tempStore(t))
-	_ = d
 	r := httptest.NewRequest(http.MethodGet,
 		"/v1/subscribe?type=session,tool_call", nil)
 	f := parseSubFilter(r)
@@ -486,29 +483,20 @@ func TestSSEConsumerChannelClosed(t *testing.T) {
 	}
 	t.Cleanup(func() { sseTickerFn = origTicker })
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
-	r = r.WithContext(ctx)
+	sub := d.SubscribeFiltered(SubFilter{}, 4)
+	d.Unsubscribe(sub)
 
-	w := &pingCaptureFlusher{}
-
-	handlerDone := make(chan struct{})
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
 	go func() {
-		defer close(handlerDone)
-		d.handleSSE(w, r)
+		defer close(done)
+		d.streamSSE(context.Background(), rec, rec, sub, SubFilter{}, func(cdc.GraphDelta) bool { return true })
 	}()
 
-	require.Eventually(t, func() bool {
-		return d.busConsumerCountForTest() > 0
-	}, 2*time.Second, 10*time.Millisecond)
-
-	d.busUnsubscribeFirstForTest()
-
 	select {
-	case <-handlerDone:
+	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("handler did not exit after channel close")
+		t.Fatal("streamSSE did not exit after channel close")
 	}
 }
 
@@ -550,6 +538,48 @@ func TestSSELiveDeltaWriteError(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("handler did not exit after live delta write error")
 	}
+}
+
+func TestSSEPayloadOmittedFromWire(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{"cmd":"ls"}}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	nodeID := model.ToolCallID("exec1", "t1")
+	g.Nodes[nodeID].Payload = &model.Payload{Input: []byte(`{"cmd":"ls"}`), Hash: "abc123"}
+	g.Nodes[nodeID].PayloadHash = "abc123"
+	d.mu.Unlock()
+
+	sub := d.SubscribeFiltered(SubFilter{}, 64)
+	defer d.Unsubscribe(sub)
+
+	var nodeEvent *cdc.GraphDelta
+	for i := range sub.Snapshot {
+		if sub.Snapshot[i].Node != nil && sub.Snapshot[i].Node.ID == nodeID {
+			nodeEvent = &sub.Snapshot[i]
+			break
+		}
+	}
+	require.NotNil(t, nodeEvent, "snapshot must contain the tool-call node")
+
+	ev := deltaToSSE(*nodeEvent)
+	b, err := json.Marshal(ev)
+	require.NoError(t, err)
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+
+	nodeMap, ok := m["node"].(map[string]any)
+	require.True(t, ok, "SSE event must have a 'node' field")
+
+	_, hasPayload := nodeMap["payload"]
+	assert.False(t, hasPayload, "SSE wire must not include raw payload")
+
+	_, hasHash := nodeMap["payload_hash"]
+	assert.True(t, hasHash, "SSE wire must include payload_hash fingerprint")
 }
 
 type pingCaptureFlusher struct {
