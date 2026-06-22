@@ -202,8 +202,8 @@
     nodeList.forEach(function (nd) {
       var p = positions.get(nd.id);
       if (!p) return;
-      var typeClass = 'node-' + (nd.type || 'marker');
-      var statusClass = 'status-' + (nd.status || 'pending');
+      var typeClass = 'node-' + escapeXML(nd.type || 'marker');
+      var statusClass = 'status-' + escapeXML(nd.status || 'pending');
       var selExtra = nd.id === selectedNodeID ? ' stroke-width="3"' : '';
       var label = (nd.name || nd.type || nd.id || '').slice(0, 18);
       parts.push('<g class="node-group" data-id="' + escapeXML(nd.id) + '">');
@@ -267,7 +267,7 @@
       var x = PX + ((s - minT) / totalMs) * BAR_W;
       var w = Math.max(((e - s) / totalMs) * BAR_W, 4);
       var y = PY + i * (rowH + 4);
-      var typeClass = 'node-' + (n.type || 'marker');
+      var typeClass = 'node-' + escapeXML(n.type || 'marker');
       var label = (n.name || n.id || '').slice(0, 22);
       parts.push('<rect class="timeline-bar ' + typeClass + '"' +
         ' x="' + x + '" y="' + y + '" width="' + w + '" height="' + rowH + '"/>');
@@ -297,7 +297,7 @@
       ['duration_ms', nd.duration_ms != null ? String(nd.duration_ms) : ''],
       ['tokens_in', nd.tokens_in != null ? String(nd.tokens_in) : ''],
       ['tokens_out', nd.tokens_out != null ? String(nd.tokens_out) : ''],
-      ['cost_usd', nd.cost_usd != null ? nd.cost_usd.toFixed(6) : ''],
+      ['cost_usd', typeof nd.cost_usd === 'number' ? nd.cost_usd.toFixed(6) : (nd.cost_usd != null ? String(nd.cost_usd) : '')],
       ['payload_hash', nd.payload_hash || ''],
       ['tier', nd.tier || ''],
     ];
@@ -335,7 +335,7 @@
     var html = '';
     runArr.forEach(function (r) {
       var sel = r.id === selectedRunID ? ' selected' : '';
-      var sc = 'run-status-' + (r.status || 'pending');
+      var sc = 'run-status-' + escapeXML(r.status || 'pending');
       html += '<li data-run="' + escapeXML(r.id) + '" class="' + sel + '">' +
         '<span class="run-status ' + sc + '"></span>' +
         escapeHTML(r.id.slice(0, 32)) + '</li>';
