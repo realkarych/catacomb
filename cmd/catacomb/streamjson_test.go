@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,4 +158,94 @@ func TestRunChildStartError(t *testing.T) {
 	t.Cleanup(func() { execCommand = orig })
 	err := runChild(io.Discard, io.Discard, filepath.Join(t.TempDir(), "d.json"), "", []string{"nope"})
 	require.Error(t, err)
+}
+
+func TestLossyWriterNonBlocking(t *testing.T) {
+	w := &lossyWriter{ch: make(chan []byte, 1)}
+	n, err := w.Write([]byte("first"))
+	require.NoError(t, err)
+	assert.Equal(t, 5, n)
+	assert.Equal(t, int64(0), w.dropped.Load())
+
+	n, err = w.Write([]byte("second"))
+	require.NoError(t, err)
+	assert.Equal(t, 6, n)
+	assert.Equal(t, int64(1), w.dropped.Load())
+}
+
+func TestLossyWriterIsolatesSlice(t *testing.T) {
+	w := &lossyWriter{ch: make(chan []byte, 1)}
+	buf := []byte("hello")
+	_, _ = w.Write(buf)
+	buf[0] = 'X'
+	got := <-w.ch
+	assert.Equal(t, byte('h'), got[0])
+}
+
+func TestRunChildPumpForwardsToDiscovery(t *testing.T) {
+	received := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			received <- body
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	host := srv.Listener.Addr().String()
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: host, Token: "tok"}))
+
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	var out bytes.Buffer
+	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}))
+
+	select {
+	case body := <-received:
+		assert.Contains(t, string(body), `"session_id":"s1"`)
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon never received forwarded data")
+	}
+}
+
+func TestRunChildShutdownNoHang(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	host := srv.Listener.Addr().String()
+	srv.Close()
+
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: host, Token: "tok"}))
+
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runChild(io.Discard, io.Discard, discovery, "", []string{"claude"})
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
 }

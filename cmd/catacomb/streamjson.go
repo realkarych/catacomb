@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/daemon"
 )
+
+const streamTeeBuffer = 1024
 
 var (
 	execCommand      = exec.Command
@@ -23,6 +26,22 @@ var (
 		},
 	}
 )
+
+type lossyWriter struct {
+	ch      chan []byte
+	dropped atomic.Int64
+}
+
+func (w *lossyWriter) Write(p []byte) (int, error) {
+	b := make([]byte, len(p))
+	copy(b, p)
+	select {
+	case w.ch <- b:
+	default:
+		w.dropped.Add(1)
+	}
+	return len(p), nil
+}
 
 func streamForward(warn io.Writer, discoveryPath string, body io.Reader) {
 	d, err := daemon.ReadDiscovery(discoveryPath)
@@ -87,8 +106,18 @@ func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []stri
 		child.Env = append(child.Env, "CATACOMB_RUN_ID="+runID)
 	}
 	pr, pw := io.Pipe()
-	child.Stdout = io.MultiWriter(stdout, pw)
+	lossy := &lossyWriter{ch: make(chan []byte, streamTeeBuffer)}
+	child.Stdout = io.MultiWriter(stdout, lossy)
 	child.Stderr = stderr
+	pumpDone := make(chan struct{})
+	go func() {
+		defer close(pumpDone)
+		for b := range lossy.ch {
+			if _, err := pw.Write(b); err != nil {
+				return
+			}
+		}
+	}()
 	fwdDone := make(chan struct{})
 	go func() {
 		defer close(fwdDone)
@@ -96,13 +125,17 @@ func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []stri
 		_, _ = io.Copy(io.Discard, pr)
 	}()
 	if err := child.Start(); err != nil {
+		close(lossy.ch)
 		_ = pw.Close()
-		_ = pr.Close()
+		<-pumpDone
 		<-fwdDone
+		_ = pr.Close()
 		return err
 	}
 	waitErr := child.Wait()
+	close(lossy.ch)
 	_ = pw.Close()
+	<-pumpDone
 	<-fwdDone
 	_ = pr.Close()
 	return waitErr
