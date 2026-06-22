@@ -127,7 +127,9 @@ func TestRunWatchPrintsLines(t *testing.T) {
 	for sc.Scan() {
 		lines = append(lines, sc.Text())
 	}
-	assert.GreaterOrEqual(t, len(lines), 1)
+	assert.Equal(t, 2, len(lines))
+	assert.Contains(t, lines[0], `"kind":"node_upsert"`)
+	assert.Contains(t, lines[1], `"kind":"run_ended"`)
 }
 
 func TestRunWatchBadAddr(t *testing.T) {
@@ -158,7 +160,6 @@ func TestRunWatchDoErrorNoCtx(t *testing.T) {
 }
 
 func TestRunWatchCtxCancelDuringScan(t *testing.T) {
-	linePrinted := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		flusher := w.(http.Flusher)
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -183,11 +184,9 @@ func TestRunWatchCtxCancelDuringScan(t *testing.T) {
 	}()
 	sc := bufio.NewScanner(pr)
 	require.True(t, sc.Scan())
-	close(linePrinted)
 	cancel()
 	require.NoError(t, <-errCh)
 	_ = pr.Close()
-	_ = linePrinted
 }
 
 func TestWatchCmdRunE(t *testing.T) {

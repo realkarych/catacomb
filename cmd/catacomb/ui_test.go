@@ -131,27 +131,22 @@ func TestUICmdNoOpenFlag(t *testing.T) {
 func TestBrowserCommandArgs(t *testing.T) {
 	tests := []struct {
 		goos     string
-		wantPath string
 		wantArgs []string
 	}{
 		{
 			goos:     "darwin",
-			wantPath: "open",
 			wantArgs: []string{"open", "http://example.com"},
 		},
 		{
 			goos:     "windows",
-			wantPath: "rundll32",
 			wantArgs: []string{"rundll32", "url.dll,FileProtocolHandler", "http://example.com"},
 		},
 		{
 			goos:     "linux",
-			wantPath: "xdg-open",
 			wantArgs: []string{"xdg-open", "http://example.com"},
 		},
 		{
 			goos:     "freebsd",
-			wantPath: "xdg-open",
 			wantArgs: []string{"xdg-open", "http://example.com"},
 		},
 	}

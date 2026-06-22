@@ -191,18 +191,14 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	neo4jPassword := d.neo4jPassword
 	d.mu.Unlock()
 
-	type exporterEntry struct {
-		exp  exportiface.Exporter
-		name string
-	}
-	var entries []exporterEntry
+	var entries []exportiface.Exporter
 
 	if otlpEndpoint != "" {
 		exp, err := newExporterFn(ctx, otlpEndpoint, grpcAddr, httpAddr)
 		if err != nil {
 			log.Printf("catacomb: otlp exporter disabled: %v", err)
 		} else {
-			entries = append(entries, exporterEntry{exp: exp, name: "otlp"})
+			entries = append(entries, exp)
 		}
 	}
 
@@ -211,7 +207,7 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 		if err != nil {
 			log.Printf("catacomb: postgres exporter disabled: %v", err)
 		} else {
-			entries = append(entries, exporterEntry{exp: exp, name: "postgres"})
+			entries = append(entries, exp)
 		}
 	}
 
@@ -220,7 +216,7 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 		if err != nil {
 			log.Printf("catacomb: neo4j exporter disabled: %v", err)
 		} else {
-			entries = append(entries, exporterEntry{exp: exp, name: "neo4j"})
+			entries = append(entries, exp)
 		}
 	}
 
@@ -229,21 +225,20 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	}
 
 	d.mu.Lock()
-	for _, e := range entries {
+	for _, exp := range entries {
 		for _, g := range d.graphs {
 			nodes, edges := g.Snapshot()
-			_ = e.exp.SnapshotState(ctx, nodes, edges)
+			_ = exp.SnapshotState(ctx, nodes, edges)
 		}
 		for _, g := range d.graphs {
 			for _, r := range g.RunsSnapshot() {
 				if r.EndedAt != nil {
-					_ = e.exp.FlushRun(ctx, r.ID)
+					_ = exp.FlushRun(ctx, r.ID)
 				}
 			}
 		}
 		consumer := d.bus.Subscribe(exporterBufSize)
 		d.exporterConsumers = append(d.exporterConsumers, consumer)
-		exp := e.exp
 		go func(c *cdc.Consumer, ex exportiface.Exporter) {
 			for {
 				select {
