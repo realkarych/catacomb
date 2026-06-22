@@ -12,7 +12,10 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
-var _ exportiface.Exporter = (*Exporter)(nil)
+var (
+	_ exportiface.Exporter = (*Exporter)(nil)
+	_ neo4jDriver          = (*driverAdapter)(nil)
+)
 
 type neo4jSession interface {
 	Run(ctx context.Context, cypher string, params map[string]any, configurers ...func(*neo4japi.TransactionConfig)) (neo4japi.ResultWithContext, error)
@@ -57,8 +60,7 @@ func (s *sessionRunner) Close(ctx context.Context) error {
 }
 
 type Exporter struct {
-	r           runner
-	schemaReady bool
+	r runner
 }
 
 func New(ctx context.Context, uri, user, password string) (*Exporter, error) {
@@ -157,10 +159,6 @@ func edgeProps(edge *model.Edge) map[string]any {
 	}
 }
 
-func (e *Exporter) markReady() {
-	e.schemaReady = true
-}
-
 func (e *Exporter) Name() string { return "neo4j" }
 
 func (e *Exporter) Shutdown(ctx context.Context) error {
@@ -203,19 +201,16 @@ func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
 		if d.Node == nil {
 			return nil
 		}
-		e.markReady()
 		return e.upsertNode(ctx, d.Node)
 	case cdc.DeltaEdgeUpsert:
 		if d.Edge == nil {
 			return nil
 		}
-		e.markReady()
 		return e.upsertEdge(ctx, d.Edge)
 	case cdc.DeltaNodeMerge:
 		if d.Node == nil {
 			return nil
 		}
-		e.markReady()
 		if err := e.r.Run(ctx, `MATCH (n {id:$id}) DETACH DELETE n`, map[string]any{"id": d.OldID}); err != nil {
 			return fmt.Errorf("neo4j exporter node_merge delete: %w", err)
 		}
@@ -224,7 +219,6 @@ func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
 		if d.Edge == nil {
 			return nil
 		}
-		e.markReady()
 		if err := e.r.Run(ctx, `MATCH ()-[r {id:$id}]->() DELETE r`, map[string]any{"id": d.Edge.ID}); err != nil {
 			return fmt.Errorf("neo4j exporter edge_delete: %w", err)
 		}
@@ -238,7 +232,6 @@ func (e *Exporter) SnapshotState(ctx context.Context, nodes []*model.Node, edges
 	if len(nodes) == 0 && len(edges) == 0 {
 		return nil
 	}
-	e.markReady()
 	for _, n := range nodes {
 		label := nodeLabel(n.Type)
 		cypher := fmt.Sprintf(

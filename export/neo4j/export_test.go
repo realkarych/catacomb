@@ -153,7 +153,6 @@ func TestEdgeRelTypeDefaultBranch(t *testing.T) {
 func TestApplyDeltaNodeUpsertEmitsCypher(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusRunning, Rev: 3}
 	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaNodeUpsert, Rev: 3, RunID: "r1", Node: n,
@@ -168,7 +167,6 @@ func TestApplyDeltaNodeUpsertEmitsCypher(t *testing.T) {
 func TestApplyDeltaNodeStatusEmitsCypher(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	n := &model.Node{ID: "n2", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, Rev: 5}
 	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaNodeStatus, Rev: 5, RunID: "r1", Node: n,
@@ -181,7 +179,6 @@ func TestApplyDeltaNodeStatusEmitsCypher(t *testing.T) {
 func TestApplyDeltaEdgeUpsertEmitsCypher(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	edge := &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "p", Dst: "c", Rev: 2}
 	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaEdgeUpsert, Rev: 2, RunID: "r1", Edge: edge,
@@ -194,7 +191,6 @@ func TestApplyDeltaEdgeUpsertEmitsCypher(t *testing.T) {
 func TestApplyDeltaNodeMergeDeletesThenUpserts(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	n := &model.Node{ID: "n-new", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 7}
 	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaNodeMerge, Rev: 7, RunID: "r1", OldID: "n-old", NewID: "n-new", Node: n,
@@ -208,7 +204,6 @@ func TestApplyDeltaNodeMergeDeletesThenUpserts(t *testing.T) {
 func TestApplyDeltaEdgeDeleteEmitsCypher(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	edge := &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeSequence, Src: "a", Dst: "b", Rev: 1}
 	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaEdgeDelete, Rev: 1, RunID: "r1", Edge: edge,
@@ -262,7 +257,6 @@ func TestApplyDeltaEdgeDeleteNilEdge(t *testing.T) {
 func TestApplyDeltaNodeUpsertAttrsJSONEncoded(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	n := &model.Node{
 		ID: "n3", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1,
 		Attrs: map[string]any{"key": "val"},
@@ -297,7 +291,6 @@ func assertNoSentinelInParams(t *testing.T, params map[string]any, sentinel stri
 func TestApplyDeltaNodeUpsertPayloadNeverInCypher(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	n := &model.Node{
 		ID: "n4", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1,
 		Payload: &model.Payload{Hash: "abc123", Input: []byte(`"UNIQUESENTINELXYZ"`)},
@@ -311,27 +304,9 @@ func TestApplyDeltaNodeUpsertPayloadNeverInCypher(t *testing.T) {
 	}
 }
 
-func TestApplyDeltaEnsureRunsOnce(t *testing.T) {
-	r := &recordRunner{}
-	e := ExporterWithRunner(r)
-	n1 := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusRunning, Rev: 1}
-	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
-		Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: n1,
-	}))
-	require.Len(t, r.calls, 1, "first call: 1 upsert (ensure is a noop for neo4j)")
-	assert.True(t, e.schemaReady)
-
-	n2 := &model.Node{ID: "n2", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 2}
-	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
-		Kind: cdc.DeltaNodeUpsert, Rev: 2, RunID: "r1", Node: n2,
-	}))
-	require.Len(t, r.calls, 2, "second call: 1 more upsert, ensure was idempotent")
-}
-
 func TestApplyDeltaNodeUpsertRunError(t *testing.T) {
 	runErr := errors.New("run error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr})
-	e.schemaReady = true
 	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1}
 	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: n,
@@ -342,7 +317,6 @@ func TestApplyDeltaNodeUpsertRunError(t *testing.T) {
 func TestApplyDeltaEdgeUpsertRunError(t *testing.T) {
 	runErr := errors.New("edge run error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr})
-	e.schemaReady = true
 	edge := &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "a", Dst: "b", Rev: 1}
 	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaEdgeUpsert, Rev: 1, RunID: "r1", Edge: edge,
@@ -353,7 +327,6 @@ func TestApplyDeltaEdgeUpsertRunError(t *testing.T) {
 func TestApplyDeltaNodeMergeDeleteError(t *testing.T) {
 	runErr := errors.New("delete error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr, failOn: 1})
-	e.schemaReady = true
 	n := &model.Node{ID: "n-new", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1}
 	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaNodeMerge, Rev: 1, RunID: "r1", OldID: "n-old", Node: n,
@@ -365,7 +338,6 @@ func TestApplyDeltaNodeMergeDeleteError(t *testing.T) {
 func TestApplyDeltaEdgeDeleteRunError(t *testing.T) {
 	runErr := errors.New("edge delete error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr})
-	e.schemaReady = true
 	edge := &model.Edge{ID: "e1", RunID: "r1", Type: model.EdgeSequence, Src: "a", Dst: "b", Rev: 1}
 	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
 		Kind: cdc.DeltaEdgeDelete, Rev: 1, RunID: "r1", Edge: edge,
@@ -384,7 +356,6 @@ func TestShutdownRunnerCloseError(t *testing.T) {
 func TestSnapshotStateUpsertsBatched(t *testing.T) {
 	r := &recordRunner{}
 	e := ExporterWithRunner(r)
-	e.schemaReady = true
 	nodes := []*model.Node{
 		{ID: "a", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK, Rev: 1},
 		{ID: "b", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 2},
@@ -403,21 +374,9 @@ func TestSnapshotStateEmptyIsNoop(t *testing.T) {
 	assert.Empty(t, r.calls)
 }
 
-func TestSnapshotStateEnsuresOnFirstWrite(t *testing.T) {
-	r := &recordRunner{}
-	e := ExporterWithRunner(r)
-	nodes := []*model.Node{
-		{ID: "a", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK, Rev: 1},
-	}
-	require.NoError(t, e.SnapshotState(context.Background(), nodes, nil))
-	assert.True(t, e.schemaReady)
-	assert.Len(t, r.calls, 1)
-}
-
 func TestSnapshotStateNodeRunError(t *testing.T) {
 	runErr := errors.New("node run error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr})
-	e.schemaReady = true
 	nodes := []*model.Node{{ID: "a", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK, Rev: 1}}
 	err := e.SnapshotState(context.Background(), nodes, nil)
 	require.Error(t, err)
@@ -427,7 +386,6 @@ func TestSnapshotStateNodeRunError(t *testing.T) {
 func TestSnapshotStateEdgeRunError(t *testing.T) {
 	runErr := errors.New("edge run error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr})
-	e.schemaReady = true
 	edges := []*model.Edge{{ID: "e1", RunID: "r1", Type: model.EdgeParentChild, Src: "a", Dst: "b", Rev: 1}}
 	err := e.SnapshotState(context.Background(), nil, edges)
 	require.Error(t, err)
