@@ -23,6 +23,7 @@ import (
 	"github.com/realkarych/catacomb/export/otlp"
 	pgexport "github.com/realkarych/catacomb/export/postgres"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
+	"github.com/realkarych/catacomb/webui"
 )
 
 var newExporterFn = otlp.New
@@ -42,7 +43,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
 	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
 	mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
-	mux.HandleFunc("GET /v1/subscribe", d.authed(token, d.handleSSE))
+	mux.HandleFunc("GET /v1/subscribe", d.authedAllowQuery(token, d.handleSSE))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -50,6 +51,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(d.metricsSnapshot())
 	})
+	mux.Handle("GET /", webui.Handler())
 	return mux
 }
 
@@ -112,6 +114,18 @@ func streamSessionID(line []byte) string {
 func (d *Daemon) authed(token string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (d *Daemon) authedAllowQuery(token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		headerOK := subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token))
+		queryOK := subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(token))
+		if headerOK != 1 && queryOK != 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

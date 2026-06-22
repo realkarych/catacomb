@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>catacomb</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <nav id="tabs">
+    <button class="tab active" data-view="graph">Graph</button>
+    <button class="tab" data-view="timeline">Timeline</button>
+    <button class="tab" data-view="inspector">Inspector</button>
+    <button class="tab" data-view="runs">Runs</button>
+  </nav>
+  <div id="status-bar"><span id="conn-status">connecting…</span></div>
+  <main id="view-host">
+    <div id="view-graph" class="view active">
+      <svg id="graph-svg" width="100%" height="100%"></svg>
+    </div>
+    <div id="view-timeline" class="view">
+      <svg id="timeline-svg" width="100%" height="100%"></svg>
+    </div>
+    <div id="view-inspector" class="view">
+      <div id="inspector-panel"><p class="hint">Click a node in the Graph view</p></div>
+    </div>
+    <div id="view-runs" class="view">
+      <div id="runs-filter-bar">
+        <input id="runs-filter" type="search" placeholder="Filter runs…">
+      </div>
+      <ul id="runs-list"></ul>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

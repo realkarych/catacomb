@@ -18,5 +18,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newIngestCmd())
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newWatchCmd())
+	root.AddCommand(newUICmd())
 	return root
 }
