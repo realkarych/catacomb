@@ -1314,6 +1314,31 @@ func TestJSONLStructureOutranksOTelEdge(t *testing.T) {
 		model.ToolCallID("e1", "pJSONL"), model.ToolCallID("e1", "child")))
 }
 
+func TestReparentEmitsEdgeDelete(t *testing.T) {
+	g := NewGraph()
+	g.Apply(model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel,
+		Kind: "assistant_tool_use", Seq: 1, EventTime: time.Unix(1, 0).UTC(),
+		Attrs:       map[string]any{"name": "Task"},
+		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pOTEL"},
+	})
+	_ = g.DrainDeltas()
+	g.Apply(model.Observation{
+		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
+		Kind: "assistant_tool_use", Seq: 2, EventTime: time.Unix(2, 0).UTC(),
+		Attrs:       map[string]any{"name": "Task"},
+		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pJSONL"},
+	})
+	oldID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child"))
+	deletedOld := false
+	for _, d := range g.DrainDeltas() {
+		if d.Kind == cdc.DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == oldID {
+			deletedOld = true
+		}
+	}
+	assert.True(t, deletedOld, "re-parent must emit DeltaEdgeDelete for the superseded edge")
+}
+
 func TestJSONLPayloadBeatsStreamJSON(t *testing.T) {
 	jsonlFull := jsonlToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
 	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)
