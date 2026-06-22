@@ -138,7 +138,7 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 func (d *Daemon) tailLoop(ctx context.Context) {
 	d.mu.Lock()
 	dir := d.transcriptDir
-	excludes := append([]string{d.dbPath}, d.transcriptExclude...)
+	excludes := append([]string{d.dbPath, cwdTranscriptExclude()}, d.transcriptExclude...)
 	d.mu.Unlock()
 	if dir == "" {
 		return

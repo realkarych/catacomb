@@ -115,7 +115,7 @@ func TestPollOnceBuffersPartialLine(t *testing.T) {
 	write(t, p, "}\n")
 	require.NoError(t, tl.PollOnce(context.Background()))
 	require.Len(t, sink.lines, 1)
-	assert.Contains(t, sink.lines[0], `"id":"m1"`)
+	assert.Equal(t, half+"}", sink.lines[0])
 }
 
 func TestPollOnceTruncationResetsAndMarksLossy(t *testing.T) {

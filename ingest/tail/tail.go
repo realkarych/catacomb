@@ -48,8 +48,7 @@ type Store interface {
 }
 
 type fileState struct {
-	cursor  model.TailCursor
-	pending []byte
+	cursor model.TailCursor
 }
 
 type Tailer struct {
@@ -174,14 +173,12 @@ func (tl *Tailer) pollFile(path string) error {
 	if size < st.cursor.Offset {
 		st.cursor.Offset = 0
 		st.cursor.Fingerprint = ""
-		st.pending = nil
 		tl.sink.MarkLossy(session)
 	} else if st.cursor.Offset > 0 && st.cursor.Fingerprint != "" {
 		head, herr := headFingerprintN(path, st.cursor.Offset)
 		if herr == nil && head != st.cursor.Fingerprint {
 			st.cursor.Offset = 0
 			st.cursor.Fingerprint = ""
-			st.pending = nil
 			tl.sink.MarkLossy(session)
 		}
 	}
@@ -200,17 +197,12 @@ func (tl *Tailer) pollFile(path string) error {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil
 	}
-	data := make([]byte, 0, len(st.pending)+n)
-	data = append(data, st.pending...)
-	data = append(data, buf[:n]...)
+	data := buf[:n]
 	advance := bytes.LastIndexByte(data, '\n')
 	if advance < 0 {
-		st.pending = data
 		return tl.persistFingerprint(st, info)
 	}
-	complete := data[:advance+1]
-	st.pending = append([]byte{}, data[advance+1:]...)
-	for _, raw := range bytes.Split(complete, []byte{'\n'}) {
+	for _, raw := range bytes.Split(data[:advance+1], []byte{'\n'}) {
 		trimmed := bytes.TrimSpace(raw)
 		if len(trimmed) == 0 {
 			continue

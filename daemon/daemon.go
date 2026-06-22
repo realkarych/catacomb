@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,11 +32,23 @@ const (
 
 var (
 	nowFn         = time.Now
+	getwdFn       = os.Getwd
 	applyFn       = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
 	parseFn       = otelingest.Parse
 	streamParseFn = streamjsoningest.Parse
 	tailParseFn   = ijsonl.Parse
 )
+
+func cwdTranscriptExclude() string {
+	wd, err := getwdFn()
+	if err != nil || wd == "" {
+		return ""
+	}
+	enc := strings.ReplaceAll(wd, "/", "-")
+	enc = strings.ReplaceAll(enc, "\\", "-")
+	enc = strings.ReplaceAll(enc, ".", "-")
+	return enc + string(os.PathSeparator)
+}
 
 type Daemon struct {
 	store             store.Store

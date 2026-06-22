@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -1069,4 +1070,18 @@ func TestMarkLossyUpsertRunError(t *testing.T) {
 	d.store = &lossyUpsertErrStore{Store: base}
 	d.MarkLossy("s1")
 	assert.Equal(t, int64(1), d.LossyForTest())
+}
+
+func TestCwdTranscriptExcludeEncodes(t *testing.T) {
+	orig := getwdFn
+	getwdFn = func() (string, error) { return "/Users/test/.cache/proj.v2", nil }
+	t.Cleanup(func() { getwdFn = orig })
+	assert.Equal(t, "-Users-test--cache-proj-v2"+string(os.PathSeparator), cwdTranscriptExclude())
+}
+
+func TestCwdTranscriptExcludeErrorReturnsEmpty(t *testing.T) {
+	orig := getwdFn
+	getwdFn = func() (string, error) { return "", errors.New("no cwd") }
+	t.Cleanup(func() { getwdFn = orig })
+	assert.Empty(t, cwdTranscriptExclude())
 }
