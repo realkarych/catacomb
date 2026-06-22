@@ -30,6 +30,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
 	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
 	mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
+	mux.HandleFunc("GET /v1/subscribe", d.authed(token, d.handleSSE))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

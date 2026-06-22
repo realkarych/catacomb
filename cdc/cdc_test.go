@@ -150,6 +150,25 @@ func TestTotalDroppedAggregatesAcrossConsumers(t *testing.T) {
 	assert.Equal(t, int64(4), b.TotalDropped())
 }
 
+func TestUnsubscribeFirstOnEmptyBusIsNoop(t *testing.T) {
+	b := NewBus()
+	b.UnsubscribeFirst()
+	assert.Equal(t, 0, b.ConsumerCount())
+}
+
+func TestUnsubscribeFirstClosesFirstConsumer(t *testing.T) {
+	b := NewBus()
+	c1 := b.Subscribe(4)
+	c2 := b.Subscribe(4)
+	b.UnsubscribeFirst()
+	assert.Equal(t, 1, b.ConsumerCount())
+	_, ok := <-c1.C
+	assert.False(t, ok, "first consumer channel should be closed")
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "n1"}})
+	got := <-c2.C
+	assert.Equal(t, uint64(1), got.Rev)
+}
+
 func TestPublishConcurrentWithReaderEventuallyDeliversFinal(t *testing.T) {
 	b := NewBus()
 	c := b.Subscribe(1)

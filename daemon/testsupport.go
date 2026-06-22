@@ -46,3 +46,7 @@ func (d *Daemon) LossyForTest() int64 {
 func (d *Daemon) busConsumerCountForTest() int {
 	return d.bus.ConsumerCount()
 }
+
+func (d *Daemon) busUnsubscribeFirstForTest() {
+	d.bus.UnsubscribeFirst()
+}
