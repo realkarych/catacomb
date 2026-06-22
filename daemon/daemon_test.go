@@ -792,7 +792,7 @@ func TestExporterLagReflectsConsumerDropped(t *testing.T) {
 	d := New(tempStore(t))
 	c := d.Subscribe(0)
 	d.mu.Lock()
-	d.exporterConsumer = c
+	d.exporterConsumers = []*cdc.Consumer{c}
 	d.mu.Unlock()
 	d.bus.Publish(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "x"}})
 	d.bus.Publish(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: 2, Node: &model.Node{ID: "y"}})

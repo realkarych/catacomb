@@ -3,6 +3,7 @@ package daemon
 import (
 	"maps"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/reduce"
 )
 
@@ -45,4 +46,12 @@ func (d *Daemon) LossyForTest() int64 {
 
 func (d *Daemon) busConsumerCountForTest() int {
 	return d.bus.ConsumerCount()
+}
+
+func (d *Daemon) ExporterConsumersForTest() []*cdc.Consumer {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]*cdc.Consumer, len(d.exporterConsumers))
+	copy(out, d.exporterConsumers)
+	return out
 }

@@ -17,11 +17,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/realkarych/catacomb/cdc"
+	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/export/otlp"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
 )
 
 var newExporterFn = otlp.New
+
+var newPostgresFn func(ctx context.Context, dsn string) (exportiface.Exporter, error)
 
 var tailTick = 500 * time.Millisecond
 
@@ -158,49 +162,74 @@ var consumerLoopExitHook func()
 
 func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	d.mu.Lock()
-	endpoint := d.otlpEndpoint
+	otlpEndpoint := d.otlpEndpoint
+	postgresDSN := d.postgresDSN
 	d.mu.Unlock()
-	if endpoint == "" {
+
+	type exporterEntry struct {
+		exp  exportiface.Exporter
+		name string
+	}
+	var entries []exporterEntry
+
+	if otlpEndpoint != "" {
+		exp, err := newExporterFn(ctx, otlpEndpoint, grpcAddr, httpAddr)
+		if err != nil {
+			log.Printf("catacomb: otlp exporter disabled: %v", err)
+		} else {
+			entries = append(entries, exporterEntry{exp: exp, name: "otlp"})
+		}
+	}
+
+	if postgresDSN != "" && newPostgresFn != nil {
+		exp, err := newPostgresFn(ctx, postgresDSN)
+		if err != nil {
+			log.Printf("catacomb: postgres exporter disabled: %v", err)
+		} else {
+			entries = append(entries, exporterEntry{exp: exp, name: "postgres"})
+		}
+	}
+
+	if len(entries) == 0 {
 		return
 	}
-	exp, err := newExporterFn(ctx, endpoint, grpcAddr, httpAddr)
-	if err != nil {
-		log.Printf("catacomb: otlp exporter disabled: %v", err)
-		return
-	}
+
 	d.mu.Lock()
-	for _, g := range d.graphs {
-		nodes, edges := g.Snapshot()
-		_ = exp.SnapshotState(ctx, nodes, edges)
-	}
-	for _, g := range d.graphs {
-		for _, r := range g.RunsSnapshot() {
-			if r.EndedAt != nil {
-				_ = exp.FlushRun(ctx, r.ID)
-			}
+	for _, e := range entries {
+		for _, g := range d.graphs {
+			nodes, edges := g.Snapshot()
+			_ = e.exp.SnapshotState(ctx, nodes, edges)
 		}
-	}
-	consumer := d.bus.Subscribe(exporterBufSize)
-	d.exporterConsumer = consumer
-	d.mu.Unlock()
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				d.bus.Unsubscribe(consumer)
-				_ = exp.Shutdown(ctx)
-				return
-			case delta, ok := <-consumer.C:
-				if !ok {
-					if consumerLoopExitHook != nil {
-						consumerLoopExitHook()
-					}
-					return
+		for _, g := range d.graphs {
+			for _, r := range g.RunsSnapshot() {
+				if r.EndedAt != nil {
+					_ = e.exp.FlushRun(ctx, r.ID)
 				}
-				_ = exp.ApplyDelta(ctx, delta)
 			}
 		}
-	}()
+		consumer := d.bus.Subscribe(exporterBufSize)
+		d.exporterConsumers = append(d.exporterConsumers, consumer)
+		exp := e.exp
+		go func(c *cdc.Consumer, ex exportiface.Exporter) {
+			for {
+				select {
+				case <-ctx.Done():
+					d.bus.Unsubscribe(c)
+					_ = ex.Shutdown(ctx)
+					return
+				case delta, ok := <-c.C:
+					if !ok {
+						if consumerLoopExitHook != nil {
+							consumerLoopExitHook()
+						}
+						return
+					}
+					_ = ex.ApplyDelta(ctx, delta)
+				}
+			}
+		}(consumer, exp)
+	}
+	d.mu.Unlock()
 }
 
 func (d *Daemon) Serve(ctx context.Context, httpLn, grpcLn net.Listener, token string) error {

@@ -66,7 +66,8 @@ type Daemon struct {
 	startedAt         time.Time
 	storeWriteErrors  int64
 	otlpEndpoint      string
-	exporterConsumer  *cdc.Consumer
+	exporterConsumers []*cdc.Consumer
+	postgresDSN       string
 	dbPath            string
 	transcriptDir     string
 	transcriptExclude []string
@@ -110,6 +111,12 @@ func (d *Daemon) SetOTLPEndpoint(s string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.otlpEndpoint = s
+}
+
+func (d *Daemon) SetPostgresDSN(s string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.postgresDSN = s
 }
 
 func (d *Daemon) Recover() error {
@@ -437,8 +444,8 @@ func (d *Daemon) metricsSnapshot() Metrics {
 		}
 	}
 	var lag int64
-	if d.exporterConsumer != nil {
-		lag = d.exporterConsumer.Dropped()
+	for _, c := range d.exporterConsumers {
+		lag += c.Dropped()
 	}
 	return Metrics{
 		UptimeSeconds:       int64(nowFn().Sub(d.startedAt).Seconds()),
