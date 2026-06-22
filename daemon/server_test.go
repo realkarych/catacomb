@@ -23,6 +23,8 @@ import (
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/realkarych/catacomb/cdc"
+	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/export/otlp"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/store"
@@ -54,6 +56,56 @@ func (f *fakeSpanExporter) spanCount() int {
 	return len(f.spans)
 }
 
+type fakeExporter struct {
+	mu        sync.Mutex
+	snapshots [][]*model.Node
+	deltas    []cdc.GraphDelta
+	flushes   []string
+	shutdowns int
+}
+
+func (f *fakeExporter) Name() string { return "fake" }
+
+func (f *fakeExporter) SnapshotState(_ context.Context, nodes []*model.Node, _ []*model.Edge) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snapshots = append(f.snapshots, nodes)
+	return nil
+}
+
+func (f *fakeExporter) ApplyDelta(_ context.Context, d cdc.GraphDelta) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deltas = append(f.deltas, d)
+	return nil
+}
+
+func (f *fakeExporter) FlushRun(_ context.Context, runID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.flushes = append(f.flushes, runID)
+	return nil
+}
+
+func (f *fakeExporter) Shutdown(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.shutdowns++
+	return nil
+}
+
+func (f *fakeExporter) snapshotCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.snapshots)
+}
+
+func (f *fakeExporter) deltaCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.deltas)
+}
+
 func loopback(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -80,7 +132,7 @@ func TestServeStartsExporterConsumer(t *testing.T) {
 	require.Eventually(t, func() bool {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		return d.exporterConsumer != nil
+		return len(d.exporterConsumers) > 0
 	}, 2*time.Second, 5*time.Millisecond)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
@@ -110,7 +162,7 @@ func TestServeExporterSnapshotsExistingGraphs(t *testing.T) {
 	require.Eventually(t, func() bool {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		return d.exporterConsumer != nil
+		return len(d.exporterConsumers) > 0
 	}, 2*time.Second, 5*time.Millisecond)
 	cancel()
 	require.NoError(t, <-errc)
@@ -134,7 +186,7 @@ func TestServeSelfLoopEndpointSkipsExporter(t *testing.T) {
 	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok2") }()
 	require.Eventually(t, called.Load, 2*time.Second, 5*time.Millisecond)
 	d.mu.Lock()
-	consumerNil := d.exporterConsumer == nil
+	consumerNil := len(d.exporterConsumers) == 0
 	d.mu.Unlock()
 	assert.True(t, consumerNil)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"post-skip"}`)))
@@ -162,7 +214,7 @@ func TestExporterConsumerLoopExitsOnChannelClose(t *testing.T) {
 	defer cancel()
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
 	d.mu.Lock()
-	consumer := d.exporterConsumer
+	consumer := d.exporterConsumers[0]
 	d.mu.Unlock()
 	require.NotNil(t, consumer)
 	d.bus.Unsubscribe(consumer)
@@ -538,4 +590,165 @@ func TestTailLoopLoadError(t *testing.T) {
 	d := New(&tailLoadErrStore{Store: tempStore(t)})
 	d.SetTranscriptDir(dir)
 	d.tailLoop(context.Background())
+}
+
+func TestStartExporterAttachesTwoConsumersWhenBothConfigured(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	origOTLP := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fake), nil
+	}
+	t.Cleanup(func() { newExporterFn = origOTLP })
+
+	fakeExp := &fakeExporter{}
+	origPG := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return fakeExp, nil
+	}
+	t.Cleanup(func() { newPostgresFn = origPG })
+
+	d := New(tempStore(t))
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetPostgresDSN("postgres://localhost/test")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx := context.Background()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+
+	d.mu.Lock()
+	n := len(d.exporterConsumers)
+	d.mu.Unlock()
+	assert.Equal(t, 2, n)
+	assert.Len(t, d.ExporterConsumersForTest(), 2)
+}
+
+func TestStartExporterPostgresErrorDisablesOnlyPostgres(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	origOTLP := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fake), nil
+	}
+	t.Cleanup(func() { newExporterFn = origOTLP })
+
+	origPG := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return nil, errors.New("connection refused")
+	}
+	t.Cleanup(func() { newPostgresFn = origPG })
+
+	d := New(tempStore(t))
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetPostgresDSN("postgres://localhost/test")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx := context.Background()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+
+	d.mu.Lock()
+	n := len(d.exporterConsumers)
+	d.mu.Unlock()
+	assert.Equal(t, 1, n)
+}
+
+func TestWiringPostgresDSNAttachesExporterAndReceivesDelta(t *testing.T) {
+	fakeExp := &fakeExporter{}
+	orig := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return fakeExp, nil
+	}
+	t.Cleanup(func() { newPostgresFn = orig })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetPostgresDSN("postgres://localhost/test")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+
+	require.Eventually(t, func() bool {
+		return len(d.ExporterConsumersForTest()) > 0
+	}, 2*time.Second, 5*time.Millisecond)
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.Eventually(t, func() bool {
+		return fakeExp.deltaCount() > 0
+	}, 3*time.Second, 5*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestWiringEmptyPostgresDSNAttachesNothing(t *testing.T) {
+	called := false
+	orig := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		called = true
+		return &fakeExporter{}, nil
+	}
+	t.Cleanup(func() { newPostgresFn = orig })
+
+	d := New(tempStore(t))
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx := context.Background()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+
+	assert.False(t, called)
+	assert.Empty(t, d.ExporterConsumersForTest())
+}
+
+func TestWiringOTLPAndPostgresRunTogether(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	origOTLP := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fake), nil
+	}
+	t.Cleanup(func() { newExporterFn = origOTLP })
+
+	fakeExp := &fakeExporter{}
+	origPG := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return fakeExp, nil
+	}
+	t.Cleanup(func() { newPostgresFn = origPG })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetPostgresDSN("postgres://localhost/test")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+
+	require.Eventually(t, func() bool {
+		return len(d.ExporterConsumersForTest()) == 2
+	}, 2*time.Second, 5*time.Millisecond)
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
+
+	require.Eventually(t, func() bool { return fake.spanCount() > 0 }, 3*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return fakeExp.deltaCount() > 0 }, 3*time.Second, 5*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestSnapshotReceivedByPostgresExporterOnAttach(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	fakeExp := &fakeExporter{}
+	origPG := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return fakeExp, nil
+	}
+	t.Cleanup(func() { newPostgresFn = origPG })
+
+	d.SetPostgresDSN("postgres://localhost/test")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx := context.Background()
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+
+	assert.Positive(t, fakeExp.snapshotCount(), "snapshot must be called at attach")
 }

@@ -18,8 +18,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/realkarych/catacomb/cdc"
+	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
 )
+
+var _ exportiface.Exporter = (*Exporter)(nil)
 
 type spanExporter interface {
 	ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error
