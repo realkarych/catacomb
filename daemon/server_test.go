@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -833,4 +834,135 @@ func TestStartExporterNeo4jErrorDisablesOnlyNeo4j(t *testing.T) {
 	n := len(d.exporterConsumers)
 	d.mu.Unlock()
 	assert.Equal(t, 1, n)
+}
+
+func TestAuthedAllowQueryHeaderValid(t *testing.T) {
+	d := New(tempStore(t))
+	var called bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := d.authedAllowQuery("mytoken", next)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r.Header.Set("Authorization", "Bearer mytoken")
+	handler(rec, r)
+	assert.True(t, called)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestAuthedAllowQueryParamValid(t *testing.T) {
+	d := New(tempStore(t))
+	var called bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := d.authedAllowQuery("mytoken", next)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?token=mytoken", nil)
+	handler(rec, r)
+	assert.True(t, called)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestAuthedAllowQueryBothAbsent401(t *testing.T) {
+	d := New(tempStore(t))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := d.authedAllowQuery("mytoken", next)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	handler(rec, r)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAuthedAllowQueryWrongHeader401(t *testing.T) {
+	d := New(tempStore(t))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := d.authedAllowQuery("mytoken", next)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r.Header.Set("Authorization", "Bearer wrongtoken")
+	handler(rec, r)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAuthedAllowQueryWrongParam401(t *testing.T) {
+	d := New(tempStore(t))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := d.authedAllowQuery("mytoken", next)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?token=wrongtoken", nil)
+	handler(rec, r)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestSSEQueryTokenE2E(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	httpLn := loopbackListener(t)
+	grpcLn := loopbackListener(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+
+	addr := httpLn.Addr().String()
+	require.Eventually(t, func() bool {
+		resp, err := http.Get("http://" + addr + "/healthz")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Second, 10*time.Millisecond)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"http://"+addr+"/v1/subscribe?token=tok", nil)
+	require.NoError(t, err)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+
+	events := make(chan map[string]any, 16)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			line := sc.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
+				continue
+			}
+			events <- ev
+		}
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev["kind"].(string) == "node_upsert" {
+				cancel()
+				<-errc
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for node_upsert via ?token= auth")
+		}
+	}
 }
