@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"slices"
+
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
@@ -18,29 +20,11 @@ type Subscription struct {
 }
 
 func matchNode(f SubFilter, n *model.Node) bool {
-	if len(f.NodeTypes) > 0 {
-		found := false
-		for _, t := range f.NodeTypes {
-			if string(n.Type) == t {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
+	if len(f.NodeTypes) > 0 && !slices.Contains(f.NodeTypes, string(n.Type)) {
+		return false
 	}
-	if len(f.Tiers) > 0 {
-		found := false
-		for _, tier := range f.Tiers {
-			if n.Tier == tier {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
+	if len(f.Tiers) > 0 && !slices.Contains(f.Tiers, n.Tier) {
+		return false
 	}
 	return true
 }
