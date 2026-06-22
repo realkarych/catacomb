@@ -403,12 +403,10 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 
 func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
 	if delta.Node != nil {
-		nc := *delta.Node
-		delta.Node = &nc
+		delta.Node = copyNode(delta.Node)
 	}
 	if delta.Edge != nil {
-		ec := *delta.Edge
-		delta.Edge = &ec
+		delta.Edge = copyEdge(delta.Edge)
 	}
 	d.bus.Publish(delta)
 }
