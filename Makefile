@@ -4,7 +4,13 @@ APP_NAME := catacomb
 DIST_DIR := bin
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: all build test cover lint fmt tidy clean help
+.PHONY: all build test cover lint fmt tidy clean proto help
+
+## Regenerate protobuf bindings (installs plugins to GOBIN, then runs buf generate)
+proto:
+	@go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+	@buf generate
 
 all: help
 

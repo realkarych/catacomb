@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package catacomb.v1;
+
+option go_package = "github.com/realkarych/catacomb/gen/catacomb/v1;catacombv1";
+
+service GraphService {
+  rpc Subscribe(SubscribeRequest) returns (stream GraphDelta);
+}
+
+message SubscribeRequest {
+  string run_id = 1;
+  repeated string node_types = 2;
+  repeated string tiers = 3;
+}
+
+message GraphDelta {
+  string kind = 1;
+  uint64 rev = 2;
+  Node node = 3;
+  Edge edge = 4;
+  string old_id = 5;
+  string new_id = 6;
+  string run_id = 7;
+  string execution_id = 8;
+}
+
+message Node {
+  string id = 1;
+  string run_id = 2;
+  string type = 3;
+  string parent_id = 4;
+  string agent_id = 5;
+  string parent_agent_id = 6;
+  string subagent_type = 7;
+  string name = 8;
+  string status = 9;
+  int64 t_start_ms = 10;
+  int64 t_end_ms = 11;
+  int64 duration_ms = 12;
+  int64 tokens_in = 13;
+  int64 tokens_out = 14;
+  double cost_usd = 15;
+  string payload_hash = 16;
+  string tier = 17;
+  uint64 rev = 18;
+  map<string, string> attrs = 19;
+}
+
+message Edge {
+  string id = 1;
+  string run_id = 2;
+  string type = 3;
+  string src = 4;
+  string dst = 5;
+  uint64 rev = 6;
+  map<string, string> attrs = 7;
+}
