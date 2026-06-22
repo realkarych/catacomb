@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"io"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -390,8 +391,8 @@ func (e *errStore) Runs() ([]model.Run, error)                                  
 func (e *errStore) Quarantine(model.QuarantineRecord) error                      { return nil }
 func (e *errStore) QuarantineCount() (int64, error)                              { return 0, nil }
 func (e *errStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
-func (e *errStore) UpsertTailCursor(model.TailCursor) error                      { return nil }
 func (e *errStore) LoadTailCursors() ([]model.TailCursor, error)                 { return nil, nil }
+func (e *errStore) UpsertTailCursor(model.TailCursor) error                      { return nil }
 func (e *errStore) Close() error                                                 { return nil }
 
 func TestEvictTerminalAfterCooldown(t *testing.T) {
@@ -896,4 +897,176 @@ func TestIngestStreamJSONReloadError(t *testing.T) {
 	d.store = &reloadErrStore{Store: base}
 	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1"}}`), "s1"))
 	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestIngestTranscriptBuildsToolNode(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	line := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	exec := d.execForTest("s1")
+	require.Equal(t, "exec1", exec)
+	n := d.GraphsForTest()[exec].Nodes[model.ToolCallID(exec, "toolu_1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "Bash", n.Name)
+	require.NotEmpty(t, n.Sources)
+	assert.Equal(t, model.SourceJSONL, n.Sources[0].Source)
+}
+
+func TestIngestTranscriptQuarantinesBadLine(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.IngestTranscript([]byte("{not json}"), "s1"))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestIngestTranscriptKnownSessionReloadsEvictedShard(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	line := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	d.dropShardForTest("s1")
+	line2 := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:01:00Z","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"toolu_3","name":"Read","input":{"path":"a"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line2, "s1"))
+	exec := d.execForTest("s1")
+	g := d.GraphsForTest()[exec]
+	require.NotNil(t, g.Nodes[model.ToolCallID(exec, "toolu_2")])
+	require.NotNil(t, g.Nodes[model.ToolCallID(exec, "toolu_3")])
+}
+
+func TestIngestTranscriptReloadError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	fixedExecID(d)
+	line := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	d.dropShardForTest("s1")
+	d.store = &reloadErrStore{Store: base}
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
+func TestIngestTranscriptPanicRecovers(t *testing.T) {
+	orig := applyFn
+	applyFn = func(*reduce.Graph, model.Observation) { panic("transcript-boom") }
+	t.Cleanup(func() { applyFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	line := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_4","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestTranscriptParseErrorViaSeam(t *testing.T) {
+	orig := tailParseFn
+	tailParseFn = func(_ io.Reader, _ string, _ func() uint64, _ func(time.Time) time.Time) ([]model.Observation, error) {
+		return nil, errors.New("parse fail")
+	}
+	t.Cleanup(func() { tailParseFn = orig })
+	s := tempStore(t)
+	d := New(s)
+	line := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_5","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestTranscriptPersistError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	line := []byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_6","name":"Bash","input":{"command":"ls"}}]}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestMarkLossySetsRunMetaAndCounter(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.IngestTranscript([]byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"a"}]}}`), "s1"))
+	d.MarkLossy("s1")
+	exec := d.execForTest("s1")
+	g := d.GraphsForTest()[exec]
+	assert.Equal(t, true, g.Runs["s1"].Meta["lossy"])
+	assert.Equal(t, int64(1), d.LossyForTest())
+}
+
+func TestMarkLossyUnknownSessionNoop(t *testing.T) {
+	d := New(tempStore(t))
+	d.MarkLossy("nope")
+	assert.Equal(t, int64(0), d.LossyForTest())
+}
+
+func TestMarkLossyKnownSessionNoGraph(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.mu.Lock()
+	d.execBySession["s1"] = "exec1"
+	d.mu.Unlock()
+	d.MarkLossy("s1")
+	assert.Equal(t, int64(0), d.LossyForTest())
+}
+
+func TestMarkLossyKnownGraphNoRun(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.mu.Lock()
+	d.execBySession["s1"] = "exec1"
+	d.graphs["exec1"] = reduce.NewGraph()
+	d.mu.Unlock()
+	d.MarkLossy("s1")
+	assert.Equal(t, int64(0), d.LossyForTest())
+}
+
+func TestMetricsIncludesLossyRuns(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.IngestTranscript([]byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"a"}]}}`), "s1"))
+	d.MarkLossy("s1")
+	assert.Equal(t, int64(1), d.metricsSnapshot().LossyRuns)
+}
+
+func TestSetTranscriptDir(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetTranscriptDir("/tmp/transcripts")
+	d.mu.Lock()
+	got := d.transcriptDir
+	d.mu.Unlock()
+	assert.Equal(t, "/tmp/transcripts", got)
+}
+
+func TestSetTranscriptExclude(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetTranscriptExclude([]string{"*.db", "*.log"})
+	d.mu.Lock()
+	got := d.transcriptExclude
+	d.mu.Unlock()
+	assert.Equal(t, []string{"*.db", "*.log"}, got)
+}
+
+func TestSetDBPath(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetDBPath("/data/catacomb.db")
+	d.mu.Lock()
+	got := d.dbPath
+	d.mu.Unlock()
+	assert.Equal(t, "/data/catacomb.db", got)
+}
+
+type lossyUpsertErrStore struct{ store.Store }
+
+func (s *lossyUpsertErrStore) UpsertRun(model.Run) error { return errors.New("upsert lossy") }
+
+func TestMarkLossyUpsertRunError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	fixedExecID(d)
+	require.NoError(t, d.IngestTranscript([]byte(`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"a"}]}}`), "s1"))
+	d.store = &lossyUpsertErrStore{Store: base}
+	d.MarkLossy("s1")
+	assert.Equal(t, int64(1), d.LossyForTest())
 }

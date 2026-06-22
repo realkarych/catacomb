@@ -36,3 +36,9 @@ func (d *Daemon) EvictedForTest() int64 {
 	defer d.mu.Unlock()
 	return d.evicted
 }
+
+func (d *Daemon) LossyForTest() int64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lossyRuns
+}
