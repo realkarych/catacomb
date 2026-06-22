@@ -96,3 +96,19 @@ func TestHandlerSubFSError500(t *testing.T) {
 	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
+
+func TestHandlerIndexContainsSSEWiring(t *testing.T) {
+	srv := httptest.NewServer(Handler())
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var sb strings.Builder
+	_, err = io.Copy(&sb, resp.Body)
+	require.NoError(t, err)
+	body := sb.String()
+	assert.Contains(t, body, "app.js")
+	assert.Contains(t, body, "style.css")
+}
