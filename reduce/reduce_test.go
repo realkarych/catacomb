@@ -1499,3 +1499,140 @@ func TestStreamEventCreatesNoJunkEmptyToolNode(t *testing.T) {
 	junkID := model.ToolCallID("exec_i2", "")
 	assert.NotContains(t, g.Nodes, junkID, "no junk empty-tool node must exist after stream_event")
 }
+
+func TestToolCallStampsEndAndDuration(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(2 * time.Second)
+	use := ob("assistant_tool_use", "toolu_d1", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+	res := ob("tool_result", "toolu_d1", t1)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, res})
+
+	n := g.Nodes[model.ToolCallID(execID, "toolu_d1")]
+	require.NotNil(t, n.TStart)
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, t1, *n.TEnd)
+	assert.Equal(t, int64(2000), *n.DurationMS)
+}
+
+func TestDurationStampOrderIndependent(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(3 * time.Second)
+	use := ob("assistant_tool_use", "toolu_d2", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+	res := ob("tool_result", "toolu_d2", t1)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{use, res})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{res, use})
+
+	id := model.ToolCallID(execID, "toolu_d2")
+	assert.Equal(t, *fwd.Nodes[id].TEnd, *rev.Nodes[id].TEnd)
+	assert.Equal(t, *fwd.Nodes[id].DurationMS, *rev.Nodes[id].DurationMS)
+}
+
+func TestAssistantTurnStampsDurationWhenStartAndEndKnown(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	first := ob("assistant_turn", "", t0)
+	first.Correlation.MessageID = "m1"
+	first.Attrs = map[string]any{"tokens_in": int64(1)}
+	last := ob("assistant_turn", "", t1)
+	last.Correlation.MessageID = "m1"
+	last.Attrs = map[string]any{"tokens_in": int64(1)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{first, last})
+
+	n := g.Nodes[model.AssistantTurnID(execID, "m1")]
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(1000), *n.DurationMS)
+}
+
+func TestEndRankHigherSourceWins(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	jsonlEnd := t0.Add(time.Second)
+	otelEnd := t0.Add(5 * time.Second)
+
+	use := ob("assistant_tool_use", "toolu_d3", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+
+	resJSONL := ob("tool_result", "toolu_d3", jsonlEnd)
+	resJSONL.Source = model.SourceJSONL
+	resJSONL.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	resOTel := ob("tool_result", "toolu_d3", otelEnd)
+	resOTel.Source = model.SourceOTel
+	resOTel.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, resJSONL, resOTel})
+	rg := NewGraph()
+	rg.ApplyAll([]model.Observation{resOTel, resJSONL, use})
+
+	id := model.ToolCallID(execID, "toolu_d3")
+	assert.Equal(t, otelEnd, *g.Nodes[id].TEnd)
+	assert.Equal(t, otelEnd, *rg.Nodes[id].TEnd)
+}
+
+func TestSessionEndGetsDurationMS(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	t1 := t0.Add(5 * time.Second)
+	g := NewGraph()
+	g.Apply(ob("session_start", "", t0))
+	g.Apply(ob("session_end", "", t1))
+	n := g.Nodes[model.SessionNodeID(execID)]
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(5000), *n.DurationMS)
+}
+
+func TestSubagentStopGetsDurationMS(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	t1 := t0.Add(3 * time.Second)
+	start := ob("subagent_stop", "", t0)
+	start.Correlation.AgentID = "a2"
+	start.EventTime = t0
+	stop := ob("subagent_stop", "", t1)
+	stop.Correlation.AgentID = "a2"
+	stop.EventTime = t1
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{start, stop})
+	n := g.Nodes[model.SubagentID(execID, "a2")]
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(3000), *n.DurationMS)
+}
+
+func TestEndRankEqualRankLatestTimeWins(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	earlier := t0.Add(time.Second)
+	later := t0.Add(2 * time.Second)
+
+	use := ob("assistant_tool_use", "toolu_d4", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+
+	resEarly := ob("tool_result", "toolu_d4", earlier)
+	resEarly.Source = model.SourceJSONL
+	resEarly.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	resLate := ob("tool_result", "toolu_d4", later)
+	resLate.Source = model.SourceJSONL
+	resLate.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, resEarly, resLate})
+	rg := NewGraph()
+	rg.ApplyAll([]model.Observation{resLate, resEarly, use})
+
+	id := model.ToolCallID(execID, "toolu_d4")
+	assert.Equal(t, later, *g.Nodes[id].TEnd)
+	assert.Equal(t, later, *rg.Nodes[id].TEnd)
+}

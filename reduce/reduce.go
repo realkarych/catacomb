@@ -33,8 +33,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "session_end":
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
-		ts := o.EventTime
-		n.TEnd = &ts
+		g.stampEnd(n, o)
 		n.Status = resolveStatus(n.Status, model.StatusOK)
 		g.emitNode(n, o)
 		g.cascadeStatus(n.ID, model.StatusUnknown, o.Seq)
@@ -52,6 +51,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
+		g.stampEnd(n, o)
 		g.applyTokens(n, o.Attrs, o.Source)
 		g.emitNode(n, o)
 	case "assistant_tool_use", "tool_result":
@@ -89,6 +89,9 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Type = model.NodeMCPCall
 	}
 	g.stamp(n, o)
+	if o.Kind == "tool_result" {
+		g.stampEnd(n, o)
+	}
 	if name, ok := o.Attrs["name"].(string); ok {
 		g.setName(n, o, name)
 	}
@@ -117,8 +120,7 @@ func (g *Graph) applySubagent(o model.Observation) {
 	if t, ok := o.Attrs["subagent_type"].(string); ok && n.SubagentType == "" {
 		n.SubagentType = t
 	}
-	ts := o.EventTime
-	n.TEnd = &ts
+	g.stampEnd(n, o)
 	n.Status = resolveStatus(n.Status, model.StatusOK)
 	g.emitNode(n, o)
 	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
@@ -206,6 +208,8 @@ type fieldStamps struct {
 	structRank  int
 	haveStruct  bool
 	structSrc   string
+	endRank     int
+	haveEnd     bool
 }
 
 func (g *Graph) stampsFor(id string) *fieldStamps {
@@ -217,6 +221,30 @@ func (g *Graph) stampsFor(id string) *fieldStamps {
 	return fs
 }
 
+func setDuration(n *model.Node) {
+	if n.TStart == nil || n.TEnd == nil {
+		return
+	}
+	ms := n.TEnd.Sub(*n.TStart).Milliseconds()
+	n.DurationMS = &ms
+}
+
+func (g *Graph) stampEnd(n *model.Node, o model.Observation) {
+	fs := g.stampsFor(n.ID)
+	r := sourceRank(o.Source)
+	switch {
+	case !fs.haveEnd || r > fs.endRank:
+		ts := o.EventTime
+		n.TEnd = &ts
+		fs.endRank = r
+		fs.haveEnd = true
+	case r == fs.endRank && (n.TEnd == nil || o.EventTime.After(*n.TEnd)):
+		ts := o.EventTime
+		n.TEnd = &ts
+	}
+	setDuration(n)
+}
+
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
 	fs := g.stampsFor(n.ID)
 	r := sourceRank(o.Source)
@@ -225,9 +253,11 @@ func (g *Graph) stamp(n *model.Node, o model.Observation) {
 		n.TStart = &ts
 		fs.timingRank = r
 		fs.haveTiming = true
+		setDuration(n)
 	} else if r == fs.timingRank && (n.TStart == nil || o.EventTime.Before(*n.TStart)) {
 		ts := o.EventTime
 		n.TStart = &ts
+		setDuration(n)
 	}
 	if o.Seq > n.Rev {
 		n.Rev = o.Seq
