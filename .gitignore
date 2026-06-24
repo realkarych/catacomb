@@ -49,3 +49,5 @@ tmp/
 webui/node_modules/
 webui/test-results/
 webui/playwright-report/
+webui/coverage/
+webui/web/coverage/
