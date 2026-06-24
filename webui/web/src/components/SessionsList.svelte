@@ -5,6 +5,7 @@
   import { filterSessions, sortSessions } from '../lib/sessions-sort';
   import type { SortKey, SortDir } from '../lib/sessions-sort';
   import { toHash } from '../lib/router';
+  import { upsertSession } from '../lib/stores/stores.svelte';
   import SessionRow from './SessionRow.svelte';
 
   interface Props {
@@ -31,6 +32,9 @@
   onMount(async () => {
     try {
       sessions = await fetchSessions(token);
+      for (const s of sessions) {
+        upsertSession(s);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Unknown error';
     } finally {

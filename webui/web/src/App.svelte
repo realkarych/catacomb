@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { connectionState, handleEvent } from './lib/stores/stores.svelte';
+  import { connectionState, handleEvent, upsertSession } from './lib/stores/stores.svelte';
   import { connect } from './lib/sse/client';
+  import { fetchSessions } from './lib/api';
   import { parseHash } from './lib/router';
   import type { Route } from './lib/router';
   import SessionsList from './components/SessionsList.svelte';
@@ -17,6 +18,14 @@
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  });
+
+  $effect(() => {
+    fetchSessions(token).then((sessions) => {
+      for (const s of sessions) {
+        upsertSession(s);
+      }
+    }).catch(() => {});
   });
 
   $effect(() => {

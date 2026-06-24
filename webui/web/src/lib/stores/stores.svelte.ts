@@ -15,6 +15,10 @@ export function selectNode(id: string | null): void {
   selectedNodeId.value = id;
 }
 
+export function upsertSession(s: SessionSummary): void {
+  sessionsById[s.session] = s;
+}
+
 export function sessionGraph(hash: string): { nodes: Node[]; edges: Edge[] } {
   const session = sessionsById[hash];
   if (!session) return { nodes: [], edges: [] };

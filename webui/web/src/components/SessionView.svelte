@@ -1,6 +1,7 @@
 <script lang="ts">
   import { toHash } from '../lib/router';
   import GraphCanvas from './GraphCanvas.svelte';
+  import NodeDrawer from './NodeDrawer.svelte';
 
   interface Props {
     hash: string;
@@ -25,6 +26,7 @@
   </div>
   <div class="graph-area">
     <GraphCanvas {hash} />
+    <NodeDrawer {hash} />
   </div>
 </div>
 
@@ -84,5 +86,6 @@
     flex: 1;
     min-height: 0;
     position: relative;
+    overflow: hidden;
   }
 </style>

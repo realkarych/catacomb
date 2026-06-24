@@ -14,7 +14,7 @@
 
   let { hash }: Props = $props();
 
-  const nodeTypes: NodeTypes = { $default: GraphNode as never };
+  const nodeTypes: NodeTypes = { default: GraphNode as never };
 
   let xyNodes = $state.raw<XyFlowNode[]>([]);
   let xyEdges = $state.raw<XyFlowEdge[]>([]);
@@ -35,7 +35,7 @@
     if (topologyKey !== prevTopologyKey) {
       prevTopologyKey = topologyKey;
       const result = applyLayout(graph.nodes, graph.edges);
-      xyNodes = result.nodes as unknown as XyFlowNode[];
+      xyNodes = result.nodes.map((n) => ({ ...n, type: 'default' })) as unknown as XyFlowNode[];
       xyEdges = result.edges as unknown as XyFlowEdge[];
       pendingFitView = true;
     } else if (graph.nodes.length > 0) {
