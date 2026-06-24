@@ -111,7 +111,6 @@ func (ss sessionsState) view(s Styles, width int) string {
 		return s.Faint.Render(msg)
 	}
 
-	_ = width
 	var b strings.Builder
 	for i, row := range ss.filtered {
 		glyph := StatusGlyph(row.Status)
@@ -122,6 +121,9 @@ func (ss sessionsState) view(s Styles, width int) string {
 		cost := Cost(row.CostUSD)
 		dur := Duration(row.DurationMS)
 		line := fmt.Sprintf("%s %s  nodes:%-4s  tok %s→%s  %s  %s", glyph, hash, nodeCount, tIn, tOut, cost, dur)
+		if width > 0 && len([]rune(line)) > width {
+			line = string([]rune(line)[:width])
+		}
 		if i == ss.cursor {
 			line = s.Selected.Render(line)
 		}

@@ -51,6 +51,7 @@ func TestRunObserveRunsProgram(t *testing.T) {
 			return daemon.Discovery{Addr: "127.0.0.1:1", Token: "tok"}, nil
 		},
 		newClient:  func(daemon.Discovery) tui.Client { return fakeObsClient{} },
+		newModel:   tui.NewModel,
 		runProgram: func(tui.Model) error { ran = true; return nil },
 		noColor:    true,
 	}
@@ -64,6 +65,7 @@ func TestRunObserveProgramError(t *testing.T) {
 			return daemon.Discovery{Addr: "127.0.0.1:1", Token: "tok"}, nil
 		},
 		newClient:  func(daemon.Discovery) tui.Client { return fakeObsClient{} },
+		newModel:   tui.NewModel,
 		runProgram: func(tui.Model) error { return errors.New("boom") },
 	}
 	err := runObserve(context.Background(), io.Discard, deps)
@@ -157,4 +159,29 @@ func TestObserveNonTTYForcesNoColor(t *testing.T) {
 
 func TestTeaRunVarNotNil(t *testing.T) {
 	assert.NotNil(t, teaRun)
+}
+
+func TestRunObserveHashDerivedCtxCancelsWithParent(t *testing.T) {
+	parent, parentCancel := context.WithCancel(context.Background())
+	parentCancel()
+	var capturedCtx context.Context
+	deps := observeDeps{
+		readDiscovery: func(string) (daemon.Discovery, error) {
+			return daemon.Discovery{Addr: "127.0.0.1:1", Token: "tok"}, nil
+		},
+		newClient: func(daemon.Discovery) tui.Client { return fakeObsClient{} },
+		newModel: func(ctx context.Context, c tui.Client, h string, nc bool) tui.Model {
+			capturedCtx = ctx
+			return tui.NewModel(ctx, c, h, nc)
+		},
+		runProgram: func(tui.Model) error { return nil },
+		noColor:    true,
+	}
+	require.NoError(t, runObserveHash(parent, io.Discard, deps, ""))
+	require.NotNil(t, capturedCtx)
+	select {
+	case <-capturedCtx.Done():
+	default:
+		t.Fatal("derived ctx not cancelled when parent was already cancelled")
+	}
 }

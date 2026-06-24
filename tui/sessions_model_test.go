@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -186,4 +187,12 @@ func TestSessionsFilteringRunesClampsCursor(t *testing.T) {
 	st, _ = st.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	st, _ = st.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
 	assert.Equal(t, 0, st.cursor)
+}
+
+func TestSessionsViewTruncatesLongLines(t *testing.T) {
+	st := newSessionsState().withSessions([]SessionSummary{sess("s1")})
+	v := st.view(NewStyles(true), 5)
+	lines := strings.Split(strings.TrimRight(v, "\n"), "\n")
+	require.Len(t, lines, 1)
+	assert.LessOrEqual(t, len([]rune(lines[0])), 5)
 }

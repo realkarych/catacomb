@@ -2,10 +2,10 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type focus int
@@ -35,14 +35,15 @@ type Model struct {
 
 func NewModel(ctx context.Context, client Client, hash string, noColor bool) Model {
 	return Model{
-		ctx:     ctx,
-		client:  client,
-		hash:    hash,
-		styles:  NewStyles(noColor),
-		loading: true,
-		focus:   focusList,
-		tree:    newTreeState(),
-		detail:  newDetailState(),
+		ctx:      ctx,
+		client:   client,
+		hash:     hash,
+		styles:   NewStyles(noColor),
+		loading:  true,
+		focus:    focusList,
+		sessions: newSessionsState(),
+		tree:     newTreeState(),
+		detail:   newDetailState(),
 	}
 }
 
@@ -61,6 +62,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.focus == focusList && m.sessions.filtering && v.Type != tea.KeyCtrlC {
+			return m.delegateKey(v)
+		}
 		switch {
 		case v.Type == tea.KeyRunes && string(v.Runes) == "q":
 			return m, tea.Quit
@@ -107,6 +111,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case streamClosedMsg:
+		if v.err != nil {
+			m.err = v.err
+		}
 		return m, nil
 
 	case payloadLoadedMsg:
@@ -193,11 +200,7 @@ func (m Model) View() string {
 	sessView := m.sessions.view(m.styles, sessionW)
 	treeView := m.tree.view(m.styles, m.height)
 	detailView := m.detail.view(m.styles, m.debug)
-	return fmt.Sprintf("%s\n%s\n%s",
-		strings.TrimRight(sessView, "\n"),
-		strings.TrimRight(treeView, "\n"),
-		strings.TrimRight(detailView, "\n"),
-	)
+	return lipgloss.JoinHorizontal(lipgloss.Top, sessView, treeView, detailView)
 }
 
 func renderTUIErr(err error) string {

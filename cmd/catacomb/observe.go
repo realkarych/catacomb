@@ -34,6 +34,7 @@ type observeDeps struct {
 	readDiscovery func(string) (daemon.Discovery, error)
 	discoveryPath string
 	newClient     func(daemon.Discovery) tui.Client
+	newModel      func(context.Context, tui.Client, string, bool) tui.Model
 	runProgram    func(tui.Model) error
 	noColor       bool
 }
@@ -53,6 +54,7 @@ func newObserveCmd() *cobra.Command {
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: daemon.DiscoveryPath(),
 				newClient:     func(d daemon.Discovery) tui.Client { return tui.NewHTTPClient(d) },
+				newModel:      tui.NewModel,
 				runProgram:    teaRun,
 				noColor:       shouldDisableColor(noColor, os.Getenv("NO_COLOR"), stdoutIsTTY()),
 			}
@@ -71,7 +73,7 @@ func runObserve(ctx context.Context, out io.Writer, deps observeDeps) error {
 	return runObserveHash(ctx, out, deps, "")
 }
 
-func runObserveHash(_ context.Context, _ io.Writer, deps observeDeps, hash string) error {
+func runObserveHash(ctx context.Context, _ io.Writer, deps observeDeps, hash string) error {
 	disc, err := deps.readDiscovery(deps.discoveryPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -79,7 +81,9 @@ func runObserveHash(_ context.Context, _ io.Writer, deps observeDeps, hash strin
 		}
 		return err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	client := deps.newClient(disc)
-	m := tui.NewModel(context.Background(), client, hash, deps.noColor)
+	m := deps.newModel(ctx, client, hash, deps.noColor)
 	return deps.runProgram(m)
 }

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -327,4 +328,79 @@ func TestInitContext(t *testing.T) {
 	defer cancel()
 	m := NewModel(ctx, &fakeClient{}, "", true)
 	assert.NotNil(t, m.ctx)
+}
+
+func TestStreamClosedMsgWithErrorSetsErr(t *testing.T) {
+	m := NewModel(t.Context(), &fakeClient{}, "s1", true)
+	someErr := errors.New("stream broke")
+	u, cmd := m.Update(streamClosedMsg{err: someErr})
+	mm := u.(Model)
+	assert.ErrorIs(t, mm.err, someErr)
+	assert.Nil(t, cmd)
+	view := mm.View()
+	assert.NotEmpty(t, view)
+	assert.NotContains(t, view, "loading")
+}
+
+func TestStreamClosedMsgCleanCloseNoError(t *testing.T) {
+	m := NewModel(t.Context(), &fakeClient{}, "s1", true)
+	u, cmd := m.Update(streamClosedMsg{})
+	mm := u.(Model)
+	assert.NoError(t, mm.err)
+	assert.Nil(t, cmd)
+}
+
+func TestFilteringQAppendsToQuery(t *testing.T) {
+	f := &fakeClient{sessions: []SessionSummary{sess("qs1")}}
+	m := NewModel(t.Context(), f, "", true)
+	u, _ := m.Update(sessionsLoadedMsg{sessions: f.sessions})
+	m = u.(Model)
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = u.(Model)
+	require.True(t, m.sessions.filtering)
+	u2, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m2 := u2.(Model)
+	assert.Nil(t, cmd)
+	assert.Equal(t, "q", m2.sessions.query)
+	assert.True(t, m2.sessions.filtering)
+}
+
+func TestFilteringDDoesNotToggleDebug(t *testing.T) {
+	f := &fakeClient{sessions: []SessionSummary{sess("ds1")}}
+	m := NewModel(t.Context(), f, "", true)
+	u, _ := m.Update(sessionsLoadedMsg{sessions: f.sessions})
+	m = u.(Model)
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = u.(Model)
+	require.True(t, m.sessions.filtering)
+	u2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m2 := u2.(Model)
+	assert.False(t, m2.debug)
+	assert.Equal(t, "d", m2.sessions.query)
+}
+
+func TestFilteringTabDoesNotCycleFocus(t *testing.T) {
+	f := &fakeClient{sessions: []SessionSummary{sess("s1")}}
+	m := NewModel(t.Context(), f, "", true)
+	u, _ := m.Update(sessionsLoadedMsg{sessions: f.sessions})
+	m = u.(Model)
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = u.(Model)
+	require.True(t, m.sessions.filtering)
+	u2, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m2 := u2.(Model)
+	assert.Equal(t, focusList, m2.focus)
+}
+
+func TestFilteringCtrlCStillQuits(t *testing.T) {
+	f := &fakeClient{sessions: []SessionSummary{sess("s1")}}
+	m := NewModel(t.Context(), f, "", true)
+	u, _ := m.Update(sessionsLoadedMsg{sessions: f.sessions})
+	m = u.(Model)
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = u.(Model)
+	require.True(t, m.sessions.filtering)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.NotNil(t, cmd)
+	assert.Equal(t, tea.Quit(), cmd())
 }
