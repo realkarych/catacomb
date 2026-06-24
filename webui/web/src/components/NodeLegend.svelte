@@ -27,7 +27,7 @@
     top: var(--s3);
     left: var(--s3);
     z-index: 10;
-    background: oklch(0.20 0.009 70 / 0.82);
+    background: var(--panel-glass);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: var(--s2) var(--s3);

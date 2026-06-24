@@ -63,6 +63,8 @@
 
   --shadow-1: 0 1px 3px oklch(0 0 0 / 0.4), 0 1px 2px oklch(0 0 0 / 0.3);
   --shadow-2: 0 4px 12px oklch(0 0 0 / 0.5), 0 2px 4px oklch(0 0 0 / 0.3);
+  --panel-glass: oklch(0.20 0.009 70 / 0.82);
+
   --shadow-lamp: 0 0 0 1px var(--ring), 0 0 16px var(--glow);
 }
 
@@ -102,6 +104,8 @@
 
     --shadow-1: 0 1px 3px oklch(0 0 0 / 0.12), 0 1px 2px oklch(0 0 0 / 0.08);
     --shadow-2: 0 4px 12px oklch(0 0 0 / 0.15), 0 2px 4px oklch(0 0 0 / 0.10);
+    --panel-glass: oklch(0.96 0.006 80 / 0.85);
+
     --shadow-lamp: 0 0 0 1px var(--ring), 0 0 16px var(--glow);
   }
 }
