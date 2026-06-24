@@ -22,6 +22,8 @@
 
   const provenance = $derived(node ? costProvenance(node) : 'unknown');
 
+  let drawerEl: HTMLDivElement | undefined = $state();
+
   function close() {
     selectNode(null);
     if (typeof window !== 'undefined') {
@@ -29,16 +31,54 @@
     }
   }
 
+  function getFocusables(): HTMLElement[] {
+    if (!drawerEl) return [];
+    return Array.from(
+      drawerEl.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => !el.hasAttribute('disabled'));
+  }
+
   $effect(() => {
     if (!isOpen) return;
+    if (typeof document === 'undefined') return;
+
+    const returnTarget = document.activeElement as HTMLElement | null;
+
+    const firstFocusable = getFocusables()[0] ?? (drawerEl ?? null);
+    firstFocusable?.focus();
+
     function onKeydown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusables = getFocusables();
+        if (focusables.length === 0) return;
+        const first = focusables[0]!;
+        const last = focusables[focusables.length - 1]!;
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       }
     }
+
     document.addEventListener('keydown', onKeydown);
-    return () => document.removeEventListener('keydown', onKeydown);
+    return () => {
+      document.removeEventListener('keydown', onKeydown);
+      returnTarget?.focus();
+    };
   });
 
   async function copyToClipboard(text: string) {
@@ -49,6 +89,7 @@
 </script>
 
 <div
+  bind:this={drawerEl}
   class="node-drawer"
   class:node-drawer--open={isOpen}
   aria-label="Node details"
