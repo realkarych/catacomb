@@ -51,3 +51,6 @@ webui/test-results/
 webui/playwright-report/
 webui/coverage/
 webui/web/coverage/
+
+# Subagent-driven-development scratch (ledger, briefs, reports, diffs) — not project docs
+.superpowers/
