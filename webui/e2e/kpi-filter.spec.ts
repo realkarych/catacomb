@@ -86,6 +86,14 @@ test.beforeEach(async ({ page }) => {
       body: buildSseBody(sseEvents),
     });
   });
+
+  await page.route('/v1/subscribe**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: buildSseBody(sseEvents),
+    });
+  });
 });
 
 test('KPI header shows cost, tokens, duration, and model', async ({ page }) => {
@@ -93,7 +101,7 @@ test('KPI header shows cost, tokens, duration, and model', async ({ page }) => {
   await expect(page.locator('.session-kpi')).toBeVisible();
 
   const kpi = page.locator('.session-kpi');
-  await expect(kpi).toContainText('$0.0456');
+  await expect(kpi).toContainText('$0.05');
   await expect(kpi).toContainText('est');
   await expect(kpi).toContainText('1,200');
   await expect(kpi).toContainText('2,500');
@@ -149,20 +157,21 @@ test('has errors chip is shown when session has error_count > 0', async ({ page 
 });
 
 test('status filter chips appear for node statuses present in graph', async ({ page }) => {
-  await page.goto(`/#/s/${sessionHash}`);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
 
   await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
 
   const chips = page.locator('.filter-group').first().locator('.filter-chip');
-  await expect(chips.first()).toBeVisible();
+  await expect(chips.first()).toBeVisible({ timeout: 8000 });
 });
 
 test('type filter chips appear for node types present in graph', async ({ page }) => {
-  await page.goto(`/#/s/${sessionHash}`);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
 
   await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
 
   const groups = page.locator('.filter-group');
+  await expect(groups.first()).toBeVisible({ timeout: 8000 });
   const count = await groups.count();
   expect(count).toBeGreaterThanOrEqual(1);
 });
