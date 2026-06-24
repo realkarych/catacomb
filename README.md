@@ -15,6 +15,28 @@ It is domain- and evaluation-agnostic: it builds a faithful, queryable graph and
 - Implementation plans → [`docs/plans/`](docs/plans/)
 - Contributor & agent guide → [`AGENTS.md`](AGENTS.md)
 
+## Quickstart
+
+```sh
+catacomb up
+```
+
+`catacomb up` does everything in one step: starts the daemon if it is not already
+running, idempotently installs the Claude Code hooks, prints the bearer URL, and
+opens the web UI in your browser. If no live session appears within a few seconds
+it replays a bundled demo transcript so you see the graph immediately.
+
+Other useful commands:
+
+```sh
+catacomb demo    # ingest the bundled demo transcript into a running daemon
+catacomb status  # show addr, pid, uptime, and session/node counts
+catacomb ui      # print the bearer URL and (re-)open the browser
+```
+
+Install from source (`go install github.com/realkarych/catacomb/cmd/catacomb@latest`)
+or build locally with `make build`.
+
 ## Development
 
 ```
