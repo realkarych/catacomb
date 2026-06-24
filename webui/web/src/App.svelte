@@ -78,11 +78,9 @@
       });
   });
 
-  const statusLabel: Record<string, string> = {
-    idle: 'disconnected',
-    connecting: 'connecting',
-    open: 'connected',
-    error: 'disconnected',
+  const degradedLabel: Record<string, string> = {
+    connecting: 'reconnecting…',
+    error: 'disconnected — retrying',
   };
 </script>
 
@@ -92,10 +90,12 @@
       <span class="wordmark-lamp" aria-hidden="true"></span>
       Catacomb
     </span>
-    <span class="conn-pill" data-state={connectionState.status} role="status" aria-live="polite">
-      <span class="conn-dot" aria-hidden="true"></span>
-      {statusLabel[connectionState.status] ?? connectionState.status}
-    </span>
+    {#if connectionState.status === 'connecting' || connectionState.status === 'error'}
+      <span class="conn-pill" data-state={connectionState.status} role="status" aria-live="polite">
+        <span class="conn-dot" aria-hidden="true"></span>
+        {degradedLabel[connectionState.status]}
+      </span>
+    {/if}
   </header>
   <main class="content">
     {#if route.kind === 'list'}
