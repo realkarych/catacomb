@@ -9,7 +9,7 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["svelte", "vite/client"],
+    "types": ["svelte", "vite/client", "node"],
     "resolveJsonModule": true
   },
   "include": ["web/src/**/*.ts", "web/src/**/*.svelte", "e2e/**/*.ts", "*.config.ts"]

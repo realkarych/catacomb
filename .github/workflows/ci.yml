@@ -63,6 +63,40 @@ jobs:
         shell: bash
         run: go test ./...
 
+  frontend:
+    name: Frontend (vitest + playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests + coverage gate
+        run: npm run test
+      - name: Build
+        run: npm run build
+      - name: Verify committed dist/ is up to date
+        run: |
+          if [ -n "$(git status --porcelain dist)" ]; then
+            echo "::error::webui/dist is stale — rebuild and commit the result"
+            git --no-pager diff --stat dist
+            exit 1
+          fi
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: E2E
+        run: npm run test:e2e
+
   coverage:
     name: Coverage gate
     runs-on: ubuntu-latest

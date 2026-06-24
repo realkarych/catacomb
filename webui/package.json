@@ -7,13 +7,16 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "check:dist": "npm run build && git diff --exit-code ../dist || (echo 'ERROR: webui/dist is stale — commit the rebuilt output' && exit 1)"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.9",
     "jsdom": "^29.1.1",
     "svelte": "^5.56.4",
