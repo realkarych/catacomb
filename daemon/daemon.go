@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -159,7 +160,9 @@ func (d *Daemon) Recover() error {
 			d.graphs[o.ExecutionID] = g
 		}
 		g.Apply(o)
-		d.execBySession[o.RunID] = o.ExecutionID
+		if o.Correlation.SessionID != "" {
+			d.execBySession[o.Correlation.SessionID] = o.ExecutionID
+		}
 		d.lastSeen[o.RunID] = o.ObservedAt
 		if o.Seq > maxSeq {
 			maxSeq = o.Seq
@@ -508,6 +511,23 @@ func sessionIDOf(payload []byte) string {
 		return ""
 	}
 	return e.SessionID
+}
+
+func (d *Daemon) executionsForSession(hash string) []string {
+	if hash == "" {
+		return nil
+	}
+	var out []string
+	for execID, g := range d.graphs {
+		for _, r := range g.Runs {
+			if slices.Contains(r.SessionIDs, hash) {
+				out = append(out, execID)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 type shardRef struct {

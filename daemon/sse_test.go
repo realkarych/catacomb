@@ -490,7 +490,7 @@ func TestSSEConsumerChannelClosed(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		d.streamSSE(context.Background(), rec, rec, sub, SubFilter{}, func(cdc.GraphDelta) bool { return true })
+		d.streamSSE(context.Background(), rec, rec, sub, func(cdc.GraphDelta) bool { return true })
 	}()
 
 	select {
@@ -630,3 +630,9 @@ func (w *pingErrorFlusher) Write(b []byte) (int, error) {
 
 func (w *pingErrorFlusher) WriteHeader(s int) { w.status = s }
 func (w *pingErrorFlusher) Flush()            {}
+
+func TestParseSubFilterSession(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?session=s1", nil)
+	f := parseSubFilter(r)
+	assert.Equal(t, "s1", f.SessionID)
+}

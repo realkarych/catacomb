@@ -44,6 +44,8 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
 	mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
 	mux.HandleFunc("GET /v1/subscribe", d.authedAllowQuery(token, d.handleSSE))
+	mux.HandleFunc("GET /v1/sessions", d.authedAllowQuery(token, d.handleSessions))
+	mux.HandleFunc("GET /v1/sessions/{hash}/graph", d.authedAllowQuery(token, d.handleSessionGraph))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -259,6 +261,27 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 		}(consumer, exp)
 	}
 	d.mu.Unlock()
+}
+
+func (d *Daemon) handleSessions(w http.ResponseWriter, _ *http.Request) {
+	d.mu.Lock()
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(sums)
+}
+
+func (d *Daemon) handleSessionGraph(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	d.mu.Lock()
+	evs, err := d.sessionGraphDeltas(hash)
+	d.mu.Unlock()
+	if errors.Is(err, ErrSessionNotFound) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(evs)
 }
 
 func (d *Daemon) Serve(ctx context.Context, httpLn, grpcLn net.Listener, token string) error {

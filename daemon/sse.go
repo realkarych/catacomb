@@ -52,7 +52,8 @@ func deltaToSSE(d cdc.GraphDelta) sseEvent {
 func parseSubFilter(r *http.Request) SubFilter {
 	q := r.URL.Query()
 	f := SubFilter{
-		RunID: q.Get("run"),
+		RunID:     q.Get("run"),
+		SessionID: q.Get("session"),
 	}
 	for _, raw := range q["type"] {
 		for _, part := range strings.Split(raw, ",") {
@@ -115,7 +116,7 @@ func (d *Daemon) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	d.streamSSE(r.Context(), w, flusher, sub, f, writeEvent)
+	d.streamSSE(r.Context(), w, flusher, sub, writeEvent)
 }
 
 func (d *Daemon) streamSSE(
@@ -123,7 +124,6 @@ func (d *Daemon) streamSSE(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	sub *Subscription,
-	f SubFilter,
 	writeEvent func(cdc.GraphDelta) bool,
 ) {
 	ticker := sseTickerFn()
@@ -137,7 +137,7 @@ func (d *Daemon) streamSSE(
 			if !ok {
 				return
 			}
-			if !matchDelta(f, delta) {
+			if !sub.match(delta) {
 				continue
 			}
 			if !writeEvent(delta) {
