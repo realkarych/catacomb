@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/realkarych/catacomb/daemon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/realkarych/catacomb/daemon"
 )
 
 func newClientFor(t *testing.T, h http.Handler) *HTTPClient {

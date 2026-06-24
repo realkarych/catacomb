@@ -17,10 +17,11 @@ type fakeClient struct {
 }
 
 func (f *fakeClient) Sessions(context.Context) ([]SessionSummary, error) { return f.sessions, f.err }
-func (f *fakeClient) Graph(context.Context, string) ([]SseEvent, error)   { return f.graph, f.err }
+func (f *fakeClient) Graph(context.Context, string) ([]SseEvent, error)  { return f.graph, f.err }
 func (f *fakeClient) Subscribe(context.Context, string, uint64) (<-chan StreamMsg, error) {
 	return f.ch, f.err
 }
+
 func (f *fakeClient) Payload(context.Context, string, string) (PayloadView, error) {
 	return f.payload, f.err
 }
