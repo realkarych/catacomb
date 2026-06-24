@@ -49,13 +49,13 @@ func openFailSince(string) (store.Store, error) {
 
 func TestRunDaemonOpenError(t *testing.T) {
 	open := func(string) (store.Store, error) { return nil, errors.New("open") }
-	err := runDaemonWith(context.Background(), open, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+	err := runDaemonWith(context.Background(), open, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	require.Error(t, err)
 }
 
 func TestRunDaemonListenError(t *testing.T) {
 	listen := func() (net.Listener, error) { return nil, errors.New("listen") }
-	err := runDaemonWith(context.Background(), store.OpenSQLite, listen, daemon.ListenLoopback, daemon.NewToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+	err := runDaemonWith(context.Background(), store.OpenSQLite, listen, daemon.ListenLoopback, daemon.NewToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	require.Error(t, err)
 }
 
@@ -63,18 +63,18 @@ func TestRunDaemonDiscoveryError(t *testing.T) {
 	dir := t.TempDir()
 	badDiscovery := filepath.Join(dir, "afile", "d.json")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o600))
-	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), badDiscovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), badDiscovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	require.Error(t, err)
 }
 
 func TestRunDaemonRecoverError(t *testing.T) {
-	err := runDaemonWith(context.Background(), openFailSince, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+	err := runDaemonWith(context.Background(), openFailSince, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	require.Error(t, err)
 }
 
 func TestRunDaemonNewTokenError(t *testing.T) {
 	failToken := func() (string, error) { return "", errors.New("token") }
-	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, failToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, failToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	require.Error(t, err)
 }
 
@@ -111,7 +111,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	}()
 	awaitHealthz(t, readAddr(t, discovery))
 
@@ -201,7 +201,7 @@ func TestRunDaemonWithGRPCListenError(t *testing.T) {
 		daemon.NewToken,
 		filepath.Join(t.TempDir(), "g.db"),
 		filepath.Join(t.TempDir(), "d.json"),
-		30*time.Minute, 4096, "", "", "", "", "", "", nil,
+		30*time.Minute, 4096, "", "", "", "", "", "", nil, false,
 	)
 	require.Error(t, err)
 }
@@ -212,7 +212,7 @@ func TestRunDaemonDiscoveryHasGRPCAddr(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil)
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
 	}()
 	var grpcAddr string
 	require.Eventually(t, func() bool {
@@ -241,7 +241,7 @@ func TestRunDaemonWithOTLPEndpoint(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "grpc://collector.example:4317", "", "", "", "", "", nil)
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "grpc://collector.example:4317", "", "", "", "", "", nil, false)
 	}()
 	awaitHealthz(t, readAddr(t, discovery))
 	cancel()
@@ -255,7 +255,7 @@ func TestRunDaemonWithTranscriptDir(t *testing.T) {
 	disc := filepath.Join(t.TempDir(), "d.json")
 	errc := make(chan error, 1)
 	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, db, disc, time.Minute, 16, "", "", "", "", "", dir, []string{"x-*.jsonl"})
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, db, disc, time.Minute, 16, "", "", "", "", "", dir, []string{"x-*.jsonl"}, false)
 	}()
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(disc)
@@ -298,7 +298,32 @@ func TestRunDaemonWithNeo4jURISet(t *testing.T) {
 			30*time.Minute, 4096,
 			"", "",
 			"bolt://localhost:7687", "neo4j", "pw",
-			"", nil,
+			"", nil, false,
+		)
+	}()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestAllowPayloadAccessFlagRegistered(t *testing.T) {
+	cmd := newDaemonCmd()
+	f := cmd.Flags().Lookup("allow-payload-access")
+	require.NotNil(t, f)
+	require.Equal(t, "false", f.DefValue)
+}
+
+func TestRunDaemonWithAllowPayloadAccessTrue(t *testing.T) {
+	dir := t.TempDir()
+	discovery := filepath.Join(dir, "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken,
+			filepath.Join(dir, "g.db"), discovery,
+			30*time.Minute, 4096,
+			"", "", "", "", "",
+			"", nil, true,
 		)
 	}()
 	awaitHealthz(t, readAddr(t, discovery))

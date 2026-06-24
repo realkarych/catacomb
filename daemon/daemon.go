@@ -53,31 +53,32 @@ func cwdTranscriptExclude() string {
 }
 
 type Daemon struct {
-	store             store.Store
-	newExecID         func() string
-	mu                sync.Mutex
-	seq               uint64
-	graphs            map[string]*reduce.Graph
-	execBySession     map[string]string
-	bus               *cdc.Bus
-	quarantined       int64
-	evicted           int64
-	reaperWindow      time.Duration
-	maxShards         int
-	lastSeen          map[string]time.Time
-	startedAt         time.Time
-	storeWriteErrors  int64
-	otlpEndpoint      string
-	exporterConsumers []*cdc.Consumer
-	postgresDSN       string
-	neo4jURI          string
-	neo4jUser         string
-	neo4jPassword     string
-	dbPath            string
-	transcriptDir     string
-	transcriptExclude []string
-	lossyRuns         int64
-	pricer            reduce.Pricer
+	store              store.Store
+	newExecID          func() string
+	mu                 sync.Mutex
+	seq                uint64
+	graphs             map[string]*reduce.Graph
+	execBySession      map[string]string
+	bus                *cdc.Bus
+	quarantined        int64
+	evicted            int64
+	reaperWindow       time.Duration
+	maxShards          int
+	lastSeen           map[string]time.Time
+	startedAt          time.Time
+	storeWriteErrors   int64
+	otlpEndpoint       string
+	exporterConsumers  []*cdc.Consumer
+	postgresDSN        string
+	neo4jURI           string
+	neo4jUser          string
+	neo4jPassword      string
+	dbPath             string
+	transcriptDir      string
+	transcriptExclude  []string
+	lossyRuns          int64
+	pricer             reduce.Pricer
+	allowPayloadAccess bool
 }
 
 func New(s store.Store) *Daemon {
@@ -397,6 +398,12 @@ func (d *Daemon) MarkLossy(sessionID string) {
 	if err := d.store.UpsertRun(*r); err != nil {
 		log.Printf("catacomb: lossy run persist failed: %v", err)
 	}
+}
+
+func (d *Daemon) SetAllowPayloadAccess(v bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.allowPayloadAccess = v
 }
 
 func (d *Daemon) SetTranscriptDir(s string) {
