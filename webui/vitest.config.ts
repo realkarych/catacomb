@@ -22,6 +22,7 @@ export default defineConfig({
         'web/src/lib/sessions-sort.ts',
         'web/src/lib/layout.ts',
         'web/src/lib/node-legend.ts',
+        'web/src/lib/timeline.ts',
       ],
       exclude: [
         '**/*.test.ts',

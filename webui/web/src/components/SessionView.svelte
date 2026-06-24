@@ -2,6 +2,9 @@
   import { toHash } from '../lib/router';
   import GraphCanvas from './GraphCanvas.svelte';
   import NodeDrawer from './NodeDrawer.svelte';
+  import Timeline from './Timeline.svelte';
+  import { sessionGraph } from '../lib/stores/stores.svelte';
+  import { buildTimeline } from '../lib/timeline';
 
   interface Props {
     hash: string;
@@ -13,6 +16,9 @@
 
   let fitKey = $state(0);
   let prevHadNode = false;
+  let viewMode: 'graph' | 'timeline' = $state('graph');
+
+  const hasTimingData = $derived(buildTimeline(sessionGraph(hash).nodes).rows.length > 0);
 
   $effect(() => {
     const hasNode = !!nodeId;
@@ -36,6 +42,22 @@
     {#if nodeId}
       <span class="node-id-label">Node: <span class="mono">{nodeId}</span></span>
     {/if}
+    {#if hasTimingData}
+      <div class="view-switcher" role="group" aria-label="View mode">
+        <button
+          class="view-btn"
+          data-active={viewMode === 'graph' ? 'true' : undefined}
+          onclick={() => (viewMode = 'graph')}
+          aria-pressed={viewMode === 'graph'}
+        >Graph</button>
+        <button
+          class="view-btn"
+          data-active={viewMode === 'timeline' ? 'true' : undefined}
+          onclick={() => (viewMode = 'timeline')}
+          aria-pressed={viewMode === 'timeline'}
+        >Timeline</button>
+      </div>
+    {/if}
   </div>
   {#if loadStatus === 'not-found'}
     <div class="not-found-state">
@@ -47,7 +69,11 @@
   {:else}
     <div class="graph-area">
       <div class="canvas-wrap">
-        <GraphCanvas {hash} refit={fitKey} />
+        {#if viewMode === 'timeline'}
+          <Timeline {hash} />
+        {:else}
+          <GraphCanvas {hash} refit={fitKey} />
+        {/if}
       </div>
       <NodeDrawer {hash} {token} />
     </div>
@@ -166,5 +192,45 @@
   .back-link:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+  }
+
+  .view-switcher {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-left: auto;
+  }
+
+  .view-btn {
+    padding: var(--s1) var(--s3);
+    font-size: var(--text-sm);
+    font-family: var(--font-ui);
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .view-btn:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .view-btn[data-active='true'] {
+    background: var(--surface-2);
+    color: var(--accent);
+  }
+
+  .view-btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .view-btn {
+      transition: none;
+    }
   }
 </style>
