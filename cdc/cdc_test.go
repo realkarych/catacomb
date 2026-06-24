@@ -163,6 +163,64 @@ func TestTotalDroppedAggregatesAcrossConsumers(t *testing.T) {
 	assert.Equal(t, int64(4), b.TotalDropped())
 }
 
+func TestDirtyFlushIsRevOrdered(t *testing.T) {
+	b := NewBus()
+	c := b.Subscribe(5)
+
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 100, Node: &model.Node{ID: "occupy", Rev: 100}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 200, Node: &model.Node{ID: "occupy2", Rev: 200}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 300, Node: &model.Node{ID: "occupy3", Rev: 300}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 400, Node: &model.Node{ID: "occupy4", Rev: 400}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 500, Node: &model.Node{ID: "occupy5", Rev: 500}})
+
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 30, Node: &model.Node{ID: "c", Rev: 30}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 10, Node: &model.Node{ID: "a", Rev: 10}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 20, Node: &model.Node{ID: "b", Rev: 20}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 10, Node: &model.Node{ID: "z", Rev: 10}})
+
+	<-c.C
+	<-c.C
+	<-c.C
+	<-c.C
+	<-c.C
+
+	b.Publish(GraphDelta{Kind: DeltaRunStarted, Rev: 999, RunID: "flush"})
+
+	var revs []uint64
+	for {
+		select {
+		case d := <-c.C:
+			revs = append(revs, d.Rev)
+		default:
+			assert.Equal(t, []uint64{10, 10, 20, 30, 999}, revs)
+			return
+		}
+	}
+}
+
+func TestDirtyDrainStopsWhenChannelRefillsDuringFlush(t *testing.T) {
+	b := NewBus()
+	c := b.Subscribe(1)
+
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "fill", Rev: 1}})
+
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 10, Node: &model.Node{ID: "a", Rev: 10}})
+	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 20, Node: &model.Node{ID: "b", Rev: 20}})
+
+	<-c.C
+
+	b.Publish(GraphDelta{Kind: DeltaRunStarted, Rev: 50, RunID: "trigger"})
+
+	require.Eventually(t, func() bool {
+		select {
+		case d := <-c.C:
+			return d.Rev == 10 || d.Rev == 20
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+}
+
 func TestPublishConcurrentWithReaderEventuallyDeliversFinal(t *testing.T) {
 	b := NewBus()
 	c := b.Subscribe(1)
