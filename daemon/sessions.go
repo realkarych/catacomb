@@ -18,8 +18,8 @@ type SessionSummary struct {
 	StartedAt  string   `json:"started_at,omitempty"`
 	EndedAt    string   `json:"ended_at,omitempty"`
 	DurationMS *int64   `json:"duration_ms,omitempty"`
-	TokensIn   *int64   `json:"tokens_in,omitempty"`
-	TokensOut  *int64   `json:"tokens_out,omitempty"`
+	TokensIn   int64    `json:"tokens_in"`
+	TokensOut  int64    `json:"tokens_out"`
 	CostUSD    *float64 `json:"cost_usd,omitempty"`
 	CostSource string   `json:"cost_source"`
 	NodeCount  int      `json:"node_count"`
@@ -191,12 +191,8 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	if hasCost {
 		sum.CostUSD = &totalCost
 	}
-	if tokensIn > 0 {
-		sum.TokensIn = &tokensIn
-	}
-	if tokensOut > 0 {
-		sum.TokensOut = &tokensOut
-	}
+	sum.TokensIn = tokensIn
+	sum.TokensOut = tokensOut
 	sort.Strings(sum.RunIDs)
 	return sum
 }

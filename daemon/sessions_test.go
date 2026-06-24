@@ -325,8 +325,8 @@ func TestSessionSummaryWithCost(t *testing.T) {
 	require.Len(t, sums, 1)
 	assert.NotNil(t, sums[0].CostUSD)
 	assert.Equal(t, "reported", sums[0].CostSource)
-	assert.NotNil(t, sums[0].TokensIn)
-	assert.NotNil(t, sums[0].TokensOut)
+	assert.Equal(t, int64(10), sums[0].TokensIn)
+	assert.Equal(t, int64(10), sums[0].TokensOut)
 }
 
 func TestSessionSummaryWithEstimatedCost(t *testing.T) {
@@ -427,4 +427,38 @@ func TestSessionSummaryWithStartedAndEndedAt(t *testing.T) {
 	assert.NotEmpty(t, sums[0].StartedAt)
 	assert.NotEmpty(t, sums[0].EndedAt)
 	assert.NotNil(t, sums[0].DurationMS)
+}
+
+func TestExecutionsForSessionSubscribeSnapshotAfterRecover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, s.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+
+	sub := d2.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d2.Unsubscribe(sub)
+
+	require.NotEmpty(t, sub.Snapshot, "snapshot must be non-empty after recover")
+
+	d2.mu.Lock()
+	scopedExecs := d2.executionsForSession("s1")
+	d2.mu.Unlock()
+
+	scopedSet := map[string]bool{}
+	for _, e := range scopedExecs {
+		scopedSet[e] = true
+	}
+	for _, delta := range sub.Snapshot {
+		assert.True(t, scopedSet[delta.ExecutionID], "snapshot delta must be scoped to s1 executions")
+	}
 }

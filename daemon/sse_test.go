@@ -636,3 +636,111 @@ func TestParseSubFilterSession(t *testing.T) {
 	f := parseSubFilter(r)
 	assert.Equal(t, "s1", f.SessionID)
 }
+
+func TestSSEFilterDropsNonMatchingSession(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	httpLn := loopbackListener(t)
+	grpcLn := loopbackListener(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+
+	addr := httpLn.Addr().String()
+	require.Eventually(t, func() bool {
+		resp, err := http.Get("http://" + addr + "/healthz")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Second, 10*time.Millisecond)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"http://"+addr+"/v1/subscribe?session=s1&token=tok", nil)
+	require.NoError(t, err)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := make(chan map[string]any, 16)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			line := sc.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
+				continue
+			}
+			events <- ev
+		}
+	}()
+
+	var snapshotKinds []string
+	deadline := time.After(2 * time.Second)
+	for len(snapshotKinds) < 1 {
+		select {
+		case ev := <-events:
+			snapshotKinds = append(snapshotKinds, ev["kind"].(string))
+		case <-deadline:
+			t.Fatal("timed out waiting for s1 snapshot event")
+		}
+	}
+	assert.Contains(t, snapshotKinds, "node_upsert")
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s-other"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s-other","tool_name":"Bash","tool_use_id":"t2","tool_input":{}}`)))
+
+	timer := time.NewTimer(300 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		select {
+		case ev := <-events:
+			execID, _ := ev["execution_id"].(string)
+			d2 := d
+			d2.mu.Lock()
+			s1Execs := d2.executionsForSession("s1")
+			d2.mu.Unlock()
+			inS1 := false
+			for _, e := range s1Execs {
+				if e == execID {
+					inS1 = true
+				}
+			}
+			if !inS1 {
+				t.Fatalf("received event for execution outside s1: execution_id=%q", execID)
+			}
+		case <-timer.C:
+			goto doneWaiting
+		}
+	}
+doneWaiting:
+
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t3","tool_input":{}}`)))
+
+	received := make(chan map[string]any, 1)
+	deadline2 := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			received <- ev
+			goto gotInSession
+		case <-deadline2:
+			t.Fatal("timed out waiting for in-session s1 live event")
+		}
+	}
+gotInSession:
+	inSessionEv := <-received
+	assert.NotNil(t, inSessionEv)
+
+	cancel()
+	<-errc
+}
