@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { connectionState, handleEvent, upsertSession } from './lib/stores/stores.svelte';
+  import { connectionState, handleEvent, upsertSession, selectNode } from './lib/stores/stores.svelte';
   import { connect } from './lib/sse/client';
   import { fetchSessions } from './lib/api';
   import { parseHash } from './lib/router';
@@ -18,6 +18,17 @@
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  });
+
+  // Route is the single source of truth for node selection. Deriving selection
+  // from the route (rather than only setting it imperatively on click) makes
+  // deep-links (#/s/{hash}/n/{id}) and browser back/forward open and close the
+  // drawer correctly. This reads `route` and writes `selectedNodeId` (a
+  // different store), so it cannot self-retrigger; click/close handlers update
+  // the hash → route, which flows back here, keeping route and selection in sync
+  // without a route↔selection write cycle.
+  $effect(() => {
+    selectNode(route.kind === 'session-node' ? route.nodeId : null);
   });
 
   $effect(() => {

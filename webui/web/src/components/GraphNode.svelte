@@ -9,10 +9,15 @@
   type GraphNodeData = { catNode: CNode };
   type Props = NodeProps<import('@xyflow/svelte').Node<GraphNodeData>>;
 
-  let { id, data, selected }: Props = $props();
+  let { id, data }: Props = $props();
 
   const catNode = $derived(data.catNode);
-  const hasOtherSelected = $derived(selectedNodeId.value !== null && !selected);
+  // Selection is driven by our own store (kept in sync with the route + drawer),
+  // not Svelte Flow's per-node `selected` prop — we never toggle Flow's internal
+  // selection, so that prop is always false and would leave every node un-lit
+  // (and all dimmed). Reading selectedNodeId here lights exactly the chosen node.
+  const isSelected = $derived(selectedNodeId.value === id);
+  const hasOtherSelected = $derived(selectedNodeId.value !== null && !isSelected);
 
   const statusColor = $derived(() => {
     const s = catNode.status;
@@ -46,13 +51,13 @@
 
 <div
   class="graph-node"
-  class:graph-node--selected={selected}
+  class:graph-node--selected={isSelected}
   class:graph-node--dimmed={hasOtherSelected}
   style="--node-color: var(--node-{catNode.type}, var(--node-marker));"
   role="button"
   tabindex="0"
   aria-label={catNode.name ?? catNode.type}
-  aria-pressed={selected}
+  aria-pressed={isSelected}
   onclick={handleClick}
   onkeydown={handleKeydown}
 >

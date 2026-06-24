@@ -1,5 +1,6 @@
 <script lang="ts">
   import '@xyflow/svelte/dist/style.css';
+  import { untrack } from 'svelte';
   import { SvelteFlow } from '@xyflow/svelte';
   import type { Node as XyFlowNode, Edge as XyFlowEdge, NodeTypes } from '@xyflow/svelte';
   import { sessionGraph, selectNode } from '../lib/stores/stores.svelte';
@@ -39,14 +40,27 @@
       xyEdges = result.edges as unknown as XyFlowEdge[];
       pendingFitView = true;
     } else if (graph.nodes.length > 0) {
+      // Data-only update (positions unchanged): refresh each node's catNode
+      // payload in place. Read the current xyNodes via untrack so this effect
+      // does NOT depend on the array it also writes — otherwise the
+      // unconditional new-array identity from a write would re-trigger the
+      // effect forever (effect_update_depth_exceeded). We additionally skip the
+      // reassignment entirely when nothing changed, keeping the effect
+      // idempotent and avoiding spurious Svelte Flow re-renders.
       const nodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
-      xyNodes = xyNodes.map((xyN) => {
+      const current = untrack(() => xyNodes);
+      let changed = false;
+      const next = current.map((xyN) => {
         const catNode = nodeMap.get(xyN.id);
         if (!catNode) return xyN;
         const currentData = (xyN.data as XyNode['data'] | undefined)?.catNode;
         if (currentData === catNode) return xyN;
+        changed = true;
         return { ...xyN, data: { catNode } };
       });
+      if (changed) {
+        xyNodes = next;
+      }
     }
   });
 
