@@ -58,8 +58,8 @@
   style="--node-color: var(--node-{catNode.type}, var(--node-marker));"
   role="button"
   tabindex="0"
-  aria-label={catNode.name ?? catNode.type}
-  aria-pressed={isSelected}
+  aria-label={`${catNode.type} ${catNode.name ?? catNode.type} — ${catNode.status ?? 'pending'}`}
+  aria-current={isSelected ? 'true' : undefined}
   onclick={handleClick}
   onkeydown={handleKeydown}
 >

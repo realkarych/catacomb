@@ -7,6 +7,8 @@
   import { dimmedEdgeIds } from '../lib/filters';
   import { applyLayout } from '../lib/layout';
   import type { XyNode } from '../lib/layout';
+  import { nextNodeByDirection } from '../lib/graph-nav';
+  import type { NavDir } from '../lib/graph-nav';
   import GraphNode from './GraphNode.svelte';
   import FlowInternals from './FlowInternals.svelte';
   import NodeLegend from './NodeLegend.svelte';
@@ -103,9 +105,43 @@
   const presentTypes = $derived(
     [...new Set(xyNodes.map((n) => ((n.data as { catNode?: { type?: string } } | undefined)?.catNode?.type ?? 'marker')))]
   );
+
+  const arrowDirMap: Record<string, NavDir> = {
+    ArrowRight: 'right',
+    ArrowLeft: 'left',
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+  };
+
+  let canvasEl: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    const el = canvasEl;
+    if (!el) return;
+    function onKeydown(e: KeyboardEvent) {
+      const dir = arrowDirMap[e.key];
+      if (!dir) return;
+      const current = selectedNodeId.value;
+      if (current === null) return;
+      e.preventDefault();
+      const graph = sessionGraph(hash);
+      const next = nextNodeByDirection(current, graph.nodes, graph.edges, dir);
+      if (next !== null && next !== current) {
+        selectNode(next);
+      }
+    }
+    el.addEventListener('keydown', onKeydown);
+    return () => el.removeEventListener('keydown', onKeydown);
+  });
 </script>
 
-<div class="graph-canvas-root">
+<div
+  bind:this={canvasEl}
+  class="graph-canvas-root"
+  role="application"
+  aria-label="Session graph"
+  tabindex="-1"
+>
   {#if isEmpty}
     <div class="empty-state">
       <div class="empty-state-icon" aria-hidden="true">⛏</div>
