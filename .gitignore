@@ -54,3 +54,6 @@ webui/web/coverage/
 
 # Subagent-driven-development scratch (ledger, briefs, reports, diffs) — not project docs
 .superpowers/
+
+# Playwright MCP scratch (screenshots/snapshots from direct MCP browser use)
+.playwright-mcp/
