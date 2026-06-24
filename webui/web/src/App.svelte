@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { connectionState, handleEvent, upsertSession, selectNode } from './lib/stores/stores.svelte';
+  import { untrack } from 'svelte';
+  import { connectionState, handleEvent, upsertSession, selectNode, desync, lastSeenRev, recordParseError, setDesyncStale } from './lib/stores/stores.svelte';
   import { connect } from './lib/sse/client';
   import { fetchSessions, fetchSessionGraph, NotFoundError } from './lib/api';
   import { parseHash } from './lib/router';
@@ -46,8 +47,19 @@
     const conn = connect({
       session: connectedHash,
       token,
-      onStatus: (s) => { connectionState.status = s; },
+      onStatus: (s) => {
+        connectionState.status = s;
+        if (s === 'open') {
+          setDesyncStale(false);
+        } else if (s === 'error') {
+          setDesyncStale(true);
+        }
+      },
       onEvent: handleEvent,
+      onParseError: (_raw, _err) => {
+        recordParseError();
+      },
+      getLastRev: () => untrack(() => lastSeenRev.value),
     });
     return () => conn.close();
   });
@@ -90,10 +102,14 @@
       <span class="wordmark-lamp" aria-hidden="true"></span>
       Catacomb
     </span>
-    {#if connectionState.status === 'connecting' || connectionState.status === 'error'}
-      <span class="conn-pill" data-state={connectionState.status} role="status" aria-live="polite">
+    {#if connectionState.status === 'connecting' || connectionState.status === 'error' || desync.stale}
+      <span class="conn-pill" data-state={desync.stale && connectionState.status === 'open' ? 'stale' : connectionState.status} role="status" aria-live="polite">
         <span class="conn-dot" aria-hidden="true"></span>
-        {degradedLabel[connectionState.status]}
+        {#if desync.stale && connectionState.status === 'open'}
+          stream data may be stale
+        {:else}
+          {degradedLabel[connectionState.status] ?? 'reconnecting…'}
+        {/if}
       </span>
     {/if}
   </header>
