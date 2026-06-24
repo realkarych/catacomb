@@ -66,6 +66,46 @@
   --shadow-lamp: 0 0 0 1px var(--ring), 0 0 16px var(--glow);
 }
 
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: oklch(0.96 0.008 82);
+    --surface: oklch(0.93 0.008 82);
+    --surface-2: oklch(0.89 0.010 82);
+    --border: oklch(0.78 0.012 80);
+    --border-strong: oklch(0.65 0.015 78);
+
+    --text: oklch(0.22 0.012 75);
+    --text-dim: oklch(0.38 0.015 75);
+    --text-faint: oklch(0.48 0.012 78);
+
+    --accent: oklch(0.58 0.13 75);
+    --accent-strong: oklch(0.50 0.14 75);
+    --glow: oklch(0.58 0.13 75 / 0.18);
+    --ring: oklch(0.58 0.13 75 / 0.55);
+
+    --ok: oklch(0.42 0.14 150);
+    --running: oklch(0.58 0.13 75);
+    --error: oklch(0.44 0.18 25);
+    --blocked: oklch(0.46 0.10 60);
+    --pending: var(--text-faint);
+
+    --node-session: oklch(0.40 0.12 250);
+    --node-user_prompt: oklch(0.40 0.12 300);
+    --node-assistant_turn: oklch(0.38 0.14 150);
+    --node-tool_call: oklch(0.42 0.13 75);
+    --node-subagent: oklch(0.40 0.12 195);
+    --node-mcp_call: oklch(0.40 0.12 340);
+    --node-hook_event: oklch(0.40 0.12 110);
+    --node-marker: oklch(0.45 0.03 75);
+
+    --shadow-1: 0 1px 3px oklch(0 0 0 / 0.12), 0 1px 2px oklch(0 0 0 / 0.08);
+    --shadow-2: 0 4px 12px oklch(0 0 0 / 0.15), 0 2px 4px oklch(0 0 0 / 0.10);
+    --shadow-lamp: 0 0 0 1px var(--ring), 0 0 16px var(--glow);
+  }
+}
+
 *,
 *::before,
 *::after {
