@@ -57,6 +57,10 @@ linters:
       - path: cmd/catacomb/main\.go
         linters:
           - revive
+      - path: tui/client\.go
+        source: c\.sseHTTP\.Do
+        linters:
+          - bodyclose
 
 formatters:
   enable:
