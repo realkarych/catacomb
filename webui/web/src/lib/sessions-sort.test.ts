@@ -29,12 +29,12 @@ describe('filterSessions', () => {
 
   it('matches on session hash substring (case-insensitive)', () => {
     expect(filterSessions(sessions, 'AAA')).toHaveLength(1);
-    expect(filterSessions(sessions, 'AAA')[0].session).toBe('aaa111');
+    expect(filterSessions(sessions, 'AAA')[0]!.session).toBe('aaa111');
   });
 
   it('matches on model_id substring (case-insensitive)', () => {
     expect(filterSessions(sessions, 'SONNET')).toHaveLength(1);
-    expect(filterSessions(sessions, 'SONNET')[0].session).toBe('bbb222');
+    expect(filterSessions(sessions, 'SONNET')[0]!.session).toBe('bbb222');
   });
 
   it('partial hash match', () => {
@@ -79,14 +79,14 @@ describe('filterSessions', () => {
     const s = [makeSession({ session: 'xyz', model_id: 'claude-sonnet' })];
     const result = filterSessions(s, 'sonnet');
     expect(result).toHaveLength(1);
-    expect(result[0].session).toBe('xyz');
+    expect(result[0]!.session).toBe('xyz');
   });
 
   it('matches on session only (not model_id)', () => {
     const s = [makeSession({ session: 'aabbcc', model_id: 'model-xyz' })];
     const result = filterSessions(s, 'aabb');
     expect(result).toHaveLength(1);
-    expect(result[0].session).toBe('aabbcc');
+    expect(result[0]!.session).toBe('aabbcc');
   });
 
   it('filters out session that matches neither field', () => {
@@ -96,7 +96,7 @@ describe('filterSessions', () => {
     ];
     const result = filterSessions(s, 'aaa');
     expect(result).toHaveLength(1);
-    expect(result[0].session).toBe('aaa111');
+    expect(result[0]!.session).toBe('aaa111');
   });
 
   it('whitespace query filters correctly', () => {
@@ -164,16 +164,16 @@ describe('sortSessions', () => {
 
   it('sorts error_count ascending', () => {
     const result = sortSessions(sessions, 'error_count', 'asc');
-    expect(result[0].error_count).toBe(0);
-    expect(result[result.length - 1].error_count).toBe(2);
+    expect(result[0]!.error_count).toBe(0);
+    expect(result[result.length - 1]!.error_count).toBe(2);
   });
 
   it('sort is stable: equal values preserve order', () => {
     const s1 = makeSession({ session: 'x1', error_count: 0, tokens_in: 50 });
     const s2 = makeSession({ session: 'x2', error_count: 0, tokens_in: 50 });
     const result = sortSessions([s1, s2], 'error_count', 'asc');
-    expect(result[0].session).toBe('x1');
-    expect(result[1].session).toBe('x2');
+    expect(result[0]!.session).toBe('x1');
+    expect(result[1]!.session).toBe('x2');
   });
 
   it('does not mutate input array', () => {
@@ -203,9 +203,9 @@ describe('sortSessions', () => {
       makeSession({ session: 's3', cost_usd: 0.1 }),
     ];
     const result = sortSessions(s, 'cost_usd', 'asc');
-    expect(result[0].session).toBe('s3');
-    expect(result[1].session).toBe('s1');
-    expect(result[2].session).toBe('s2');
+    expect(result[0]!.session).toBe('s3');
+    expect(result[1]!.session).toBe('s1');
+    expect(result[2]!.session).toBe('s2');
   });
 
   it('handles greater-than comparison', () => {
@@ -214,7 +214,7 @@ describe('sortSessions', () => {
       makeSession({ session: 's2', tokens_in: 50 }),
     ];
     const result = sortSessions(s, 'tokens_in', 'asc');
-    expect(result[0].session).toBe('s2');
-    expect(result[1].session).toBe('s1');
+    expect(result[0]!.session).toBe('s2');
+    expect(result[1]!.session).toBe('s1');
   });
 });
