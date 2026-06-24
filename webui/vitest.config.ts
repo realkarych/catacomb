@@ -19,6 +19,7 @@ export default defineConfig({
         'web/src/lib/api.ts',
         'web/src/lib/router.ts',
         'web/src/lib/sessions-sort.ts',
+        'web/src/lib/layout.ts',
       ],
       exclude: [
         '**/*.test.ts',

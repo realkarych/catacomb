@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toHash } from '../lib/router';
+  import GraphCanvas from './GraphCanvas.svelte';
 
   interface Props {
     hash: string;
@@ -22,10 +23,8 @@
       <span class="node-id-label">Node: <span class="mono">{nodeId}</span></span>
     {/if}
   </div>
-  <div class="graph-placeholder empty-state">
-    <div class="empty-state-icon" aria-hidden="true">⛏</div>
-    <p class="empty-state-headline">Graph coming soon</p>
-    <p class="empty-state-hint">Session: <span class="mono">{hash}</span></p>
+  <div class="graph-area">
+    <GraphCanvas {hash} />
   </div>
 </div>
 
@@ -81,7 +80,9 @@
     color: var(--text-faint);
   }
 
-  .graph-placeholder {
+  .graph-area {
     flex: 1;
+    min-height: 0;
+    position: relative;
   }
 </style>
