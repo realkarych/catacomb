@@ -71,8 +71,6 @@ func TestRunUpDaemonNotRunningStartsIt(t *testing.T) {
 	realDisc := daemon.Discovery{Addr: "127.0.0.1:22222", Token: "tok2"}
 
 	startCalled := false
-	ch := make(chan time.Time)
-	t.Cleanup(func() { close(ch) })
 	deps := upDeps{
 		readDiscovery: func(_ string) (daemon.Discovery, error) {
 			if !startCalled {
@@ -90,8 +88,8 @@ func TestRunUpDaemonNotRunningStartsIt(t *testing.T) {
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
 		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
-		after:        func(_ time.Duration) <-chan time.Time { return ch },
-		waitSeconds:  0,
+		after:        instantAfter,
+		waitSeconds:  1,
 		noOpen:       true,
 	}
 
@@ -324,8 +322,6 @@ func TestRunUpPollHealthzCalledAfterStart(t *testing.T) {
 
 	startCalled := false
 	pollCalled := false
-	ch := make(chan time.Time)
-	t.Cleanup(func() { close(ch) })
 	deps := upDeps{
 		readDiscovery: func(_ string) (daemon.Discovery, error) {
 			if !startCalled {
@@ -346,8 +342,8 @@ func TestRunUpPollHealthzCalledAfterStart(t *testing.T) {
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
 		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
-		after:        func(_ time.Duration) <-chan time.Time { return ch },
-		waitSeconds:  0,
+		after:        instantAfter,
+		waitSeconds:  1,
 		noOpen:       true,
 	}
 
@@ -357,16 +353,13 @@ func TestRunUpPollHealthzCalledAfterStart(t *testing.T) {
 
 func TestRunUpReadDiscoveryAfterStartFails(t *testing.T) {
 	discPath := t.TempDir() + "/d.json"
-	readErr := errors.New("post-start read failed")
 	startCalled := false
-	ch := make(chan time.Time)
-	t.Cleanup(func() { close(ch) })
 	deps := upDeps{
 		readDiscovery: func(_ string) (daemon.Discovery, error) {
 			if !startCalled {
 				return daemon.Discovery{}, fmt.Errorf("x: %w", os.ErrNotExist)
 			}
-			return daemon.Discovery{}, readErr
+			return daemon.Discovery{}, errors.New("post-start read failed")
 		},
 		discoveryPath: discPath,
 		startDaemon: func() error {
@@ -378,14 +371,14 @@ func TestRunUpReadDiscoveryAfterStartFails(t *testing.T) {
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
 		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
-		after:        func(_ time.Duration) <-chan time.Time { return ch },
-		waitSeconds:  0,
+		after:        instantAfter,
+		waitSeconds:  2,
 		noOpen:       true,
 	}
 
 	err := runUp(context.Background(), io.Discard, deps)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, readErr))
+	assert.True(t, errors.Is(err, ErrDaemonUnreachable))
 }
 
 func TestRunUpURLWriteError(t *testing.T) {
@@ -452,6 +445,81 @@ func TestRunUpDemoFallbackAfterFirstSessionCountHasSessions(t *testing.T) {
 	assert.False(t, replayCalled, "if sessions appear after timer, no demo needed")
 }
 
+func TestRunUpReadinessLoopConvergesAfterK(t *testing.T) {
+	discPath := t.TempDir() + "/d.json"
+	realDisc := daemon.Discovery{Addr: "127.0.0.1:55555", Token: "tok5"}
+
+	startCalled := false
+	readCallCount := 0
+	pollCallCount := 0
+
+	deps := upDeps{
+		readDiscovery: func(_ string) (daemon.Discovery, error) {
+			if !startCalled {
+				return daemon.Discovery{}, fmt.Errorf("x: %w", os.ErrNotExist)
+			}
+			readCallCount++
+			if readCallCount < 3 {
+				return daemon.Discovery{}, errors.New("not ready yet")
+			}
+			return realDisc, nil
+		},
+		discoveryPath: discPath,
+		startDaemon: func() error {
+			startCalled = true
+			return nil
+		},
+		installHooks: func() error { return nil },
+		pollHealthz: func(_ context.Context, _ string) error {
+			pollCallCount++
+			return nil
+		},
+		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
+		openBrowser:  func(_ string) error { return nil },
+		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
+		after:        instantAfter,
+		waitSeconds:  5,
+		noOpen:       true,
+	}
+
+	var out strings.Builder
+	require.NoError(t, runUp(context.Background(), &out, deps))
+	assert.True(t, startCalled)
+	assert.Equal(t, 3, readCallCount)
+	assert.Equal(t, 1, pollCallCount)
+	assert.Contains(t, out.String(), "127.0.0.1:55555")
+}
+
+func TestRunUpReadinessLoopNeverReady(t *testing.T) {
+	discPath := t.TempDir() + "/d.json"
+
+	startCalled := false
+	deps := upDeps{
+		readDiscovery: func(_ string) (daemon.Discovery, error) {
+			if !startCalled {
+				return daemon.Discovery{}, fmt.Errorf("x: %w", os.ErrNotExist)
+			}
+			return daemon.Discovery{}, errors.New("never ready")
+		},
+		discoveryPath: discPath,
+		startDaemon: func() error {
+			startCalled = true
+			return nil
+		},
+		installHooks: func() error { return nil },
+		pollHealthz:  func(_ context.Context, _ string) error { return nil },
+		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
+		openBrowser:  func(_ string) error { return nil },
+		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
+		after:        instantAfter,
+		waitSeconds:  3,
+	}
+
+	err := runUp(context.Background(), io.Discard, deps)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrDaemonUnreachable))
+}
+
 func TestBuildStartDaemonOsExecutableError(t *testing.T) {
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "", errors.New("no exe") }
@@ -463,7 +531,7 @@ func TestBuildStartDaemonOsExecutableError(t *testing.T) {
 	assert.Contains(t, err.Error(), "resolve executable")
 }
 
-func TestBuildStartDaemonLogOpenError(t *testing.T) {
+func TestBuildStartDaemonCreateRunDirError(t *testing.T) {
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
@@ -471,7 +539,41 @@ func TestBuildStartDaemonLogOpenError(t *testing.T) {
 	fn := buildStartDaemon("/no/such/dir/d.json")
 	err := fn()
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create run dir")
+}
+
+func TestBuildStartDaemonLogOpenError(t *testing.T) {
+	origOsExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origOsExecutable })
+
+	dir := t.TempDir()
+	discPath := dir + "/d.json"
+	require.NoError(t, os.MkdirAll(discPath+".log", 0o700))
+
+	fn := buildStartDaemon(discPath)
+	err := fn()
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open daemon log")
+}
+
+func TestBuildStartDaemonCreatesRunDir(t *testing.T) {
+	origOsExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origOsExecutable })
+
+	origStartCmd := startCmd
+	startCmd = func(_ *exec.Cmd) error { return nil }
+	t.Cleanup(func() { startCmd = origStartCmd })
+
+	base := t.TempDir()
+	discPath := base + "/run/d.json"
+	runDir := base + "/run"
+
+	require.NoDirExists(t, runDir)
+	fn := buildStartDaemon(discPath)
+	require.NoError(t, fn())
+	assert.DirExists(t, runDir)
 }
 
 func TestBuildStartDaemonStartError(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -66,6 +67,9 @@ func buildStartDaemon(discPath string) func() error {
 			return fmt.Errorf("up: resolve executable: %w", err)
 		}
 		logPath := discPath + ".log"
+		if mkErr := os.MkdirAll(filepath.Dir(logPath), 0o700); mkErr != nil {
+			return fmt.Errorf("up: create run dir: %w", mkErr)
+		}
 		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return fmt.Errorf("up: open daemon log: %w", err)
@@ -136,12 +140,19 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 		if startErr := deps.startDaemon(); startErr != nil {
 			return startErr
 		}
-		if pollErr := deps.pollHealthz(ctx, ""); pollErr != nil {
-			return pollErr
+		ready := false
+		for attempt := 0; attempt < deps.waitSeconds; attempt++ {
+			disc, err = deps.readDiscovery(deps.discoveryPath)
+			if err == nil {
+				if hzErr := deps.pollHealthz(ctx, disc.Addr); hzErr == nil {
+					ready = true
+					break
+				}
+			}
+			<-deps.after(time.Second)
 		}
-		disc, err = deps.readDiscovery(deps.discoveryPath)
-		if err != nil {
-			return err
+		if !ready {
+			return fmt.Errorf("%w: daemon did not become ready", ErrDaemonUnreachable)
 		}
 	} else {
 		if pollErr := deps.pollHealthz(ctx, disc.Addr); pollErr != nil {

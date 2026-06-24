@@ -2,8 +2,4 @@ package main
 
 import "os"
 
-func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		os.Exit(1)
-	}
-}
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
