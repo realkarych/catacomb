@@ -73,6 +73,16 @@ func TestListenLoopbackError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestWriteReadDiscoveryNewFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	in := Discovery{Addr: "127.0.0.1:5001", Token: "tok", Pid: 12345, StartedAt: "2026-06-24T10:00:00Z"}
+	require.NoError(t, WriteDiscovery(path, in))
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, 12345, got.Pid)
+	assert.Equal(t, "2026-06-24T10:00:00Z", got.StartedAt)
+}
+
 func TestWriteReadDiscoveryRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "daemon.json")
 	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:5000", Token: "tok"}))

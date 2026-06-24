@@ -108,6 +108,8 @@ func runDaemonWith(
 		Token:    token,
 		GRPCAddr: grpcLn.Addr().String(),
 	}
+	disc.Pid = os.Getpid()
+	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := daemon.WriteDiscovery(discoveryPath, disc); err != nil {
 		return err
 	}

@@ -330,3 +330,27 @@ func TestRunDaemonWithAllowPayloadAccessTrue(t *testing.T) {
 	cancel()
 	require.NoError(t, <-errc)
 }
+
+func TestRunDaemonDiscoveryHasPidAndStartedAt(t *testing.T) {
+	dir := t.TempDir()
+	discovery := filepath.Join(dir, "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "", "", "", "", "", "", nil, false)
+	}()
+	var d daemon.Discovery
+	require.Eventually(t, func() bool {
+		disc, err := daemon.ReadDiscovery(discovery)
+		if err != nil || disc.Pid == 0 {
+			return false
+		}
+		d = disc
+		return true
+	}, 2*time.Second, 10*time.Millisecond)
+	require.NotZero(t, d.Pid)
+	_, err := time.Parse(time.RFC3339, d.StartedAt)
+	require.NoError(t, err)
+	cancel()
+	require.NoError(t, <-errc)
+}
