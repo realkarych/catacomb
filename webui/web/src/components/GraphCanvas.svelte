@@ -3,7 +3,7 @@
   import { untrack } from 'svelte';
   import { SvelteFlow } from '@xyflow/svelte';
   import type { Node as XyFlowNode, Edge as XyFlowEdge, NodeTypes } from '@xyflow/svelte';
-  import { sessionGraph, selectNode } from '../lib/stores/stores.svelte';
+  import { sessionGraph, selectNode, selectedNodeId } from '../lib/stores/stores.svelte';
   import { applyLayout } from '../lib/layout';
   import type { XyNode } from '../lib/layout';
   import GraphNode from './GraphNode.svelte';
@@ -104,6 +104,7 @@
     >
       <FlowInternals
         {pendingFitView}
+        focusNodeId={selectedNodeId.value}
         onFitViewDone={() => { pendingFitView = false; }}
       />
     </SvelteFlow>

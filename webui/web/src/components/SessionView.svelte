@@ -15,10 +15,10 @@
 
   $effect(() => {
     const hasNode = !!nodeId;
-    if (hasNode !== prevHadNode) {
-      prevHadNode = hasNode;
+    if (!hasNode && prevHadNode) {
       fitKey += 1;
     }
+    prevHadNode = hasNode;
   });
 
   function goBack() {
