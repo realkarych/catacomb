@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchSessions, fetchSessionGraph, NotFoundError } from './api';
-import type { SessionSummary, SseEvent } from './types';
+import { fetchSessions, fetchSessionGraph, fetchNodePayload, NotFoundError, ForbiddenError } from './api';
+import type { SessionSummary, SseEvent, PayloadView } from './types';
 
 function mockFetch(status: number, body: unknown): typeof fetch {
   return vi.fn().mockResolvedValue({
@@ -71,5 +71,49 @@ describe('NotFoundError', () => {
     expect(e.name).toBe('NotFoundError');
     expect(e.message).toBe('test');
     expect(e).toBeInstanceOf(Error);
+  });
+});
+
+describe('ForbiddenError', () => {
+  it('has name ForbiddenError', () => {
+    const e = new ForbiddenError('test');
+    expect(e.name).toBe('ForbiddenError');
+    expect(e.message).toBe('test');
+    expect(e).toBeInstanceOf(Error);
+  });
+});
+
+describe('fetchNodePayload', () => {
+  const samplePayload: PayloadView = {
+    node_id: 'n1',
+    payload_hash: 'abc',
+    input: { cmd: 'ls' },
+    output: { result: 'ok' },
+    redactions: [],
+    redacted: false,
+  };
+
+  it('returns PayloadView on 200', async () => {
+    const f = mockFetch(200, samplePayload);
+    const result = await fetchNodePayload('hash123', 'n1', 'mytoken', f);
+    expect(result).toEqual(samplePayload);
+    expect(f).toHaveBeenCalledWith('/v1/sessions/hash123/nodes/n1/payload', {
+      headers: { Authorization: 'Bearer mytoken' },
+    });
+  });
+
+  it('throws ForbiddenError on 403', async () => {
+    const f = mockFetch(403, null);
+    await expect(fetchNodePayload('hash', 'n1', 'tok', f)).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it('throws NotFoundError on 404', async () => {
+    const f = mockFetch(404, null);
+    await expect(fetchNodePayload('hash', 'n1', 'tok', f)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('throws Error on 500', async () => {
+    const f = mockFetch(500, null);
+    await expect(fetchNodePayload('hash', 'n1', 'tok', f)).rejects.toBeInstanceOf(Error);
   });
 });

@@ -59,3 +59,17 @@ export interface SessionSummary {
   model_id?: string;
   run_ids: string[];
 }
+
+export interface RedactionFinding {
+  path: string;
+  reason: string;
+}
+
+export interface PayloadView {
+  node_id: string;
+  payload_hash?: string;
+  input?: unknown;
+  output?: unknown;
+  redactions: RedactionFinding[];
+  redacted: boolean;
+}

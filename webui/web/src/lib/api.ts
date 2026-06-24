@@ -1,9 +1,16 @@
-import type { SessionSummary, SseEvent } from './types';
+import type { SessionSummary, SseEvent, PayloadView } from './types';
 
 export class NotFoundError extends Error {
   constructor(msg: string) {
     super(msg);
     this.name = 'NotFoundError';
+  }
+}
+
+export class ForbiddenError extends Error {
+  constructor(msg: string) {
+    super(msg);
+    this.name = 'ForbiddenError';
   }
 }
 
@@ -19,4 +26,19 @@ export async function fetchSessionGraph(hash: string, token: string, f = fetch):
   if (res.status === 404) throw new NotFoundError(`session ${hash} not found`);
   if (!res.ok) throw new Error(`fetchSessionGraph failed: ${res.status}`);
   return res.json() as Promise<SseEvent[]>;
+}
+
+export async function fetchNodePayload(
+  hash: string,
+  nodeId: string,
+  token: string,
+  f = fetch,
+): Promise<PayloadView> {
+  const res = await f(`/v1/sessions/${hash}/nodes/${nodeId}/payload`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 403) throw new ForbiddenError('payload access disabled');
+  if (res.status === 404) throw new NotFoundError(`node ${nodeId} payload not found`);
+  if (!res.ok) throw new Error(`fetchNodePayload failed: ${res.status}`);
+  return res.json() as Promise<PayloadView>;
 }

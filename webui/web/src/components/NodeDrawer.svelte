@@ -5,11 +5,13 @@
   import { toHash } from '../lib/router';
   import StatusPill from './StatusPill.svelte';
   import MetricRow from './MetricRow.svelte';
+  import PayloadPanel from './PayloadPanel.svelte';
 
   interface Props {
     hash: string;
+    token: string;
   }
-  let { hash }: Props = $props();
+  let { hash, token }: Props = $props();
 
   const node = $derived(
     selectedNodeId.value ? (nodesById[selectedNodeId.value] ?? null) : null
@@ -86,6 +88,8 @@
           value={(node.attrs?.['model_id'] as string | undefined) ?? (node.attrs?.['model'] as string | undefined) ?? '—'}
         />
       </div>
+
+      <PayloadPanel {hash} nodeId={node.id} {token} />
 
       <details class="advanced-section">
         <summary class="advanced-summary">Advanced</summary>

@@ -7,8 +7,9 @@
     hash: string;
     nodeId?: string;
     loadStatus?: string;
+    token: string;
   }
-  let { hash, nodeId, loadStatus = 'idle' }: Props = $props();
+  let { hash, nodeId, loadStatus = 'idle', token }: Props = $props();
 
   let fitKey = $state(0);
   let prevHadNode = false;
@@ -48,7 +49,7 @@
       <div class="canvas-wrap">
         <GraphCanvas {hash} refit={fitKey} />
       </div>
-      <NodeDrawer {hash} />
+      <NodeDrawer {hash} {token} />
     </div>
   {/if}
 </div>

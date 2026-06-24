@@ -17,6 +17,7 @@ export default defineConfig({
         'web/src/lib/pricing/**',
         'web/src/lib/sse/client.ts',
         'web/src/lib/api.ts',
+        'web/src/lib/payload-view.ts',
         'web/src/lib/router.ts',
         'web/src/lib/sessions-sort.ts',
         'web/src/lib/layout.ts',

@@ -101,9 +101,9 @@
     {#if route.kind === 'list'}
       <SessionsList {token} />
     {:else if route.kind === 'session'}
-      <SessionView hash={route.hash} loadStatus={sessionLoadStatus} />
+      <SessionView hash={route.hash} loadStatus={sessionLoadStatus} {token} />
     {:else if route.kind === 'session-node'}
-      <SessionView hash={route.hash} nodeId={route.nodeId} loadStatus={sessionLoadStatus} />
+      <SessionView hash={route.hash} nodeId={route.nodeId} loadStatus={sessionLoadStatus} {token} />
     {/if}
   </main>
 </div>
