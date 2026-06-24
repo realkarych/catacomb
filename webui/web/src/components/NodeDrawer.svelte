@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { selectedNodeId, selectNode, nodesById } from '../lib/stores/stores.svelte';
+  import { selectedNodeId, navigateToNode, nodesById } from '../lib/stores/stores.svelte';
   import { formatDuration, formatTokens, formatCost, shortHash } from '../lib/format/format';
   import { costProvenance } from '../lib/pricing/provenance';
-  import { toHash } from '../lib/router';
   import StatusPill from './StatusPill.svelte';
   import MetricRow from './MetricRow.svelte';
   import PayloadPanel from './PayloadPanel.svelte';
@@ -10,8 +9,9 @@
   interface Props {
     hash: string;
     token: string;
+    focusOnOpen?: boolean;
   }
-  let { hash, token }: Props = $props();
+  let { hash, token, focusOnOpen = false }: Props = $props();
 
   const node = $derived(
     selectedNodeId.value ? (nodesById[selectedNodeId.value] ?? null) : null
@@ -25,9 +25,21 @@
   let drawerEl: HTMLDivElement | undefined = $state();
 
   function close() {
-    selectNode(null);
-    if (typeof window !== 'undefined') {
-      window.location.hash = toHash({ kind: 'session', hash });
+    const closingId = selectedNodeId.value;
+    navigateToNode(hash, null);
+    if (typeof document === 'undefined') return;
+    const target =
+      (closingId
+        ? document.querySelector<HTMLElement>(
+            `.svelte-flow__node[data-id="${CSS.escape(closingId)}"] [role="button"]`,
+          ) ??
+          document.querySelector<HTMLElement>(
+            `.svelte-flow__node[data-id="${CSS.escape(closingId)}"]`,
+          )
+        : null) ??
+      document.querySelector<HTMLElement>('[role="application"][aria-label="Session graph"]');
+    if (target && target.isConnected) {
+      target.focus();
     }
   }
 
@@ -44,40 +56,21 @@
     if (!isOpen) return;
     if (typeof document === 'undefined') return;
 
-    const returnTarget = document.activeElement as HTMLElement | null;
-
-    const firstFocusable = getFocusables()[0] ?? (drawerEl ?? null);
-    firstFocusable?.focus();
+    if (focusOnOpen) {
+      const firstFocusable = getFocusables()[0] ?? (drawerEl ?? null);
+      firstFocusable?.focus();
+    }
 
     function onKeydown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
-        return;
-      }
-      if (e.key === 'Tab') {
-        const focusables = getFocusables();
-        if (focusables.length === 0) return;
-        const first = focusables[0]!;
-        const last = focusables[focusables.length - 1]!;
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
       }
     }
 
     document.addEventListener('keydown', onKeydown);
     return () => {
       document.removeEventListener('keydown', onKeydown);
-      returnTarget?.focus();
     };
   });
 

@@ -2,20 +2,18 @@
   import { Handle, Position } from '@xyflow/svelte';
   import type { NodeProps } from '@xyflow/svelte';
   import type { Node as CNode } from '../lib/types';
-  import { selectedNodeId, selectNode, filteredNodeIds } from '../lib/stores/stores.svelte';
+  import { selectedNodeId, navigateToNode, filteredNodeIds } from '../lib/stores/stores.svelte';
   import { formatTokens, shortHash } from '../lib/format/format';
-  import { toHash } from '../lib/router';
 
-  type GraphNodeData = { catNode: CNode };
+  type GraphNodeData = { catNode: CNode; sessionHash: string; onActivate?: () => void };
   type Props = NodeProps<import('@xyflow/svelte').Node<GraphNodeData>>;
 
   let { id, data }: Props = $props();
 
   const catNode = $derived(data.catNode);
-  // Selection is driven by our own store (kept in sync with the route + drawer),
-  // not Svelte Flow's per-node `selected` prop — we never toggle Flow's internal
-  // selection, so that prop is always false and would leave every node un-lit
-  // (and all dimmed). Reading selectedNodeId here lights exactly the chosen node.
+  const sessionHash = $derived(data.sessionHash);
+  const onActivate = $derived(data.onActivate);
+
   const isSelected = $derived(selectedNodeId.value === id);
   const hasOtherSelected = $derived(selectedNodeId.value !== null && !isSelected);
   const isFilteredOut = $derived(filteredNodeIds.value !== null && !filteredNodeIds.value.has(id));
@@ -32,21 +30,15 @@
 
   const isRunning = $derived(catNode.status === 'running');
 
-  function handleClick() {
-    selectNode(id);
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash;
-      const sessionMatch = hash.match(/#\/s\/([^/]+)/);
-      if (sessionMatch?.[1]) {
-        window.location.hash = toHash({ kind: 'session-node', hash: sessionMatch[1], nodeId: id });
-      }
-    }
+  function activate() {
+    navigateToNode(sessionHash, id);
+    onActivate?.();
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      handleClick();
+      activate();
     }
   }
 </script>
@@ -60,7 +52,7 @@
   tabindex="0"
   aria-label={`${catNode.type} ${catNode.name ?? catNode.type} — ${catNode.status ?? 'pending'}`}
   aria-current={isSelected ? 'true' : undefined}
-  onclick={handleClick}
+  onclick={activate}
   onkeydown={handleKeydown}
 >
   <Handle type="target" position={Position.Left} class="graph-handle" />

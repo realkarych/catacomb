@@ -5,9 +5,11 @@
   import Timeline from './Timeline.svelte';
   import SessionHeader from './SessionHeader.svelte';
   import FilterBar from './FilterBar.svelte';
-  import { sessionGraph, filterState, setFilteredNodeIds } from '../lib/stores/stores.svelte';
+  import { sessionGraph, filterState, setFilteredNodeIds, selectedNodeId, navigateToNode } from '../lib/stores/stores.svelte';
   import { filterNodes, isActive } from '../lib/filters';
   import { buildTimeline } from '../lib/timeline';
+  import { nextNodeByDirection } from '../lib/graph-nav';
+  import type { NavDir } from '../lib/graph-nav';
 
   interface Props {
     hash: string;
@@ -20,6 +22,7 @@
   let fitKey = $state(0);
   let prevHadNode = false;
   let viewMode: 'graph' | 'timeline' = $state('graph');
+  let drawerFocusOnOpen = $state(false);
 
   const graph = $derived(sessionGraph(hash));
   const hasTimingData = $derived(buildTimeline(graph.nodes).rows.length > 0);
@@ -45,6 +48,40 @@
 
   function goBack() {
     window.location.hash = toHash({ kind: 'list' });
+  }
+
+  const arrowDirMap: Record<string, NavDir> = {
+    ArrowRight: 'right',
+    ArrowLeft: 'left',
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+  };
+
+  function onGraphAreaKeydown(e: KeyboardEvent) {
+    const dir = arrowDirMap[e.key];
+    if (!dir) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const tag = target.tagName.toLowerCase();
+    if (
+      tag === 'input' ||
+      tag === 'textarea' ||
+      target.getAttribute('role') === 'searchbox' ||
+      target.isContentEditable
+    ) {
+      return;
+    }
+    e.preventDefault();
+    const g = sessionGraph(hash);
+    const next = nextNodeByDirection(selectedNodeId.value, g.nodes, g.edges, dir);
+    if (next !== null) {
+      drawerFocusOnOpen = false;
+      navigateToNode(hash, next);
+    }
+  }
+
+  function onNodeActivate() {
+    drawerFocusOnOpen = true;
   }
 </script>
 
@@ -84,15 +121,15 @@
       <button class="back-link" onclick={goBack}>← Back to sessions</button>
     </div>
   {:else}
-    <div class="graph-area">
+    <div class="graph-area" onkeydown={onGraphAreaKeydown} role="presentation">
       <div class="canvas-wrap">
         {#if viewMode === 'timeline'}
           <Timeline {hash} />
         {:else}
-          <GraphCanvas {hash} refit={fitKey} />
+          <GraphCanvas {hash} refit={fitKey} onNodeActivate={onNodeActivate} />
         {/if}
       </div>
-      <NodeDrawer {hash} {token} />
+      <NodeDrawer {hash} {token} focusOnOpen={drawerFocusOnOpen} />
     </div>
   {/if}
 </div>

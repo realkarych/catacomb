@@ -3,12 +3,10 @@
   import { untrack } from 'svelte';
   import { SvelteFlow } from '@xyflow/svelte';
   import type { Node as XyFlowNode, Edge as XyFlowEdge, NodeTypes } from '@xyflow/svelte';
-  import { sessionGraph, selectNode, selectedNodeId, filteredNodeIds } from '../lib/stores/stores.svelte';
+  import { sessionGraph, navigateToNode, selectedNodeId, filteredNodeIds } from '../lib/stores/stores.svelte';
   import { dimmedEdgeIds } from '../lib/filters';
   import { applyLayout } from '../lib/layout';
   import type { XyNode } from '../lib/layout';
-  import { nextNodeByDirection } from '../lib/graph-nav';
-  import type { NavDir } from '../lib/graph-nav';
   import GraphNode from './GraphNode.svelte';
   import FlowInternals from './FlowInternals.svelte';
   import NodeLegend from './NodeLegend.svelte';
@@ -16,9 +14,10 @@
   interface Props {
     hash: string;
     refit?: number;
+    onNodeActivate?: () => void;
   }
 
-  let { hash, refit = 0 }: Props = $props();
+  let { hash, refit = 0, onNodeActivate }: Props = $props();
 
   const nodeTypes: NodeTypes = { default: GraphNode as never };
 
@@ -41,7 +40,11 @@
     if (topologyKey !== prevTopologyKey) {
       prevTopologyKey = topologyKey;
       const result = applyLayout(graph.nodes, graph.edges);
-      xyNodes = result.nodes.map((n) => ({ ...n, type: 'default' })) as unknown as XyFlowNode[];
+      xyNodes = result.nodes.map((n) => ({
+        ...n,
+        type: 'default',
+        data: { ...(n.data as object), sessionHash: hash, onActivate: onNodeActivate },
+      })) as unknown as XyFlowNode[];
       const matchingIds = untrack(() => filteredNodeIds.value);
       const dimmed = matchingIds ? dimmedEdgeIds(graph.edges, matchingIds) : new Set<string>();
       xyEdges = result.edges.map((e) => ({
@@ -66,7 +69,7 @@
         const currentData = (xyN.data as XyNode['data'] | undefined)?.catNode;
         if (currentData === catNode) return xyN;
         changed = true;
-        return { ...xyN, data: { catNode } };
+        return { ...xyN, data: { catNode, sessionHash: hash, onActivate: onNodeActivate } };
       });
       if (changed) {
         xyNodes = next;
@@ -106,33 +109,7 @@
     [...new Set(xyNodes.map((n) => ((n.data as { catNode?: { type?: string } } | undefined)?.catNode?.type ?? 'marker')))]
   );
 
-  const arrowDirMap: Record<string, NavDir> = {
-    ArrowRight: 'right',
-    ArrowLeft: 'left',
-    ArrowUp: 'up',
-    ArrowDown: 'down',
-  };
-
   let canvasEl: HTMLDivElement | undefined = $state();
-
-  $effect(() => {
-    const el = canvasEl;
-    if (!el) return;
-    function onKeydown(e: KeyboardEvent) {
-      const dir = arrowDirMap[e.key];
-      if (!dir) return;
-      const current = selectedNodeId.value;
-      if (current === null) return;
-      e.preventDefault();
-      const graph = sessionGraph(hash);
-      const next = nextNodeByDirection(current, graph.nodes, graph.edges, dir);
-      if (next !== null && next !== current) {
-        selectNode(next);
-      }
-    }
-    el.addEventListener('keydown', onKeydown);
-    return () => el.removeEventListener('keydown', onKeydown);
-  });
 </script>
 
 <div
@@ -157,7 +134,7 @@
       fitViewOptions={{ maxZoom: 1.0 }}
       minZoom={0.1}
       maxZoom={2}
-      onnodeclick={({ node }) => selectNode(node.id)}
+      onnodeclick={({ node }) => { navigateToNode(hash, node.id); onNodeActivate?.(); }}
     >
       <FlowInternals
         {pendingFitView}

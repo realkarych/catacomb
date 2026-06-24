@@ -22,6 +22,16 @@ export function selectNode(id: string | null): void {
   selectedNodeId.value = id;
 }
 
+export function navigateToNode(sessionHash: string, id: string | null): void {
+  selectedNodeId.value = id;
+  if (typeof window === 'undefined') return;
+  if (id === null) {
+    window.location.hash = `#/s/${encodeURIComponent(sessionHash)}`;
+  } else {
+    window.location.hash = `#/s/${encodeURIComponent(sessionHash)}/n/${encodeURIComponent(id)}`;
+  }
+}
+
 export function upsertSession(s: SessionSummary): void {
   sessionsById[s.session] = s;
 }
