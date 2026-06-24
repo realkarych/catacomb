@@ -44,3 +44,8 @@ tmp/
 
 # Bare binary from `go build ./cmd/catacomb`
 /catacomb
+
+# Frontend (webui) — node artifacts; dist/ is committed (embedded by go:embed)
+webui/node_modules/
+webui/test-results/
+webui/playwright-report/

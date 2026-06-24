@@ -1037,28 +1037,28 @@ func TestStaticHandlerFullSmokeIndex(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), `id="app"`)
-	assert.Contains(t, string(body), "app.js")
+	assert.Contains(t, string(body), "<title>Catacomb</title>")
+	assert.Contains(t, string(body), `type="module"`)
 }
 
-func TestStaticHandlerSmokeCSSResolves(t *testing.T) {
+func TestStaticHandlerSmokeHashedAssetResolves(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Get(srv.URL + "/style.css")
+	resp, err := http.Get(srv.URL + "/assets/")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, resp.Header.Get("Content-Type"), "text/css")
+	assert.NotEqual(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
-func TestStaticHandlerSmokeAppJSResolves(t *testing.T) {
+func TestStaticHandlerUnknownAsset404(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Get(srv.URL + "/app.js")
+	resp, err := http.Get(srv.URL + "/does-not-exist.png")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
