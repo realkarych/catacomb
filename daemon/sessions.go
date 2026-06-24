@@ -13,20 +13,23 @@ import (
 var ErrSessionNotFound = errors.New("daemon: session not found")
 
 type SessionSummary struct {
-	Session    string   `json:"session"`
-	Status     string   `json:"status"`
-	StartedAt  string   `json:"started_at,omitempty"`
-	EndedAt    string   `json:"ended_at,omitempty"`
-	DurationMS *int64   `json:"duration_ms,omitempty"`
-	TokensIn   int64    `json:"tokens_in"`
-	TokensOut  int64    `json:"tokens_out"`
-	CostUSD    *float64 `json:"cost_usd,omitempty"`
-	CostSource string   `json:"cost_source"`
-	NodeCount  int      `json:"node_count"`
-	ToolCount  int      `json:"tool_count"`
-	ErrorCount int      `json:"error_count"`
-	ModelID    string   `json:"model_id,omitempty"`
-	RunIDs     []string `json:"run_ids"`
+	Session        string         `json:"session"`
+	Status         string         `json:"status"`
+	StartedAt      string         `json:"started_at,omitempty"`
+	EndedAt        string         `json:"ended_at,omitempty"`
+	DurationMS     *int64         `json:"duration_ms,omitempty"`
+	TokensIn       int64          `json:"tokens_in"`
+	TokensOut      int64          `json:"tokens_out"`
+	CostUSD        *float64       `json:"cost_usd,omitempty"`
+	CostSource     string         `json:"cost_source"`
+	NodeCount      int            `json:"node_count"`
+	ToolCount      int            `json:"tool_count"`
+	ErrorCount     int            `json:"error_count"`
+	ModelID        string         `json:"model_id,omitempty"`
+	RunIDs         []string       `json:"run_ids"`
+	CountsByType   map[string]int `json:"counts_by_type"`
+	CountsByStatus map[string]int `json:"counts_by_status"`
+	ErrorRate      float64        `json:"error_rate"`
 }
 
 func (d *Daemon) sessionGraphDeltas(hash string) ([]sseEvent, error) {
@@ -102,8 +105,10 @@ func foldStatus(cur string, s model.Status) string {
 
 func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	sum := SessionSummary{
-		Session: hash,
-		RunIDs:  []string{},
+		Session:        hash,
+		RunIDs:         []string{},
+		CountsByType:   map[string]int{},
+		CountsByStatus: map[string]int{},
 	}
 	var (
 		tStart    *time.Time
@@ -148,6 +153,8 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 				continue
 			}
 			sum.NodeCount++
+			sum.CountsByType[string(n.Type)]++
+			sum.CountsByStatus[string(n.Status)]++
 			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall {
 				sum.ToolCount++
 			}
@@ -177,6 +184,9 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 				}
 			}
 		}
+	}
+	if sum.NodeCount > 0 {
+		sum.ErrorRate = float64(sum.ErrorCount) / float64(sum.NodeCount)
 	}
 	if tStart != nil {
 		sum.StartedAt = tStart.UTC().Format(time.RFC3339)

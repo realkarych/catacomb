@@ -463,6 +463,124 @@ func TestExecutionsForSessionSubscribeSnapshotAfterRecover(t *testing.T) {
 	}
 }
 
+func TestSessionSummaryCountsByTypeAndStatus(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	nodeID := model.ToolCallID("exec1", "t1")
+	g.Nodes[nodeID].Status = model.StatusError
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+
+	require.Len(t, sums, 1)
+	s := sums[0]
+
+	require.NotNil(t, s.CountsByType)
+	require.NotNil(t, s.CountsByStatus)
+
+	totalByType := 0
+	for _, c := range s.CountsByType {
+		totalByType += c
+	}
+	assert.Equal(t, s.NodeCount, totalByType, "counts_by_type must sum to NodeCount")
+
+	totalByStatus := 0
+	for _, c := range s.CountsByStatus {
+		totalByStatus += c
+	}
+	assert.Equal(t, s.NodeCount, totalByStatus, "counts_by_status must sum to NodeCount")
+
+	assert.Greater(t, s.CountsByType[string(model.NodeToolCall)], 0)
+	assert.Greater(t, s.CountsByStatus[string(model.StatusError)], 0)
+}
+
+func TestSessionSummaryErrorRate(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t2","tool_input":{}}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	nodeID := model.ToolCallID("exec1", "t1")
+	g.Nodes[nodeID].Status = model.StatusError
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+
+	require.Len(t, sums, 1)
+	s := sums[0]
+	assert.Equal(t, 1, s.ErrorCount)
+	expected := float64(1) / float64(s.NodeCount)
+	assert.InDelta(t, expected, s.ErrorRate, 1e-9)
+}
+
+func TestSessionSummaryErrorRateZeroWhenNoNodes(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	for k := range g.Nodes {
+		delete(g.Nodes, k)
+	}
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, 0, sum.NodeCount)
+	assert.Equal(t, float64(0), sum.ErrorRate)
+}
+
+func TestSessionSummaryMapsNotNullWhenEmpty(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	for k := range g.Nodes {
+		delete(g.Nodes, k)
+	}
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	b, err := json.Marshal(sum)
+	require.NoError(t, err)
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+
+	cbt, ok := m["counts_by_type"]
+	assert.True(t, ok, "counts_by_type must be present")
+	assert.NotNil(t, cbt, "counts_by_type must not be null")
+
+	cbs, ok := m["counts_by_status"]
+	assert.True(t, ok, "counts_by_status must be present")
+	assert.NotNil(t, cbs, "counts_by_status must not be null")
+}
+
+func TestSessionSummaryCountsDeterministic(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+
+	d.mu.Lock()
+	sum1 := d.summarizeSession("s1")
+	sum2 := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, sum1.CountsByType, sum2.CountsByType)
+	assert.Equal(t, sum1.CountsByStatus, sum2.CountsByStatus)
+	assert.Equal(t, sum1.ErrorRate, sum2.ErrorRate)
+}
+
 func TestSessionSummaryModelIDFromIngestedObservation(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
