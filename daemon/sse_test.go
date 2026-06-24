@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -635,6 +636,243 @@ func TestParseSubFilterSession(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?session=s1", nil)
 	f := parseSubFilter(r)
 	assert.Equal(t, "s1", f.SessionID)
+}
+
+func TestParseLastEventIDHeader(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r.Header.Set("Last-Event-ID", "42")
+	assert.Equal(t, uint64(42), parseLastEventID(r))
+}
+
+func TestParseLastEventIDSinceParam(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?since=17", nil)
+	assert.Equal(t, uint64(17), parseLastEventID(r))
+}
+
+func TestParseLastEventIDHeaderWinOverSince(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?since=17", nil)
+	r.Header.Set("Last-Event-ID", "99")
+	assert.Equal(t, uint64(99), parseLastEventID(r))
+}
+
+func TestParseLastEventIDMalformedHeader(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r.Header.Set("Last-Event-ID", "notanumber")
+	assert.Equal(t, uint64(0), parseLastEventID(r))
+}
+
+func TestParseLastEventIDMalformedSince(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe?since=bad", nil)
+	assert.Equal(t, uint64(0), parseLastEventID(r))
+}
+
+func TestParseLastEventIDAbsent(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	assert.Equal(t, uint64(0), parseLastEventID(r))
+}
+
+func TestParseLastEventIDZero(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r.Header.Set("Last-Event-ID", "0")
+	assert.Equal(t, uint64(0), parseLastEventID(r))
+}
+
+func TestSSEResumeWithCursorFiltersSnapshot(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+
+	sub := d.SubscribeFiltered(SubFilter{}, 64)
+	defer d.Unsubscribe(sub)
+
+	require.NotEmpty(t, sub.Snapshot)
+	var maxRev uint64
+	for _, delta := range sub.Snapshot {
+		if delta.Rev > maxRev {
+			maxRev = delta.Rev
+		}
+	}
+
+	var minRev uint64
+	for _, delta := range sub.Snapshot {
+		if minRev == 0 || delta.Rev < minRev {
+			minRev = delta.Rev
+		}
+	}
+
+	cursor := minRev
+
+	var collectedIDs []string
+	var collectedRevs []uint64
+	w := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r = r.WithContext(ctx)
+	r.Header.Set("Last-Event-ID", fmt.Sprintf("%d", cursor))
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		d.handleSSE(w, r)
+	}()
+
+	require.Eventually(t, func() bool {
+		return d.busConsumerCountForTest() > 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	<-doneCh
+
+	sc := bufio.NewScanner(strings.NewReader(w.String()))
+	var lastID string
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "id: ") {
+			lastID = strings.TrimPrefix(line, "id: ")
+		} else if strings.HasPrefix(line, "data: ") && lastID != "" {
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err == nil {
+				if rev, ok := ev["rev"].(float64); ok {
+					collectedIDs = append(collectedIDs, lastID)
+					collectedRevs = append(collectedRevs, uint64(rev))
+				}
+			}
+			lastID = ""
+		}
+	}
+
+	for _, rev := range collectedRevs {
+		assert.Greater(t, rev, cursor, "snapshot must only include Rev > cursor")
+	}
+	_ = collectedIDs
+}
+
+func TestSSEResumeZeroCursorFullSnapshot(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	sub0 := d.SubscribeFiltered(SubFilter{}, 64)
+	defer d.Unsubscribe(sub0)
+	fullCount := len(sub0.Snapshot)
+
+	w := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodGet, "/v1/subscribe", nil)
+	r = r.WithContext(ctx)
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		d.handleSSE(w, r)
+	}()
+
+	require.Eventually(t, func() bool {
+		return d.busConsumerCountForTest() > 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	<-doneCh
+
+	sc := bufio.NewScanner(strings.NewReader(w.String()))
+	var dataCount int
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "data: ") {
+			dataCount++
+		}
+	}
+	assert.Equal(t, fullCount, dataCount, "zero cursor must send full snapshot")
+}
+
+func TestSSEResumeSinceParamFiltersSnapshot(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t2","tool_input":{}}`)))
+
+	sub := d.SubscribeFiltered(SubFilter{}, 64)
+	defer d.Unsubscribe(sub)
+
+	require.NotEmpty(t, sub.Snapshot)
+	var minRev uint64
+	for _, delta := range sub.Snapshot {
+		if minRev == 0 || delta.Rev < minRev {
+			minRev = delta.Rev
+		}
+	}
+
+	w := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/v1/subscribe?since=%d", minRev), nil)
+	r = r.WithContext(ctx)
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		d.handleSSE(w, r)
+	}()
+
+	require.Eventually(t, func() bool {
+		return d.busConsumerCountForTest() > 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	<-doneCh
+
+	sc := bufio.NewScanner(strings.NewReader(w.String()))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err == nil {
+				if rev, ok := ev["rev"].(float64); ok {
+					assert.Greater(t, uint64(rev), minRev, "since param must filter snapshot to Rev > cursor")
+				}
+			}
+		}
+	}
+}
+
+type captureWriter struct {
+	mu     sync.Mutex
+	buf    strings.Builder
+	header http.Header
+	status int
+}
+
+func (w *captureWriter) Header() http.Header {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *captureWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(b)
+}
+
+func (w *captureWriter) WriteHeader(s int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.status = s
+}
+
+func (w *captureWriter) Flush() {}
+
+func (w *captureWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 func TestSSEFilterDropsNonMatchingSession(t *testing.T) {
