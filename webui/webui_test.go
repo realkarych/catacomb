@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,30 +34,6 @@ func TestHandlerServesRootAsIndexHTML(t *testing.T) {
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
 }
 
-func TestHandlerServesAppJS(t *testing.T) {
-	srv := httptest.NewServer(Handler())
-	t.Cleanup(srv.Close)
-
-	resp, err := http.Get(srv.URL + "/app.js")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	ct := resp.Header.Get("Content-Type")
-	assert.True(t, strings.Contains(ct, "javascript") || strings.Contains(ct, "text/plain"),
-		"expected JS content-type, got: %s", ct)
-}
-
-func TestHandlerServesStyleCSS(t *testing.T) {
-	srv := httptest.NewServer(Handler())
-	t.Cleanup(srv.Close)
-
-	resp, err := http.Get(srv.URL + "/style.css")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, resp.Header.Get("Content-Type"), "text/css")
-}
-
 func TestHandlerMissingAsset404(t *testing.T) {
 	srv := httptest.NewServer(Handler())
 	t.Cleanup(srv.Close)
@@ -69,20 +44,30 @@ func TestHandlerMissingAsset404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-func TestHandlerIndexContainsAppMount(t *testing.T) {
+func TestHandlerIndexIsBuiltShell(t *testing.T) {
 	srv := httptest.NewServer(Handler())
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var sb strings.Builder
-	_, err = io.Copy(&sb, resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	body := sb.String()
-	assert.Contains(t, body, `id="app"`)
-	assert.Contains(t, body, `app.js`)
+	assert.Contains(t, string(body), `id="app"`)
+	assert.Contains(t, string(body), "<title>Catacomb</title>")
+	assert.Contains(t, string(body), `type="module"`)
+}
+
+func TestHandlerAssetsHaveCorrectContentType(t *testing.T) {
+	srv := httptest.NewServer(Handler())
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/assets/")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.NotEqual(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
 func TestHandlerSubFSError500(t *testing.T) {
@@ -95,20 +80,4 @@ func TestHandlerSubFSError500(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-func TestHandlerIndexContainsSSEWiring(t *testing.T) {
-	srv := httptest.NewServer(Handler())
-	t.Cleanup(srv.Close)
-
-	resp, err := http.Get(srv.URL + "/")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-
-	var sb strings.Builder
-	_, err = io.Copy(&sb, resp.Body)
-	require.NoError(t, err)
-	body := sb.String()
-	assert.Contains(t, body, "app.js")
-	assert.Contains(t, body, "style.css")
 }

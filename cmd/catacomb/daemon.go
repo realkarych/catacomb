@@ -21,6 +21,7 @@ func newDaemonCmd() *cobra.Command {
 	var maxShards int
 	var transcriptDir string
 	var transcriptExclude []string
+	var allowPayloadAccess bool
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the catacomb daemon (receives hook events, builds the live graph)",
@@ -30,7 +31,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude, allowPayloadAccess)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
@@ -44,6 +45,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&neo4jPassword, "neo4j-export-password", "", "Neo4j password for materialized graph export")
 	cmd.Flags().StringVar(&transcriptDir, "transcript-dir", "", "Claude Code transcript dir to tail (empty = disabled; recommended: ~/.claude/projects)")
 	cmd.Flags().StringArrayVar(&transcriptExclude, "transcript-exclude", nil, "glob(s) of transcript paths to never tail (repeatable; the daemon db + cwd are always excluded)")
+	cmd.Flags().BoolVar(&allowPayloadAccess, "allow-payload-access", false, "enable the node payload content endpoint (default off)")
 	return cmd
 }
 
@@ -63,6 +65,7 @@ func runDaemonWith(
 	neo4jPassword string,
 	transcriptDir string,
 	transcriptExclude []string,
+	allowPayloadAccess bool,
 ) error {
 	s, err := open(dbPath)
 	if err != nil {
@@ -79,6 +82,7 @@ func runDaemonWith(
 	d.SetDBPath(dbPath)
 	d.SetTranscriptDir(transcriptDir)
 	d.SetTranscriptExclude(transcriptExclude)
+	d.SetAllowPayloadAccess(allowPayloadAccess)
 	err = d.Recover()
 	if err != nil {
 		return err
@@ -104,6 +108,8 @@ func runDaemonWith(
 		Token:    token,
 		GRPCAddr: grpcLn.Addr().String(),
 	}
+	disc.Pid = os.Getpid()
+	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := daemon.WriteDiscovery(discoveryPath, disc); err != nil {
 		return err
 	}

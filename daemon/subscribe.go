@@ -9,6 +9,7 @@ import (
 
 type SubFilter struct {
 	RunID     string
+	SessionID string
 	NodeTypes []string
 	Tiers     []string
 }
@@ -17,6 +18,7 @@ type Subscription struct {
 	Snapshot []cdc.GraphDelta
 	Consumer *cdc.Consumer
 	filter   SubFilter
+	execSet  map[string]bool
 }
 
 func matchNode(f SubFilter, n *model.Node) bool {
@@ -56,8 +58,18 @@ func matchDelta(f SubFilter, d cdc.GraphDelta) bool {
 func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	var execSet map[string]bool
+	if f.SessionID != "" {
+		execSet = map[string]bool{}
+		for _, e := range d.executionsForSession(f.SessionID) {
+			execSet[e] = true
+		}
+	}
 	var snapshot []cdc.GraphDelta
 	for execID, g := range d.graphs {
+		if execSet != nil && !execSet[execID] {
+			continue
+		}
 		nodes, edges := g.Snapshot()
 		for _, n := range nodes {
 			if !matchNode(f, n) {
@@ -87,7 +99,14 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 		}
 	}
 	consumer := d.bus.Subscribe(bufSize)
-	return &Subscription{Snapshot: snapshot, Consumer: consumer, filter: f}
+	return &Subscription{Snapshot: snapshot, Consumer: consumer, filter: f, execSet: execSet}
+}
+
+func (s *Subscription) match(d cdc.GraphDelta) bool {
+	if s.execSet != nil && !s.execSet[d.ExecutionID] {
+		return false
+	}
+	return matchDelta(s.filter, d)
 }
 
 func (d *Daemon) Unsubscribe(s *Subscription) {

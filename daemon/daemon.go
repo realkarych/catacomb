@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	streamjsoningest "github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/pricing"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
@@ -51,33 +53,36 @@ func cwdTranscriptExclude() string {
 }
 
 type Daemon struct {
-	store             store.Store
-	newExecID         func() string
-	mu                sync.Mutex
-	seq               uint64
-	graphs            map[string]*reduce.Graph
-	execBySession     map[string]string
-	bus               *cdc.Bus
-	quarantined       int64
-	evicted           int64
-	reaperWindow      time.Duration
-	maxShards         int
-	lastSeen          map[string]time.Time
-	startedAt         time.Time
-	storeWriteErrors  int64
-	otlpEndpoint      string
-	exporterConsumers []*cdc.Consumer
-	postgresDSN       string
-	neo4jURI          string
-	neo4jUser         string
-	neo4jPassword     string
-	dbPath            string
-	transcriptDir     string
-	transcriptExclude []string
-	lossyRuns         int64
+	store              store.Store
+	newExecID          func() string
+	mu                 sync.Mutex
+	seq                uint64
+	graphs             map[string]*reduce.Graph
+	execBySession      map[string]string
+	bus                *cdc.Bus
+	quarantined        int64
+	evicted            int64
+	reaperWindow       time.Duration
+	maxShards          int
+	lastSeen           map[string]time.Time
+	startedAt          time.Time
+	storeWriteErrors   int64
+	otlpEndpoint       string
+	exporterConsumers  []*cdc.Consumer
+	postgresDSN        string
+	neo4jURI           string
+	neo4jUser          string
+	neo4jPassword      string
+	dbPath             string
+	transcriptDir      string
+	transcriptExclude  []string
+	lossyRuns          int64
+	pricer             reduce.Pricer
+	allowPayloadAccess bool
 }
 
 func New(s store.Store) *Daemon {
+	eng := pricing.New()
 	return &Daemon{
 		store:         s,
 		newExecID:     func() string { return ulid.Make().String() },
@@ -88,6 +93,17 @@ func New(s store.Store) *Daemon {
 		reaperWindow:  defaultReaperWindow,
 		maxShards:     defaultMaxShards,
 		startedAt:     nowFn(),
+		pricer: reduce.PricerFunc(func(in reduce.PriceInputs) (reduce.PriceResult, bool) {
+			r, ok := eng.Cost(pricing.Inputs{
+				ModelID:     in.ModelID,
+				TokensIn:    in.TokensIn,
+				TokensOut:   in.TokensOut,
+				CacheReadIn: in.CacheReadIn,
+				CacheWrite:  in.CacheWrite,
+				ReportedUSD: in.ReportedUSD,
+			})
+			return reduce.PriceResult{USD: r.USD, Source: r.Source}, ok
+		}),
 	}
 }
 
@@ -141,11 +157,13 @@ func (d *Daemon) Recover() error {
 	for _, o := range obs {
 		g, ok := d.graphs[o.ExecutionID]
 		if !ok {
-			g = reduce.NewGraph()
+			g = reduce.NewGraphWithPricer(d.pricer)
 			d.graphs[o.ExecutionID] = g
 		}
 		g.Apply(o)
-		d.execBySession[o.RunID] = o.ExecutionID
+		if o.Correlation.SessionID != "" {
+			d.execBySession[o.Correlation.SessionID] = o.ExecutionID
+		}
 		d.lastSeen[o.RunID] = o.ObservedAt
 		if o.Seq > maxSeq {
 			maxSeq = o.Seq
@@ -193,7 +211,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, err := d.store.ObservationsForExecution(execID)
 			if err != nil {
@@ -245,7 +263,7 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
@@ -290,7 +308,7 @@ func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) (err error) {
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
@@ -333,7 +351,7 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
@@ -380,6 +398,12 @@ func (d *Daemon) MarkLossy(sessionID string) {
 	if err := d.store.UpsertRun(*r); err != nil {
 		log.Printf("catacomb: lossy run persist failed: %v", err)
 	}
+}
+
+func (d *Daemon) SetAllowPayloadAccess(v bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.allowPayloadAccess = v
 }
 
 func (d *Daemon) SetTranscriptDir(s string) {
@@ -494,6 +518,23 @@ func sessionIDOf(payload []byte) string {
 		return ""
 	}
 	return e.SessionID
+}
+
+func (d *Daemon) executionsForSession(hash string) []string {
+	if hash == "" {
+		return nil
+	}
+	var out []string
+	for execID, g := range d.graphs {
+		for _, r := range g.Runs {
+			if slices.Contains(r.SessionIDs, hash) {
+				out = append(out, execID)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 type shardRef struct {

@@ -1,6 +1,8 @@
 package cdc
 
 import (
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/realkarych/catacomb/model"
@@ -99,11 +101,27 @@ func (b *Bus) Publish(d GraphDelta) {
 }
 
 func (c *Consumer) deliver(d GraphDelta) {
-	for k, pending := range c.dirty {
-		select {
-		case c.ch <- pending:
-			delete(c.dirty, k)
-		default:
+	if len(c.dirty) > 0 {
+		keys := make([]string, 0, len(c.dirty))
+		for k := range c.dirty {
+			keys = append(keys, k)
+		}
+		slices.SortFunc(keys, func(a, b string) int {
+			pa, pb := c.dirty[a], c.dirty[b]
+			if pa.Rev != pb.Rev {
+				if pa.Rev < pb.Rev {
+					return -1
+				}
+				return 1
+			}
+			return strings.Compare(a, b)
+		})
+		for _, k := range keys {
+			select {
+			case c.ch <- c.dirty[k]:
+				delete(c.dirty, k)
+			default:
+			}
 		}
 	}
 	select {

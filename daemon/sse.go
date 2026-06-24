@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,10 +50,26 @@ func deltaToSSE(d cdc.GraphDelta) sseEvent {
 	return ev
 }
 
+func parseLastEventID(r *http.Request) uint64 {
+	raw := r.Header.Get("Last-Event-ID")
+	if raw == "" {
+		raw = r.URL.Query().Get("since")
+	}
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
 func parseSubFilter(r *http.Request) SubFilter {
 	q := r.URL.Query()
 	f := SubFilter{
-		RunID: q.Get("run"),
+		RunID:     q.Get("run"),
+		SessionID: q.Get("session"),
 	}
 	for _, raw := range q["type"] {
 		for _, part := range strings.Split(raw, ",") {
@@ -85,6 +102,7 @@ func (d *Daemon) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	cursor := parseLastEventID(r)
 	f := parseSubFilter(r)
 	sub := d.SubscribeFiltered(f, subBufSize)
 	defer d.Unsubscribe(sub)
@@ -110,12 +128,15 @@ func (d *Daemon) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, snap := range sub.Snapshot {
+		if cursor > 0 && snap.Rev <= cursor {
+			continue
+		}
 		if !writeEvent(snap) {
 			return
 		}
 	}
 
-	d.streamSSE(r.Context(), w, flusher, sub, f, writeEvent)
+	d.streamSSE(r.Context(), w, flusher, sub, writeEvent)
 }
 
 func (d *Daemon) streamSSE(
@@ -123,7 +144,6 @@ func (d *Daemon) streamSSE(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	sub *Subscription,
-	f SubFilter,
 	writeEvent func(cdc.GraphDelta) bool,
 ) {
 	ticker := sseTickerFn()
@@ -137,7 +157,7 @@ func (d *Daemon) streamSSE(
 			if !ok {
 				return
 			}
-			if !matchDelta(f, delta) {
+			if !sub.match(delta) {
 				continue
 			}
 			if !writeEvent(delta) {

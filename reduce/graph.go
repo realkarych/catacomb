@@ -12,15 +12,25 @@ type Graph struct {
 	spanChildren map[string]bool
 	stamps       map[string]*fieldStamps
 	deltas       []cdc.GraphDelta
+	pricer       Pricer
 }
 
 func NewGraph() *Graph {
+	return newGraph(nil)
+}
+
+func NewGraphWithPricer(p Pricer) *Graph {
+	return newGraph(p)
+}
+
+func newGraph(p Pricer) *Graph {
 	return &Graph{
 		Nodes:        map[string]*model.Node{},
 		Edges:        map[string]*model.Edge{},
 		Runs:         map[string]*model.Run{},
 		spanChildren: map[string]bool{},
 		stamps:       map[string]*fieldStamps{},
+		pricer:       p,
 	}
 }
 

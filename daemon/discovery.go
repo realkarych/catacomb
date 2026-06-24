@@ -11,9 +11,11 @@ import (
 )
 
 type Discovery struct {
-	Addr     string `json:"addr"`
-	Token    string `json:"token"`
-	GRPCAddr string `json:"grpc_addr,omitempty"`
+	Addr      string `json:"addr"`
+	Token     string `json:"token"`
+	GRPCAddr  string `json:"grpc_addr,omitempty"`
+	Pid       int    `json:"pid,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
 }
 
 var (

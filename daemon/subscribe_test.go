@@ -257,3 +257,51 @@ func TestSubscribeRaceJSON(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestSubscribeFilteredBySession(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s2"}`)))
+
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d.Unsubscribe(sub)
+
+	for _, delta := range sub.Snapshot {
+		assert.Equal(t, "exec1", delta.ExecutionID)
+	}
+	assert.NotEmpty(t, sub.Snapshot)
+}
+
+func TestSubscribeSessionUnknownEmptySnapshot(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "ghost"}, 64)
+	defer d.Unsubscribe(sub)
+	assert.Empty(t, sub.Snapshot)
+}
+
+func TestSubscriptionMatchExecSet(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d.Unsubscribe(sub)
+
+	inSession := cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, ExecutionID: "exec1", RunID: "s1"}
+	outSession := cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, ExecutionID: "exec2", RunID: "s2"}
+
+	assert.True(t, sub.match(inSession))
+	assert.False(t, sub.match(outSession))
+}
+
+func TestSubscriptionMatchNoExecSet(t *testing.T) {
+	d := New(tempStore(t))
+	sub := d.SubscribeFiltered(SubFilter{}, 64)
+	defer d.Unsubscribe(sub)
+
+	delta := cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, ExecutionID: "any", RunID: "r1"}
+	assert.True(t, sub.match(delta))
+}

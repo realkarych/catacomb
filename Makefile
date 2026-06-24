@@ -53,3 +53,17 @@ help:
 	@echo "  fmt     - apply gofumpt + goimports via golangci-lint"
 	@echo "  tidy    - go mod tidy"
 	@echo "  clean   - remove build and coverage artifacts"
+
+WEB := webui
+
+.PHONY: web-install web-build web-test web-e2e web-check
+web-install:
+	cd $(WEB) && npm ci
+web-check:
+	cd $(WEB) && npm run check
+web-build:
+	cd $(WEB) && npm run build
+web-test:
+	cd $(WEB) && npm run test
+web-e2e:
+	cd $(WEB) && npx playwright install --with-deps chromium && npm run test:e2e

@@ -91,6 +91,20 @@ func TestUserPromptAndAssistantTurn(t *testing.T) {
 	assert.Equal(t, int64(5), *turnNode.TokensOut)
 }
 
+func TestAssistantTurnModelAttr(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	turn := ob("assistant_turn", "", t0)
+	turn.Correlation.MessageID = "msg_2"
+	turn.Attrs = map[string]any{"model": "claude-opus-4-8", "tokens_in": int64(10), "tokens_out": int64(5)}
+
+	g := NewGraph()
+	g.Apply(turn)
+
+	turnNode := g.Nodes[model.AssistantTurnID(execID, "msg_2")]
+	require.NotNil(t, turnNode)
+	assert.Equal(t, "claude-opus-4-8", turnNode.Attrs["model"])
+}
+
 func TestApplyUnknownKind(t *testing.T) {
 	g := NewGraph()
 	g.Apply(ob("mystery", "", time.Unix(0, 0).UTC()))
@@ -147,6 +161,25 @@ func TestToInt64(t *testing.T) {
 		n, ok := toInt64(c.in)
 		assert.Equal(t, c.ok, ok)
 		assert.Equal(t, c.n, n)
+	}
+}
+
+func TestToFloat64(t *testing.T) {
+	cases := []struct {
+		in any
+		ok bool
+		f  float64
+	}{
+		{float64(1.5), true, 1.5},
+		{float32(2.5), true, float64(float32(2.5))},
+		{int64(3), true, 3.0},
+		{int(4), true, 4.0},
+		{"x", false, 0},
+	}
+	for _, c := range cases {
+		f, ok := toFloat64(c.in)
+		assert.Equal(t, c.ok, ok)
+		assert.InDelta(t, c.f, f, 1e-6)
 	}
 }
 
@@ -1498,4 +1531,289 @@ func TestStreamEventCreatesNoJunkEmptyToolNode(t *testing.T) {
 	g.ApplyAll(obs)
 	junkID := model.ToolCallID("exec_i2", "")
 	assert.NotContains(t, g.Nodes, junkID, "no junk empty-tool node must exist after stream_event")
+}
+
+func TestToolCallStampsEndAndDuration(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(2 * time.Second)
+	use := ob("assistant_tool_use", "toolu_d1", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+	res := ob("tool_result", "toolu_d1", t1)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, res})
+
+	n := g.Nodes[model.ToolCallID(execID, "toolu_d1")]
+	require.NotNil(t, n.TStart)
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, t1, *n.TEnd)
+	assert.Equal(t, int64(2000), *n.DurationMS)
+}
+
+func TestDurationStampOrderIndependent(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(3 * time.Second)
+	use := ob("assistant_tool_use", "toolu_d2", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+	res := ob("tool_result", "toolu_d2", t1)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{use, res})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{res, use})
+
+	id := model.ToolCallID(execID, "toolu_d2")
+	assert.Equal(t, *fwd.Nodes[id].TEnd, *rev.Nodes[id].TEnd)
+	assert.Equal(t, *fwd.Nodes[id].DurationMS, *rev.Nodes[id].DurationMS)
+}
+
+func TestAssistantTurnStampsDurationWhenStartAndEndKnown(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	first := ob("assistant_turn", "", t0)
+	first.Correlation.MessageID = "m1"
+	first.Attrs = map[string]any{"tokens_in": int64(1)}
+	last := ob("assistant_turn", "", t1)
+	last.Correlation.MessageID = "m1"
+	last.Attrs = map[string]any{"tokens_in": int64(1)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{first, last})
+
+	n := g.Nodes[model.AssistantTurnID(execID, "m1")]
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(1000), *n.DurationMS)
+}
+
+func TestEndRankHigherSourceWins(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	jsonlEnd := t0.Add(time.Second)
+	otelEnd := t0.Add(5 * time.Second)
+
+	use := ob("assistant_tool_use", "toolu_d3", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+
+	resJSONL := ob("tool_result", "toolu_d3", jsonlEnd)
+	resJSONL.Source = model.SourceJSONL
+	resJSONL.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	resOTel := ob("tool_result", "toolu_d3", otelEnd)
+	resOTel.Source = model.SourceOTel
+	resOTel.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, resJSONL, resOTel})
+	rg := NewGraph()
+	rg.ApplyAll([]model.Observation{resOTel, resJSONL, use})
+
+	id := model.ToolCallID(execID, "toolu_d3")
+	assert.Equal(t, otelEnd, *g.Nodes[id].TEnd)
+	assert.Equal(t, otelEnd, *rg.Nodes[id].TEnd)
+}
+
+func TestSessionEndGetsDurationMS(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	t1 := t0.Add(5 * time.Second)
+	g := NewGraph()
+	g.Apply(ob("session_start", "", t0))
+	g.Apply(ob("session_end", "", t1))
+	n := g.Nodes[model.SessionNodeID(execID)]
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(5000), *n.DurationMS)
+}
+
+func TestSubagentStopGetsDurationMS(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	t1 := t0.Add(3 * time.Second)
+	first := ob("subagent_stop", "", t0)
+	first.Correlation.AgentID = "a2"
+	first.EventTime = t0
+	second := ob("subagent_stop", "", t1)
+	second.Correlation.AgentID = "a2"
+	second.EventTime = t1
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{first, second})
+	n := g.Nodes[model.SubagentID(execID, "a2")]
+	require.NotNil(t, n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(3000), *n.DurationMS)
+}
+
+func TestEndRankEqualRankLatestTimeWins(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	earlier := t0.Add(time.Second)
+	later := t0.Add(2 * time.Second)
+
+	use := ob("assistant_tool_use", "toolu_d4", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+
+	resEarly := ob("tool_result", "toolu_d4", earlier)
+	resEarly.Source = model.SourceJSONL
+	resEarly.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	resLate := ob("tool_result", "toolu_d4", later)
+	resLate.Source = model.SourceJSONL
+	resLate.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, resEarly, resLate})
+	rg := NewGraph()
+	rg.ApplyAll([]model.Observation{resLate, resEarly, use})
+
+	id := model.ToolCallID(execID, "toolu_d4")
+	assert.Equal(t, later, *g.Nodes[id].TEnd)
+	assert.Equal(t, later, *rg.Nodes[id].TEnd)
+}
+
+func TestAssistantTurnCostReportedProvenance(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		if in.ReportedUSD != nil {
+			return PriceResult{USD: *in.ReportedUSD, Source: "reported"}, true
+		}
+		return PriceResult{USD: float64(in.TokensIn+in.TokensOut) / 1000, Source: "estimated"}, true
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc1"
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(10), "tokens_out": int64(5), "cost_usd": float64(0.25)}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc1")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, 0.25, *n.CostUSD, 1e-9)
+	assert.Equal(t, "reported", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnCostEstimatedProvenance(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{USD: float64(in.TokensIn+in.TokensOut) / 1000, Source: "estimated"}, true
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc2"
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(1000), "tokens_out": int64(0)}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc2")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, 1.0, *n.CostUSD, 1e-9)
+	assert.Equal(t, "estimated", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{}, false
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc3"
+	o.Attrs = map[string]any{"model": "unknown", "tokens_in": int64(5)}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc3")]
+	assert.Nil(t, n.CostUSD)
+	_, has := n.Attrs["cost_source"]
+	assert.False(t, has)
+}
+
+func TestCostAttributionOrderIndependent(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{USD: float64(in.TokensIn), Source: "estimated"}, true
+	})
+	t0 := time.Unix(0, 0).UTC()
+	a := ob("assistant_turn", "", t0)
+	a.Source = model.SourceStreamJSON
+	a.Correlation.MessageID = "mc4"
+	a.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(7)}
+	b := ob("assistant_turn", "", t0.Add(time.Second))
+	b.Source = model.SourceOTel
+	b.Correlation.MessageID = "mc4"
+	b.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(11)}
+
+	fwd := NewGraphWithPricer(p)
+	fwd.ApplyAll([]model.Observation{a, b})
+	rev := NewGraphWithPricer(p)
+	rev.ApplyAll([]model.Observation{b, a})
+
+	id := model.AssistantTurnID(execID, "mc4")
+	require.NotNil(t, fwd.Nodes[id].CostUSD)
+	assert.Equal(t, *fwd.Nodes[id].CostUSD, *rev.Nodes[id].CostUSD)
+}
+
+func TestNewGraphNoPricerNoCost(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc5"
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(5)}
+	g := NewGraph()
+	g.Apply(o)
+	assert.Nil(t, g.Nodes[model.AssistantTurnID(execID, "mc5")].CostUSD)
+}
+
+func TestEnsureRunPopulatesModelID(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc6"
+	o.Attrs = map[string]any{"model": "claude-sonnet-4-6", "tokens_in": int64(10)}
+
+	g := NewGraph()
+	g.Apply(o)
+
+	r := g.Runs[runID]
+	require.NotNil(t, r)
+	assert.Equal(t, "claude-sonnet-4-6", r.ModelID)
+}
+
+func TestEnsureRunModelIDFirstNonEmptyWins(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	first := ob("assistant_turn", "", t0)
+	first.Correlation.MessageID = "mc7a"
+	first.Attrs = map[string]any{"model": "claude-opus-4-8"}
+	second := ob("assistant_turn", "", t0.Add(time.Second))
+	second.Correlation.MessageID = "mc7b"
+	second.Attrs = map[string]any{"model": "claude-sonnet-4-6"}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{first, second})
+
+	r := g.Runs[runID]
+	require.NotNil(t, r)
+	assert.Equal(t, "claude-opus-4-8", r.ModelID)
+}
+
+func TestCumulativeCostNoDoubleCount(t *testing.T) {
+	sq := seq()
+	line1 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.10}`)
+	line2 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.30}`)
+	obs1, err := streamjson.Parse(line1, execID, sq)
+	require.NoError(t, err)
+	obs2, err := streamjson.Parse(line2, execID, sq)
+	require.NoError(t, err)
+
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		if in.ReportedUSD != nil {
+			return PriceResult{USD: *in.ReportedUSD, Source: "reported"}, true
+		}
+		return PriceResult{}, false
+	})
+	g := NewGraphWithPricer(p)
+	g.ApplyAll(obs1)
+	g.ApplyAll(obs2)
+
+	var costUSD float64
+	var found bool
+	for _, n := range g.Nodes {
+		if n.Type == model.NodeAssistantTurn && n.CostUSD != nil {
+			costUSD += *n.CostUSD
+			found = true
+		}
+	}
+	require.True(t, found, "expected at least one assistant_turn node with cost")
+	assert.InDelta(t, 0.30, costUSD, 1e-9)
 }

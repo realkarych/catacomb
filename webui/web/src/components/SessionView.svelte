@@ -1,0 +1,311 @@
+<script lang="ts">
+  import { toHash } from '../lib/router';
+  import GraphCanvas from './GraphCanvas.svelte';
+  import NodeDrawer from './NodeDrawer.svelte';
+  import Timeline from './Timeline.svelte';
+  import SessionHeader from './SessionHeader.svelte';
+  import FilterBar from './FilterBar.svelte';
+  import { sessionGraph, filterState, setFilteredNodeIds, selectedNodeId, navigateToNode } from '../lib/stores/stores.svelte';
+  import { filterNodes, isActive } from '../lib/filters';
+  import { buildTimeline } from '../lib/timeline';
+  import { nextNodeByDirection } from '../lib/graph-nav';
+  import type { NavDir } from '../lib/graph-nav';
+
+  interface Props {
+    hash: string;
+    nodeId?: string;
+    loadStatus?: string;
+    token: string;
+  }
+  let { hash, nodeId, loadStatus = 'idle', token }: Props = $props();
+
+  let fitKey = $state(0);
+  let prevHadNode = false;
+  let viewMode: 'graph' | 'timeline' = $state('graph');
+  let drawerFocusOnOpen = $state(false);
+  let canvasWrapEl: HTMLDivElement | undefined = $state();
+
+  const graph = $derived(sessionGraph(hash));
+  const hasTimingData = $derived(buildTimeline(graph.nodes).rows.length > 0);
+
+  const filteredNodes = $derived(filterNodes(graph.nodes, filterState));
+  const filterActive = $derived(isActive(filterState));
+
+  $effect(() => {
+    if (filterActive) {
+      setFilteredNodeIds(new Set(filteredNodes.map((n) => n.id)));
+    } else {
+      setFilteredNodeIds(null);
+    }
+  });
+
+  $effect(() => {
+    const hasNode = !!nodeId;
+    if (!hasNode && prevHadNode) {
+      fitKey += 1;
+    }
+    prevHadNode = hasNode;
+  });
+
+  function goBack() {
+    window.location.hash = toHash({ kind: 'list' });
+  }
+
+  const arrowDirMap: Record<string, NavDir> = {
+    ArrowRight: 'right',
+    ArrowLeft: 'left',
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+  };
+
+  function onWindowArrowKeydown(e: KeyboardEvent) {
+    const dir = arrowDirMap[e.key];
+    if (!dir) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const tag = target.tagName.toLowerCase();
+    if (
+      tag === 'input' ||
+      tag === 'textarea' ||
+      tag === 'select' ||
+      target.getAttribute('role') === 'searchbox' ||
+      target.isContentEditable
+    ) {
+      return;
+    }
+    if (target.closest('[role="complementary"]')) return;
+    e.preventDefault();
+    const g = sessionGraph(hash);
+    const next = nextNodeByDirection(selectedNodeId.value, g.nodes, g.edges, dir);
+    if (next !== null) {
+      drawerFocusOnOpen = false;
+      navigateToNode(hash, next);
+      const targetId = next;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const btn = document.querySelector<HTMLElement>(
+            `.svelte-flow__node[data-id="${CSS.escape(targetId)}"] [role="button"]`
+          ) ?? document.querySelector<HTMLElement>(
+            `.svelte-flow__node[data-id="${CSS.escape(targetId)}"]`
+          ) ?? canvasWrapEl ?? null;
+          if (btn && btn.isConnected) btn.focus();
+        });
+      });
+    }
+  }
+
+  $effect(() => {
+    window.addEventListener('keydown', onWindowArrowKeydown);
+    return () => {
+      window.removeEventListener('keydown', onWindowArrowKeydown);
+    };
+  });
+
+  function onNodeActivate() {
+    drawerFocusOnOpen = true;
+  }
+</script>
+
+<div class="session-view">
+  <div class="session-header">
+    <button class="back-btn" onclick={goBack} aria-label="Back to sessions list">
+      ← Sessions
+    </button>
+    <span class="session-hash mono">{hash}</span>
+    {#if nodeId}
+      <span class="node-id-label">Node: <span class="mono">{nodeId}</span></span>
+    {/if}
+    {#if hasTimingData}
+      <div class="view-switcher" role="group" aria-label="View mode">
+        <button
+          class="view-btn"
+          data-active={viewMode === 'graph' ? 'true' : undefined}
+          onclick={() => (viewMode = 'graph')}
+          aria-pressed={viewMode === 'graph'}
+        >Graph</button>
+        <button
+          class="view-btn"
+          data-active={viewMode === 'timeline' ? 'true' : undefined}
+          onclick={() => (viewMode = 'timeline')}
+          aria-pressed={viewMode === 'timeline'}
+        >Timeline</button>
+      </div>
+    {/if}
+  </div>
+  <SessionHeader {hash} />
+  <FilterBar {hash} totalCount={graph.nodes.length} filteredCount={filteredNodes.length} />
+  {#if loadStatus === 'not-found'}
+    <div class="not-found-state">
+      <div class="not-found-icon" aria-hidden="true">🔍</div>
+      <p class="not-found-headline">Session not found</p>
+      <p class="not-found-hint">No session with hash <span class="mono">{hash}</span></p>
+      <button class="back-link" onclick={goBack}>← Back to sessions</button>
+    </div>
+  {:else}
+    <div class="graph-area" role="presentation">
+      <div class="canvas-wrap" tabindex={-1} bind:this={canvasWrapEl}>
+        {#if viewMode === 'timeline'}
+          <Timeline {hash} />
+        {:else}
+          <GraphCanvas {hash} refit={fitKey} onNodeActivate={onNodeActivate} />
+        {/if}
+      </div>
+      <NodeDrawer {hash} {token} focusOnOpen={drawerFocusOnOpen} />
+    </div>
+  {/if}
+</div>
+
+<style>
+  .session-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .session-header {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s2) var(--s4);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s1) var(--s3);
+    font-size: var(--text-sm);
+    font-family: var(--font-ui);
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+  }
+
+  .back-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .back-btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .session-hash {
+    font-size: var(--text-sm);
+    color: var(--accent);
+  }
+
+  .node-id-label {
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+  }
+
+  .graph-area {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  .canvas-wrap {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .not-found-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s3);
+    color: var(--text-faint);
+  }
+
+  .not-found-icon {
+    font-size: 2rem;
+  }
+
+  .not-found-headline {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text-dim);
+    margin: 0;
+  }
+
+  .not-found-hint {
+    font-size: var(--text-sm);
+    margin: 0;
+  }
+
+  .back-link {
+    font-size: var(--text-sm);
+    font-family: var(--font-ui);
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: var(--s1) var(--s3);
+    cursor: pointer;
+    transition: opacity 0.12s;
+  }
+
+  .back-link:hover {
+    opacity: 0.8;
+  }
+
+  .back-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .view-switcher {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-left: auto;
+  }
+
+  .view-btn {
+    padding: var(--s1) var(--s3);
+    font-size: var(--text-sm);
+    font-family: var(--font-ui);
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .view-btn:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .view-btn[data-active='true'] {
+    background: var(--surface-2);
+    color: var(--accent);
+  }
+
+  .view-btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .view-btn {
+      transition: none;
+    }
+  }
+</style>

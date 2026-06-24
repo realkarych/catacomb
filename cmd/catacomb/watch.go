@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,6 +50,9 @@ func runWatch(
 ) error {
 	disc, err := daemon.ReadDiscovery(discoveryPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNoDaemon
+		}
 		return err
 	}
 	u := &url.URL{

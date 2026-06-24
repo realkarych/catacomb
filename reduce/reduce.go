@@ -33,8 +33,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "session_end":
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
-		ts := o.EventTime
-		n.TEnd = &ts
+		g.stampEnd(n, o)
 		n.Status = resolveStatus(n.Status, model.StatusOK)
 		g.emitNode(n, o)
 		g.cascadeStatus(n.ID, model.StatusUnknown, o.Seq)
@@ -52,7 +51,16 @@ func (g *Graph) Apply(o model.Observation) {
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
-		g.applyTokens(n, o.Attrs, o.Source)
+		g.stampEnd(n, o)
+		if g.applyTokens(n, o.Attrs, o.Source) {
+			g.applyCost(n, o.Attrs)
+		}
+		if m, ok := o.Attrs["model"].(string); ok && m != "" {
+			if n.Attrs == nil {
+				n.Attrs = map[string]any{}
+			}
+			n.Attrs["model"] = m
+		}
 		g.emitNode(n, o)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
@@ -89,6 +97,9 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Type = model.NodeMCPCall
 	}
 	g.stamp(n, o)
+	if o.Kind == "tool_result" {
+		g.stampEnd(n, o)
+	}
 	if name, ok := o.Attrs["name"].(string); ok {
 		g.setName(n, o, name)
 	}
@@ -117,8 +128,7 @@ func (g *Graph) applySubagent(o model.Observation) {
 	if t, ok := o.Attrs["subagent_type"].(string); ok && n.SubagentType == "" {
 		n.SubagentType = t
 	}
-	ts := o.EventTime
-	n.TEnd = &ts
+	g.stampEnd(n, o)
 	n.Status = resolveStatus(n.Status, model.StatusOK)
 	g.emitNode(n, o)
 	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
@@ -206,6 +216,8 @@ type fieldStamps struct {
 	structRank  int
 	haveStruct  bool
 	structSrc   string
+	endRank     int
+	haveEnd     bool
 }
 
 func (g *Graph) stampsFor(id string) *fieldStamps {
@@ -217,6 +229,30 @@ func (g *Graph) stampsFor(id string) *fieldStamps {
 	return fs
 }
 
+func setDuration(n *model.Node) {
+	if n.TStart == nil || n.TEnd == nil {
+		return
+	}
+	ms := n.TEnd.Sub(*n.TStart).Milliseconds()
+	n.DurationMS = &ms
+}
+
+func (g *Graph) stampEnd(n *model.Node, o model.Observation) {
+	fs := g.stampsFor(n.ID)
+	r := sourceRank(o.Source)
+	switch {
+	case !fs.haveEnd || r > fs.endRank:
+		ts := o.EventTime
+		n.TEnd = &ts
+		fs.endRank = r
+		fs.haveEnd = true
+	case r == fs.endRank && o.EventTime.After(*n.TEnd):
+		ts := o.EventTime
+		n.TEnd = &ts
+	}
+	setDuration(n)
+}
+
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
 	fs := g.stampsFor(n.ID)
 	r := sourceRank(o.Source)
@@ -225,9 +261,11 @@ func (g *Graph) stamp(n *model.Node, o model.Observation) {
 		n.TStart = &ts
 		fs.timingRank = r
 		fs.haveTiming = true
+		setDuration(n)
 	} else if r == fs.timingRank && (n.TStart == nil || o.EventTime.Before(*n.TStart)) {
 		ts := o.EventTime
 		n.TStart = &ts
+		setDuration(n)
 	}
 	if o.Seq > n.Rev {
 		n.Rev = o.Seq
@@ -271,11 +309,11 @@ func (g *Graph) mergePayload(n *model.Node, p *model.Payload, src model.Source) 
 	n.PayloadHash = n.Payload.Hash
 }
 
-func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) {
+func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) bool {
 	fs := g.stampsFor(n.ID)
 	r := tokenRank(src)
 	if fs.haveToken && r < fs.tokenRank {
-		return
+		return false
 	}
 	fs.tokenRank = r
 	fs.haveToken = true
@@ -284,6 +322,51 @@ func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Sourc
 	}
 	if v, ok := toInt64(attrs["tokens_out"]); ok {
 		n.TokensOut = &v
+	}
+	return true
+}
+
+func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
+	if g.pricer == nil {
+		return
+	}
+	in := PriceInputs{}
+	if m, ok := attrs["model"].(string); ok {
+		in.ModelID = m
+	}
+	if n.TokensIn != nil {
+		in.TokensIn = *n.TokensIn
+	}
+	if n.TokensOut != nil {
+		in.TokensOut = *n.TokensOut
+	}
+	if v, ok := toFloat64(attrs["cost_usd"]); ok {
+		in.ReportedUSD = &v
+	}
+	res, ok := g.pricer.Cost(in)
+	if !ok {
+		return
+	}
+	usd := res.USD
+	n.CostUSD = &usd
+	if n.Attrs == nil {
+		n.Attrs = map[string]any{}
+	}
+	n.Attrs["cost_source"] = res.Source
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	default:
+		return 0, false
 	}
 }
 
@@ -321,6 +404,11 @@ func (g *Graph) ensureRun(o model.Observation) {
 		r.LastSeq = o.Seq
 	}
 	r.SessionIDs = appendUnique(r.SessionIDs, o.Correlation.SessionID)
+	if r.ModelID == "" {
+		if m, ok := o.Attrs["model"].(string); ok && m != "" {
+			r.ModelID = m
+		}
+	}
 }
 
 func (g *Graph) applyRunEnded(o model.Observation) {

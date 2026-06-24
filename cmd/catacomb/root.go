@@ -2,6 +2,12 @@ package main
 
 import "github.com/spf13/cobra"
 
+const (
+	groupObserve  = "observe"
+	groupSetup    = "setup"
+	groupAdvanced = "advanced"
+)
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "catacomb",
@@ -9,15 +15,38 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd())
-	root.AddCommand(newReplayCmd())
-	root.AddCommand(newHookCmd())
-	root.AddCommand(newInstallHooksCmd())
-	root.AddCommand(newDaemonCmd())
-	root.AddCommand(newEnvCmd())
-	root.AddCommand(newIngestCmd())
-	root.AddCommand(newRunCmd())
-	root.AddCommand(newWatchCmd())
-	root.AddCommand(newUICmd())
+	root.AddGroup(
+		&cobra.Group{ID: groupObserve, Title: "Observe:"},
+		&cobra.Group{ID: groupSetup, Title: "Setup:"},
+		&cobra.Group{ID: groupAdvanced, Title: "Advanced:"},
+	)
+
+	observe := func(cmd *cobra.Command) *cobra.Command {
+		cmd.GroupID = groupObserve
+		return cmd
+	}
+	setup := func(cmd *cobra.Command) *cobra.Command {
+		cmd.GroupID = groupSetup
+		return cmd
+	}
+	advanced := func(cmd *cobra.Command) *cobra.Command {
+		cmd.GroupID = groupAdvanced
+		return cmd
+	}
+
+	root.AddCommand(observe(newUpCmd()))
+	root.AddCommand(observe(newUICmd()))
+	root.AddCommand(observe(newWatchCmd()))
+	root.AddCommand(observe(newStatusCmd()))
+	root.AddCommand(observe(newObserveCmd()))
+	root.AddCommand(setup(newDaemonCmd()))
+	root.AddCommand(setup(newInstallHooksCmd()))
+	root.AddCommand(setup(newEnvCmd()))
+	root.AddCommand(advanced(newHookCmd()))
+	root.AddCommand(advanced(newIngestCmd()))
+	root.AddCommand(advanced(newRunCmd()))
+	root.AddCommand(advanced(newReplayCmd()))
+	root.AddCommand(advanced(newDemoCmd()))
+	root.AddCommand(advanced(newVersionCmd()))
 	return root
 }
