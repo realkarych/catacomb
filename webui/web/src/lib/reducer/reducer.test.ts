@@ -26,6 +26,7 @@ describe('emptyState', () => {
     expect(s.edges).toEqual({});
     expect(s.established).toEqual({});
     expect(s.tombstones).toEqual({});
+    expect(s.statusRevs).toEqual({});
   });
 });
 
@@ -276,6 +277,25 @@ describe('clobber/rev fix', () => {
     });
     expect(s.nodes['n1']?.status).toBe('complete');
     expect(s.nodes['n1']?.name).toBe('Bash');
+  });
+
+  it('upsert after status seed with no status field on seed (only duration_ms), upsert rev < seed rev preserves duration_ms', () => {
+    // Covers the false-branch of `if (existing.status !== undefined)` in node_upsert merge.
+    const s = emptyState();
+    applyDelta(s, {
+      kind: 'node_status',
+      rev: 8,
+      node: { id: 'n1', run_id: 'r', type: '', duration_ms: 888, rev: 8 },
+    });
+    applyDelta(s, {
+      kind: 'node_upsert',
+      rev: 2,
+      node: { id: 'n1', run_id: 'r', type: 'tool_call', name: 'Bash', rev: 2 },
+    });
+    expect(s.nodes['n1']?.name).toBe('Bash');
+    expect(s.nodes['n1']?.duration_ms).toBe(888);
+    expect(s.nodes['n1']?.status).toBeUndefined();
+    expect(s.nodes['n1']?.t_end).toBeUndefined();
   });
 });
 
@@ -607,5 +627,104 @@ describe('determinism — permutation property test', () => {
     for (const p of perms) {
       expect(fold(p)).toEqual(want);
     }
+  });
+
+  // Bug 1 fix: multiple node_status events — latest-rev-wins independent of upsert rev.
+  // The pending→running→ok lifecycle produces multiple status events for one node.
+  // All arrival permutations must converge to the highest-rev status.
+  it('multiple node_status events are latest-rev-wins: all permutations converge to rev-7 status', () => {
+    // Three shapes: upsert at rev=3, status at rev=7, status at rev=5.
+    // Expected outcome: status='ok', t_end set, duration_ms=700 (from rev=7 event).
+    const deltas: SseEvent[] = [
+      {
+        kind: 'node_upsert',
+        rev: 3,
+        node: { id: 'n1', run_id: 'r', type: 'tool_call', name: 'Bash', status: 'running', rev: 3 },
+      },
+      {
+        kind: 'node_status',
+        rev: 7,
+        node: { id: 'n1', run_id: 'r', type: '', status: 'ok', t_end: '2026-01-01T00:00:07Z', duration_ms: 700, rev: 7 },
+      },
+      {
+        kind: 'node_status',
+        rev: 5,
+        node: { id: 'n1', run_id: 'r', type: '', status: 'done', t_end: '2026-01-01T00:00:05Z', duration_ms: 500, rev: 5 },
+      },
+    ];
+    const perms = permutations(deltas);
+    expect(perms.length).toBe(6);
+    const want = fold(perms[0]!);
+    // All permutations must converge.
+    for (const p of perms) {
+      expect(fold(p)).toEqual(want);
+    }
+    // The canonical result must be the rev-7 status, not rev-5.
+    expect(want.nodes['n1']?.status).toBe('ok');
+    expect(want.nodes['n1']?.t_end).toBe('2026-01-01T00:00:07Z');
+    expect(want.nodes['n1']?.duration_ms).toBe(700);
+    expect(want.nodes['n1']?.name).toBe('Bash');
+  });
+
+  it('pending→running→ok lifecycle (3 status events) all permutations converge to ok', () => {
+    const deltas: SseEvent[] = [
+      {
+        kind: 'node_upsert',
+        rev: 1,
+        node: { id: 'n1', run_id: 'r', type: 'tool_call', name: 'Bash', rev: 1 },
+      },
+      {
+        kind: 'node_status',
+        rev: 2,
+        node: { id: 'n1', run_id: 'r', type: '', status: 'pending', rev: 2 },
+      },
+      {
+        kind: 'node_status',
+        rev: 4,
+        node: { id: 'n1', run_id: 'r', type: '', status: 'running', rev: 4 },
+      },
+      {
+        kind: 'node_status',
+        rev: 9,
+        node: { id: 'n1', run_id: 'r', type: '', status: 'ok', t_end: '2026-06-24T00:00:09Z', duration_ms: 900, rev: 9 },
+      },
+    ];
+    const perms = permutations(deltas);
+    expect(perms.length).toBe(24);
+    const want = fold(perms[0]!);
+    for (const p of perms) {
+      expect(fold(p)).toEqual(want);
+    }
+    expect(want.nodes['n1']?.status).toBe('ok');
+    expect(want.nodes['n1']?.duration_ms).toBe(900);
+    expect(want.nodes['n1']?.name).toBe('Bash');
+  });
+});
+
+// Bug 2 (documented, not a logic change): edge_upsert + edge_delete with backend-realistic
+// monotonic revs (delete.rev > upsert.rev). Both arrival orders must converge to edge absent.
+// The backend cdc bus always assigns delete.rev > upsert.rev for the same edge, so the
+// divergent case (upsert.rev > delete.rev) cannot arise in production.
+describe('determinism — edge tombstone monotonic-rev convergence', () => {
+  it('edge_upsert(rev=4) + edge_delete(rev=6): both orderings converge to edge absent', () => {
+    const upsert: SseEvent = {
+      kind: 'edge_upsert',
+      rev: 4,
+      edge: { id: 'e1', run_id: 'r', type: 'parent_child', src: 'a', dst: 'b', rev: 4 },
+    };
+    const del: SseEvent = {
+      kind: 'edge_delete',
+      rev: 6,
+      edge: { id: 'e1', run_id: 'r', type: 'parent_child', src: 'a', dst: 'b', rev: 6 },
+    };
+
+    const s1 = fold([upsert, del]);
+    const s2 = fold([del, upsert]);
+
+    expect(s1.edges['e1']).toBeUndefined();
+    expect(s2.edges['e1']).toBeUndefined();
+    expect(s1.tombstones['e1']).toBe(6);
+    expect(s2.tombstones['e1']).toBe(6);
+    expect(s1).toEqual(s2);
   });
 });
