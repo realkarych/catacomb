@@ -123,6 +123,37 @@ test('ArrowRight from canvas with no selection selects root and updates URL hash
   expect(hash).toContain(`/n/${rootNodeId}`);
 });
 
+test('ArrowRight CHAINING: two consecutive arrows with no re-focus traverse two different nodes', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+
+  const canvas = page.locator('[role="application"][aria-label="Session graph"]');
+  await canvas.focus();
+
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('[role="button"][aria-current="true"]')).toHaveAttribute(
+    'aria-label',
+    /Root Node/,
+    { timeout: 3000 },
+  );
+  const hashAfterFirst = await page.evaluate(() => window.location.hash);
+  expect(hashAfterFirst).toContain(`/n/${rootNodeId}`);
+
+  await page.keyboard.press('ArrowRight');
+
+  await expect(page.locator('[role="button"][aria-current="true"]')).toHaveAttribute(
+    'aria-label',
+    /Child Node/,
+    { timeout: 3000 },
+  );
+
+  const hashAfterSecond = await page.evaluate(() => window.location.hash);
+  expect(hashAfterSecond).toContain(`/n/${childNodeId}`);
+  expect(hashAfterSecond).not.toContain(`/n/${rootNodeId}`);
+
+  await expect(page.locator('.node-drawer--open .drawer-title')).toContainText('Child Node');
+});
+
 test('ArrowRight again selects neighbor and drawer title, aria-current, URL hash all agree', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
@@ -165,6 +196,8 @@ test('Enter opens drawer then Escape returns focus to node button (not body)', a
   await page.keyboard.press('Escape');
 
   await expect(page.locator('.node-drawer--open')).not.toBeVisible();
+
+  await page.waitForTimeout(450);
 
   const activeInfo = await page.evaluate(() => {
     const el = document.activeElement;
