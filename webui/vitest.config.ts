@@ -16,6 +16,7 @@ export default defineConfig({
         'web/src/lib/format/**',
         'web/src/lib/pricing/**',
         'web/src/lib/sse/client.ts',
+        'web/src/lib/api.ts',
       ],
       exclude: [
         '**/*.test.ts',

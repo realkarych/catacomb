@@ -1,5 +1,19 @@
 <script lang="ts">
-  import { connectionState } from './lib/stores/stores.svelte';
+  import { connectionState, handleEvent } from './lib/stores/stores.svelte';
+  import { connect } from './lib/sse/client';
+
+  const token = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('token') ?? '';
+
+  $effect(() => {
+    if (!token) return;
+    const conn = connect({
+      session: '',
+      token,
+      onStatus: (s) => { connectionState.status = s; },
+      onEvent: handleEvent,
+    });
+    return () => conn.close();
+  });
 
   const statusLabel: Record<string, string> = {
     idle: 'disconnected',
