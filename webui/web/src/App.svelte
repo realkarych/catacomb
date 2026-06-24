@@ -1,7 +1,7 @@
 <script lang="ts">
   import { connectionState, handleEvent } from './lib/stores/stores.svelte';
   import { connect } from './lib/sse/client';
-  import { parseHash, toHash } from './lib/router';
+  import { parseHash } from './lib/router';
   import type { Route } from './lib/router';
   import SessionsList from './components/SessionsList.svelte';
   import SessionView from './components/SessionView.svelte';
