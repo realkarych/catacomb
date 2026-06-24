@@ -55,7 +55,7 @@ func TestRedact_Clean_NoSecrets(t *testing.T) {
 }
 
 func TestRedact_Deterministic(t *testing.T) {
-	input := []byte(`{"password":"supersecret","name":"Alice","token":"ghp_abcdefghijklmnopqrstuvwxyz1234567890"}`)
+	input := []byte(`{"note":"ghp_abcdefghijklmnopqrstuvwxyz1234567890","name":"Alice"}`)
 	r1 := redact.Redact(input)
 	r2 := redact.Redact(input)
 	assert.Equal(t, r1.Data, r2.Data)
@@ -73,123 +73,163 @@ func TestRedact_Binary_NonUTF8(t *testing.T) {
 }
 
 func TestRedact_ValueScan_AWS_Key(t *testing.T) {
-	t.Run("positive", func(t *testing.T) {
-		input := []byte(`{"key":"AKIAIOSFODNN7EXAMPLE"}`)
+	t.Run("AKIA positive under non-sensitive key", func(t *testing.T) {
+		secret := "AKIAIOSFODNN7EXAMPLE"
+		input := []byte(`{"note":"` + secret + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
-		assert.False(t, containsSecret(result.Data, "AKIAIOSFODNN7EXAMPLE"))
+		assert.False(t, containsSecret(result.Data, secret))
 		reasons := findingReasons(result.Findings)
 		assert.Contains(t, reasons, "aws-key")
 	})
-	t.Run("near-miss", func(t *testing.T) {
-		input := []byte(`{"key":"BKIAIOSFODNN7EXAMPLE"}`)
+	t.Run("ASIA STS positive under non-sensitive key", func(t *testing.T) {
+		secret := "ASIAJEXAMPLEKEY12345"
+		input := []byte(`{"note":"` + secret + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "ASIA STS key must be caught by value-scan")
+		assert.False(t, containsSecret(result.Data, secret))
+		assert.Contains(t, findingReasons(result.Findings), "aws-key")
+	})
+	t.Run("AROA positive under non-sensitive key", func(t *testing.T) {
+		secret := "AROAJEXAMPLEKEY12345"
+		input := []byte(`{"note":"` + secret + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "aws-key")
+	})
+	t.Run("AIDA positive under non-sensitive key", func(t *testing.T) {
+		secret := "AIDAJEXAMPLEKEY12345"
+		input := []byte(`{"note":"` + secret + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "aws-key")
+	})
+	t.Run("near-miss wrong prefix", func(t *testing.T) {
+		input := []byte(`{"note":"BKIAIOSFODNN7EXAMPLE"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
-	t.Run("near-miss-short", func(t *testing.T) {
-		input := []byte(`{"key":"AKIA123"}`)
+	t.Run("near-miss short", func(t *testing.T) {
+		input := []byte(`{"note":"AKIA123"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
 }
 
 func TestRedact_ValueScan_GitHub_Token(t *testing.T) {
-	t.Run("ghp positive", func(t *testing.T) {
+	t.Run("ghp positive under non-sensitive key", func(t *testing.T) {
 		token := "ghp_" + strings.Repeat("a", 36)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"note":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.False(t, containsSecret(result.Data, token))
 		assert.Contains(t, findingReasons(result.Findings), "github-token")
 	})
-	t.Run("gho positive", func(t *testing.T) {
+	t.Run("gho positive under non-sensitive key", func(t *testing.T) {
 		token := "gho_" + strings.Repeat("b", 36)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"content":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "github-token")
 	})
-	t.Run("ghs positive", func(t *testing.T) {
+	t.Run("ghs positive under non-sensitive key", func(t *testing.T) {
 		token := "ghs_" + strings.Repeat("c", 36)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"text":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "github-token")
 	})
-	t.Run("ghu positive", func(t *testing.T) {
+	t.Run("ghu positive under non-sensitive key", func(t *testing.T) {
 		token := "ghu_" + strings.Repeat("d", 36)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"content":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
-	})
-	t.Run("gpr positive", func(t *testing.T) {
-		token := "gpr_" + strings.Repeat("e", 36)
-		input := []byte(`{"token":"` + token + `"}`)
-		result := redact.Redact(input)
-		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "github-token")
 	})
 	t.Run("near-miss short", func(t *testing.T) {
 		input := []byte(`{"value":"ghp_short"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
-	t.Run("github_pat positive", func(t *testing.T) {
+	t.Run("github_pat positive under non-sensitive key", func(t *testing.T) {
 		token := "github_pat_" + strings.Repeat("f", 40)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"note":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "github-token")
 	})
 }
 
 func TestRedact_ValueScan_OpenAI_Key(t *testing.T) {
-	t.Run("positive", func(t *testing.T) {
+	t.Run("sk- basic positive under non-sensitive key", func(t *testing.T) {
 		key := "sk-" + strings.Repeat("A", 20)
-		input := []byte(`{"api_key":"` + key + `"}`)
+		input := []byte(`{"note":"` + key + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.False(t, containsSecret(result.Data, key))
 		assert.Contains(t, findingReasons(result.Findings), "openai-key")
 	})
-	t.Run("sk-ant positive", func(t *testing.T) {
+	t.Run("sk-ant- positive under non-sensitive key", func(t *testing.T) {
 		key := "sk-ant-" + strings.Repeat("B", 20)
-		input := []byte(`{"key":"` + key + `"}`)
+		input := []byte(`{"note":"` + key + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "openai-key")
+	})
+	t.Run("sk-ant- with underscore positive under non-sensitive key", func(t *testing.T) {
+		key := "sk-ant-api03-AbCDef_GHIjkl_MNOpqr_STUvwx_YZabcd_EFAAAA"
+		input := []byte(`{"note":"` + key + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "sk-ant- key containing underscores must be caught by value-scan")
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Contains(t, findingReasons(result.Findings), "openai-key")
+	})
+	t.Run("sk-proj- with underscore positive under non-sensitive key", func(t *testing.T) {
+		key := "sk-proj-ab_cd-ef_gh-ij_kl-mn_op-qr_st-uv_wx-yz_AA"
+		input := []byte(`{"note":"` + key + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "sk-proj- key containing underscores must be caught by value-scan")
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Contains(t, findingReasons(result.Findings), "openai-key")
 	})
 	t.Run("near-miss short", func(t *testing.T) {
-		input := []byte(`{"key":"sk-short"}`)
+		input := []byte(`{"note":"sk-short"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
 }
 
 func TestRedact_ValueScan_Slack_Token(t *testing.T) {
-	t.Run("xoxb positive", func(t *testing.T) {
+	t.Run("xoxb positive under non-sensitive key", func(t *testing.T) {
 		token := "xoxb-" + strings.Repeat("1", 10)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"note":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.Contains(t, findingReasons(result.Findings), "slack-token")
 	})
-	t.Run("xoxa positive", func(t *testing.T) {
+	t.Run("xoxa positive under non-sensitive key", func(t *testing.T) {
 		token := "xoxa-" + strings.Repeat("2", 10)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"content":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "slack-token")
 	})
-	t.Run("xoxp positive", func(t *testing.T) {
+	t.Run("xoxp positive under non-sensitive key", func(t *testing.T) {
 		token := "xoxp-" + strings.Repeat("3", 10)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"text":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "slack-token")
 	})
-	t.Run("xoxr positive", func(t *testing.T) {
+	t.Run("xoxr positive under non-sensitive key", func(t *testing.T) {
 		token := "xoxr-" + strings.Repeat("4", 10)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"note":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 	})
-	t.Run("xoxs positive", func(t *testing.T) {
+	t.Run("xoxs positive under non-sensitive key", func(t *testing.T) {
 		token := "xoxs-" + strings.Repeat("5", 10)
-		input := []byte(`{"token":"` + token + `"}`)
+		input := []byte(`{"note":"` + token + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 	})
@@ -206,9 +246,9 @@ func TestRedact_ValueScan_Slack_Token(t *testing.T) {
 }
 
 func TestRedact_ValueScan_JWT(t *testing.T) {
-	t.Run("positive", func(t *testing.T) {
+	t.Run("positive under non-sensitive key", func(t *testing.T) {
 		jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-		input := []byte(`{"auth":"` + jwt + `"}`)
+		input := []byte(`{"note":"` + jwt + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.False(t, containsSecret(result.Data, jwt))
@@ -222,97 +262,131 @@ func TestRedact_ValueScan_JWT(t *testing.T) {
 }
 
 func TestRedact_ValueScan_PEM_Block(t *testing.T) {
-	t.Run("positive RSA", func(t *testing.T) {
+	t.Run("positive RSA marker in JSON string value", func(t *testing.T) {
 		pem := "-----BEGIN RSA PRIVATE KEY-----"
-		input := []byte(`{"key":"` + pem + `"}`)
+		input := []byte(`{"note":"` + pem + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.False(t, containsSecret(result.Data, pem))
 		assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
 	})
-	t.Run("positive EC", func(t *testing.T) {
+	t.Run("positive EC marker in JSON string value", func(t *testing.T) {
 		pem := "-----BEGIN EC PRIVATE KEY-----"
-		input := []byte(`{"key":"` + pem + `"}`)
+		input := []byte(`{"note":"` + pem + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
 	})
-	t.Run("positive generic PRIVATE KEY", func(t *testing.T) {
+	t.Run("positive generic PRIVATE KEY marker in JSON string value", func(t *testing.T) {
 		pem := "-----BEGIN PRIVATE KEY-----"
-		input := []byte(`{"key":"` + pem + `"}`)
+		input := []byte(`{"note":"` + pem + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
 	})
 	t.Run("near-miss public key", func(t *testing.T) {
-		input := []byte(`{"key":"-----BEGIN PUBLIC KEY-----"}`)
+		input := []byte(`{"note":"-----BEGIN PUBLIC KEY-----"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
+	})
+	t.Run("full PEM block body redacted in free text", func(t *testing.T) {
+		pemBlock := "-----BEGIN RSA PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nSHORTSECRET123\n-----END RSA PRIVATE KEY-----"
+		input := []byte(pemBlock)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "full PEM block must be caught in free-text mode")
+		assert.False(t, containsSecret(result.Data, "SHORTSECRET123"), "PEM body must be redacted in free-text mode")
+		assert.False(t, containsSecret(result.Data, "b3BlbnNzaC1rZXktdjEAAAAA"), "PEM body must be fully redacted")
+		assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
+	})
+	t.Run("OPENSSH full block body redacted in free text", func(t *testing.T) {
+		pemBlock := "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nSHORTSECRET123\n-----END OPENSSH PRIVATE KEY-----"
+		input := []byte(pemBlock)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, "SHORTSECRET123"))
+	})
+	t.Run("PEM marker only without END block redacted in free text", func(t *testing.T) {
+		markerOnly := "-----BEGIN RSA PRIVATE KEY-----\nsome body without end marker"
+		input := []byte(markerOnly)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "PEM marker alone must be caught in free-text mode")
+		assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
 	})
 }
 
 func TestRedact_ValueScan_Google_API_Key(t *testing.T) {
-	t.Run("positive", func(t *testing.T) {
+	t.Run("positive under non-sensitive key", func(t *testing.T) {
 		key := "AIza" + strings.Repeat("B", 35)
-		input := []byte(`{"key":"` + key + `"}`)
+		input := []byte(`{"note":"` + key + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.Contains(t, findingReasons(result.Findings), "google-api-key")
 	})
 	t.Run("near-miss short", func(t *testing.T) {
-		input := []byte(`{"key":"AIzaShort"}`)
+		input := []byte(`{"note":"AIzaShort"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
 }
 
 func TestRedact_ValueScan_Bearer_Token(t *testing.T) {
-	t.Run("positive", func(t *testing.T) {
-		input := []byte(`{"header":"Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.XXXX"}`)
+	t.Run("positive under non-sensitive key", func(t *testing.T) {
+		input := []byte(`{"note":"Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.XXXX"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.Contains(t, findingReasons(result.Findings), "bearer-token")
 	})
 	t.Run("near-miss no token value", func(t *testing.T) {
-		input := []byte(`{"header":"Bearer "}`)
+		input := []byte(`{"note":"Bearer "}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
 }
 
 func TestRedact_ValueScan_ConnectionString(t *testing.T) {
-	t.Run("postgres positive", func(t *testing.T) {
+	t.Run("postgres positive under non-sensitive key", func(t *testing.T) {
 		connstr := "postgres://user:secretpass@localhost:5432/db"
-		input := []byte(`{"dsn":"` + connstr + `"}`)
+		input := []byte(`{"note":"` + connstr + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.False(t, containsSecret(result.Data, connstr))
 		assert.Contains(t, findingReasons(result.Findings), "connection-string")
 	})
-	t.Run("mysql positive", func(t *testing.T) {
+	t.Run("mysql positive under non-sensitive key", func(t *testing.T) {
 		connstr := "mysql://admin:pass123@db.example.com/mydb"
-		input := []byte(`{"url":"` + connstr + `"}`)
+		input := []byte(`{"content":"` + connstr + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "connection-string")
+	})
+	t.Run("password-only redis positive under non-sensitive key", func(t *testing.T) {
+		connstr := "redis://:secretpass@localhost:6379"
+		input := []byte(`{"note":"` + connstr + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "connection-string")
 	})
 	t.Run("near-miss no password", func(t *testing.T) {
-		input := []byte(`{"url":"postgres://localhost:5432/db"}`)
+		input := []byte(`{"note":"postgres://localhost:5432/db"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
 }
 
 func TestRedact_ValueScan_HighEntropy(t *testing.T) {
-	t.Run("long hex positive", func(t *testing.T) {
+	t.Run("long hex positive under non-sensitive key", func(t *testing.T) {
 		hex := strings.Repeat("a1b2c3d4", 6)
-		input := []byte(`{"hash":"` + hex + `"}`)
+		input := []byte(`{"note":"` + hex + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.Contains(t, findingReasons(result.Findings), "high-entropy")
 	})
-	t.Run("long base64 positive", func(t *testing.T) {
+	t.Run("long base64 positive under non-sensitive key", func(t *testing.T) {
 		b64 := strings.Repeat("ABCDEFGHabcdefgh01234567", 3)
-		input := []byte(`{"token":"` + b64 + `"}`)
+		input := []byte(`{"note":"` + b64 + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.Contains(t, findingReasons(result.Findings), "high-entropy")
 	})
 	t.Run("near-miss short hex", func(t *testing.T) {
 		input := []byte(`{"id":"deadbeef1234"}`)
@@ -346,14 +420,38 @@ func TestRedact_KeyGlob_Password(t *testing.T) {
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 	})
+	t.Run("db_password compound key", func(t *testing.T) {
+		input := []byte(`{"db_password":"mysupersecret"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "db_password must be caught by compound key matching")
+		assert.False(t, containsSecret(result.Data, "mysupersecret"))
+	})
+	t.Run("user_password compound key", func(t *testing.T) {
+		input := []byte(`{"user_password":"hunter3"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+	})
 }
 
 func TestRedact_KeyGlob_Secret(t *testing.T) {
-	input := []byte(`{"client_secret":"abc123xyz"}`)
-	result := redact.Redact(input)
-	assert.True(t, result.Redacted)
-	assert.False(t, containsSecret(result.Data, "abc123xyz"))
-	assert.Contains(t, findingReasons(result.Findings), "sensitive-key")
+	t.Run("client_secret exact", func(t *testing.T) {
+		input := []byte(`{"client_secret":"abc123xyz"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, "abc123xyz"))
+		assert.Contains(t, findingReasons(result.Findings), "sensitive-key")
+	})
+	t.Run("aws_secret_access_key compound", func(t *testing.T) {
+		input := []byte(`{"aws_secret_access_key":"wJalrXUtnFEMI"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "aws_secret_access_key must be caught by compound key matching")
+		assert.False(t, containsSecret(result.Data, "wJalrXUtnFEMI"))
+	})
+	t.Run("client_secret_key compound", func(t *testing.T) {
+		input := []byte(`{"client_secret_key":"somesecretval"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+	})
 }
 
 func TestRedact_KeyGlob_Token(t *testing.T) {
@@ -384,6 +482,7 @@ func TestRedact_KeyGlob_APIKey(t *testing.T) {
 		{"api_key", "api_val1"},
 		{"apikey", "api_val2"},
 		{"api-key", "api_val3"},
+		{"x-api-key", "api_val4"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.key, func(t *testing.T) {
@@ -475,7 +574,7 @@ func TestRedact_KeyGlob_NestedArray(t *testing.T) {
 
 func TestRedact_Mixed_ValueAndKey(t *testing.T) {
 	awsKey := "AKIAIOSFODNN7EXAMPLE"
-	input := []byte(`{"password":"mypass","api_key":"` + awsKey + `"}`)
+	input := []byte(`{"password":"mypass","note":"` + awsKey + `"}`)
 	result := redact.Redact(input)
 	assert.True(t, result.Redacted)
 	assert.False(t, containsSecret(result.Data, "mypass"))
@@ -484,11 +583,25 @@ func TestRedact_Mixed_ValueAndKey(t *testing.T) {
 }
 
 func TestRedact_PlainText_NotJSON(t *testing.T) {
-	t.Run("plain text with secret", func(t *testing.T) {
+	t.Run("plain text with AKIA secret", func(t *testing.T) {
 		secret := "AKIAIOSFODNN7EXAMPLE"
 		input := []byte("export AWS_KEY=" + secret)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, secret))
+	})
+	t.Run("plain text with ASIA STS secret", func(t *testing.T) {
+		secret := "ASIAJEXAMPLEKEY12345"
+		input := []byte("export AWS_KEY=" + secret)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, secret))
+	})
+	t.Run("plain text with sk-ant underscore key", func(t *testing.T) {
+		secret := "sk-ant-api03-AbCDef_GHIjkl_MNOpqr_STUvwxAA"
+		input := []byte("ANTHROPIC_API_KEY=" + secret)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "sk-ant- key with underscores must be caught in free-text mode")
 		assert.False(t, containsSecret(result.Data, secret))
 	})
 	t.Run("plain text no secret", func(t *testing.T) {
@@ -531,7 +644,7 @@ func TestRedact_Unicode(t *testing.T) {
 
 func TestRedact_FindingsSorted(t *testing.T) {
 	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-	input := []byte(`{"password":"pass123","token":"` + jwt + `","api_key":"AKIAIOSFODNN7EXAMPLE"}`)
+	input := []byte(`{"password":"pass123","note":"` + jwt + `","api_key":"AKIAIOSFODNN7EXAMPLE"}`)
 	result := redact.Redact(input)
 	assert.True(t, result.Redacted)
 	assert.GreaterOrEqual(t, len(result.Findings), 2)
@@ -598,5 +711,44 @@ func TestRedact_ResultRedactedField(t *testing.T) {
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.NotEmpty(t, result.Findings)
+	})
+}
+
+func TestRedact_Placeholder_Format(t *testing.T) {
+	t.Run("sensitive key placeholder includes reason", func(t *testing.T) {
+		input := []byte(`{"password":"mysecret"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, string(result.Data), "‹redacted:")
+		assert.NotContains(t, string(result.Data), "mysecret")
+	})
+	t.Run("value scan placeholder includes reason", func(t *testing.T) {
+		secret := "AKIAIOSFODNN7EXAMPLE"
+		input := []byte(`{"note":"` + secret + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, string(result.Data), "‹redacted:aws-key›")
+	})
+}
+
+func TestRedact_NumberFidelity(t *testing.T) {
+	t.Run("big integer preserved when redaction occurs", func(t *testing.T) {
+		input := []byte(`{"password":"s3cr3t","id":10000000000000001}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, string(result.Data), "10000000000000001", "big integer must not be corrupted by float64 round-trip")
+	})
+	t.Run("large float preserved when redaction occurs", func(t *testing.T) {
+		input := []byte(`{"password":"s3cr3t","ratio":1.23456789012345}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, string(result.Data), "1.23456789012345")
+	})
+	t.Run("HTML characters not escaped", func(t *testing.T) {
+		input := []byte(`{"password":"s3cr3t","url":"https://example.com?a=1&b=2"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.Contains(t, string(result.Data), "&", "ampersand must not be HTML-escaped in output")
+		assert.NotContains(t, string(result.Data), "\\u0026")
 	})
 }

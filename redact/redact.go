@@ -1,11 +1,14 @@
 package redact
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -21,25 +24,27 @@ type Result struct {
 }
 
 var (
-	reAWSKey = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	reAWSKey = regexp.MustCompile(`(?:AKIA|ASIA|AGPA|AROA|AIDA|ANPA|ANVA|AIPA|ABIA|ACCA)[0-9A-Z]{16}`)
 
 	reGitHubToken = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)
 
 	reGitHubPAT = regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{40,}\b`)
 
-	reOpenAIKey = regexp.MustCompile(`\bsk-[A-Za-z0-9-]{20,}\b`)
+	reOpenAIKey = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}`)
 
 	reSlackToken = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9]([A-Za-z0-9-]{8,})\b`)
 
 	reJWT = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\b`)
 
-	rePEMPrivateKey = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+	rePEMMarker = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+
+	rePEMBlock = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
 
 	reGoogleAPIKey = regexp.MustCompile(`\bAIza[A-Za-z0-9_-]{35,}\b`)
 
 	reBearerToken = regexp.MustCompile(`\bBearer\s+[A-Za-z0-9._~+/=-]{10,}\b`)
 
-	reConnectionString = regexp.MustCompile(`[a-z][a-z0-9+\-.]*://[^:@\s/]+:[^@\s]+@[^\s"'` + "`" + `]+`)
+	reConnectionString = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+\-.]*://(?:[^:@\s/]+:[^@\s]+@|:[^@\s]+@)[^\s"'` + "`" + `]+`)
 
 	reHexEntropy = regexp.MustCompile(`\b[0-9a-fA-F]{40,}\b`)
 
@@ -58,7 +63,7 @@ var valueRules = []valueRule{
 	{reGitHubPAT, "github-token"},
 	{reOpenAIKey, "openai-key"},
 	{reSlackToken, "slack-token"},
-	{rePEMPrivateKey, "pem-private-key"},
+	{rePEMMarker, "pem-private-key"},
 	{reGoogleAPIKey, "google-api-key"},
 	{reBearerToken, "bearer-token"},
 	{reJWT, "jwt"},
@@ -66,24 +71,24 @@ var valueRules = []valueRule{
 	{reBase64Entropy, "high-entropy"},
 }
 
-var sensitiveKeyPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)^password$`),
-	regexp.MustCompile(`(?i)^passwd$`),
-	regexp.MustCompile(`(?i)^secret$`),
-	regexp.MustCompile(`(?i)^token$`),
-	regexp.MustCompile(`(?i)^api[_-]?key$`),
-	regexp.MustCompile(`(?i)^apikey$`),
-	regexp.MustCompile(`(?i)^authorization$`),
-	regexp.MustCompile(`(?i)^auth$`),
-	regexp.MustCompile(`(?i)^access[_-]?token$`),
-	regexp.MustCompile(`(?i)^refresh[_-]?token$`),
-	regexp.MustCompile(`(?i)^client[_-]?secret$`),
-	regexp.MustCompile(`(?i)^private[_-]?key$`),
-	regexp.MustCompile(`(?i)^credentials?$`),
-	regexp.MustCompile(`(?i)^session[_-]?key$`),
+var sensitiveKeyTokens = []string{
+	"password",
+	"passwd",
+	"secret",
+	"token",
+	"apikey",
+	"api_key",
+	"auth",
+	"credential",
+	"private_key",
+	"privatekey",
+	"sessionkey",
+	"session_key",
 }
 
-const redactedPlaceholder = "[REDACTED]"
+func placeholder(reason string) string {
+	return "‹redacted:" + reason + "›"
+}
 
 func matchValueRule(s string) string {
 	for _, rule := range valueRules {
@@ -92,6 +97,27 @@ func matchValueRule(s string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeKey(k string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(k) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isSensitiveKey(k string) bool {
+	norm := normalizeKey(k)
+	for _, tok := range sensitiveKeyTokens {
+		normTok := normalizeKey(tok)
+		if strings.Contains(norm, normTok) {
+			return true
+		}
+	}
+	return false
 }
 
 func Redact(raw []byte) Result {
@@ -109,8 +135,10 @@ func Redact(raw []byte) Result {
 		}
 	}
 
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var node any
-	if err := json.Unmarshal(raw, &node); err != nil {
+	if err := dec.Decode(&node); err != nil {
 		return redactFreeText(raw)
 	}
 
@@ -124,7 +152,11 @@ func Redact(raw []byte) Result {
 		return findings[i].Path < findings[j].Path
 	})
 
-	out, _ := json.Marshal(redacted)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(redacted)
+	out := bytes.TrimRight(buf.Bytes(), "\n")
 
 	return Result{
 		Data:     out,
@@ -137,12 +169,27 @@ func redactFreeText(raw []byte) Result {
 	text := string(raw)
 	var findings []Finding
 	result := text
+
+	if rePEMBlock.MatchString(result) {
+		result = rePEMBlock.ReplaceAllString(result, placeholder("pem-private-key"))
+		findings = append(findings, Finding{Path: "", Reason: "pem-private-key"})
+	} else if rePEMMarker.MatchString(result) {
+		result = rePEMMarker.ReplaceAllString(result, placeholder("pem-private-key"))
+		findings = append(findings, Finding{Path: "", Reason: "pem-private-key"})
+	}
+
 	for _, rule := range valueRules {
+		if rule.re == rePEMMarker {
+			continue
+		}
 		if rule.re.MatchString(result) {
-			result = rule.re.ReplaceAllString(result, redactedPlaceholder)
+			result = rule.re.ReplaceAllStringFunc(result, func(m string) string {
+				return placeholder(rule.reason)
+			})
 			findings = append(findings, Finding{Path: "", Reason: rule.reason})
 		}
 	}
+
 	if len(findings) == 0 {
 		return Result{Data: raw}
 	}
@@ -179,7 +226,7 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 				if reason == "" {
 					reason = "sensitive-key"
 				}
-				result[k] = redactedPlaceholder
+				result[k] = placeholder(reason)
 				*findings = append(*findings, Finding{Path: childPath, Reason: reason})
 			} else {
 				result[k] = walkNode(v, childPath, findings)
@@ -200,23 +247,14 @@ func walkArray(arr []any, path string, findings *[]Finding) []any {
 	return result
 }
 
-func redactStringValue(s, path string, findings *[]Finding) string {
+func redactStringValue(s, path string, findings *[]Finding) any {
 	for _, rule := range valueRules {
 		if rule.re.MatchString(s) {
 			*findings = append(*findings, Finding{Path: path, Reason: rule.reason})
-			return redactedPlaceholder
+			return placeholder(rule.reason)
 		}
 	}
 	return s
-}
-
-func isSensitiveKey(k string) bool {
-	for _, pat := range sensitiveKeyPatterns {
-		if pat.MatchString(k) {
-			return true
-		}
-	}
-	return false
 }
 
 func joinPath(parent, key string) string {
