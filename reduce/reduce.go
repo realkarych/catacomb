@@ -52,7 +52,9 @@ func (g *Graph) Apply(o model.Observation) {
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
 		g.stampEnd(n, o)
-		g.applyTokens(n, o.Attrs, o.Source)
+		if g.applyTokens(n, o.Attrs, o.Source) {
+			g.applyCost(n, o.Attrs)
+		}
 		g.emitNode(n, o)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
@@ -301,11 +303,11 @@ func (g *Graph) mergePayload(n *model.Node, p *model.Payload, src model.Source) 
 	n.PayloadHash = n.Payload.Hash
 }
 
-func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) {
+func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) bool {
 	fs := g.stampsFor(n.ID)
 	r := tokenRank(src)
 	if fs.haveToken && r < fs.tokenRank {
-		return
+		return false
 	}
 	fs.tokenRank = r
 	fs.haveToken = true
@@ -314,6 +316,51 @@ func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Sourc
 	}
 	if v, ok := toInt64(attrs["tokens_out"]); ok {
 		n.TokensOut = &v
+	}
+	return true
+}
+
+func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
+	if g.pricer == nil {
+		return
+	}
+	in := PriceInputs{}
+	if m, ok := attrs["model"].(string); ok {
+		in.ModelID = m
+	}
+	if n.TokensIn != nil {
+		in.TokensIn = *n.TokensIn
+	}
+	if n.TokensOut != nil {
+		in.TokensOut = *n.TokensOut
+	}
+	if v, ok := toFloat64(attrs["cost_usd"]); ok {
+		in.ReportedUSD = &v
+	}
+	res, ok := g.pricer.Cost(in)
+	if !ok {
+		return
+	}
+	usd := res.USD
+	n.CostUSD = &usd
+	if n.Attrs == nil {
+		n.Attrs = map[string]any{}
+	}
+	n.Attrs["cost_source"] = res.Source
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	default:
+		return 0, false
 	}
 }
 

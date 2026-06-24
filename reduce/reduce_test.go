@@ -150,6 +150,25 @@ func TestToInt64(t *testing.T) {
 	}
 }
 
+func TestToFloat64(t *testing.T) {
+	cases := []struct {
+		in any
+		ok bool
+		f  float64
+	}{
+		{float64(1.5), true, 1.5},
+		{float32(2.5), true, float64(float32(2.5))},
+		{int64(3), true, 3.0},
+		{int(4), true, 4.0},
+		{"x", false, 0},
+	}
+	for _, c := range cases {
+		f, ok := toFloat64(c.in)
+		assert.Equal(t, c.ok, ok)
+		assert.InDelta(t, c.f, f, 1e-6)
+	}
+}
+
 func TestIsMCP(t *testing.T) {
 	assert.True(t, isMCP("mcp__fs__read"))
 	assert.False(t, isMCP("Bash"))
@@ -1635,4 +1654,91 @@ func TestEndRankEqualRankLatestTimeWins(t *testing.T) {
 	id := model.ToolCallID(execID, "toolu_d4")
 	assert.Equal(t, later, *g.Nodes[id].TEnd)
 	assert.Equal(t, later, *rg.Nodes[id].TEnd)
+}
+
+func TestAssistantTurnCostReportedProvenance(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		if in.ReportedUSD != nil {
+			return PriceResult{USD: *in.ReportedUSD, Source: "reported"}, true
+		}
+		return PriceResult{USD: float64(in.TokensIn+in.TokensOut) / 1000, Source: "estimated"}, true
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc1"
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(10), "tokens_out": int64(5), "cost_usd": 0.25}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc1")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, 0.25, *n.CostUSD, 1e-9)
+	assert.Equal(t, "reported", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnCostEstimatedProvenance(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{USD: float64(in.TokensIn+in.TokensOut) / 1000, Source: "estimated"}, true
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc2"
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(1000), "tokens_out": int64(0)}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc2")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, 1.0, *n.CostUSD, 1e-9)
+	assert.Equal(t, "estimated", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{}, false
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc3"
+	o.Attrs = map[string]any{"model": "unknown", "tokens_in": int64(5)}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc3")]
+	assert.Nil(t, n.CostUSD)
+	_, has := n.Attrs["cost_source"]
+	assert.False(t, has)
+}
+
+func TestCostAttributionOrderIndependent(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{USD: float64(in.TokensIn), Source: "estimated"}, true
+	})
+	t0 := time.Unix(0, 0).UTC()
+	a := ob("assistant_turn", "", t0)
+	a.Source = model.SourceStreamJSON
+	a.Correlation.MessageID = "mc4"
+	a.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(7)}
+	b := ob("assistant_turn", "", t0.Add(time.Second))
+	b.Source = model.SourceOTel
+	b.Correlation.MessageID = "mc4"
+	b.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(11)}
+
+	fwd := NewGraphWithPricer(p)
+	fwd.ApplyAll([]model.Observation{a, b})
+	rev := NewGraphWithPricer(p)
+	rev.ApplyAll([]model.Observation{b, a})
+
+	id := model.AssistantTurnID(execID, "mc4")
+	require.NotNil(t, fwd.Nodes[id].CostUSD)
+	assert.Equal(t, *fwd.Nodes[id].CostUSD, *rev.Nodes[id].CostUSD)
+}
+
+func TestNewGraphNoPricerNoCost(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc5"
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(5)}
+	g := NewGraph()
+	g.Apply(o)
+	assert.Nil(t, g.Nodes[model.AssistantTurnID(execID, "mc5")].CostUSD)
 }

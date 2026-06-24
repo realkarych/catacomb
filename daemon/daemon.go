@@ -21,6 +21,7 @@ import (
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	streamjsoningest "github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/pricing"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
@@ -75,9 +76,11 @@ type Daemon struct {
 	transcriptDir     string
 	transcriptExclude []string
 	lossyRuns         int64
+	pricer            reduce.Pricer
 }
 
 func New(s store.Store) *Daemon {
+	eng := pricing.New()
 	return &Daemon{
 		store:         s,
 		newExecID:     func() string { return ulid.Make().String() },
@@ -88,6 +91,17 @@ func New(s store.Store) *Daemon {
 		reaperWindow:  defaultReaperWindow,
 		maxShards:     defaultMaxShards,
 		startedAt:     nowFn(),
+		pricer: reduce.PricerFunc(func(in reduce.PriceInputs) (reduce.PriceResult, bool) {
+			r, ok := eng.Cost(pricing.Inputs{
+				ModelID:     in.ModelID,
+				TokensIn:    in.TokensIn,
+				TokensOut:   in.TokensOut,
+				CacheReadIn: in.CacheReadIn,
+				CacheWrite:  in.CacheWrite,
+				ReportedUSD: in.ReportedUSD,
+			})
+			return reduce.PriceResult{USD: r.USD, Source: r.Source}, ok
+		}),
 	}
 }
 
@@ -141,7 +155,7 @@ func (d *Daemon) Recover() error {
 	for _, o := range obs {
 		g, ok := d.graphs[o.ExecutionID]
 		if !ok {
-			g = reduce.NewGraph()
+			g = reduce.NewGraphWithPricer(d.pricer)
 			d.graphs[o.ExecutionID] = g
 		}
 		g.Apply(o)
@@ -193,7 +207,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, err := d.store.ObservationsForExecution(execID)
 			if err != nil {
@@ -245,7 +259,7 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
@@ -290,7 +304,7 @@ func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) (err error) {
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
@@ -333,7 +347,7 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 	}
 	g, inMem := d.graphs[execID]
 	if !inMem {
-		g = reduce.NewGraph()
+		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
