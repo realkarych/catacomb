@@ -904,6 +904,23 @@ func TestAuthedAllowQueryWrongParam401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+func TestTranscriptRouteBearer(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/transcript", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestTranscriptRouteRegistered(t *testing.T) {
+	d := New(tempStore(t))
+	r := httptest.NewRequest(http.MethodPost, "/v1/transcript", strings.NewReader(""))
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestStaticHandlerServesRoot(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
