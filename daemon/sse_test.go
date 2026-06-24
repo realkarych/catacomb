@@ -705,10 +705,9 @@ func TestSSEFilterDropsNonMatchingSession(t *testing.T) {
 		select {
 		case ev := <-events:
 			execID, _ := ev["execution_id"].(string)
-			d2 := d
-			d2.mu.Lock()
-			s1Execs := d2.executionsForSession("s1")
-			d2.mu.Unlock()
+			d.mu.Lock()
+			s1Execs := d.executionsForSession("s1")
+			d.mu.Unlock()
 			inS1 := false
 			for _, e := range s1Execs {
 				if e == execID {
@@ -739,7 +738,7 @@ doneWaiting:
 	}
 gotInSession:
 	inSessionEv := <-received
-	assert.NotNil(t, inSessionEv)
+	assert.Equal(t, "exec1", inSessionEv["execution_id"])
 
 	cancel()
 	<-errc

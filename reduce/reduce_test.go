@@ -1616,14 +1616,14 @@ func TestSessionEndGetsDurationMS(t *testing.T) {
 func TestSubagentStopGetsDurationMS(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	t1 := t0.Add(3 * time.Second)
-	start := ob("subagent_stop", "", t0)
-	start.Correlation.AgentID = "a2"
-	start.EventTime = t0
-	stop := ob("subagent_stop", "", t1)
-	stop.Correlation.AgentID = "a2"
-	stop.EventTime = t1
+	first := ob("subagent_stop", "", t0)
+	first.Correlation.AgentID = "a2"
+	first.EventTime = t0
+	second := ob("subagent_stop", "", t1)
+	second.Correlation.AgentID = "a2"
+	second.EventTime = t1
 	g := NewGraph()
-	g.ApplyAll([]model.Observation{start, stop})
+	g.ApplyAll([]model.Observation{first, second})
 	n := g.Nodes[model.SubagentID(execID, "a2")]
 	require.NotNil(t, n.TEnd)
 	require.NotNil(t, n.DurationMS)
@@ -1665,7 +1665,7 @@ func TestAssistantTurnCostReportedProvenance(t *testing.T) {
 	})
 	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
 	o.Correlation.MessageID = "mc1"
-	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(10), "tokens_out": int64(5), "cost_usd": 0.25}
+	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(10), "tokens_out": int64(5), "cost_usd": float64(0.25)}
 
 	g := NewGraphWithPricer(p)
 	g.Apply(o)
@@ -1741,4 +1741,65 @@ func TestNewGraphNoPricerNoCost(t *testing.T) {
 	g := NewGraph()
 	g.Apply(o)
 	assert.Nil(t, g.Nodes[model.AssistantTurnID(execID, "mc5")].CostUSD)
+}
+
+func TestEnsureRunPopulatesModelID(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc6"
+	o.Attrs = map[string]any{"model": "claude-sonnet-4-6", "tokens_in": int64(10)}
+
+	g := NewGraph()
+	g.Apply(o)
+
+	r := g.Runs[runID]
+	require.NotNil(t, r)
+	assert.Equal(t, "claude-sonnet-4-6", r.ModelID)
+}
+
+func TestEnsureRunModelIDFirstNonEmptyWins(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	first := ob("assistant_turn", "", t0)
+	first.Correlation.MessageID = "mc7a"
+	first.Attrs = map[string]any{"model": "claude-opus-4-8"}
+	second := ob("assistant_turn", "", t0.Add(time.Second))
+	second.Correlation.MessageID = "mc7b"
+	second.Attrs = map[string]any{"model": "claude-sonnet-4-6"}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{first, second})
+
+	r := g.Runs[runID]
+	require.NotNil(t, r)
+	assert.Equal(t, "claude-opus-4-8", r.ModelID)
+}
+
+func TestCumulativeCostNoDoubleCount(t *testing.T) {
+	sq := seq()
+	line1 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.10}`)
+	line2 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.30}`)
+	obs1, err := streamjson.Parse(line1, execID, sq)
+	require.NoError(t, err)
+	obs2, err := streamjson.Parse(line2, execID, sq)
+	require.NoError(t, err)
+
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		if in.ReportedUSD != nil {
+			return PriceResult{USD: *in.ReportedUSD, Source: "reported"}, true
+		}
+		return PriceResult{}, false
+	})
+	g := NewGraphWithPricer(p)
+	g.ApplyAll(obs1)
+	g.ApplyAll(obs2)
+
+	var costUSD float64
+	var found bool
+	for _, n := range g.Nodes {
+		if n.Type == model.NodeAssistantTurn && n.CostUSD != nil {
+			costUSD += *n.CostUSD
+			found = true
+		}
+	}
+	require.True(t, found, "expected at least one assistant_turn node with cost")
+	assert.InDelta(t, 0.30, costUSD, 1e-9)
 }

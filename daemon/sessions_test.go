@@ -462,3 +462,18 @@ func TestExecutionsForSessionSubscribeSnapshotAfterRecover(t *testing.T) {
 		assert.True(t, scopedSet[delta.ExecutionID], "snapshot delta must be scoped to s1 executions")
 	}
 }
+
+func TestSessionSummaryModelIDFromIngestedObservation(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+
+	sessionInit := []byte(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-sonnet-4-6"}`)
+	require.NoError(t, d.IngestStreamJSON(sessionInit, "s1"))
+
+	d.mu.Lock()
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+
+	require.Len(t, sums, 1)
+	assert.Equal(t, "claude-sonnet-4-6", sums[0].ModelID)
+}

@@ -240,7 +240,7 @@ func (g *Graph) stampEnd(n *model.Node, o model.Observation) {
 		n.TEnd = &ts
 		fs.endRank = r
 		fs.haveEnd = true
-	case r == fs.endRank && (n.TEnd == nil || o.EventTime.After(*n.TEnd)):
+	case r == fs.endRank && o.EventTime.After(*n.TEnd):
 		ts := o.EventTime
 		n.TEnd = &ts
 	}
@@ -398,6 +398,11 @@ func (g *Graph) ensureRun(o model.Observation) {
 		r.LastSeq = o.Seq
 	}
 	r.SessionIDs = appendUnique(r.SessionIDs, o.Correlation.SessionID)
+	if r.ModelID == "" {
+		if m, ok := o.Attrs["model"].(string); ok && m != "" {
+			r.ModelID = m
+		}
+	}
 }
 
 func (g *Graph) applyRunEnded(o model.Observation) {
