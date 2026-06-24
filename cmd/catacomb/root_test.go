@@ -48,6 +48,7 @@ func TestCommandGroupAssignments(t *testing.T) {
 	assert.Equal(t, "observe", groups["ui"])
 	assert.Equal(t, "observe", groups["watch"])
 	assert.Equal(t, "observe", groups["status"])
+	assert.Equal(t, "observe", groups["observe"])
 	assert.Equal(t, "setup", groups["daemon"])
 	assert.Equal(t, "setup", groups["install-hooks"])
 	assert.Equal(t, "setup", groups["env"])

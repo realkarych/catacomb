@@ -38,6 +38,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(observe(newUICmd()))
 	root.AddCommand(observe(newWatchCmd()))
 	root.AddCommand(observe(newStatusCmd()))
+	root.AddCommand(observe(newObserveCmd()))
 	root.AddCommand(setup(newDaemonCmd()))
 	root.AddCommand(setup(newInstallHooksCmd()))
 	root.AddCommand(setup(newEnvCmd()))
