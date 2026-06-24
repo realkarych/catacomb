@@ -8,6 +8,7 @@
   import type { XyNode } from '../lib/layout';
   import GraphNode from './GraphNode.svelte';
   import FlowInternals from './FlowInternals.svelte';
+  import NodeLegend from './NodeLegend.svelte';
 
   interface Props {
     hash: string;
@@ -78,6 +79,9 @@
   });
 
   const isEmpty = $derived(xyNodes.length === 0);
+  const presentTypes = $derived(
+    [...new Set(xyNodes.map((n) => ((n.data as { catNode?: { type?: string } } | undefined)?.catNode?.type ?? 'marker')))]
+  );
 </script>
 
 <div class="graph-canvas-root">
@@ -93,6 +97,7 @@
       bind:edges={xyEdges}
       {nodeTypes}
       fitView
+      fitViewOptions={{ maxZoom: 1.0 }}
       minZoom={0.1}
       maxZoom={2}
       onnodeclick={({ node }) => selectNode(node.id)}
@@ -102,6 +107,7 @@
         onFitViewDone={() => { pendingFitView = false; }}
       />
     </SvelteFlow>
+    <NodeLegend types={presentTypes} />
   {/if}
 </div>
 
@@ -155,6 +161,13 @@
   }
 
   :global(.svelte-flow .svelte-flow__node) {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    width: auto !important;
+    color: inherit !important;
     font-family: var(--font-ui) !important;
   }
 </style>

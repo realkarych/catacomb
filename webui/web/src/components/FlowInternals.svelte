@@ -15,7 +15,7 @@
   $effect(() => {
     if (pendingFitView) {
       tick().then(() => {
-        fitView({ duration: 300 });
+        fitView({ duration: 300, maxZoom: 1.0 });
         onFitViewDone();
       });
     }

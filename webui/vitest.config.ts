@@ -20,6 +20,7 @@ export default defineConfig({
         'web/src/lib/router.ts',
         'web/src/lib/sessions-sort.ts',
         'web/src/lib/layout.ts',
+        'web/src/lib/node-legend.ts',
       ],
       exclude: [
         '**/*.test.ts',
