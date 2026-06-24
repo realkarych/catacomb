@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sessionGraph, selectNode, selectedNodeId } from '../lib/stores/stores.svelte';
+  import { sessionGraph, selectNode, selectedNodeId, filteredNodeIds } from '../lib/stores/stores.svelte';
   import { buildTimeline } from '../lib/timeline';
   import { nodeTypeInfo } from '../lib/node-legend';
   import { formatDuration } from '../lib/format/format';
@@ -33,9 +33,12 @@
       {#each model.rows as row (row.id)}
         {@const info = nodeTypeInfo(row.type)}
         {@const isSelected = selectedNodeId.value === row.id}
+        {@const isFilteredOut = filteredNodeIds.value !== null && !filteredNodeIds.value.has(row.id)}
         <button
           class="timeline-row"
           data-selected={isSelected ? 'true' : undefined}
+          data-filtered-out={isFilteredOut ? 'true' : undefined}
+          style={isFilteredOut ? 'opacity: 0.4;' : undefined}
           aria-label="{row.label} ({row.type}){row.unknownDuration ? ', timing unknown' : ', duration ' + formatDuration(undefined)}"
           onclick={() => selectNode(row.id)}
         >

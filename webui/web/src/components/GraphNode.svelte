@@ -2,7 +2,7 @@
   import { Handle, Position } from '@xyflow/svelte';
   import type { NodeProps } from '@xyflow/svelte';
   import type { Node as CNode } from '../lib/types';
-  import { selectedNodeId, selectNode } from '../lib/stores/stores.svelte';
+  import { selectedNodeId, selectNode, filteredNodeIds } from '../lib/stores/stores.svelte';
   import { formatTokens, shortHash } from '../lib/format/format';
   import { toHash } from '../lib/router';
 
@@ -18,6 +18,8 @@
   // (and all dimmed). Reading selectedNodeId here lights exactly the chosen node.
   const isSelected = $derived(selectedNodeId.value === id);
   const hasOtherSelected = $derived(selectedNodeId.value !== null && !isSelected);
+  const isFilteredOut = $derived(filteredNodeIds.value !== null && !filteredNodeIds.value.has(id));
+  const isDimmed = $derived(hasOtherSelected || isFilteredOut);
 
   const statusColor = $derived(() => {
     const s = catNode.status;
@@ -52,7 +54,7 @@
 <div
   class="graph-node"
   class:graph-node--selected={isSelected}
-  class:graph-node--dimmed={hasOtherSelected}
+  class:graph-node--dimmed={isDimmed}
   style="--node-color: var(--node-{catNode.type}, var(--node-marker));"
   role="button"
   tabindex="0"

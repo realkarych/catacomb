@@ -4,7 +4,9 @@
   import NodeDrawer from './NodeDrawer.svelte';
   import Timeline from './Timeline.svelte';
   import SessionHeader from './SessionHeader.svelte';
-  import { sessionGraph } from '../lib/stores/stores.svelte';
+  import FilterBar from './FilterBar.svelte';
+  import { sessionGraph, filterState, setFilteredNodeIds } from '../lib/stores/stores.svelte';
+  import { filterNodes, isActive } from '../lib/filters';
   import { buildTimeline } from '../lib/timeline';
 
   interface Props {
@@ -19,7 +21,19 @@
   let prevHadNode = false;
   let viewMode: 'graph' | 'timeline' = $state('graph');
 
-  const hasTimingData = $derived(buildTimeline(sessionGraph(hash).nodes).rows.length > 0);
+  const graph = $derived(sessionGraph(hash));
+  const hasTimingData = $derived(buildTimeline(graph.nodes).rows.length > 0);
+
+  const filteredNodes = $derived(filterNodes(graph.nodes, filterState));
+  const filterActive = $derived(isActive(filterState));
+
+  $effect(() => {
+    if (filterActive) {
+      setFilteredNodeIds(new Set(filteredNodes.map((n) => n.id)));
+    } else {
+      setFilteredNodeIds(null);
+    }
+  });
 
   $effect(() => {
     const hasNode = !!nodeId;
@@ -61,6 +75,7 @@
     {/if}
   </div>
   <SessionHeader {hash} />
+  <FilterBar {hash} totalCount={graph.nodes.length} filteredCount={filteredNodes.length} />
   {#if loadStatus === 'not-found'}
     <div class="not-found-state">
       <div class="not-found-icon" aria-hidden="true">🔍</div>

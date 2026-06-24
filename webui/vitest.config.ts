@@ -23,6 +23,7 @@ export default defineConfig({
         'web/src/lib/layout.ts',
         'web/src/lib/node-legend.ts',
         'web/src/lib/timeline.ts',
+        'web/src/lib/filters.ts',
       ],
       exclude: [
         '**/*.test.ts',

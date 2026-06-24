@@ -1,6 +1,8 @@
 import { applyDelta, emptyState } from '../reducer/reducer';
 import type { GraphState } from '../reducer/reducer';
 import type { Node, Edge, SessionSummary, SseEvent } from '../types';
+import { emptyFilter } from '../filters';
+import type { FilterState } from '../filters';
 import { sessionGraphFrom } from './selectors';
 
 const _graphState: GraphState = $state(emptyState());
@@ -10,6 +12,8 @@ export const edgesById: Record<string, Edge> = _graphState.edges;
 export const sessionsById: Record<string, SessionSummary> = $state({});
 export const selectedNodeId: { value: string | null } = $state({ value: null });
 export const connectionState: { status: 'idle' | 'connecting' | 'open' | 'error' } = $state({ status: 'idle' });
+export const filterState: FilterState = $state(emptyFilter());
+export const filteredNodeIds: { value: Set<string> | null } = $state({ value: null });
 
 export function selectNode(id: string | null): void {
   selectedNodeId.value = id;
@@ -28,4 +32,12 @@ export function sessionGraph(hash: string): { nodes: Node[]; edges: Edge[] } {
 
 export function handleEvent(ev: SseEvent): void {
   applyDelta(_graphState, ev);
+}
+
+export function resetFilter(): void {
+  Object.assign(filterState, emptyFilter());
+}
+
+export function setFilteredNodeIds(ids: Set<string> | null): void {
+  filteredNodeIds.value = ids;
 }
