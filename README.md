@@ -29,9 +29,10 @@ it replays a bundled demo transcript so you see the graph immediately.
 Other useful commands:
 
 ```sh
-catacomb demo    # ingest the bundled demo transcript into a running daemon
-catacomb status  # show addr, pid, uptime, and session/node counts
-catacomb ui      # print the bearer URL and (re-)open the browser
+catacomb demo             # ingest the bundled demo transcript into a running daemon
+catacomb status           # show addr, pid, uptime, and session/node counts
+catacomb ui               # print the bearer URL and (re-)open the browser
+catacomb observe [hash]   # interactive terminal observer (sessions → graph tree → node detail)
 ```
 
 Install from source (`go install github.com/realkarych/catacomb/cmd/catacomb@latest`)
