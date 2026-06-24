@@ -142,8 +142,16 @@ test('stale pill appears on parse error and reflects degraded signal', async ({ 
   await expect(page.locator('.conn-pill')).toContainText('stale');
 });
 
-test('reconnect URL carries since param matching last seen rev', async ({ page }) => {
-  const capturedUrls: string[] = [];
+test('second connect URL carries since param matching last seen rev', async ({ page }) => {
+  const sessionHash2 = 'deadbeef1111deadbeef1111deadbeef';
+
+  await page.route(`/v1/sessions/${sessionHash2}/graph`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: '',
+    });
+  });
 
   await page.addInitScript(() => {
     const urls: string[] = [];
@@ -172,15 +180,27 @@ test('reconnect URL carries since param matching last seen rev', async ({ page }
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
 
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(300);
 
-  const urls: string[] = await page.evaluate(
+  const urlsBefore: string[] = await page.evaluate(
     () => (globalThis as unknown as { _capturedSseUrls: string[] })._capturedSseUrls,
   );
-  capturedUrls.push(...urls);
+  expect(urlsBefore.length).toBeGreaterThanOrEqual(1);
+  expect(urlsBefore[0]).toContain('/v1/subscribe');
+  expect(urlsBefore[0]).toContain('session=');
 
-  expect(capturedUrls.length).toBeGreaterThanOrEqual(1);
-  const firstUrl = capturedUrls[0]!;
-  expect(firstUrl).toContain('/v1/subscribe');
-  expect(firstUrl).toContain('session=');
+  await page.evaluate((hash) => {
+    window.location.hash = `/s/${hash}`;
+  }, sessionHash2);
+
+  await page.waitForTimeout(300);
+
+  const urlsAfter: string[] = await page.evaluate(
+    () => (globalThis as unknown as { _capturedSseUrls: string[] })._capturedSseUrls,
+  );
+
+  expect(urlsAfter.length).toBeGreaterThanOrEqual(2);
+  const secondUrl = urlsAfter[urlsAfter.length - 1]!;
+  expect(secondUrl).toContain('/v1/subscribe');
+  expect(secondUrl).toContain('since=5');
 });

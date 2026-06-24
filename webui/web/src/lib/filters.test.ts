@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { emptyFilter, isActive, filterNodes } from './filters';
-import type { Node } from './types';
+import { emptyFilter, isActive, filterNodes, dimmedEdgeIds } from './filters';
+import type { Node, Edge } from './types';
 
 function makeNode(overrides: Partial<Node> = {}): Node {
   return {
@@ -20,7 +20,6 @@ describe('emptyFilter', () => {
     expect(f.query).toBe('');
     expect(f.statuses).toEqual([]);
     expect(f.types).toEqual([]);
-    expect(f.models).toEqual([]);
     expect(f.hasError).toBe(false);
   });
 });
@@ -46,10 +45,6 @@ describe('isActive', () => {
     expect(isActive({ ...emptyFilter(), types: ['tool_call'] })).toBe(true);
   });
 
-  it('returns true when models is non-empty', () => {
-    expect(isActive({ ...emptyFilter(), models: ['claude-3'] })).toBe(true);
-  });
-
   it('returns true when hasError is true', () => {
     expect(isActive({ ...emptyFilter(), hasError: true })).toBe(true);
   });
@@ -60,8 +55,8 @@ describe('filterNodes', () => {
     makeNode({ id: 'n1', type: 'tool_call', status: 'ok', name: 'BashTool' }),
     makeNode({ id: 'n2', type: 'user_prompt', status: 'error', name: 'User Input' }),
     makeNode({ id: 'n3', type: 'assistant_turn', status: 'running', name: 'Assistant Response' }),
-    makeNode({ id: 'n4', type: 'tool_call', status: 'ok', name: 'ReadFile', attrs: { model_id: 'claude-3' } }),
-    makeNode({ id: 'n5', type: 'session', status: 'ok', name: 'Root', attrs: { model: 'claude-2' } }),
+    makeNode({ id: 'n4', type: 'tool_call', status: 'ok', name: 'ReadFile' }),
+    makeNode({ id: 'n5', type: 'session', status: 'ok', name: 'Root' }),
     makeNode({ id: 'n6', type: 'marker', status: undefined, name: undefined }),
   ];
 
@@ -93,21 +88,6 @@ describe('filterNodes', () => {
   it('filters by multiple types', () => {
     const result = filterNodes(nodes, { ...emptyFilter(), types: ['tool_call', 'session'] });
     expect(result.map((n) => n.id)).toEqual(['n1', 'n4', 'n5']);
-  });
-
-  it('filters by model via attrs.model_id', () => {
-    const result = filterNodes(nodes, { ...emptyFilter(), models: ['claude-3'] });
-    expect(result.map((n) => n.id)).toEqual(['n4']);
-  });
-
-  it('filters by model via attrs.model', () => {
-    const result = filterNodes(nodes, { ...emptyFilter(), models: ['claude-2'] });
-    expect(result.map((n) => n.id)).toEqual(['n5']);
-  });
-
-  it('filters by model — excludes nodes with no model attr', () => {
-    const result = filterNodes(nodes, { ...emptyFilter(), models: ['claude-3', 'claude-2'] });
-    expect(result.map((n) => n.id)).toEqual(['n4', 'n5']);
   });
 
   it('filters by query matching name (case-insensitive)', () => {
@@ -153,5 +133,55 @@ describe('filterNodes', () => {
   it('returns empty array when no nodes match', () => {
     const result = filterNodes(nodes, { ...emptyFilter(), query: 'zzz-no-match' });
     expect(result).toEqual([]);
+  });
+});
+
+describe('dimmedEdgeIds', () => {
+  function makeEdge(id: string, src: string, dst: string): Edge {
+    return { id, run_id: 'r1', type: 'call', src, dst, rev: 1 };
+  }
+
+  const edges: Edge[] = [
+    makeEdge('e1', 'n1', 'n2'),
+    makeEdge('e2', 'n2', 'n3'),
+    makeEdge('e3', 'n3', 'n4'),
+  ];
+
+  it('returns empty set when all endpoints match', () => {
+    const matching = new Set(['n1', 'n2', 'n3', 'n4']);
+    expect(dimmedEdgeIds(edges, matching).size).toBe(0);
+  });
+
+  it('dims edge when src is not matching', () => {
+    const matching = new Set(['n2', 'n3', 'n4']);
+    const dimmed = dimmedEdgeIds(edges, matching);
+    expect(dimmed.has('e1')).toBe(true);
+    expect(dimmed.has('e2')).toBe(false);
+    expect(dimmed.has('e3')).toBe(false);
+  });
+
+  it('dims edge when dst is not matching', () => {
+    const matching = new Set(['n1', 'n2', 'n3']);
+    const dimmed = dimmedEdgeIds(edges, matching);
+    expect(dimmed.has('e3')).toBe(true);
+    expect(dimmed.has('e1')).toBe(false);
+    expect(dimmed.has('e2')).toBe(false);
+  });
+
+  it('dims edge when both endpoints are not matching', () => {
+    const matching = new Set(['n1', 'n2']);
+    const dimmed = dimmedEdgeIds(edges, matching);
+    expect(dimmed.has('e1')).toBe(false);
+    expect(dimmed.has('e2')).toBe(true);
+    expect(dimmed.has('e3')).toBe(true);
+  });
+
+  it('returns empty set for empty edges', () => {
+    expect(dimmedEdgeIds([], new Set(['n1'])).size).toBe(0);
+  });
+
+  it('returns all edges dimmed when matching set is empty', () => {
+    const dimmed = dimmedEdgeIds(edges, new Set());
+    expect(dimmed.size).toBe(edges.length);
   });
 });

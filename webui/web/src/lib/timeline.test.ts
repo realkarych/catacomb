@@ -205,6 +205,27 @@ describe('buildTimeline', () => {
     expect(result.rows[0]?.widthFrac).toBe(0.005);
   });
 
+  it('populates durationMs for timed rows and leaves it undefined for unknown-duration rows', () => {
+    const nodes = [
+      makeNode({
+        id: 'timed',
+        type: 'tool_call',
+        t_start: '2024-06-01T10:00:00.000Z',
+        duration_ms: 1500,
+      }),
+      makeNode({
+        id: 'untimed',
+        type: 'user_prompt',
+        t_start: '2024-06-01T10:00:00.000Z',
+      }),
+    ];
+    const result = buildTimeline(nodes);
+    const timedRow = getRow(result.rows, 'timed');
+    const untimedRow = getRow(result.rows, 'untimed');
+    expect(timedRow.durationMs).toBe(1500);
+    expect(untimedRow.durationMs).toBeUndefined();
+  });
+
   it('uses name as label and falls back to type', () => {
     const nodes = [
       makeNode({

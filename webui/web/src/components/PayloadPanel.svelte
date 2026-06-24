@@ -1,7 +1,16 @@
 <script lang="ts">
   import { fetchNodePayload, ForbiddenError, NotFoundError } from '../lib/api';
-  import { prettyJSON, payloadState } from '../lib/payload-view';
+  import { prettyJSON, payloadState, type PayloadState } from '../lib/payload-view';
   import type { PayloadView } from '../lib/types';
+
+  type DisplayState = 'idle' | 'loading' | 'not-found' | 'error' | PayloadState;
+
+  function computeDisplayState(fs: typeof fetchState, v: PayloadView | null, fb: boolean): DisplayState {
+    if (fs === 'idle' || fs === 'loading') return fs;
+    if (fs === 'not-found') return 'not-found';
+    if (fs === 'error') return 'error';
+    return payloadState(v, fb);
+  }
 
   interface Props {
     hash: string;
@@ -11,41 +20,43 @@
   let { hash, nodeId, token }: Props = $props();
 
   let revealed = $state(false);
-  let loadState: 'idle' | 'loading' | 'forbidden' | 'not-found' | 'error' | 'ok' = $state('idle');
+  let fetchState: 'idle' | 'loading' | 'not-found' | 'error' | 'done' = $state('idle');
   let view: PayloadView | null = $state(null);
   let forbidden = $state(false);
+
+  const displayState = $derived(computeDisplayState(fetchState, view, forbidden));
 
   $effect(() => {
     nodeId;
     revealed = false;
-    loadState = 'idle';
+    fetchState = 'idle';
     view = null;
     forbidden = false;
   });
 
   async function reveal() {
     revealed = true;
-    loadState = 'loading';
+    fetchState = 'loading';
     forbidden = false;
     view = null;
     try {
       view = await fetchNodePayload(hash, nodeId, token);
-      loadState = 'ok';
+      fetchState = 'done';
     } catch (e) {
       if (e instanceof ForbiddenError) {
-        loadState = 'forbidden';
         forbidden = true;
+        fetchState = 'done';
       } else if (e instanceof NotFoundError) {
-        loadState = 'not-found';
+        fetchState = 'not-found';
       } else {
-        loadState = 'error';
+        fetchState = 'error';
       }
     }
   }
 
   function collapse() {
     revealed = false;
-    loadState = 'idle';
+    fetchState = 'idle';
     view = null;
     forbidden = false;
   }
@@ -78,20 +89,20 @@
       </button>
     </div>
 
-    {#if loadState === 'loading'}
+    {#if displayState === 'loading'}
       <div class="payload-loading" role="status" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
         <span class="sr-only">Loading…</span>
       </div>
-    {:else if loadState === 'forbidden'}
+    {:else if displayState === 'disabled'}
       <p class="payload-msg">
         Content viewing is off. Start the daemon with <code class="mono">--allow-payload-access</code> to enable.
       </p>
-    {:else if loadState === 'not-found'}
+    {:else if displayState === 'not-found' || displayState === 'empty'}
       <p class="payload-msg">No stored payload for this node.</p>
-    {:else if loadState === 'error'}
+    {:else if displayState === 'error'}
       <p class="payload-msg payload-msg--error">Failed to load content.</p>
-    {:else if loadState === 'ok' && view}
+    {:else if (displayState === 'redacted' || displayState === 'ready') && view}
       {#if view.redacted}
         <div class="redacted-notice" aria-label="Content was redacted">
           <span class="redacted-badge">redacted</span>

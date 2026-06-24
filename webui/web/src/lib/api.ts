@@ -22,7 +22,7 @@ export async function fetchSessions(token: string, f = fetch): Promise<SessionSu
 }
 
 export async function fetchSessionGraph(hash: string, token: string, f = fetch): Promise<SseEvent[]> {
-  const res = await f(`/v1/sessions/${hash}/graph`, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await f(`/v1/sessions/${encodeURIComponent(hash)}/graph`, { headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 404) throw new NotFoundError(`session ${hash} not found`);
   if (!res.ok) throw new Error(`fetchSessionGraph failed: ${res.status}`);
   return res.json() as Promise<SseEvent[]>;
@@ -34,7 +34,7 @@ export async function fetchNodePayload(
   token: string,
   f = fetch,
 ): Promise<PayloadView> {
-  const res = await f(`/v1/sessions/${hash}/nodes/${nodeId}/payload`, {
+  const res = await f(`/v1/sessions/${encodeURIComponent(hash)}/nodes/${encodeURIComponent(nodeId)}/payload`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (res.status === 403) throw new ForbiddenError('payload access disabled');

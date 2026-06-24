@@ -6,6 +6,7 @@ export interface TimelineRow {
   offsetFrac: number;
   widthFrac: number;
   unknownDuration: boolean;
+  durationMs?: number;
   type: string;
   status?: string;
 }
@@ -39,9 +40,11 @@ export function buildTimeline(nodes: Node[]): TimelineModel {
 
     let widthFrac: number;
     let unknownDuration: boolean;
+    let durationMs: number | undefined;
     if (n.duration_ms !== undefined && n.duration_ms > 0) {
       widthFrac = Math.min(Math.max(n.duration_ms / spanMs, 0.005), 1);
       unknownDuration = false;
+      durationMs = n.duration_ms;
     } else {
       widthFrac = 0.005;
       unknownDuration = true;
@@ -53,6 +56,7 @@ export function buildTimeline(nodes: Node[]): TimelineModel {
       offsetFrac,
       widthFrac,
       unknownDuration,
+      durationMs,
       type: n.type,
       status: n.status,
     };

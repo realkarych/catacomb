@@ -54,6 +54,14 @@ describe('fetchSessionGraph', () => {
     });
   });
 
+  it('encodes hash in URL', async () => {
+    const f = mockFetch(200, []);
+    await fetchSessionGraph('hash/with/slash', 'tok', f);
+    expect(f).toHaveBeenCalledWith('/v1/sessions/hash%2Fwith%2Fslash/graph', {
+      headers: { Authorization: 'Bearer tok' },
+    });
+  });
+
   it('throws NotFoundError on 404', async () => {
     const f = mockFetch(404, null);
     await expect(fetchSessionGraph('hash', 'tok', f)).rejects.toBeInstanceOf(NotFoundError);
@@ -99,6 +107,14 @@ describe('fetchNodePayload', () => {
     expect(result).toEqual(samplePayload);
     expect(f).toHaveBeenCalledWith('/v1/sessions/hash123/nodes/n1/payload', {
       headers: { Authorization: 'Bearer mytoken' },
+    });
+  });
+
+  it('encodes hash and nodeId in URL', async () => {
+    const f = mockFetch(200, samplePayload);
+    await fetchNodePayload('hash/special', 'exec1:tool:p1', 'tok', f);
+    expect(f).toHaveBeenCalledWith('/v1/sessions/hash%2Fspecial/nodes/exec1%3Atool%3Ap1/payload', {
+      headers: { Authorization: 'Bearer tok' },
     });
   });
 

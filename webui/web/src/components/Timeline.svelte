@@ -39,7 +39,7 @@
           data-selected={isSelected ? 'true' : undefined}
           data-filtered-out={isFilteredOut ? 'true' : undefined}
           style={isFilteredOut ? 'opacity: 0.4;' : undefined}
-          aria-label="{row.label} ({row.type}){row.unknownDuration ? ', timing unknown' : ', duration ' + formatDuration(undefined)}"
+          aria-label="{row.label} ({row.type}){row.unknownDuration ? ', timing unknown' : ', duration ' + formatDuration(row.durationMs)}"
           onclick={() => selectNode(row.id)}
         >
           <span class="row-label">{row.label}</span>
