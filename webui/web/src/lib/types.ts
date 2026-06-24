@@ -58,6 +58,9 @@ export interface SessionSummary {
   error_count: number;
   model_id?: string;
   run_ids: string[];
+  counts_by_type?: Record<string, number>;
+  counts_by_status?: Record<string, number>;
+  error_rate?: number;
 }
 
 export interface RedactionFinding {

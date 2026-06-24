@@ -3,6 +3,7 @@
   import GraphCanvas from './GraphCanvas.svelte';
   import NodeDrawer from './NodeDrawer.svelte';
   import Timeline from './Timeline.svelte';
+  import SessionHeader from './SessionHeader.svelte';
   import { sessionGraph } from '../lib/stores/stores.svelte';
   import { buildTimeline } from '../lib/timeline';
 
@@ -59,6 +60,7 @@
       </div>
     {/if}
   </div>
+  <SessionHeader {hash} />
   {#if loadStatus === 'not-found'}
     <div class="not-found-state">
       <div class="not-found-icon" aria-hidden="true">🔍</div>
