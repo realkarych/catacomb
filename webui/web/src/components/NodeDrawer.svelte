@@ -28,19 +28,21 @@
     const closingId = selectedNodeId.value;
     navigateToNode(hash, null);
     if (typeof document === 'undefined') return;
-    const target =
-      (closingId
-        ? document.querySelector<HTMLElement>(
-            `.svelte-flow__node[data-id="${CSS.escape(closingId)}"] [role="button"]`,
-          ) ??
-          document.querySelector<HTMLElement>(
-            `.svelte-flow__node[data-id="${CSS.escape(closingId)}"]`,
-          )
-        : null) ??
-      document.querySelector<HTMLElement>('[role="application"][aria-label="Session graph"]');
-    if (target && target.isConnected) {
-      target.focus();
-    }
+    setTimeout(() => {
+      const target =
+        (closingId
+          ? document.querySelector<HTMLElement>(
+              `.svelte-flow__node[data-id="${CSS.escape(closingId)}"] [role="button"]`,
+            ) ??
+            document.querySelector<HTMLElement>(
+              `.svelte-flow__node[data-id="${CSS.escape(closingId)}"]`,
+            )
+          : null) ??
+        document.querySelector<HTMLElement>('[role="application"][aria-label="Session graph"]');
+      if (target && target.isConnected) {
+        target.focus();
+      }
+    }, 350);
   }
 
   function getFocusables(): HTMLElement[] {

@@ -23,6 +23,7 @@
   let prevHadNode = false;
   let viewMode: 'graph' | 'timeline' = $state('graph');
   let drawerFocusOnOpen = $state(false);
+  let canvasWrapEl: HTMLDivElement | undefined = $state();
 
   const graph = $derived(sessionGraph(hash));
   const hasTimingData = $derived(buildTimeline(graph.nodes).rows.length > 0);
@@ -57,7 +58,7 @@
     ArrowDown: 'down',
   };
 
-  function onGraphAreaKeydown(e: KeyboardEvent) {
+  function onWindowArrowKeydown(e: KeyboardEvent) {
     const dir = arrowDirMap[e.key];
     if (!dir) return;
     const target = e.target as HTMLElement | null;
@@ -66,19 +67,39 @@
     if (
       tag === 'input' ||
       tag === 'textarea' ||
+      tag === 'select' ||
       target.getAttribute('role') === 'searchbox' ||
       target.isContentEditable
     ) {
       return;
     }
+    if (target.closest('[role="complementary"]')) return;
     e.preventDefault();
     const g = sessionGraph(hash);
     const next = nextNodeByDirection(selectedNodeId.value, g.nodes, g.edges, dir);
     if (next !== null) {
       drawerFocusOnOpen = false;
       navigateToNode(hash, next);
+      const targetId = next;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const btn = document.querySelector<HTMLElement>(
+            `.svelte-flow__node[data-id="${CSS.escape(targetId)}"] [role="button"]`
+          ) ?? document.querySelector<HTMLElement>(
+            `.svelte-flow__node[data-id="${CSS.escape(targetId)}"]`
+          ) ?? canvasWrapEl ?? null;
+          if (btn && btn.isConnected) btn.focus();
+        });
+      });
     }
   }
+
+  $effect(() => {
+    window.addEventListener('keydown', onWindowArrowKeydown);
+    return () => {
+      window.removeEventListener('keydown', onWindowArrowKeydown);
+    };
+  });
 
   function onNodeActivate() {
     drawerFocusOnOpen = true;
@@ -121,8 +142,8 @@
       <button class="back-link" onclick={goBack}>← Back to sessions</button>
     </div>
   {:else}
-    <div class="graph-area" onkeydown={onGraphAreaKeydown} role="presentation">
-      <div class="canvas-wrap">
+    <div class="graph-area" role="presentation">
+      <div class="canvas-wrap" tabindex={-1} bind:this={canvasWrapEl}>
         {#if viewMode === 'timeline'}
           <Timeline {hash} />
         {:else}
