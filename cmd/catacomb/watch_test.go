@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -45,6 +47,19 @@ func TestRunWatchPrintsEvents(t *testing.T) {
 func TestRunWatchDiscoveryError(t *testing.T) {
 	err := runWatch(context.Background(), "/no/such/path.json", "", nil, nil, http.DefaultClient, io.Discard)
 	require.Error(t, err)
+}
+
+func TestRunWatchDiscoveryNotFoundReturnsErrNoDaemon(t *testing.T) {
+	err := runWatch(context.Background(), t.TempDir()+"/missing.json", "", nil, nil, http.DefaultClient, io.Discard)
+	assert.True(t, errors.Is(err, ErrNoDaemon))
+}
+
+func TestRunWatchDiscoveryParseError(t *testing.T) {
+	disc := t.TempDir() + "/bad.json"
+	require.NoError(t, os.WriteFile(disc, []byte("{not json}"), 0o600))
+	err := runWatch(context.Background(), disc, "", nil, nil, http.DefaultClient, io.Discard)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNoDaemon))
 }
 
 func TestRunWatchHTTPError(t *testing.T) {

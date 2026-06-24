@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -62,6 +63,19 @@ func TestRunUINoOpen(t *testing.T) {
 func TestRunUIDiscoveryError(t *testing.T) {
 	err := runUI("/no/such/path.json", false, io.Discard)
 	require.Error(t, err)
+}
+
+func TestRunUIDiscoveryNotFoundReturnsErrNoDaemon(t *testing.T) {
+	err := runUI(t.TempDir()+"/missing.json", false, io.Discard)
+	assert.True(t, errors.Is(err, ErrNoDaemon))
+}
+
+func TestRunUIDiscoveryParseError(t *testing.T) {
+	disc := t.TempDir() + "/bad.json"
+	require.NoError(t, os.WriteFile(disc, []byte("{not json}"), 0o600))
+	err := runUI(disc, false, io.Discard)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNoDaemon))
 }
 
 func TestRunUIOpenError(t *testing.T) {

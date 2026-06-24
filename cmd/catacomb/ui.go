@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -49,6 +51,9 @@ func newUICmd() *cobra.Command {
 func runUI(discoveryPath string, noOpen bool, out io.Writer) error {
 	disc, err := daemon.ReadDiscovery(discoveryPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNoDaemon
+		}
 		return err
 	}
 	u := &url.URL{
