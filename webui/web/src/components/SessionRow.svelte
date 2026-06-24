@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SessionSummary } from '../lib/types';
-  import { formatDuration, formatTokens, formatCost, shortHash } from '../lib/format/format';
+  import { formatDuration, formatTokens, formatCost, shortHash, formatDate } from '../lib/format/format';
   import { toHash } from '../lib/router';
   import StatusPill from './StatusPill.svelte';
 
@@ -30,6 +30,7 @@
 >
   <td class="cell cell-hash mono">{shortHash(session.session, 12)}</td>
   <td class="cell cell-status"><StatusPill status={session.status} /></td>
+  <td class="cell cell-num">{formatDate(session.started_at)}</td>
   <td class="cell cell-num">{formatDuration(session.duration_ms)}</td>
   <td class="cell cell-num">{formatTokens(session.tokens_in)} / {formatTokens(session.tokens_out)}</td>
   <td class="cell cell-cost">

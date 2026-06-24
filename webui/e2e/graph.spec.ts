@@ -177,3 +177,14 @@ test('empty session shows waiting state', async ({ page }) => {
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
   await expect(page.locator('.empty-state-headline')).toContainText('Waiting');
 });
+
+test('unknown session hash shows session not found state', async ({ page }) => {
+  const unknownHash = 'ffff0000ffff0000ffff0000ffff0000';
+  await page.route(`/v1/sessions/${unknownHash}/graph`, async (route) => {
+    await route.fulfill({ status: 404, body: 'not found' });
+  });
+  await page.goto(`/?token=test#/s/${unknownHash}`);
+  await expect(page.locator('.session-view')).toBeVisible();
+  await expect(page.locator('.not-found-headline')).toContainText('Session not found');
+  await expect(page.locator('.empty-state-headline')).toHaveCount(0);
+});

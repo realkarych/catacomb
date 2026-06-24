@@ -91,6 +91,20 @@ func TestUserPromptAndAssistantTurn(t *testing.T) {
 	assert.Equal(t, int64(5), *turnNode.TokensOut)
 }
 
+func TestAssistantTurnModelAttr(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	turn := ob("assistant_turn", "", t0)
+	turn.Correlation.MessageID = "msg_2"
+	turn.Attrs = map[string]any{"model": "claude-opus-4-8", "tokens_in": int64(10), "tokens_out": int64(5)}
+
+	g := NewGraph()
+	g.Apply(turn)
+
+	turnNode := g.Nodes[model.AssistantTurnID(execID, "msg_2")]
+	require.NotNil(t, turnNode)
+	assert.Equal(t, "claude-opus-4-8", turnNode.Attrs["model"])
+}
+
 func TestApplyUnknownKind(t *testing.T) {
 	g := NewGraph()
 	g.Apply(ob("mystery", "", time.Unix(0, 0).UTC()))

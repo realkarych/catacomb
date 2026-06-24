@@ -55,6 +55,12 @@ func (g *Graph) Apply(o model.Observation) {
 		if g.applyTokens(n, o.Attrs, o.Source) {
 			g.applyCost(n, o.Attrs)
 		}
+		if m, ok := o.Attrs["model"].(string); ok && m != "" {
+			if n.Attrs == nil {
+				n.Attrs = map[string]any{}
+			}
+			n.Attrs["model"] = m
+		}
 		g.emitNode(n, o)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)

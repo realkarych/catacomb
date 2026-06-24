@@ -30,3 +30,10 @@ export function shortHash(h?: string, n = 8): string {
   if (!h) return '—';
   return h.slice(0, n);
 }
+
+export function formatDate(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}

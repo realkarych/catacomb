@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDuration, formatTokens, formatCost, shortHash } from './format';
+import { formatDuration, formatTokens, formatCost, shortHash, formatDate } from './format';
 
 describe('formatDuration', () => {
   it('returns em dash when undefined', () => {
@@ -142,5 +142,22 @@ describe('shortHash', () => {
 
   it('returns full string when custom n exceeds length', () => {
     expect(shortHash('abc', 10)).toBe('abc');
+  });
+});
+
+describe('formatDate', () => {
+  it('returns em dash when undefined', () => {
+    expect(formatDate(undefined)).toBe('—');
+  });
+
+  it('returns em dash for invalid date string', () => {
+    expect(formatDate('not-a-date')).toBe('—');
+  });
+
+  it('returns a formatted date string for a valid ISO timestamp', () => {
+    const result = formatDate('2026-06-20T10:00:01Z');
+    expect(result).not.toBe('—');
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
   });
 });

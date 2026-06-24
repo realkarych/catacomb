@@ -11,9 +11,10 @@
 
   interface Props {
     hash: string;
+    refit?: number;
   }
 
-  let { hash }: Props = $props();
+  let { hash, refit = 0 }: Props = $props();
 
   const nodeTypes: NodeTypes = { default: GraphNode as never };
 
@@ -67,6 +68,12 @@
   $effect(() => {
     const _hash = hash;
     void _hash;
+    pendingFitView = true;
+  });
+
+  $effect(() => {
+    const _refit = refit;
+    void _refit;
     pendingFitView = true;
   });
 

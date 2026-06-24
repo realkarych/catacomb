@@ -127,6 +127,7 @@
           <tr>
             <th class="th" scope="col">Session</th>
             <th class="th" scope="col">Status</th>
+            <th class="th th-num" scope="col">Started</th>
             <th class="th th-num" scope="col">Duration</th>
             <th class="th th-num" scope="col">Tokens in/out</th>
             <th class="th th-num" scope="col">Cost</th>

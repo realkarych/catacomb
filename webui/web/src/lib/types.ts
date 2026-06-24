@@ -8,7 +8,6 @@ export interface SseEvent {
   node?: Node;
   edge?: Edge;
   old_id?: string;
-  new_id?: string;
 }
 
 export interface Node {

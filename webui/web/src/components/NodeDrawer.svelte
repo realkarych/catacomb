@@ -157,20 +157,15 @@
 
 <style>
   .node-drawer {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 360px;
-    z-index: 10;
+    width: 0;
+    flex-shrink: 0;
     background: var(--surface);
-    border-left: 1px solid var(--border);
-    transform: translateX(100%);
-    transition: transform 0.2s ease, visibility 0s linear 0.2s;
-    visibility: hidden;
+    border-left: none;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    transition: width 0.2s ease;
+    visibility: hidden;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -180,9 +175,15 @@
   }
 
   .node-drawer--open {
-    transform: translateX(0);
+    width: 360px;
+    border-left: 1px solid var(--border);
     visibility: visible;
-    transition: transform 0.2s ease, visibility 0s linear 0s;
+  }
+
+  @media (max-width: 700px) {
+    .node-drawer--open {
+      width: 100%;
+    }
   }
 
   .drawer-inner {

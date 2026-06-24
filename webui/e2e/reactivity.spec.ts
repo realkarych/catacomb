@@ -216,3 +216,54 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer and lights the node on load',
   await expect(drawer.locator('.metric-row')).toHaveCount(5);
   await expect(page.locator('.graph-node--selected')).toHaveCount(1);
 });
+
+test('node navigation within a session does not reconnect SSE', async ({ page }) => {
+  let constructionCount = 0;
+  await page.addInitScript(
+    ([topology]) => {
+      let count = 0;
+      class CountingEventSource {
+        onopen: ((ev: unknown) => void) | null = null;
+        onerror: ((ev: unknown) => void) | null = null;
+        onmessage: ((ev: { data: string }) => void) | null = null;
+        constructor(_url: string) {
+          count += 1;
+          (globalThis as unknown as { _sseCount: number })._sseCount = count;
+          setTimeout(() => {
+            this.onopen?.({});
+            for (const ev of topology as unknown[]) {
+              this.onmessage?.({ data: JSON.stringify(ev) });
+            }
+          }, 0);
+        }
+        close() {}
+      }
+      (globalThis as unknown as { EventSource: unknown }).EventSource = CountingEventSource as unknown;
+    },
+    [topologyEvents] as const,
+  );
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+
+  constructionCount = await page.evaluate(() => (globalThis as unknown as { _sseCount: number })._sseCount ?? 0);
+  expect(constructionCount).toBe(1);
+
+  const turn = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
+  await turn.click();
+  await expect(page).toHaveURL(new RegExp(`#/s/${sessionHash}/n/${turnId}`));
+  constructionCount = await page.evaluate(() => (globalThis as unknown as { _sseCount: number })._sseCount ?? 0);
+  expect(constructionCount).toBe(1);
+
+  const sessionNode = page.locator('.svelte-flow__node').filter({ hasText: 'Session Root' });
+  await sessionNode.click();
+  await expect(page).toHaveURL(new RegExp(`#/s/${sessionHash}/n/session-root`));
+  constructionCount = await page.evaluate(() => (globalThis as unknown as { _sseCount: number })._sseCount ?? 0);
+  expect(constructionCount).toBe(1);
+
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(new RegExp(`#/s/${sessionHash}$`));
+
+  constructionCount = await page.evaluate(() => (globalThis as unknown as { _sseCount: number })._sseCount ?? 0);
+  expect(constructionCount).toBe(1);
+});

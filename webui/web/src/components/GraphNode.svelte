@@ -73,7 +73,7 @@
     ></span>
   </div>
 
-  <div class="graph-node-id mono">{shortHash(id)}</div>
+  <div class="graph-node-id mono">{id.startsWith('session:') ? shortHash(id.slice(8) || id) : shortHash(id)}</div>
 
   {#if catNode.tokens_in !== undefined || catNode.tokens_out !== undefined}
     <div class="graph-node-tokens">

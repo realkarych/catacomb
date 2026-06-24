@@ -1,7 +1,7 @@
 <script lang="ts">
   import { connectionState, handleEvent, upsertSession, selectNode } from './lib/stores/stores.svelte';
   import { connect } from './lib/sse/client';
-  import { fetchSessions } from './lib/api';
+  import { fetchSessions, fetchSessionGraph, NotFoundError } from './lib/api';
   import { parseHash } from './lib/router';
   import type { Route } from './lib/router';
   import SessionsList from './components/SessionsList.svelte';
@@ -9,7 +9,9 @@
 
   const token = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('token') ?? '';
 
-  let route: Route = $state(parseHash(typeof window !== 'undefined' ? window.location.hash : ''));
+  const initialHash = typeof window !== 'undefined' ? window.location.hash : '';
+  const initialRoute = parseHash(initialHash);
+  let route: Route = $state(initialRoute);
 
   $effect(() => {
     if (typeof window === 'undefined') return;
@@ -20,13 +22,6 @@
     return () => window.removeEventListener('hashchange', onHashChange);
   });
 
-  // Route is the single source of truth for node selection. Deriving selection
-  // from the route (rather than only setting it imperatively on click) makes
-  // deep-links (#/s/{hash}/n/{id}) and browser back/forward open and close the
-  // drawer correctly. This reads `route` and writes `selectedNodeId` (a
-  // different store), so it cannot self-retrigger; click/close handlers update
-  // the hash → route, which flows back here, keeping route and selection in sync
-  // without a route↔selection write cycle.
   $effect(() => {
     selectNode(route.kind === 'session-node' ? route.nodeId : null);
   });
@@ -39,16 +34,48 @@
     }).catch(() => {});
   });
 
+  const _initSSEHash = initialRoute.kind !== 'list' ? initialRoute.hash : '';
+  let connectedHash = $state(_initSSEHash);
+
+  $effect(() => {
+    connectedHash = route.kind !== 'list' ? route.hash : '';
+  });
+
   $effect(() => {
     if (!token) return;
-    const sessionHash = route.kind !== 'list' ? route.hash : '';
     const conn = connect({
-      session: sessionHash,
+      session: connectedHash,
       token,
       onStatus: (s) => { connectionState.status = s; },
       onEvent: handleEvent,
     });
     return () => conn.close();
+  });
+
+  type SessionLoadStatus = 'idle' | 'loading' | 'ok' | 'not-found' | 'error';
+  let sessionLoadStatus: SessionLoadStatus = $state('idle');
+
+  $effect(() => {
+    const hash = connectedHash;
+    if (!hash || !token) {
+      sessionLoadStatus = 'idle';
+      return;
+    }
+    sessionLoadStatus = 'loading';
+    fetchSessionGraph(hash, token)
+      .then((events) => {
+        for (const ev of events) {
+          handleEvent(ev);
+        }
+        sessionLoadStatus = 'ok';
+      })
+      .catch((err) => {
+        if (err instanceof NotFoundError) {
+          sessionLoadStatus = 'not-found';
+        } else {
+          sessionLoadStatus = 'error';
+        }
+      });
   });
 
   const statusLabel: Record<string, string> = {
@@ -74,9 +101,9 @@
     {#if route.kind === 'list'}
       <SessionsList {token} />
     {:else if route.kind === 'session'}
-      <SessionView hash={route.hash} />
+      <SessionView hash={route.hash} loadStatus={sessionLoadStatus} />
     {:else if route.kind === 'session-node'}
-      <SessionView hash={route.hash} nodeId={route.nodeId} />
+      <SessionView hash={route.hash} nodeId={route.nodeId} loadStatus={sessionLoadStatus} />
     {/if}
   </main>
 </div>

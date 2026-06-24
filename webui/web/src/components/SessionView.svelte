@@ -6,8 +6,20 @@
   interface Props {
     hash: string;
     nodeId?: string;
+    loadStatus?: string;
   }
-  let { hash, nodeId }: Props = $props();
+  let { hash, nodeId, loadStatus = 'idle' }: Props = $props();
+
+  let fitKey = $state(0);
+  let prevHadNode = false;
+
+  $effect(() => {
+    const hasNode = !!nodeId;
+    if (hasNode !== prevHadNode) {
+      prevHadNode = hasNode;
+      fitKey += 1;
+    }
+  });
 
   function goBack() {
     window.location.hash = toHash({ kind: 'list' });
@@ -24,10 +36,21 @@
       <span class="node-id-label">Node: <span class="mono">{nodeId}</span></span>
     {/if}
   </div>
-  <div class="graph-area">
-    <GraphCanvas {hash} />
-    <NodeDrawer {hash} />
-  </div>
+  {#if loadStatus === 'not-found'}
+    <div class="not-found-state">
+      <div class="not-found-icon" aria-hidden="true">🔍</div>
+      <p class="not-found-headline">Session not found</p>
+      <p class="not-found-hint">No session with hash <span class="mono">{hash}</span></p>
+      <button class="back-link" onclick={goBack}>← Back to sessions</button>
+    </div>
+  {:else}
+    <div class="graph-area">
+      <div class="canvas-wrap">
+        <GraphCanvas {hash} refit={fitKey} />
+      </div>
+      <NodeDrawer {hash} />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -85,7 +108,62 @@
   .graph-area {
     flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  .canvas-wrap {
+    flex: 1;
+    min-width: 0;
     position: relative;
     overflow: hidden;
+  }
+
+  .not-found-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s3);
+    color: var(--text-faint);
+  }
+
+  .not-found-icon {
+    font-size: 2rem;
+  }
+
+  .not-found-headline {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text-dim);
+    margin: 0;
+  }
+
+  .not-found-hint {
+    font-size: var(--text-sm);
+    margin: 0;
+  }
+
+  .back-link {
+    font-size: var(--text-sm);
+    font-family: var(--font-ui);
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: var(--s1) var(--s3);
+    cursor: pointer;
+    transition: opacity 0.12s;
+  }
+
+  .back-link:hover {
+    opacity: 0.8;
+  }
+
+  .back-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 </style>
