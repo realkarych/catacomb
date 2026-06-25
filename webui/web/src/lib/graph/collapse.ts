@@ -9,18 +9,6 @@ function hasChildren(hierarchy: Hierarchy, id: string): boolean {
   return hierarchy.childrenOf(id).length > 0;
 }
 
-export function defaultCollapsed(
-  nodes: Node[],
-  hierarchy: Hierarchy,
-  predicate: CollapsePredicate = DEFAULT_COLLAPSE,
-): Set<string> {
-  const out = new Set<string>();
-  for (const node of nodes) {
-    if (predicate(node) && hasChildren(hierarchy, node.id)) out.add(node.id);
-  }
-  return out;
-}
-
 export function visibleNodeIds(
   nodes: Node[],
   hierarchy: Hierarchy,

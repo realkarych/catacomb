@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_COLLAPSE,
-  defaultCollapsed,
   visibleNodeIds,
   toggle,
   collapseAll,
@@ -48,25 +47,6 @@ describe('DEFAULT_COLLAPSE predicate', () => {
   });
 });
 
-describe('defaultCollapsed', () => {
-  it('collapses assistant_turn and subagent that have children', () => {
-    const { nodes, h } = sessionFixture();
-    expect(defaultCollapsed(nodes, h)).toEqual(new Set(['at', 'sub']));
-  });
-
-  it('does not collapse a predicate-matching node with no children', () => {
-    const nodes = [n('s', 'session'), n('at', 'assistant_turn')];
-    const edges = [e('e1', 's', 'at')];
-    const h = buildHierarchy(nodes, edges);
-    expect(defaultCollapsed(nodes, h)).toEqual(new Set<string>());
-  });
-
-  it('honours a swapped predicate', () => {
-    const { nodes, h } = sessionFixture();
-    const onlyUser = (node: Node) => node.type === 'user_prompt';
-    expect(defaultCollapsed(nodes, h, onlyUser)).toEqual(new Set(['u']));
-  });
-});
 
 describe('visibleNodeIds', () => {
   it('with nothing collapsed every node is visible', () => {
@@ -95,7 +75,8 @@ describe('visibleNodeIds', () => {
 
   it('default policy yields the spine (session, prompt, turn, top-level subagent)', () => {
     const { nodes, h } = sessionFixture();
-    const vis = visibleNodeIds(nodes, h, defaultCollapsed(nodes, h));
+    const collapsed = new Set(nodes.filter((nd) => DEFAULT_COLLAPSE(nd) && h.childrenOf(nd.id).length > 0).map((nd) => nd.id));
+    const vis = visibleNodeIds(nodes, h, collapsed);
     expect([...vis].sort()).toEqual(['at', 's', 'sub', 'u']);
   });
 });
