@@ -82,7 +82,7 @@ Binding on every task; each task's steps re-verify them.
 | `daemon/server.go` | Modify | Register `POST /v1/transcript` → `d.authed(token, d.handleTranscript)`. |
 | `daemon/server_test.go` | Modify | Route registration + bearer-gating (401 without token) for `/v1/transcript`. |
 | `README.md` | Modify | Replace the `make`-only "Development" lede for users with a **Quickstart** block: `catacomb up` (one line), what it does, `catacomb demo`, `catacomb status`; keep the `make` block under Development. |
-| `webui/web/src/lib/theme.ts` | Create | Pure theme resolver: `resolveTheme(stored, osPrefersLight) -> 'dark' | 'light'`; `nextTheme(current) -> ...`; storage key constant. **Gated 100%.** |
+| `webui/web/src/lib/theme.ts` | Create | Pure theme resolver: `resolveTheme(stored, osPrefersLight) -> 'dark' \| 'light'`; `nextTheme(current) -> ...`; storage key constant. **Gated 100%.** |
 | `webui/web/src/lib/theme.test.ts` | Create | 100% branches: stored override wins; absent stored → OS; toggle cycles; invalid stored → default dark. |
 | `webui/web/style.css` | Modify | Add `[data-theme='light']` token block + `@media (prefers-color-scheme: light)` scoped override; bump `--text-faint` for contrast (both themes). Dark `:root` default unchanged. |
 | `webui/web/src/lib/stores/theme.svelte.ts` | Create | Thin runes wiring: `$state` current theme, init from `localStorage` + `matchMedia` (seam), `toggleTheme()` persists + sets `document.documentElement.dataset.theme`. NOT gated. |
@@ -196,6 +196,7 @@ Recommended sequence (each a commit): **D-be1 → D-cli1 → D-cli2 → D-cli4 (
 **Behavior (pin):** mirror `handleStreamJSON` (`daemon/server.go`): `bufio.Scanner` with `sc.Buffer(make([]byte,0,1MiB), 16MiB)`, `defer recover()` logging, skip blank lines, copy each line, derive `sessionID` from the line (`streamSessionID` reads `session_id`; transcript lines use `sessionId` — pin: add a small `transcriptSessionID(line)` reading `sessionId` per the Claude Code shape), `_ = d.IngestTranscript(buf, sessionID)`, always `200`. `d.IngestTranscript` already exists (`daemon/daemon.go`) and quarantines on error — no new error surface.
 
 **Steps:**
+
 - [ ] **Step 1: Branch.** `cd /Users/karych/src/catacomb && git checkout -b feat/m-d-onboarding-polish`
 - [ ] **Step 2: Write failing `daemon/transcript_test.go`** — `httptest.NewServer(d.Handler("tok"))`, POST the demo-shape lines with the bearer header, assert via `GET /v1/sessions` (or the in-memory graph) that the demo session appears with nodes; a panic-injecting line is recovered; a scan error is logged not fatal; 401 without token. Reuse `tempStore`/`ob(...)` helpers from `daemon/*_test.go`.
 - [ ] **Step 3: Run — expect FAIL.** `go test ./daemon/ -run Transcript 2>&1 | head`
@@ -213,6 +214,7 @@ Recommended sequence (each a commit): **D-be1 → D-cli1 → D-cli2 → D-cli4 (
 **Interfaces:** the pinned `Discovery` additions (`Pid`, `StartedAt`). In `runDaemonWith`, populate `disc.Pid = os.Getpid()` and `disc.StartedAt = nowFn().UTC().Format(time.RFC3339)` before `WriteDiscovery`. (`nowFn` already exists in `daemon`; in `cmd` use `time.Now()` wrapped behind a small package `var nowFn = time.Now` if a test needs determinism — pin: add `var nowFn = time.Now` in `cmd/catacomb` for `status`/`daemon` time, reset in tests, consistent with `daemon`'s pattern.)
 
 **Steps:**
+
 - [ ] **Step 1: Write failing tests** — `daemon/discovery_test.go` round-trips `Pid`/`StartedAt`; `cmd/catacomb/daemon_test.go` asserts the written discovery (read back after `runDaemonWith` starts) has non-zero `Pid` and a `time.Parse(time.RFC3339, StartedAt)`-able value.
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement** the struct fields + the writes in `runDaemonWith`.
@@ -231,6 +233,7 @@ Recommended sequence (each a commit): **D-be1 → D-cli1 → D-cli2 → D-cli4 (
 **Notes for implementer:** the sentinels' `Error()` strings are the contract — each ENDS in the exact command (`catacomb up` / `catacomb install-hooks` / `catacomb ui`). Do **not** add trailing punctuation after the command. `up`/`status`/`demo` call `renderErr` when printing a failure (or return the sentinel so the root's error printer shows it). Since `root.go` sets `SilenceErrors: true`, the commands print their own error via `cmd.PrintErrln(renderErr(err))` and return the sentinel — pin: commands `return` the sentinel (for `errors.Is` testability) **and** the top-level `main`/root prints `renderErr`. Simplest: a thin wrapper in each `RunE` that maps+prints+returns.
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `errors_test.go`** — each sentinel string `strings.HasSuffix` the command; `errors.Is(fmt.Errorf("x: %w", ErrNoDaemon), ErrNoDaemon)`; `renderErr` table: not-exist→up, refused→unreachable, 401→restarted, generic→passthrough.
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement** `errors.go`.
@@ -251,6 +254,7 @@ Recommended sequence (each a commit): **D-be1 → D-cli1 → D-cli2 → D-cli4 (
 **Notes for implementer:** `demo` is a thin client; all logic that matters (the transcript + the POST) is seam-injected, so `demo_test.go` runs against an `httptest` daemon (real `d.Handler("tok")`) and asserts the session is queryable — **no real daemon process**. No-daemon (discovery missing) → `ErrNoDaemon` via `renderErr`. The embedded asset uses the only-allowed `//go:embed` comment.
 
 **Steps:**
+
 - [ ] **Step 1: Author `cmd/catacomb/testdata/demo.jsonl`** (the rich transcript) and verify it parses: a quick `go test ./ingest/jsonl/` style check or a temporary `ParseReader` assertion in the demo test.
 - [ ] **Step 2: Write failing `demo_test.go`** — spin `httptest.NewServer(d.Handler("tok"))`, write a discovery file pointing at it, run `runDemo`, assert (via `GET /v1/sessions` or `d` introspection) that `demo-0001` exists with the expected node kinds (subagent, tool, mcp, an error). Cases: no discovery → `ErrNoDaemon`; HTTP non-2xx → error surfaced; deep-link printed with the stable hash.
 - [ ] **Step 3: Run — expect FAIL.**
@@ -279,6 +283,7 @@ nodes        47
 **Notes for implementer:** if `readDiscovery` fails with not-exist → `ErrNoDaemon` (via `renderErr`). If the sessions fetch fails (daemon dead but stale discovery) → still print addr/pid/uptime/token-age and show `sessions`/`nodes` as `unavailable` (graceful partial — silence-when-broken is wrong here; the user needs the partial truth). A 401 from `/v1/sessions` → `ErrDaemonRestarted`. `fetchSessions` is seam-injected; tests use an `httptest` daemon (real `d.Handler`) or a fake returning summaries — no real daemon. Uptime/token-age formatting reuses a duration humanizer (a tiny pure helper, or `time.Duration.Truncate(time.Second).String()`).
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `status_test.go`** — fake discovery (addr/pid/started_at=now-12m) + fake/`httptest` sessions → assert the rendered block has addr/pid/uptime≈12m/token-age≈12m/sessions=N/nodes=Σ. Cases: missing discovery → `ErrNoDaemon`; sessions fetch error → partial block with `unavailable`; 401 → `ErrDaemonRestarted`.
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement** `status.go`.
@@ -300,6 +305,7 @@ nodes        47
 4. Live-session fallback: if `!deps.noDemo`, `n, _ := deps.sessionCount(ctx, disc)`; if `n == 0`, wait on `deps.after(waitSeconds)` then re-check `sessionCount`; if still `0`, print "No live session detected — replaying a demo. (catacomb demo to replay)" and `deps.replayDemo(ctx, disc)`. (Pin: the offer is **non-interactive by default** — it just replays the demo and tells the user, because an interactive prompt is hard to test and the owner wants a populated UI on first run; a `--no-demo` flag opts out. Document this choice.)
 
 **The production `upDeps` builder (in `RunE`):**
+
 - `startDaemon` = `func() error { exe,_ := osExecutable(); c := execCommand(exe, "daemon", "--db", db, "--transcript-dir", ...optional...); c.Stdout/Stderr = logfile; return startCmd(c) }` — **`startCmd` (Start, not Wait)** so it detaches; reuse the existing `startCmd`/`execCommand`/`osExecutable` seams.
 - `pollHealthz` = bounded `http.Get(addr+"/healthz")` loop using `deps.after` between attempts (NOT `time.Sleep`).
 - `sessionCount` = the same `/v1/sessions` fetch `status` uses.
@@ -307,6 +313,7 @@ nodes        47
 - `after = time.After`.
 
 **Notes for implementer (THE testability crux — Gaps/Risks #1):** `runUp` touches **only** `deps.*` and `out` — never `exec`, `http`, `time.Sleep`, or a browser directly. `up_test.go` builds `upDeps` entirely from fakes and drives the timeout via the injected `after` channel:
+
 - *daemon already running:* `readDiscovery` ok + `pollHealthz` ok → assert `startDaemon` NOT called.
 - *not running:* `readDiscovery` not-exist (first call) → `startDaemon` called → second `readDiscovery` ok → `pollHealthz` ok.
 - *healthz never comes up:* `pollHealthz` returns error → `ErrDaemonUnreachable`.
@@ -316,6 +323,7 @@ nodes        47
 Every seam error path is its own case. No goroutine races on wall-clock — the test closes the `after` channel to advance "time".
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `up_test.go`** — the full case matrix above, all via fake `upDeps`. Add a `newUpCmd` smoke test (flags `--no-open`/`--no-demo` registered; `RunE` builds prod deps — exercise the builder with seam swaps for `execCommand`/`startCmd`/`openBrowser` so the prod path is covered without a real daemon, mirroring `ui_test.go`'s `startCmd` swap).
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement** `up.go` (`runUp` + `upDeps` + `newUpCmd` + the prod builder).
@@ -334,6 +342,7 @@ Every seam error path is its own case. No goroutine races on wall-clock — the 
 **Notes for implementer:** set `GroupID` where each `newXCmd()` is constructed OR right after `AddCommand` in `root.go` (pin: set it in `root.go` after each `AddCommand`, keeping the per-command constructors group-agnostic and the mapping in one readable place). Cobra renders ungrouped commands under "Additional Commands" — assigning all of them keeps help clean.
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `root_test.go`** — `newRootCmd()` then assert: the three groups present (`root.Groups()` IDs/titles); **every** `root.Commands()` entry has a non-empty `GroupID` that is one of the three; `up`/`demo`/`status` are registered. (Optionally snapshot `root.UsageString()` contains the three titles.)
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement** groups + `GroupID` assignment in `root.go`.
@@ -366,6 +375,7 @@ is never empty.
 Keep the existing `make` block under **Development** (it is for contributors). Do not over-document; mirror the terse house style.
 
 **Steps:**
+
 - [ ] **Step 1: Edit `README.md`** — add the Quickstart block; keep Development. (No Go test; the repo's `lint-docs` job covers markdown.)
 - [ ] **Step 2: Verify** `make lint` / the docs lint job is happy locally if runnable.
 - [ ] **Step 3: Commit** `docs: README quickstart (catacomb up / demo / status)`.
@@ -392,6 +402,7 @@ export function nextTheme(current: Theme): Theme;
 **Rules (pin):** `resolveTheme` — a valid stored `'dark'|'light'` wins; else `osPrefersLight ? 'light' : 'dark'`; invalid/absent stored + no OS signal → `'dark'` (the firm default). `nextTheme` toggles. Pure, no DOM. This is the only line-gated theme code (§spec §10 Q6 / prompt's "theme-resolve helper").
 
 **Steps:**
+
 - [ ] Write failing `theme.test.ts` (stored dark/light wins; null+OS-light→light; null+OS-dark→dark; garbage stored→dark; `nextTheme` cycles). Implement `theme.ts`. 100% gate. Add to `vitest.config.ts` include.
 - [ ] Commit `feat(webui): pure theme resolver (OS-aware, persisted-override)`.
 
@@ -400,6 +411,7 @@ export function nextTheme(current: Theme): Theme;
 **Files:** Modify `webui/web/style.css`; create `webui/web/src/lib/stores/theme.svelte.ts`, `webui/web/src/components/ThemeToggle.svelte`; modify `webui/web/src/App.svelte`. (Depends on D-fe1.)
 
 **CSS (pin):** add, after the `:root` dark block (which stays the default):
+
 - `@media (prefers-color-scheme: light) { :root:not([data-theme='dark']) { /* light token overrides */ } }` — OS-respecting default.
 - `[data-theme='light'] { /* same light token overrides */ }` — explicit override.
 - `[data-theme='dark'] { /* (redundant; equals :root) */ }` is unnecessary; rely on `:root`.
@@ -410,6 +422,7 @@ The light palette overrides `--bg`/`--surface`/`--surface-2`/`--border`/`--borde
 **Toggle (`ThemeToggle.svelte`, not gated):** a quiet topbar button (sun/moon glyph), `aria-pressed={theme==='light'}`, `title`, calls `toggleTheme()`. Mount in `App.svelte`'s `.topbar` (next to the conn-pill, minimalist).
 
 **Steps:**
+
 - [ ] Add the light-theme CSS blocks (no dark regression). Build `theme.svelte.ts` + `ThemeToggle.svelte`; mount + init in `App.svelte`. `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): light theme + persisted OS-aware toggle (dark stays default)`.
 
@@ -430,6 +443,7 @@ export function nextNodeByDirection(
 **Rules (pin):** `right` → first outgoing-edge target of `currentId` (by deterministic order: target id sort); `left` → first incoming-edge source; `up`/`down` → previous/next **sibling** (nodes sharing a parent via `parent_child`, ordered by id or `sequence`); `currentId===null` → the layout root (a node with no incoming `parent_child`, lowest id) for any dir; no candidate → return `currentId` (no-op, never null-out an existing selection); empty graph → `null`. Pure, deterministic — mirrors the Go reducer's determinism discipline so traversal is stable.
 
 **Steps:**
+
 - [ ] Write failing `graph-nav.test.ts` (right/left along an edge; up/down siblings; no-edge no-op; null→root; empty→null; deterministic tie-break). Implement `graph-nav.ts`. 100% gate. Add to `vitest.config.ts` include.
 - [ ] Commit `feat(webui): pure graph keyboard-navigation helper (arrow traversal along edges)`.
 
@@ -442,6 +456,7 @@ export function nextNodeByDirection(
 **`GraphCanvas.svelte` (pin):** `role="application"` + `aria-label="Session graph"` on the root; a keydown handler that, when an arrow key is pressed with a selection, computes `nextNodeByDirection(selectedNodeId.value, graph.nodes, graph.edges, dir)` and `selectNode(...)` the result, then ensures the focused node scrolls into view (reuse the existing `FlowInternals` `focusNodeId` mechanism, which already centers a node). Prevent default so the canvas does not also pan. This makes the graph fully keyboard-traversable along edges (prompt's deep-a11y requirement).
 
 **Steps:**
+
 - [ ] Wire `graph-nav` into `GraphCanvas` keydown; add roles/aria/keydown to `GraphNode`. `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): graph arrow-key traversal along edges + node roles/aria`.
 
@@ -454,6 +469,7 @@ export function nextNodeByDirection(
 **Notes for implementer:** the existing ESC handler stays; extend the same `$effect(() => { if(!isOpen) return; ... })` block to add the focus capture/return and the Tab trap, cleaning up listeners on close. Guard `typeof document` for SSR-safety as elsewhere.
 
 **Steps:**
+
 - [ ] Implement focus-trap + focus-return in `NodeDrawer.svelte`. `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): node-drawer focus-trap + focus-return for keyboard a11y`.
 
@@ -464,6 +480,7 @@ export function nextNodeByDirection(
 **Change (pin):** raise `--text-faint` lightness in the dark `:root` (currently `oklch(0.55 0.010 80)` on `--bg oklch(0.16 ...)`) to clear WCAG AA for the small-text uses it has (metric `—`, hints, conn-pill). Pick the smallest bump that reaches ≥4.5:1 against `--bg`/`--surface` (e.g. `~0.62`), and set the light-theme `--text-faint` to clear AA against the light bg too. Verify the contrast ratio (any OKLCH→sRGB contrast check) and note the computed ratio in the commit body.
 
 **Steps:**
+
 - [ ] Bump `--text-faint` (dark + light); verify ≥4.5:1. `npm run build`; commit incl. `dist/`. `fix(webui): bump --text-faint to meet WCAG AA contrast`.
 
 ### Task D-fe7 — Playwright a11y + theme e2e (and dark-default guard)
@@ -471,11 +488,13 @@ export function nextNodeByDirection(
 **Files:** Create (or fold into existing) `webui/web/e2e/onboarding.spec.ts`, using `page.route()` mocks (the established hermetic pattern — no live daemon). (Depends on D-fe2/fe4/fe5.)
 
 **Coverage (pin):**
+
 - **Theme:** toggle flips `documentElement.dataset.theme` and a representative `getComputedStyle(--bg)` changes; reload persists the choice (localStorage); with `colorScheme:'light'` emulation and no stored choice, the light palette applies; **dark default unchanged** — with no stored choice and dark OS, `--bg` equals the known dark value (the regression guard).
 - **Drawer a11y:** open a node → focus is inside the drawer; Tab cycles within; ESC → focus returns to the triggering node.
 - **Graph traversal:** select a node, press ArrowRight → an edge-adjacent node becomes selected.
 
 **Steps:**
+
 - [ ] Write the specs against `page.route()` mocks for `/v1/sessions`, `/v1/sessions/{hash}/graph`, `/v1/subscribe` (reuse the existing mock helpers). `npm run test:e2e` green locally.
 - [ ] Final: full Go suite + cross-build + codepolicy + FE vitest gate + `dist`-drift clean. Commit `test(webui): e2e for theme persistence, drawer focus, graph traversal, dark-default guard`.
 

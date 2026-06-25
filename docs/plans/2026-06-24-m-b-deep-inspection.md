@@ -69,14 +69,14 @@ Binding on every task; each task's steps re-verify them.
 | `webui/web/src/lib/timeline.test.ts` | Create | 100% branches (empty, single, proportional widths, unknown-duration marker, rows-without-timing hidden, clamp). |
 | `webui/web/src/lib/filters.ts` | Create | Pure structured filter + free-text: `filterNodes(nodes, FilterState)`; predicates for status/type/model/has-error + name substring. **Gated 100%.** |
 | `webui/web/src/lib/filters.test.ts` | Create | 100% branches (each predicate, combined, empty filter identity, case-insensitive search, has-error chip). |
-| `webui/web/src/lib/payload-view.ts` | Create | Pure helpers: `prettyJSON(raw)`, `payloadState(view, enabled, error)` → `'disabled'|'redacted'|'empty'|'ready'`. **Gated 100%.** |
+| `webui/web/src/lib/payload-view.ts` | Create | Pure helpers: `prettyJSON(raw)`, `payloadState(view, enabled, error)` → `'disabled'\|'redacted'\|'empty'\|'ready'`. **Gated 100%.** |
 | `webui/web/src/lib/payload-view.test.ts` | Create | 100% branches. |
 | `webui/web/src/components/PayloadPanel.svelte` | Create | Opt-in Input/Output reveal: toggle, pretty JSON, copy, redaction notice, disabled/empty states. Not gated. |
 | `webui/web/src/components/NodeDrawer.svelte` | Modify | Mount `PayloadPanel` (opt-in, below metrics, above Advanced); pass `hash`/`nodeId`/`token`/`enabled`. |
 | `webui/web/src/components/Timeline.svelte` | Create | Waterfall view-mode of the session (SVG/CSS bars from `timeline.ts`). Not gated. |
 | `webui/web/src/components/SessionHeader.svelte` | Create | Sticky KPI strip (cost/tokens/wall-clock/counts/errors/model) from `sessionsById[hash]`. Not gated. |
 | `webui/web/src/components/FilterBar.svelte` | Create | Structured filter controls + search input + error chip. Not gated. |
-| `webui/web/src/components/SessionView.svelte` | Modify | Add `SessionHeader`; add a `graph | timeline` view-mode toggle; mount `FilterBar`; pass filtered node set to graph/timeline. |
+| `webui/web/src/components/SessionView.svelte` | Modify | Add `SessionHeader`; add a `graph \| timeline` view-mode toggle; mount `FilterBar`; pass filtered node set to graph/timeline. |
 | `webui/web/src/lib/stores/stores.svelte.ts` | Modify | Add `filterState` ($state), `desync` indicator state, `lastSeenRev`; expose a filtered `sessionGraph` read or a `filteredSessionGraph(hash, filter)` (delegates to pure `filters.ts`). |
 | `webui/web/src/lib/sse/client.ts` | Modify | Track last-seen rev; reconnect backoff; surface parse errors via `onParseError`; expose a stale/desync signal. (Logic gated where pure; the EventSource seam stays thin.) |
 | `webui/web/src/lib/sse/client.test.ts` | Modify | 100% on resume/backoff/parse-error-surfacing logic with the fake `EventSourceLike`. |
@@ -198,6 +198,7 @@ func Redact(raw []byte) Result
 ```
 
 `Redact` accepts a `json.RawMessage` (or arbitrary bytes):
+
 - If `raw` is empty → `Result{Data: raw, Findings: nil}`.
 - If `raw` is valid JSON → walk it; for every **string value** (at any depth) and every **object key matching a key-glob** (`*api_key*`, `authorization`, `*secret*`, `*token*`, `*password*`, case-insensitive), run the value-scanning pack; replace a matched span (or the whole value for key-glob hits) with `"‹redacted:<reason>›"`; record `{path, reason}` (dotted path, array indices as `[i]`). Re-marshal deterministically (stable key order via `json.Marshal` of the reconstructed structure — note: decode into `map[string]any` loses key order, which is acceptable for a viewing surface; document this).
 - If `raw` is **not** valid JSON or **not** valid UTF-8 → treat as opaque free text: scan for value patterns; if it is non-UTF8/binary, replace wholesale with `"‹binary:<len>,<sha256-prefix>›"` and one finding `{path:"", reason:"binary"}`.
@@ -205,11 +206,13 @@ func Redact(raw []byte) Result
 **Value-scanning pack (ADR-0020 §Decision 1), each with a `reason`:** connection-string URIs with embedded credentials (`scheme://user:pass@host`), AWS keys (`AKIA[0-9A-Z]{16}`), GitHub tokens (`gh[pousr]_[A-Za-z0-9]{36,}`), OpenAI-style (`sk-[A-Za-z0-9]{20,}`), Slack (`xox[baprs]-[A-Za-z0-9-]{10,}`), JWTs (`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`), PEM blocks (`-----BEGIN [A-Z ]+PRIVATE KEY-----`), and high-entropy base64/hex runs (length ≥ 40, charset-gated) as a catch-all. Patterns are package-level immutable `var` slices of `*regexp.Regexp` compiled once (no `init()` side effect beyond `regexp.MustCompile` in a `var` block, consistent with existing `var` table style; if codepolicy/`gochecknoglobals` objects, expose via a constructor func returning the slice).
 
 **Notes for implementer:**
+
 - Conservative default for a viewing surface: a false positive (over-redaction) is acceptable; a false negative (leaked secret) is not. The high-entropy catch-all biases toward redaction.
 - This package is pure (no clock, no I/O). The sha256 used in the binary-ref reason is `crypto/sha256` over the raw bytes (prefix hex), distinct from `model.HashPayload`.
 - Do NOT attempt the full ADR-0020 whole-node surface here; B-be1 only feeds payload Input/Output through this.
 
 **Steps:**
+
 - [ ] **Step 1: Branch.** `cd /Users/karych/src/catacomb && git checkout -b feat/m-b-deep-inspection`
 - [ ] **Step 2: Write failing `redact/redact_test.go`** — one table-driven test per rule + nested JSON path + key-glob + binary + clean no-op + invalid-JSON-free-text. Assert `Findings` paths/reasons and that no raw secret substring survives in `Result.Data`.
 - [ ] **Step 3: Run — expect build/FAIL.** `go test ./redact/ 2>&1 | head`
@@ -227,12 +230,14 @@ func Redact(raw []byte) Result
 **Files:** Create `daemon/payload.go`, `daemon/payload_test.go`. Modify `daemon/daemon.go` (flag + setter), `daemon/server.go` (route + handler), `daemon/server_test.go`. (Depends on `redact`.)
 
 **Interfaces (produces):**
+
 - `daemon/daemon.go`: field `allowPayloadAccess bool`; `func (d *Daemon) SetAllowPayloadAccess(v bool)`.
 - `daemon/payload.go`: `PayloadView`, `RedactionFinding` (the pinned structs); sentinels `ErrPayloadAccessDisabled`, `ErrPayloadNotFound`; `func (d *Daemon) nodePayloadView(hash, selector string) (PayloadView, error)` (caller holds `d.mu`); `handleNodePayload`.
 
 **Default-OFF mechanism (pin):** the gate is checked **inside** `nodePayloadView` (or at the top of `handleNodePayload`): if `!d.allowPayloadAccess` → return `ErrPayloadAccessDisabled` → handler writes **403**. This is independent of and in addition to `authedAllowQuery`'s 401. `daemon.New` leaves the field false, so the endpoint is off for every existing test and every default deployment; only `--allow-payload-access` (cmd) or `SetAllowPayloadAccess(true)` (tests) enables it.
 
 **Resolution + redaction (pin):**
+
 1. `execs := d.executionsForSession(hash)`; empty → `ErrSessionNotFound` (404).
 2. Search the session's graphs for a node with `n.ID == selector`; if none, search for `n.PayloadHash == selector`. None → `ErrPayloadNotFound` (404).
 3. If `n.Payload == nil` (or both Input and Output empty) → `ErrPayloadNotFound` (404). (A node with no captured payload is "nothing to view", distinct from "found".)
@@ -242,6 +247,7 @@ func Redact(raw []byte) Result
 **Notes for implementer:** hold `d.mu` for the graph read; do not call `redact` under the lock if payloads are large enough to matter — copy the `Input`/`Output` byte slices out under the lock, release, then redact (redaction is pure and CPU-bound). Keep `n.Payload` untouched (read-only). The endpoint must never appear in any non-loopback surface (it is on the loopback mux, same as the rest).
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `daemon/payload_test.go`** mirroring `sessions_test.go` setup (`tempStore`, `fixedExecID`, ingest `ob(...)` with a payload). Cases: default-off → `ErrPayloadAccessDisabled`; enabled+by-id → redacted view; enabled+by-`payload_hash` → same node; unknown session → `ErrSessionNotFound`; unknown selector → `ErrPayloadNotFound`; node with nil payload → `ErrPayloadNotFound`; a payload carrying a fake secret → assert the secret substring is absent and a finding is present. Add `server_test.go` HTTP cases: 401 (no token), 403 (token, disabled), 200 (token, enabled), 404 (enabled, bad node), via `httptest.NewServer(d.Handler("tok"))`.
 - [ ] **Step 2: Run — expect FAIL.** `go test ./daemon/ -run Payload 2>&1 | head`
 - [ ] **Step 3: Implement** `daemon.go` field+setter, `daemon/payload.go`, `daemon/server.go` route+handler.
@@ -259,6 +265,7 @@ func Redact(raw []byte) Result
 **Interfaces:** new unexported `func parseLastEventID(r *http.Request) uint64` (header `Last-Event-ID`, else `?since=`; `strconv.ParseUint`; 0/parse-error → 0). `handleSSE` computes `cursor := parseLastEventID(r)` and, in the snapshot loop, skips `snap.Rev <= cursor` (when `cursor > 0`).
 
 **Behavior (pin, read pre-flight #5):**
+
 - No header, no `?since=` → unchanged (full snapshot).
 - Header `Last-Event-ID: <rev>` → snapshot filtered to `Rev > cursor`; live tail unchanged.
 - `?since=<rev>` honored when the header is absent (non-EventSource clients / explicit catch-up).
@@ -267,6 +274,7 @@ func Redact(raw []byte) Result
 **Notes for implementer:** this is a pure filter in the snapshot emit loop; `writeEvent`/`streamSSE`/the ticker are untouched. See Gaps/Risks #2 for why this is correct under the coalesce bus: the snapshot is built from the live graph (current node/edge `Rev`s), so skipping `Rev <= cursor` cannot drop a state the client has not seen — any node updated after the client's cursor carries a `Rev > cursor` and is re-sent in full.
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `daemon/sse_test.go` cases** — using the existing SSE e2e harness (loopback server + `EventSource`-style request with the header, or a direct `httptest` request reading the body): assert that with `Last-Event-ID` set above some snapshot revs, only higher-rev deltas appear in the snapshot prefix; with no header, all appear; with `?since=`, same as header.
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement `parseLastEventID` + the snapshot skip.**
@@ -285,6 +293,7 @@ func Redact(raw []byte) Result
 **Notes for implementer:** purely additive to the existing `summarizeSession`; the existing fields and their tests are unchanged. Status keys use the raw `model.Status` string; an empty status (no status set) keys under `""` — acceptable, or skip empties (pin: include `""` so counts sum to `NodeCount`; document). Emit `{}` not `null` for both maps (initialize with `map[string]int{}`).
 
 **Steps:**
+
 - [ ] **Step 1: Write failing `daemon/sessions_test.go` cases** asserting `counts_by_type`/`counts_by_status` sums equal `NodeCount`, error_rate math, and JSON emits `{}` not `null` for an empty session (extend `TestSessionSummariesEmpty`/`TestSessionSummariesBasic`).
 - [ ] **Step 2: Run — expect FAIL.**
 - [ ] **Step 3: Implement the additive fields.**
@@ -324,6 +333,7 @@ export function buildTimeline(nodes: Node[]): TimelineModel;
 **SessionView wiring:** add a minimal `view: 'graph' | 'timeline'` toggle in the session header area (two quiet buttons; default `graph`). Hide the timeline entirely when `buildTimeline(nodes).rows.length === 0` (silence-when-healthy: no empty timeline chrome). Feed it the same node set the graph uses (post-filter once B-fe4 lands).
 
 **Steps:**
+
 - [ ] Write failing `timeline.test.ts` (empty, single, proportional widths, unknown-duration marker, rows-without-timing hidden, clamp on tiny/huge durations). Implement `timeline.ts`. 100% gate green. Add to `vitest.config.ts` include.
 - [ ] Build `Timeline.svelte` + the SessionView toggle. `npm run check` clean.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): timeline waterfall from stamped durations`.
@@ -355,6 +365,7 @@ export function isActive(f: FilterState): boolean;
 **Store wiring:** add `filterState = $state(emptyFilter())`; expose `filteredSessionGraph(hash)` that calls `sessionGraph(hash)` then `filterNodes(...)` with the current `filterState` (keep the pure work in `filters.ts`; the `.svelte.ts` stays thin). Edges whose endpoints are filtered out are dropped from the rendered set (compute in a pure helper, gated).
 
 **Steps:**
+
 - [ ] Write failing `filters.test.ts` (each predicate, combined, empty identity/reference, case-insensitive, hasError, model from attrs, edge-drop helper). Implement `filters.ts`. 100% gate. Add to `vitest.config.ts` include.
 - [ ] Build `FilterBar.svelte`; wire `filterState` + `filteredSessionGraph`; feed graph + timeline. `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): structured filters + free-text search with error chip`.
@@ -368,6 +379,7 @@ export function isActive(f: FilterState): boolean;
 **SessionView wiring:** mount `<SessionHeader {hash} />` above the graph/timeline area, alongside the existing back button / hash. Keep it sticky (`position: sticky; top: 0`) and quiet.
 
 **Steps:**
+
 - [ ] Build `SessionHeader.svelte` from `sessionsById[hash]` (pure formatting via existing `format.ts`/`provenance.ts` — no new gated logic needed; if any non-trivial KPI derivation appears, factor it into a tiny gated helper). `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): sticky session-header KPI strip`.
 
@@ -402,6 +414,7 @@ export function payloadState(view: PayloadView | null, forbidden: boolean): Payl
 **App wiring:** `NodeDrawer` already receives `hash`; thread `token` (already in `App.svelte`) down through `SessionView` → `NodeDrawer` → `PayloadPanel`. A 403 on reveal renders the `disabled` state (the UI does not need a separate capability probe; the first reveal attempt reveals capability).
 
 **Steps:**
+
 - [ ] Write failing `api.test.ts` (200 → PayloadView, 403 → ForbiddenError, 404 → NotFoundError, network/parse) and `payload-view.test.ts` (every state + prettyJSON branches). Implement `api.ts` additions + `payload-view.ts`. 100% gate (add both to `vitest.config.ts` include). Pin the new `types.ts` shapes.
 - [ ] Build `PayloadPanel.svelte`; mount in `NodeDrawer.svelte`; thread `token` through `SessionView`. `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): opt-in redaction-aware content panel in the node drawer`.
@@ -411,6 +424,7 @@ export function payloadState(view: PayloadView | null, forbidden: boolean): Payl
 **Files:** Modify `webui/web/src/lib/sse/client.ts` (+ `client.test.ts`), `webui/web/src/lib/stores/stores.svelte.ts` (desync/lastSeenRev state), `App.svelte`. (Depends on B-be2.)
 
 **Client changes (pin):**
+
 - Track the last-seen `rev` (from `onEvent` payloads) so a reconnect can pass it. Browser `EventSource` sends `Last-Event-ID` automatically from the last `id:` it saw; the explicit `lastSeenRev` is a belt-and-suspenders for the `?since=` query and for the fake test seam. Extend `ConnectOptions` with `onParseError?: (raw: string, err: unknown) => void` and `getLastRev?: () => number` (or have `connect` own a `lastRev` it appends as `&since=` on reconnect).
 - **Reconnect backoff:** on `onerror`, schedule a reconnect with capped exponential backoff (e.g. 0.5s→…→10s) using an injectable timer seam (default `setTimeout`; tests inject a fake), so there is **no `time.Sleep`/real timer in tests**. Reset backoff on a successful `open`.
 - **Surface parse errors:** the current `connect` swallows `JSON.parse` failures (`catch {}`). Change to call `onParseError` (and increment a desync counter) instead of silently dropping — spec §6 "surface (not swallow) parse errors".
@@ -421,6 +435,7 @@ export function payloadState(view: PayloadView | null, forbidden: boolean): Payl
 **Notes for implementer:** keep ALL branching (backoff math, stale decision, parse-error routing) in pure functions in `client.ts` so the 100% gate covers it via the fake `EventSourceLike` + fake timer; the `.svelte.ts`/`App.svelte` wiring stays thin. Do not introduce a real reconnect loop the tests can't drive synchronously.
 
 **Steps:**
+
 - [ ] Write failing `client.test.ts` (resume passes last rev/`since`; backoff schedules via fake timer and resets on open; `onParseError` fires on malformed data instead of swallowing; stale signal toggles). Implement `client.ts`. 100% gate.
 - [ ] Wire `desync`/`lastSeenRev` into `stores.svelte.ts` + `App.svelte` topbar (quiet pill). `npm run check`.
 - [ ] `npm run build`; commit incl. `dist/`. `feat(webui): SSE resume + reconnect backoff + visible desync, surfaced parse errors`.
@@ -430,6 +445,7 @@ export function payloadState(view: PayloadView | null, forbidden: boolean): Payl
 **Files:** Create `webui/web/e2e/{content,timeline,kpi,filters,resume}.spec.ts` (or fold into existing spec files), using `page.route()` mocks (the established hermetic pattern — no live daemon).
 
 **Coverage:**
+
 - **Content:** mock the payload endpoint enabled → reveal shows redacted Input/Output + the "N redacted" notice + copy; mock 403 → reveal shows the "disabled" state.
 - **Timeline:** mock a session graph with stamped durations → toggle to timeline → proportional bars present, an unknown-duration node shows the distinct marker, a node without `t_start` is absent.
 - **KPI strip:** mock `/v1/sessions` with cost/tokens/counts/errors → header shows the values; error count is prominent only when `>0`.
@@ -437,6 +453,7 @@ export function payloadState(view: PayloadView | null, forbidden: boolean): Payl
 - **Resume:** assert the reconnect request carries `Last-Event-ID`/`since` (intercept the SSE request URL/headers on the second connect) and the desync pill appears on a forced error then clears on reconnect.
 
 **Steps:**
+
 - [ ] Write the specs against `page.route()` mocks for `/v1/sessions`, `/v1/sessions/{hash}/graph`, `/v1/sessions/{hash}/nodes/{id}/payload`, `/v1/subscribe`.
 - [ ] `npm run test:e2e` green locally.
 - [ ] Final: full Go suite + cross-build + codepolicy + FE vitest gate + `dist`-drift clean. Commit `test(webui): e2e for content/timeline/kpi/filters/resume`.

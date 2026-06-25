@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -532,11 +533,10 @@ func TestBuildStartDaemonOsExecutableError(t *testing.T) {
 }
 
 func TestBuildStartDaemonCreateRunDirError(t *testing.T) {
-	origOsExecutable := osExecutable
-	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
-	t.Cleanup(func() { osExecutable = origOsExecutable })
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 
-	fn := buildStartDaemon("/no/such/dir/d.json")
+	fn := buildStartDaemon(filepath.Join(blocker, "run", "d.json"))
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create run dir")
