@@ -1880,6 +1880,73 @@ func TestEnsureRunModelIDFirstNonEmptyWins(t *testing.T) {
 	assert.Equal(t, "claude-opus-4-8", r.ModelID)
 }
 
+func TestApplyUserPromptMergesTextPayload(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
+		Kind: "user_prompt", Correlation: model.Correlation{SessionID: "s1", UUID: "u1"},
+		Payload:   &model.Payload{Input: json.RawMessage(`"list files"`)},
+		EventTime: time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	o.Payload.Hash = model.HashPayload(o.Payload)
+	g.ApplyAll([]model.Observation{o})
+	n := g.Nodes[model.UserPromptID("e1", "u1")]
+	require.NotNil(t, n)
+	require.NotNil(t, n.Payload)
+	assert.JSONEq(t, `"list files"`, string(n.Payload.Input))
+	assert.NotEmpty(t, n.PayloadHash)
+}
+
+func TestApplyAssistantTurnMergesTextPayload(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
+		Payload:   &model.Payload{Output: json.RawMessage(`"the reply"`)},
+		EventTime: time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	o.Payload.Hash = model.HashPayload(o.Payload)
+	g.ApplyAll([]model.Observation{o})
+	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
+	require.NotNil(t, n)
+	require.NotNil(t, n.Payload)
+	assert.JSONEq(t, `"the reply"`, string(n.Payload.Output))
+	assert.NotEmpty(t, n.PayloadHash)
+}
+
+func TestApplyAssistantTurnNilPayloadNoPanic(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m2"},
+		EventTime: time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	g.ApplyAll([]model.Observation{o})
+	n := g.Nodes[model.AssistantTurnID("e1", "m2")]
+	require.NotNil(t, n)
+	assert.Nil(t, n.Payload)
+}
+
+func TestApplyAssistantTurnResultDoesNotClobberText(t *testing.T) {
+	g := NewGraph()
+	first := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
+		Payload:   &model.Payload{Output: json.RawMessage(`"keep me"`)},
+		EventTime: time.Unix(1, 0).UTC(), Seq: 1,
+	}
+	first.Payload.Hash = model.HashPayload(first.Payload)
+	second := model.Observation{
+		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
+		EventTime: time.Unix(2, 0).UTC(), Seq: 2,
+	}
+	g.ApplyAll([]model.Observation{first, second})
+	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
+	require.NotNil(t, n.Payload)
+	assert.JSONEq(t, `"keep me"`, string(n.Payload.Output))
+}
+
 func TestCumulativeCostNoDoubleCount(t *testing.T) {
 	sq := seq()
 	line1 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.10}`)
