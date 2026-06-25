@@ -66,12 +66,20 @@ func TestParseReaderShapes(t *testing.T) {
 	}
 }
 
-func TestParseReaderUserPromptPayload(t *testing.T) {
+func TestParseReaderUserPromptTextPayload(t *testing.T) {
 	up := byKind(parseFixture(t), "user_prompt")
 	require.Len(t, up, 1)
 	require.NotNil(t, up[0].Payload)
+	assert.JSONEq(t, `"list files"`, string(up[0].Payload.Input))
+	assert.Empty(t, up[0].Payload.Output)
 	assert.NotEmpty(t, up[0].Payload.Hash)
-	assert.Equal(t, `"list files"`, string(up[0].Payload.Input))
+}
+
+func TestParseReaderUserPromptEmptyTextNoPayload(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x","is_error":false}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	assert.Empty(t, byKind(obs, "user_prompt"))
 }
 
 func TestParseReaderToolUsePayload(t *testing.T) {
