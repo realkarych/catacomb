@@ -83,17 +83,20 @@ export function toHash(route: Route): string;
 ```
 
 `parseHash` rules:
+
 - `""` / `"#/"` / anything not matching → `{ kind: 'list' }`
 - `"#/s/{hash}"` → `{ kind: 'session', hash }`
 - `"#/s/{hash}/n/{nodeId}"` → `{ kind: 'session-node', hash, nodeId }`
 - `hash` and `nodeId` are percent-decoded (`decodeURIComponent`).
 
 `toHash` rules:
+
 - `list` → `"#/"`
 - `session` → `"#/s/" + encodeURIComponent(hash)`
 - `session-node` → `"#/s/" + encodeURIComponent(hash) + "/n/" + encodeURIComponent(nodeId)`
 
 **Test coverage** (all branches, 100%):
+
 - Empty string / bare `#` / `#/` → list.
 - Exact `#/s/abc123` → session hash `"abc123"`.
 - `#/s/abc123/n/node%3A456` → session-node with decoded nodeId `"node:456"`.
@@ -102,6 +105,7 @@ export function toHash(route: Route): string;
 - Hash/nodeId with special chars (`/`, `:`, spaces) are correctly encoded/decoded.
 
 **Steps:**
+
 - [ ] Write failing tests `router.test.ts`.
 - [ ] Implement `router.ts`.
 - [ ] Run `npm run test -- web/src/lib/router` — expect green + 100% coverage.
@@ -128,10 +132,12 @@ export function sortSessions(sessions: SessionSummary[], key: SortKey, dir: Sort
 `sortSessions`: sort by `key` ascending or descending. Undefined values sort last regardless of direction. Returns a new array; stable sort (preserves relative order of equal rows). `started_at` sorts lexicographically (ISO 8601 strings compare correctly that way).
 
 **Test coverage** (100%):
+
 - `filterSessions` with empty / partial hash match / model_id match / no match / case-insensitive.
 - `sortSessions` ascending and descending for each key; undefined values last in both directions; stable sort tie-break.
 
 **Steps:**
+
 - [ ] Write failing tests.
 - [ ] Implement module.
 - [ ] Run tests — green + 100%.
@@ -142,6 +148,7 @@ export function sortSessions(sessions: SessionSummary[], key: SortKey, dir: Sort
 **Files:** `web/src/components/SessionsList.svelte`, `web/src/components/SessionRow.svelte`, `web/src/components/StatusPill.svelte`, `web/src/App.svelte` (modify)
 
 **Interfaces consumed:**
+
 - `fetchSessions(token)` from `lib/api.ts` — called on mount, result stored in local `$state`.
 - `sessionsById` from `stores.svelte.ts` — used to get live-updated per-session status where available.
 - `filterSessions`, `sortSessions` from `sessions-sort.ts`.
@@ -150,6 +157,7 @@ export function sortSessions(sessions: SessionSummary[], key: SortKey, dir: Sort
 - `costProvenance` from `pricing/provenance.ts`.
 
 **SessionsList behavior:**
+
 - On mount: call `fetchSessions(token)` and store the result. Loading state while in-flight; error state if rejected; empty state (reuse `.empty-state` primitives from `style.css`) when the array is empty.
 - Search bar (controlled `$state` string): filters via `filterSessions`.
 - Column headers are clickable to sort; clicking the same header toggles direction. Default sort: `started_at` descending (newest first).
@@ -159,6 +167,7 @@ export function sortSessions(sessions: SessionSummary[], key: SortKey, dir: Sort
 **StatusPill:** a `<span class="status-pill" data-status={status}>` mapping `'ok' | 'running' | 'error' | 'blocked' | 'pending'` to the design-token colors (`--ok`, `--running`, `--error`, `--blocked`, `--pending`). Single Svelte prop; no logic — not gated.
 
 **App.svelte router wiring:**
+
 - Add a `$state` `route: Route` initialized from `parseHash(window.location.hash)`.
 - Add a `$effect` listening to `window`'s `hashchange` event; on event call `parseHash` and update `route`; tear down listener on cleanup.
 - Template: `{#if route.kind === 'list'}` → `<SessionsList>` / `{:else if route.kind === 'session' || route.kind === 'session-node'}` → session view (GraphCanvas + NodeDrawer, wired in task h/i).
@@ -166,11 +175,13 @@ export function sortSessions(sessions: SessionSummary[], key: SortKey, dir: Sort
 - Keep existing `$effect` for SSE connect unchanged; update it so `session` param is `route.kind !== 'list' ? route.hash : ''`.
 
 **Empty / loading / error copy (in interface voice):**
+
 - Loading: "Loading sessions…"
 - Empty: "No sessions yet — start a Claude session with the hooks installed." (hint: "Run `catacomb up` to start the daemon and install hooks.")
 - Error: "Could not load sessions. Check that the daemon is running and your token is valid."
 
 **Steps:**
+
 - [ ] Create `StatusPill.svelte`.
 - [ ] Create `SessionRow.svelte`.
 - [ ] Create `SessionsList.svelte` with loading/empty/error states.
@@ -228,6 +239,7 @@ export function applyLayout(
 ```
 
 **Adapter logic:**
+
 1. Build a dagre `Graph` with `{ multigraph: false }`. Set graph options: `rankdir: opts.rankdir ?? 'LR'`, `nodesep: opts.nodesep ?? 60`, `ranksep: opts.ranksep ?? 100`, `align: 'UL'`, `ranker: 'network-simplex'`.
 2. For each node: `g.setNode(node.id, { width: opts.nodeWidth ?? 200, height: opts.nodeHeight ?? 60 })`.
 3. For each edge: `g.setEdge(edge.src, edge.dst, {}, edge.id)` — use edge id as the multigraph key to keep multi-edges stable.
@@ -237,6 +249,7 @@ export function applyLayout(
 7. Output is **deterministic**: same `nodes`/`edges` arrays → same `LayoutResult`. Node order within each rank is determined by dagre's rank algorithm (network-simplex); no random tiebreaks. Do not sort the output by id after layout — dagre's order IS the layout order.
 
 **Test coverage** (100%):
+
 - Empty input → empty output.
 - Single node → positioned at (0,0) area (centering math correct).
 - Linear chain a→b→c with LR rankdir: a.x < b.x < c.x (nodes increase left-to-right).
@@ -248,6 +261,7 @@ export function applyLayout(
 **Note:** dagre mutates its graph in place. The adapter creates a fresh `Graph` on each call — this ensures determinism even if the caller caches the function. Tests can therefore call `applyLayout` twice on the same input and `expect(result1).toEqual(result2)`.
 
 **Steps:**
+
 - [ ] Write failing tests `layout.test.ts`.
 - [ ] Implement `layout.ts` using `@dagrejs/dagre`.
 - [ ] Add `@xyflow/svelte` and `@dagrejs/dagre` to `package.json`; run `npm install`.
@@ -259,6 +273,7 @@ export function applyLayout(
 **Files:** `web/src/components/GraphCanvas.svelte`, `web/src/components/GraphNode.svelte`
 
 **Interfaces consumed:**
+
 - `sessionGraph(hash)` from `stores.svelte.ts` — returns `{ nodes: Node[], edges: Edge[] }`.
 - `selectedNodeId` from `stores.svelte.ts`.
 - `selectNode(id)` from `stores.svelte.ts`.
@@ -267,6 +282,7 @@ export function applyLayout(
 - `@xyflow/svelte` CSS: `import '@xyflow/svelte/dist/style.css'` (in `GraphCanvas.svelte`).
 
 **GraphCanvas props:**
+
 ```ts
 let { hash }: { hash: string } = $props();
 ```
@@ -282,6 +298,7 @@ let prevTopologyKey = '';
 ```
 
 A `$derived` reads `sessionGraph(hash)` — this is reactive to `nodesById`/`edgesById` changes via the Svelte 5 `$state` proxy on `_graphState`. On every reactive update:
+
 1. Compute a topology key: `JSON.stringify([...nodeIds].sort() + [...edgeIds].sort())`.
 2. If the topology key changed: call `applyLayout(nodes, edges)`, set `xyNodes` and `xyEdges` via `$state.raw` (full replace). Then schedule `fitView()` (see Timing below). Update `prevTopologyKey`.
 3. If only data changed (status/tokens): update `xyNodes` by mapping the existing array, replacing only the `data.catNode` field for the nodes that changed — use `$state.raw` to assign a new array (required by XyFlow's Svelte 5 integration). No `fitView` call.
@@ -291,14 +308,17 @@ This is implemented inside a `$effect` that calls `sessionGraph(hash)` on every 
 **fitView timing.** `fitView` must fire after the DOM has rendered the new nodes. Use `useSvelteFlow()` to get the `fitView` function inside the `SvelteFlow` context. Call `fitView({ duration: 300 })` inside a `tick()` await (Svelte's `import { tick } from 'svelte'`) after setting `xyNodes`/`xyEdges` — this ensures the XyFlow internal node measurement has completed before fitting. Also call `fitView` when `hash` changes (session switch) via a `$effect` watching `hash`.
 
 **Render abstraction boundary.** Export a `GraphEngine` interface and a `SvelteFlowEngine` implementation. The `GraphCanvas` imports `SvelteFlowEngine` but its template only calls methods on `GraphEngine`. This is intentionally thin — the interface covers only the surface actually used:
+
 ```ts
 interface GraphEngine {
   fitView(opts?: { duration?: number }): void;
 }
 ```
+
 `GraphCanvas` receives a `engine?: GraphEngine` prop defaulting to the internal SvelteFlow binding. A future WebGL engine implements `GraphEngine` and passes it in. Do not build more abstraction than this.
 
 **GraphNode component** (`type` = one of the NodeType strings):
+
 - Props: `let { data, selected }: NodeProps<{ catNode: Node }> = $props();` (Svelte 5 XyFlow pattern — props from `$props()`).
 - Background color: `var(--node-{data.catNode.type})` — use a CSS custom property lookup via inline style.
 - Status indicator: a small dot in the top-right corner using `--ok` / `--error` / `--running` / `--blocked` / `--pending` based on `data.catNode.status`.
@@ -309,6 +329,7 @@ interface GraphEngine {
 - Include `<Handle type="target" position={Position.Left} />` and `<Handle type="source" position={Position.Right} />` for LR layout. Handles should be visually minimal (no filled circle by default — override XyFlow's default handle style with transparent background).
 
 **SvelteFlow template (inside GraphCanvas):**
+
 ```svelte
 <SvelteFlow
   bind:nodes={xyNodes}
@@ -332,6 +353,7 @@ interface GraphEngine {
 **CSS.** `GraphCanvas` needs `height: 100%` on its root element (the SvelteFlow container must have an explicit height). Parent layout (App.svelte content area) must pass height down. The XyFlow stylesheet is imported in `GraphCanvas.svelte`; XyFlow's default edge/node styles are overridden where they conflict with the design tokens (edge stroke → `--border`; selected edge → `--accent`).
 
 **Steps:**
+
 - [ ] Install `@xyflow/svelte` and `@dagrejs/dagre` via `npm install` (if not already done in h1).
 - [ ] Create `GraphNode.svelte` with lamplight selection, status dot, handles.
 - [ ] Create `GraphCanvas.svelte` with topology-keyed layout, incremental update path, fitView wiring.
@@ -350,6 +372,7 @@ interface GraphEngine {
 **Files:** `web/src/components/NodeDrawer.svelte`, `web/src/components/MetricRow.svelte`
 
 **Interfaces consumed:**
+
 - `selectedNodeId` from `stores.svelte.ts`.
 - `selectNode(null)` from `stores.svelte.ts` — to deselect.
 - `nodesById` from `stores.svelte.ts` — to resolve the selected node.
@@ -357,12 +380,15 @@ interface GraphEngine {
 - `costProvenance` from `pricing/provenance.ts`.
 
 **MetricRow component:**
+
 ```svelte
 let { label, value }: { label: string; value: string } = $props();
 ```
+
 A `<div class="metric-row">` with `<span class="metric-label">{label}</span>` and `<span class="metric-value">{value}</span>`. Value uses `.mono` class when it is a hash or id (the caller decides by wrapping the value string — MetricRow itself is purely presentational). Renders `—` when `value` is the `"—"` string (the format helpers produce this). Not gated.
 
 **NodeDrawer behavior:**
+
 - Derives the selected node: `$derived(selectedNodeId.value ? nodesById[selectedNodeId.value] ?? null : null)`.
 - When `node` is null → drawer is closed (zero width or `display: none`). Transition: slide-in from right on open, slide-out on close via CSS `transition: transform 0.2s ease`.
 - **Metric header** (always rendered with labels; `"—"` when value is unknown):
@@ -395,6 +421,7 @@ The drawer is an absolutely-positioned right panel inside the session view conta
 Implemented as: session view container is `position: relative; overflow: hidden`. Drawer is `position: absolute; right: 0; top: 0; bottom: 0; width: 360px; z-index: 10` with `transform: translateX(100%)` when closed, `translateX(0)` when open.
 
 **Steps:**
+
 - [ ] Create `MetricRow.svelte`.
 - [ ] Create `NodeDrawer.svelte` with metric header, Advanced disclosure, ESC handler, close button, slide-in CSS.
 - [ ] Wire into `App.svelte` session view: `<NodeDrawer />` (reads `selectedNodeId` directly from the store — no props needed).
@@ -409,11 +436,13 @@ Implemented as: session view container is `position: relative; overflow: hidden`
 **Test daemon setup:** follow the existing `e2e/shell.spec.ts` pattern. The `playwright.config.ts` already defines a `webServer` for `vite preview` (the static SPA). For the hero e2e, a second server entry (or a global setup hook) starts a real catacomb daemon pre-seeded with a synthetic session. The seeding mechanism: write a small `testdata/seed-session.jsonl` (a minimal Claude stream-json transcript with one assistant turn and one tool call) and replay it via the daemon's ingestion path before the test, or use the daemon's existing `/v1/…` endpoints. Alternatively: mock the REST + SSE endpoints via Playwright's `page.route()` to intercept `GET /v1/sessions` and `GET /v1/sessions/{hash}/graph` returning static JSON — this avoids a live daemon and makes the test fully hermetic.
 
 **Recommended approach: `page.route()` mocks.** This avoids daemon lifecycle in CI:
+
 - Mock `GET /v1/sessions` → static `SessionSummary[]` array with one entry (hash `"abc123def456"`, status `"ok"`, duration_ms `4200`, tokens_in `512`, tokens_out `128`, cost_usd `0.0031`, cost_source `"reported"`, tool_count `2`, error_count `0`, model_id `"claude-opus-4-5"`).
 - Mock `GET /v1/sessions/abc123def456/graph` → static `SseEvent[]` with a session node, an assistant_turn node, a tool_call node, edges between them.
 - Mock `GET /v1/subscribe?session=abc123def456&token=test` → SSE stream returning `data: {"kind":"node_upsert", ...}` events then `data: {"kind":"ping"}`. Use Playwright's `page.route` to return a streaming response.
 
 **Test steps:**
+
 ```ts
 test('hero flow: list → session → node → drawer shows metrics', async ({ page }) => {
   // 1. Mock REST + SSE
@@ -432,6 +461,7 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
 ```
 
 Also add a deep-link test:
+
 ```ts
 test('deep-link: /#/s/{hash} opens session view directly', async ({ page }) => {
   // navigate directly to /#/s/abc123def456
@@ -440,6 +470,7 @@ test('deep-link: /#/s/{hash} opens session view directly', async ({ page }) => {
 ```
 
 **Steps:**
+
 - [ ] Write `e2e/hero.spec.ts` with `page.route()` mocks.
 - [ ] Run `npm run test:e2e` locally — green.
 - [ ] Commit.
@@ -447,6 +478,7 @@ test('deep-link: /#/s/{hash} opens session view directly', async ({ page }) => {
 ### i3: Final wiring, rebuild, and verification
 
 **Steps:**
+
 - [ ] Run full test suite: `npm run test` (Vitest, all logic modules 100%).
 - [ ] Run `npm run check` (svelte-check typecheck).
 - [ ] Run `npm run build` — build clean.
