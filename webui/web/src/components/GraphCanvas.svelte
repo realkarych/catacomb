@@ -28,12 +28,14 @@
   let xyNodes = $state.raw<XyFlowNode[]>([]);
   let xyEdges = $state.raw<XyFlowEdge[]>([]);
   let prevTopologyKey = '';
-  let pendingFitView = $state(false);
+  let pendingFitView = $state(true);
+  let pendingRestoreViewport = $state(false);
 
   let collapsed = $state.raw<Set<string>>(new Set());
   let seeded = false;
   let showOrphans = $state(false);
   let anchorId: string | null = null;
+  let preserveViewportOnNext = false;
 
   function handleToggle(id: string) {
     anchorId = id;
@@ -44,11 +46,13 @@
     const graph = sessionGraph(hash);
     const h = buildHierarchy(graph.nodes, graph.edges);
     anchorId = selectedNodeId.value;
+    if (!anchorId) preserveViewportOnNext = true;
     collapsed = collapseAll(graph.nodes, h);
   }
 
   function handleExpandAll() {
     anchorId = selectedNodeId.value;
+    if (!anchorId) preserveViewportOnNext = true;
     collapsed = expandAll();
   }
 
@@ -107,7 +111,7 @@
         ...e,
         className: dimmed.has(e.id) ? 'edge--dimmed' : undefined,
       })) as unknown as XyFlowEdge[];
-      if (anchorId) { pendingFitView = false; anchorId = null; } else { pendingFitView = true; }
+      if (anchorId) { pendingFitView = false; anchorId = null; } else if (preserveViewportOnNext) { preserveViewportOnNext = false; pendingFitView = false; pendingRestoreViewport = true; } else { pendingFitView = true; }
     } else if (graph.nodes.length > 0) {
       const view = collapseView(graph.nodes, graph.edges, collapsed);
       const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
@@ -219,7 +223,6 @@
       bind:nodes={xyNodes}
       bind:edges={xyEdges}
       {nodeTypes}
-      fitView
       fitViewOptions={{ maxZoom: 1.0 }}
       minZoom={0.1}
       maxZoom={2}
@@ -227,8 +230,10 @@
     >
       <FlowInternals
         {pendingFitView}
+        {pendingRestoreViewport}
         focusNodeId={selectedNodeId.value}
         onFitViewDone={() => { pendingFitView = false; }}
+        onRestoreViewportDone={() => { pendingRestoreViewport = false; }}
       />
     </SvelteFlow>
     <NodeLegend types={presentTypes} />
