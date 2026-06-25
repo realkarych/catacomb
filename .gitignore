@@ -20,6 +20,8 @@ vendor/
 
 # Catacomb local state
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
