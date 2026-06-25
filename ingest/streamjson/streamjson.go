@@ -3,6 +3,7 @@ package streamjson
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -151,12 +152,13 @@ func decodeContent(raw json.RawMessage) (string, []block, error) {
 }
 
 func assistantTextFromBlocks(blocks []block) string {
+	var parts []string
 	for _, b := range blocks {
 		if b.Type == "text" && b.Text != "" {
-			return b.Text
+			parts = append(parts, b.Text)
 		}
 	}
-	return ""
+	return strings.Join(parts, "")
 }
 
 func assistantParts(base model.Correlation, msg message, text string, blocks []block) []partial {

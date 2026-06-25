@@ -334,7 +334,7 @@ func seedTextPayload(t *testing.T, d *Daemon, nodeID string, out json.RawMessage
 	d.mu.Unlock()
 }
 
-func TestNodePayloadViewAssistantTextReturned(t *testing.T) {
+func TestNodePayloadViewTextReturned(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
 	d.SetAllowPayloadAccess(true)
@@ -351,7 +351,7 @@ func TestNodePayloadViewAssistantTextReturned(t *testing.T) {
 	assert.Nil(t, view.Input)
 }
 
-func TestNodePayloadViewAssistantTextRedactsSecret(t *testing.T) {
+func TestNodePayloadViewTextRedactsSecret(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
 	d.SetAllowPayloadAccess(true)
@@ -369,7 +369,7 @@ func TestNodePayloadViewAssistantTextRedactsSecret(t *testing.T) {
 	require.NotEmpty(t, view.Redactions)
 }
 
-func TestNodePayloadViewAssistantTextGatedOff(t *testing.T) {
+func TestNodePayloadViewTextGatedOff(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))

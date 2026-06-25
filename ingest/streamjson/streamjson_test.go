@@ -1,6 +1,7 @@
 package streamjson
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -229,4 +230,19 @@ func TestParseResultTurnNoPayload(t *testing.T) {
 	require.Len(t, obs, 1)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
 	assert.Nil(t, obs[0].Payload)
+}
+
+func TestParseAssistantMultiTextBlocksConcatenated(t *testing.T) {
+	var seq uint64
+	next := func() uint64 { s := seq; seq++; return s }
+	line := []byte(`{"type":"assistant","session_id":"s1","message":{"id":"m2","content":[{"type":"text","text":"hello"},{"type":"text","text":" world"}]}}`)
+	obs, err := Parse(line, "e", next)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	turn := obs[0]
+	assert.Equal(t, "assistant_turn", turn.Kind)
+	require.NotNil(t, turn.Payload)
+	var got string
+	require.NoError(t, json.Unmarshal(turn.Payload.Output, &got))
+	assert.Equal(t, "hello world", got)
 }
