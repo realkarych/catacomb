@@ -141,6 +141,41 @@ test('gated payload (403) yields no snippet but keeps the cheap label', async ({
   await expect(page.locator('.outline-snippet')).toHaveCount(0);
 });
 
+test('text-less conversation nodes never fetch a payload (no 404s)', async ({ page }) => {
+  const textlessEvents: SseEvent[] = [
+    { kind: 'node_upsert', rev: 1, node: { id: 'n-session', run_id: 'run-out', type: 'session', name: 'Session Root', status: 'ok', rev: 1 } },
+    { kind: 'node_upsert', rev: 2, node: { id: 'n-prompt', run_id: 'run-out', type: 'user_prompt', name: 'user prompt', status: 'ok', payload_hash: 'ph-prompt', rev: 2 } },
+    { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt', rev: 3 } },
+    { kind: 'node_upsert', rev: 4, node: { id: 'n-turn-empty', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'ok', rev: 4 } },
+    { kind: 'edge_upsert', rev: 5, edge: { id: 'e2', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-turn-empty', rev: 5 } },
+  ];
+
+  await page.route('/v1/sessions', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fakeSessions) }),
+  );
+  await page.route('/v1/subscribe**', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: buildSseBody(textlessEvents) }),
+  );
+
+  const payloadPaths: string[] = [];
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) => {
+    payloadPaths.push(new URL(route.request().url()).pathname);
+    if (route.request().url().includes('n-prompt')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptPayload) });
+    } else {
+      await route.fulfill({ status: 404, body: 'payload not found' });
+    }
+  });
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+  await expect(page.locator('.outline-row').filter({ hasText: 'assistant' }).first()).toBeVisible();
+  await page.waitForTimeout(500);
+
+  expect(payloadPaths.some((p) => p.includes('n-turn-empty'))).toBe(false);
+  expect(payloadPaths.some((p) => p.includes('n-prompt'))).toBe(true);
+});
+
 test('collapsed parent row shows an aggregate badge with a status dot', async ({ page }) => {
   await routeBase(page);
   await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>

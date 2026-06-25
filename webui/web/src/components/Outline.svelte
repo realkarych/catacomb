@@ -11,7 +11,7 @@
   import { filterNodes, isActive } from '../lib/filters';
   import { formatTokens, formatCost, formatDuration } from '../lib/format/format';
   import { isConversationNode, conversationText } from '../lib/conversation';
-  import { fetchNodePayload } from '../lib/api';
+  import { fetchNodePayload, NotFoundError, ForbiddenError } from '../lib/api';
 
   interface Props {
     hash: string;
@@ -112,8 +112,8 @@
       untrack(() => {
         snippets = { ...snippets, [id]: snippet };
       });
-    } catch {
-      attempted.add(id);
+    } catch (err) {
+      if (err instanceof NotFoundError || err instanceof ForbiddenError) return;
     }
   }
 
@@ -122,6 +122,7 @@
     untrack(() => {
       for (const row of vis) {
         if (!isConversationNode(row.node.type)) continue;
+        if (!row.node.payload_hash) continue;
         if (attempted.has(row.id)) continue;
         void loadSnippet(row.id);
       }
