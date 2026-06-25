@@ -86,6 +86,31 @@ const sseEvents: SseEvent[] = [
       rev: 5,
     },
   },
+  {
+    kind: 'node_upsert',
+    rev: 6,
+    node: {
+      id: 'node-prompt-pl',
+      run_id: 'run-payload',
+      type: 'user_prompt',
+      name: 'user prompt',
+      status: 'ok',
+      payload_hash: 'prompthash',
+      rev: 6,
+    },
+  },
+  {
+    kind: 'edge_upsert',
+    rev: 7,
+    edge: {
+      id: 'edge-pl-3',
+      run_id: 'run-payload',
+      type: 'parent_child',
+      src: 'node-session-pl',
+      dst: 'node-prompt-pl',
+      rev: 7,
+    },
+  },
 ];
 
 const redactedPayload: PayloadView = {
@@ -128,7 +153,7 @@ test('content panel: collapsed by default, no fetch until reveal', async ({ page
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
   await toolNode.click();
@@ -151,7 +176,7 @@ test('content panel: 200 redacted payload shows input/output + redacted badge + 
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
   await toolNode.click();
@@ -182,7 +207,7 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
   await toolNode.click();
@@ -195,6 +220,33 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   await expect(drawer.locator('.payload-msg')).toBeVisible();
   await expect(drawer.locator('.payload-msg')).toContainText('--allow-payload-access');
   await expect(drawer.locator('.payload-section')).toHaveCount(0);
+});
+
+test('content panel: user prompt renders input as text, not JSON', async ({ page }) => {
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route) => {
+    const promptPayload: PayloadView = {
+      node_id: 'node-prompt-pl',
+      payload_hash: 'prompthash',
+      input: 'What is the meaning of life?',
+      redactions: [],
+      redacted: false,
+    };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptPayload) });
+  });
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
+
+  const promptNode = page.locator('.svelte-flow__node').filter({ hasText: 'user prompt' });
+  await promptNode.click();
+
+  const drawer = page.locator('.node-drawer');
+  await expect(drawer).toBeVisible();
+  await drawer.locator('.reveal-btn').click();
+
+  await expect(drawer.locator('.payload-section-label')).toContainText('Prompt');
+  await expect(drawer.locator('.payload-text')).toContainText('What is the meaning of life?');
+  await expect(drawer.locator('.payload-content.mono')).toHaveCount(0);
 });
 
 test('content panel: assistant turn renders response as text, not JSON', async ({ page }) => {
@@ -210,7 +262,7 @@ test('content panel: assistant turn renders response as text, not JSON', async (
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const turnNode = page.locator('.svelte-flow__node').filter({ hasText: 'assistant turn' });
   await turnNode.click();

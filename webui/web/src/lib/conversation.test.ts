@@ -25,6 +25,10 @@ describe('isConversationNode', () => {
   it('returns false for empty string', () => {
     expect(isConversationNode('')).toBe(false);
   });
+
+  it('returns false for mcp_call', () => {
+    expect(isConversationNode('mcp_call')).toBe(false);
+  });
 });
 
 describe('conversationText', () => {
