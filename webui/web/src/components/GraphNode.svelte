@@ -4,8 +4,18 @@
   import type { Node as CNode } from '../lib/types';
   import { selectedNodeId, navigateToNode, filteredNodeIds } from '../lib/stores/stores.svelte';
   import { formatTokens, shortHash } from '../lib/format/format';
+  import type { Aggregate } from '../lib/graph/types';
+  import { badgeStatLine, badgeStatusColor } from '../lib/graph/badge';
 
-  type GraphNodeData = { catNode: CNode; sessionHash: string; onActivate?: () => void };
+  type GraphNodeData = {
+    catNode: CNode;
+    sessionHash: string;
+    onActivate?: () => void;
+    collapsible?: boolean;
+    collapsed?: boolean;
+    aggregate?: Aggregate;
+    onToggle?: (id: string) => void;
+  };
   type Props = NodeProps<import('@xyflow/svelte').Node<GraphNodeData>>;
 
   let { id, data }: Props = $props();
@@ -13,6 +23,10 @@
   const catNode = $derived(data.catNode);
   const sessionHash = $derived(data.sessionHash);
   const onActivate = $derived(data.onActivate);
+  const collapsible = $derived(data.collapsible ?? false);
+  const collapsed = $derived(data.collapsed ?? false);
+  const aggregate = $derived(data.aggregate);
+  const onToggle = $derived(data.onToggle);
 
   const isSelected = $derived(selectedNodeId.value === id);
   const hasOtherSelected = $derived(selectedNodeId.value !== null && !isSelected);
@@ -41,6 +55,12 @@
       activate();
     }
   }
+
+  function handleToggle(ev: MouseEvent | KeyboardEvent) {
+    ev.stopPropagation();
+    ev.preventDefault();
+    onToggle?.(id);
+  }
 </script>
 
 <div
@@ -58,6 +78,16 @@
   <Handle type="target" position={Position.Left} class="graph-handle" />
 
   <div class="graph-node-header">
+    {#if collapsible}
+      <button
+        class="graph-node-toggle"
+        type="button"
+        aria-label={collapsed ? 'Expand node' : 'Collapse node'}
+        aria-expanded={!collapsed}
+        onclick={handleToggle}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleToggle(e); }}
+      >{collapsed ? '▸' : '▾'}</button>
+    {/if}
     <span class="graph-node-name">{catNode.name ?? catNode.type}</span>
     <span
       class="graph-node-status"
@@ -68,6 +98,12 @@
   </div>
 
   <div class="graph-node-id mono">{id.startsWith('session:') ? shortHash(id.slice(8) || id) : shortHash(id)}</div>
+
+  {#if collapsed && aggregate}
+    <div class="graph-node-badge" style="--badge-status: {badgeStatusColor(aggregate.status)};">
+      <span class="graph-node-badge-stat mono">{badgeStatLine(aggregate)}</span>
+    </div>
+  {/if}
 
   {#if catNode.tokens_in !== undefined || catNode.tokens_out !== undefined}
     <div class="graph-node-tokens">
@@ -168,5 +204,36 @@
 
   :global(.graph-handle:hover) {
     background: var(--accent) !important;
+  }
+
+  .graph-node-toggle {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: var(--text-sm);
+    line-height: 1;
+    padding: 0 var(--s1) 0 0;
+    flex-shrink: 0;
+  }
+
+  .graph-node-toggle:hover {
+    color: var(--text);
+  }
+
+  .graph-node-toggle:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .graph-node-badge {
+    margin-top: var(--s1);
+    padding-left: var(--s2);
+    border-left: 2px solid var(--badge-status);
+  }
+
+  .graph-node-badge-stat {
+    font-size: var(--text-xs);
+    color: var(--text-dim);
   }
 </style>
