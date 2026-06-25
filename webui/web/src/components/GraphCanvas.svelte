@@ -83,17 +83,18 @@
       if (changed) collapsed = next;
     }
 
-    const topologyKey = collapseTopologyKey(graph.nodes, graph.edges, collapsed) + (showOrphans ? ':o' : '');
+    if (graph.nodes.length === 0) return;
+
+    const view = collapseView(graph.nodes, graph.edges, collapsed);
+    const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
+    const orphanSet = new Set(view.hierarchy.orphans);
+    const shownNodes = showOrphans ? view.nodes : view.nodes.filter((n) => !orphanSet.has(n.id));
+    const shownEdges = showOrphans ? view.edges : view.edges.filter((e) => !orphanSet.has(e.src) && !orphanSet.has(e.dst));
+
+    const topologyKey = collapseTopologyKey(shownNodes, shownEdges) + (showOrphans ? ':o' : '');
 
     if (topologyKey !== prevTopologyKey) {
       prevTopologyKey = topologyKey;
-      const view = collapseView(graph.nodes, graph.edges, collapsed);
-      const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
-
-      const hier = view.hierarchy;
-      const orphanSet = new Set(hier.orphans);
-      const shownNodes = showOrphans ? view.nodes : view.nodes.filter((n) => !orphanSet.has(n.id));
-      const shownEdges = showOrphans ? view.edges : view.edges.filter((e) => !orphanSet.has(e.src) && !orphanSet.has(e.dst));
 
       const oldPos = Object.fromEntries(
         (untrack(() => xyNodes)).map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
@@ -130,9 +131,7 @@
         className: dimmed.has(e.id) ? 'edge--dimmed' : undefined,
       })) as unknown as XyFlowEdge[];
       if (anchorId) { pendingFitView = false; anchorId = null; } else if (preserveViewportOnNext) { preserveViewportOnNext = false; pendingFitView = false; pendingRestoreViewport = true; } else { pendingFitView = true; }
-    } else if (graph.nodes.length > 0) {
-      const view = collapseView(graph.nodes, graph.edges, collapsed);
-      const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
+    } else {
       const nodeMap = new Map(view.nodes.map((n) => [n.id, n]));
       const current = untrack(() => xyNodes);
       let changed = false;
@@ -150,7 +149,7 @@
           onToggle: handleToggle,
         };
         const prev = xyN.data as { catNode?: unknown; aggregate?: unknown } | undefined;
-        if (prev?.catNode === catNode && prev?.aggregate === undefined && data.aggregate === undefined) {
+        if (prev?.catNode === catNode && prev?.aggregate === data.aggregate) {
           return xyN;
         }
         changed = true;

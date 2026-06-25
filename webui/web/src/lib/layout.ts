@@ -130,11 +130,9 @@ export function anchorOffset(
 export function collapseTopologyKey(
   nodes: { id: string }[],
   edges: { id: string }[],
-  collapsed: Set<string>,
 ): string {
   return JSON.stringify([
     [...nodes.map((n) => n.id)].sort(),
     [...edges.map((e) => e.id)].sort(),
-    [...collapsed].sort(),
   ]);
 }

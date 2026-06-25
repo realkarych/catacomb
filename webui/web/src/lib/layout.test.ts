@@ -174,25 +174,57 @@ describe('anchorOffset', () => {
 });
 
 describe('collapseTopologyKey', () => {
-  it('changes when the collapsed set changes', () => {
-    const nodes = [{ id: 'a' }, { id: 'b' }];
-    const edges = [{ id: 'e1' }];
-    const k1 = collapseTopologyKey(nodes, edges, new Set());
-    const k2 = collapseTopologyKey(nodes, edges, new Set(['a']));
+  it('changes when the visible node set changes', () => {
+    const k1 = collapseTopologyKey([{ id: 'a' }, { id: 'b' }], [{ id: 'e1' }]);
+    const k2 = collapseTopologyKey([{ id: 'a' }], [{ id: 'e1' }]);
     expect(k1).not.toBe(k2);
   });
 
-  it('is stable regardless of collapsed-set insertion order', () => {
-    const nodes = [{ id: 'a' }];
-    const edges: { id: string }[] = [];
-    const k1 = collapseTopologyKey(nodes, edges, new Set(['x', 'y']));
-    const k2 = collapseTopologyKey(nodes, edges, new Set(['y', 'x']));
-    expect(k1).toBe(k2);
+  it('changes when the lifted edge set changes', () => {
+    const k1 = collapseTopologyKey([{ id: 'a' }, { id: 'b' }], [{ id: 'e1' }]);
+    const k2 = collapseTopologyKey([{ id: 'a' }, { id: 'b' }], []);
+    expect(k1).not.toBe(k2);
   });
 
   it('is stable regardless of node/edge order', () => {
-    const k1 = collapseTopologyKey([{ id: 'b' }, { id: 'a' }], [{ id: 'e2' }, { id: 'e1' }], new Set());
-    const k2 = collapseTopologyKey([{ id: 'a' }, { id: 'b' }], [{ id: 'e1' }, { id: 'e2' }], new Set());
+    const k1 = collapseTopologyKey([{ id: 'b' }, { id: 'a' }], [{ id: 'e2' }, { id: 'e1' }]);
+    const k2 = collapseTopologyKey([{ id: 'a' }, { id: 'b' }], [{ id: 'e1' }, { id: 'e2' }]);
     expect(k1).toBe(k2);
+  });
+
+  it('changes when a collapse hides a previously-visible node', () => {
+    const nodes = [makeNode('s', 'session'), makeNode('at', 'assistant_turn'), makeNode('t1', 'tool_call')];
+    const edges = [makeEdge('e1', 's', 'at'), makeEdge('e2', 'at', 't1')];
+    const expanded = collapseView(nodes, edges, new Set());
+    const collapsed = collapseView(nodes, edges, new Set(['at']));
+    const kExpanded = collapseTopologyKey(expanded.nodes, expanded.edges);
+    const kCollapsed = collapseTopologyKey(collapsed.nodes, collapsed.edges);
+    expect(kExpanded).not.toBe(kCollapsed);
+  });
+
+  it('is stable when a node is added under a collapsed parent (hidden arrival)', () => {
+    const nodes = [makeNode('s', 'session'), makeNode('at', 'assistant_turn'), makeNode('t1', 'tool_call')];
+    const edges = [makeEdge('e1', 's', 'at'), makeEdge('e2', 'at', 't1')];
+    const collapsed = new Set(['at']);
+    const before = collapseView(nodes, edges, collapsed);
+    const grownNodes = [...nodes, makeNode('t2', 'tool_call')];
+    const grownEdges = [...edges, makeEdge('e3', 'at', 't2')];
+    const after = collapseView(grownNodes, grownEdges, collapsed);
+    const kBefore = collapseTopologyKey(before.nodes, before.edges);
+    const kAfter = collapseTopologyKey(after.nodes, after.edges);
+    expect(kAfter).toBe(kBefore);
+  });
+
+  it('changes when a node is added under an expanded parent (visible arrival)', () => {
+    const nodes = [makeNode('s', 'session'), makeNode('at', 'assistant_turn'), makeNode('t1', 'tool_call')];
+    const edges = [makeEdge('e1', 's', 'at'), makeEdge('e2', 'at', 't1')];
+    const expanded = new Set<string>();
+    const before = collapseView(nodes, edges, expanded);
+    const grownNodes = [...nodes, makeNode('t2', 'tool_call')];
+    const grownEdges = [...edges, makeEdge('e3', 'at', 't2')];
+    const after = collapseView(grownNodes, grownEdges, expanded);
+    const kBefore = collapseTopologyKey(before.nodes, before.edges);
+    const kAfter = collapseTopologyKey(after.nodes, after.edges);
+    expect(kAfter).not.toBe(kBefore);
   });
 });

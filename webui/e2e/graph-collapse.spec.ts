@@ -219,3 +219,54 @@ test('a live node under a collapsed parent bumps the badge without appearing', a
   await expect(node(page, 't3')).toHaveCount(0);
   await expect(node(page, 'at').locator('.graph-node-badge-stat')).toContainText('3 ·');
 });
+
+test('a tool streamed live under a collapsed turn bumps the badge without refitting the viewport', async ({ page }) => {
+  await installPushableSse(page);
+  await page.goto(`/?token=test#/s/${hash}`);
+  await expect(node(page, 'at')).toBeVisible();
+  await expect(node(page, 'at').locator('.graph-node-badge-stat')).toContainText('2 ·');
+  await expect(node(page, 't1')).toHaveCount(0);
+
+  const viewport = page.locator('.svelte-flow__viewport');
+  const transformOf = async (): Promise<string> =>
+    (await viewport.evaluate((el) => getComputedStyle(el as HTMLElement).transform)) ?? '';
+
+  async function settledTransform(): Promise<string> {
+    let last = await transformOf();
+    await expect
+      .poll(async () => {
+        const now = await transformOf();
+        const stable = now === last;
+        last = now;
+        return stable;
+      })
+      .toBe(true);
+    return last;
+  }
+
+  const initialTransform = await settledTransform();
+
+  const pane = page.locator('.svelte-flow__pane');
+  const box = await pane.boundingBox();
+  if (!box) throw new Error('flow pane has no bounding box');
+  const px = box.x + box.width / 2;
+  const py = box.y + 30;
+  await page.mouse.move(px, py);
+  await page.mouse.down();
+  await page.mouse.move(px - 140, py + 60, { steps: 8 });
+  await page.mouse.up();
+
+  await expect.poll(transformOf).not.toBe(initialTransform);
+  const pannedTransform = await settledTransform();
+
+  await pushSse(page, [
+    { kind: 'node_upsert', rev: 30, node: { id: 't9', run_id: 'run1', type: 'tool_call', name: 'LiveLate', status: 'ok', tokens_in: 50, tokens_out: 60, rev: 30 } },
+    { kind: 'edge_upsert', rev: 31, edge: { id: 'e10', run_id: 'run1', type: 'parent_child', src: 'at', dst: 't9', rev: 31 } },
+  ]);
+
+  await expect(node(page, 'at').locator('.graph-node-badge-stat')).toContainText('3 ·');
+  await expect(node(page, 't9')).toHaveCount(0);
+
+  await page.waitForTimeout(500);
+  expect(await transformOf()).toBe(pannedTransform);
+});
