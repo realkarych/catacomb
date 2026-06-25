@@ -57,3 +57,6 @@ webui/web/coverage/
 
 # Playwright MCP scratch (screenshots/snapshots from direct MCP browser use)
 .playwright-mcp/
+
+# Claude Code local runtime (hooks point at machine-specific absolute paths)
+/.claude/
