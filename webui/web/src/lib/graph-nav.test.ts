@@ -158,4 +158,39 @@ describe('nextNodeByDirection', () => {
       expect(r1).toBe(r2);
     });
   });
+
+  describe('visible-set filtering', () => {
+    it('skips hidden children when navigating right', () => {
+      const nodes = [n('s'), n('a'), n('b')];
+      const edges = [e('e1', 's', 'a'), e('e2', 's', 'b')];
+      const visible = new Set(['s', 'b']);
+      expect(nextNodeByDirection('s', nodes, edges, 'right', visible)).toBe('b');
+    });
+
+    it('returns currentId when the only target is hidden', () => {
+      const nodes = [n('s'), n('a')];
+      const edges = [e('e1', 's', 'a')];
+      const visible = new Set(['s']);
+      expect(nextNodeByDirection('s', nodes, edges, 'right', visible)).toBe('s');
+    });
+
+    it('root selection ignores hidden nodes', () => {
+      const nodes = [n('hidden'), n('vis')];
+      const visible = new Set(['vis']);
+      expect(nextNodeByDirection(null, nodes, [], 'down', visible)).toBe('vis');
+    });
+
+    it('up/down skip hidden siblings', () => {
+      const nodes = [n('root'), n('a'), n('b'), n('c')];
+      const edges = [e('e1', 'root', 'a'), e('e2', 'root', 'b'), e('e3', 'root', 'c')];
+      const visible = new Set(['root', 'a', 'c']);
+      expect(nextNodeByDirection('a', nodes, edges, 'down', visible)).toBe('c');
+    });
+
+    it('without a visible set behaves exactly as before', () => {
+      const nodes = [n('s'), n('a'), n('b')];
+      const edges = [e('e1', 's', 'a'), e('e2', 's', 'b')];
+      expect(nextNodeByDirection('s', nodes, edges, 'right')).toBe('a');
+    });
+  });
 });

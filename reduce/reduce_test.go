@@ -1372,6 +1372,99 @@ func TestReparentEmitsEdgeDelete(t *testing.T) {
 	assert.True(t, deletedOld, "re-parent must emit DeltaEdgeDelete for the superseded edge")
 }
 
+func hookToolNoMessage(seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
+		Source: model.SourceHook, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "t1"},
+		Attrs:       map[string]any{"name": "Bash", "status": "running"},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func jsonlToolTurn(seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
+		Source: model.SourceJSONL, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "t1", MessageID: "m1"},
+		Attrs:       map[string]any{"name": "Bash"},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestHookSessionReparentedToTurnByJSONL(t *testing.T) {
+	g := NewGraph()
+	g.Apply(hookToolNoMessage(1))
+	_ = g.DrainDeltas()
+	g.Apply(jsonlToolTurn(2))
+
+	tool := model.ToolCallID("e1", "t1")
+	turnEdge := model.EdgeID("e1", model.EdgeParentChild, model.AssistantTurnID("e1", "m1"), tool)
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
+	require.Contains(t, g.Edges, turnEdge)
+	assert.NotContains(t, g.Edges, sessionEdge)
+
+	deletedSession := false
+	for _, d := range g.DrainDeltas() {
+		if d.Kind == cdc.DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
+			deletedSession = true
+		}
+	}
+	assert.True(t, deletedSession, "session edge must be deleted when tool is reparented to its turn")
+}
+
+func TestJSONLTurnNotReplacedByHookSessionFallback(t *testing.T) {
+	g := NewGraph()
+	g.Apply(jsonlToolTurn(1))
+	g.Apply(hookToolNoMessage(2))
+
+	tool := model.ToolCallID("e1", "t1")
+	turnEdge := model.EdgeID("e1", model.EdgeParentChild, model.AssistantTurnID("e1", "m1"), tool)
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
+	require.Contains(t, g.Edges, turnEdge)
+	assert.NotContains(t, g.Edges, sessionEdge)
+}
+
+func TestParentToolUseIDIsSoleStructuralParent(t *testing.T) {
+	g := NewGraph()
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
+		Kind: "assistant_tool_use", Seq: 1, EventTime: time.Unix(1, 0).UTC(),
+		Attrs:       map[string]any{"name": "Bash"},
+		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "tc", ParentToolUseID: "tp", MessageID: "m1"},
+	}
+	g.Apply(o)
+
+	tool := model.ToolCallID("e1", "tc")
+	parentToolEdge := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tp"), tool)
+	turnEdge := model.EdgeID("e1", model.EdgeParentChild, model.AssistantTurnID("e1", "m1"), tool)
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
+	require.Contains(t, g.Edges, parentToolEdge)
+	assert.NotContains(t, g.Edges, turnEdge)
+	assert.NotContains(t, g.Edges, sessionEdge)
+}
+
+func TestPlainToolTurnParentOnly(t *testing.T) {
+	g := NewGraph()
+	g.Apply(jsonlToolTurn(1))
+
+	tool := model.ToolCallID("e1", "t1")
+	turnEdge := model.EdgeID("e1", model.EdgeParentChild, model.AssistantTurnID("e1", "m1"), tool)
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
+	require.Contains(t, g.Edges, turnEdge)
+	assert.NotContains(t, g.Edges, sessionEdge)
+}
+
+func TestHookOnlyToolKeepsSessionParent(t *testing.T) {
+	g := NewGraph()
+	g.Apply(hookToolNoMessage(1))
+	g.Apply(hookToolNoMessage(2))
+
+	tool := model.ToolCallID("e1", "t1")
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
+	require.Contains(t, g.Edges, sessionEdge)
+}
+
 func TestJSONLPayloadBeatsStreamJSON(t *testing.T) {
 	jsonlFull := jsonlToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
 	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)

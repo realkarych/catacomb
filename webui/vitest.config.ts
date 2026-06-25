@@ -25,6 +25,7 @@ export default defineConfig({
         'web/src/lib/timeline.ts',
         'web/src/lib/filters.ts',
         'web/src/lib/graph-nav.ts',
+        'web/src/lib/graph/**',
       ],
       exclude: [
         '**/*.test.ts',

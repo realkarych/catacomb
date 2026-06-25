@@ -21,16 +21,19 @@ func seededTree() treeState {
 func TestTreeMoveAndClamp(t *testing.T) {
 	ts := seededTree()
 	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	assert.Equal(t, 0, ts.cursor)
+	assert.Equal(t, 1, ts.cursor)
+	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	assert.Equal(t, 1, ts.cursor)
 	ts2, _ := ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
 	assert.Equal(t, 0, ts2.cursor)
 }
 
 func TestTreeExpandRevealsChildren(t *testing.T) {
 	ts := seededTree()
-	v0 := ts.view(NewStyles(true), 10)
-	assert.NotContains(t, v0, "tool call")
-	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Contains(t, ts.view(NewStyles(true), 10), "tool call")
+	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	assert.NotContains(t, ts.view(NewStyles(true), 10), "tool call")
+	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
 	assert.Contains(t, ts.view(NewStyles(true), 10), "tool call")
 }
 
@@ -80,14 +83,30 @@ func TestTreeCollapseWithH(t *testing.T) {
 func TestTreeSpaceExpandCollapse(t *testing.T) {
 	ts := seededTree()
 	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeySpace})
-	assert.Contains(t, ts.view(NewStyles(true), 10), "tool call")
-	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeySpace})
 	assert.NotContains(t, ts.view(NewStyles(true), 10), "tool call")
+	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeySpace})
+	assert.Contains(t, ts.view(NewStyles(true), 10), "tool call")
 }
 
 func TestTreeLExpand(t *testing.T) {
 	ts := seededTree()
 	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	assert.Contains(t, ts.view(NewStyles(true), 10), "tool call")
+}
+
+func TestTreeEnterExpandsCollapsedByDefaultNode(t *testing.T) {
+	ts := newTreeState()
+	evs := []SseEvent{
+		nodeEv("node_upsert", "s", "session", "running", 1),
+		nodeEv("node_upsert", "at", "assistant_turn", "running", 2),
+		nodeEv("node_upsert", "tc", "tool_call", "running", 3),
+		{Kind: "edge_upsert", Rev: 4, Edge: &Edge{ID: "e1", Type: "parent_child", Src: "s", Dst: "at", Rev: 4}},
+		{Kind: "edge_upsert", Rev: 5, Edge: &Edge{ID: "e2", Type: "parent_child", Src: "at", Dst: "tc", Rev: 5}},
+	}
+	ts = ts.seed(evs)
+	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	assert.Equal(t, 1, ts.cursor)
+	ts, _ = ts.update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Contains(t, ts.view(NewStyles(true), 10), "tool call")
 }
 
@@ -149,6 +168,38 @@ func TestViewOffset(t *testing.T) {
 	assert.Equal(t, 1, viewOffset(10, 10))
 	assert.Equal(t, 5, viewOffset(14, 10))
 	assert.Equal(t, 0, viewOffset(5, 0))
+}
+
+func TestSeedDefaultExpandsSpineNotTurns(t *testing.T) {
+	ts := newTreeState()
+	evs := []SseEvent{
+		nodeEv("node_upsert", "s", "session", "running", 1),
+		nodeEv("node_upsert", "u", "user_prompt", "running", 2),
+		nodeEv("node_upsert", "at", "assistant_turn", "running", 3),
+		nodeEv("node_upsert", "t1", "tool_call", "running", 4),
+		nodeEv("node_upsert", "sub", "subagent", "running", 5),
+		nodeEv("node_upsert", "subc", "tool_call", "running", 6),
+		{Kind: "edge_upsert", Rev: 7, Edge: &Edge{ID: "e1", Type: "parent_child", Src: "s", Dst: "u", Rev: 7}},
+		{Kind: "edge_upsert", Rev: 8, Edge: &Edge{ID: "e2", Type: "parent_child", Src: "u", Dst: "at", Rev: 8}},
+		{Kind: "edge_upsert", Rev: 9, Edge: &Edge{ID: "e3", Type: "parent_child", Src: "at", Dst: "t1", Rev: 9}},
+		{Kind: "edge_upsert", Rev: 10, Edge: &Edge{ID: "e4", Type: "parent_child", Src: "u", Dst: "sub", Rev: 10}},
+		{Kind: "edge_upsert", Rev: 11, Edge: &Edge{ID: "e5", Type: "parent_child", Src: "sub", Dst: "subc", Rev: 11}},
+	}
+	ts = ts.seed(evs)
+	rows := Flatten(ts.graph, ts.expanded)
+	visible := map[string]bool{}
+	for _, r := range rows {
+		visible[r.Node.ID] = true
+	}
+	if !visible["s"] || !visible["u"] || !visible["at"] || !visible["sub"] {
+		t.Fatalf("spine not visible: %v", visible)
+	}
+	if visible["t1"] {
+		t.Fatalf("assistant_turn child should be collapsed by default")
+	}
+	if visible["subc"] {
+		t.Fatalf("subagent child should be collapsed by default")
+	}
 }
 
 func TestTreeScrollOffsetBackwards(t *testing.T) {

@@ -77,13 +77,13 @@ func (g *Graph) Apply(o model.Observation) {
 	}
 }
 
-func (g *Graph) upsertEdgeGated(o model.Observation, src, dst string) {
+func (g *Graph) structEdgeAllowed(o model.Observation) bool {
 	if o.Source == model.SourceOTel && o.Correlation.ParentSpanID != "" {
 		if !g.spanChildren[o.Correlation.SpanID] && o.Correlation.ToolUseID == "" {
-			return
+			return false
 		}
 	}
-	g.upsertEdge(o.ExecutionID, o.RunID, src, dst, o.Seq)
+	return true
 }
 
 func (g *Graph) applyTool(o model.Observation) {
@@ -111,12 +111,15 @@ func (g *Graph) applyTool(o model.Observation) {
 	}
 	g.mergePayload(n, o.Payload, o.Source)
 	g.emitNode(n, o)
-	parent := model.SessionNodeID(o.ExecutionID)
-	if o.Correlation.MessageID != "" {
-		parent = model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID)
+	switch {
+	case o.Correlation.ParentToolUseID != "":
+		g.upsertParentToolEdge(o)
+	case !g.structEdgeAllowed(o):
+	case o.Correlation.MessageID != "":
+		g.setStructParent(o, structKindTurn, model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), id)
+	default:
+		g.setStructParent(o, structKindSession, model.SessionNodeID(o.ExecutionID), id)
 	}
-	g.upsertEdgeGated(o, parent, id)
-	g.upsertParentToolEdge(o)
 }
 
 func (g *Graph) applySubagent(o model.Observation) {
@@ -180,15 +183,25 @@ func structureRank(s model.Source) int {
 	}
 }
 
+const (
+	structKindSession    = 0
+	structKindTurn       = 1
+	structKindParentTool = 2
+)
+
 func (g *Graph) upsertParentToolEdge(o model.Observation) {
 	if o.Correlation.ParentToolUseID == "" || o.Correlation.ToolUseID == "" {
 		return
 	}
 	src := model.ToolCallID(o.ExecutionID, o.Correlation.ParentToolUseID)
 	dst := model.ToolCallID(o.ExecutionID, o.Correlation.ToolUseID)
+	g.setStructParent(o, structKindParentTool, src, dst)
+}
+
+func (g *Graph) setStructParent(o model.Observation, kind int, src, dst string) {
 	fs := g.stampsFor(dst)
 	r := structureRank(o.Source)
-	if fs.haveStruct && r < fs.structRank {
+	if fs.haveStruct && (kind < fs.structKind || (kind == fs.structKind && r < fs.structRank)) {
 		return
 	}
 	if fs.haveStruct && fs.structSrc != src {
@@ -198,6 +211,7 @@ func (g *Graph) upsertParentToolEdge(o model.Observation) {
 			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: o.Seq, Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
 		}
 	}
+	fs.structKind = kind
 	fs.structRank = r
 	fs.haveStruct = true
 	fs.structSrc = src
@@ -214,6 +228,7 @@ type fieldStamps struct {
 	payloadRank int
 	havePayload bool
 	structRank  int
+	structKind  int
 	haveStruct  bool
 	structSrc   string
 	endRank     int

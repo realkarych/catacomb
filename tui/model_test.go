@@ -243,8 +243,6 @@ func TestTreeEnterSelectsNodeAndFocusesDetail(t *testing.T) {
 		{Kind: "edge_upsert", Rev: 3, Edge: &Edge{ID: "e1", Type: "parent_child", Src: "s", Dst: "a", Rev: 3}},
 	}})
 	m = u.(Model)
-	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = u.(Model)
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = u.(Model)
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -316,8 +314,6 @@ func TestTreeKeyDelegatedWhenFocusTree(t *testing.T) {
 	}})
 	m = u.(Model)
 	assert.Equal(t, focusTree, m.focus)
-	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = u.(Model)
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	m = u.(Model)
 	assert.Equal(t, 1, m.tree.cursor)
