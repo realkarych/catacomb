@@ -144,6 +144,7 @@ test('graph view does not trigger effect_update_depth_exceeded on data updates',
   const loopErrors = () => errors.filter((e) => e.includes('effect_update_depth_exceeded'));
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
 
   // The loop trips while the graph is mounting and aborts node rendering, so
@@ -170,6 +171,7 @@ test('clicking a graph node opens the drawer with metric values and lights the n
   page,
 }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
   await page.waitForTimeout(1000);
 
@@ -208,6 +210,7 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer and lights the node on load',
   page,
 }) => {
   await page.goto(`/?token=test#/s/${sessionHash}/n/${turnId}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const drawer = page.locator('.node-drawer');
@@ -215,6 +218,25 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer and lights the node on load',
   await expect(drawer).toContainText('Assistant Turn');
   await expect(drawer.locator('.metric-row')).toHaveCount(5);
   await expect(page.locator('.graph-node--selected')).toHaveCount(1);
+});
+
+test('clicking a visible on-screen node does NOT change the viewport transform', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await page.waitForTimeout(1000);
+
+  const viewport = page.locator('.svelte-flow__viewport');
+  const transformBefore = await viewport.evaluate((el) => getComputedStyle(el as HTMLElement).transform);
+
+  const turn = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
+  await turn.click();
+
+  await expect(page.locator('.node-drawer.node-drawer--open')).toBeVisible();
+  await page.waitForTimeout(400);
+
+  const transformAfter = await viewport.evaluate((el) => getComputedStyle(el as HTMLElement).transform);
+  expect(transformAfter).toBe(transformBefore);
 });
 
 test('node navigation within a session does not reconnect SSE', async ({ page }) => {
@@ -244,6 +266,7 @@ test('node navigation within a session does not reconnect SSE', async ({ page })
   );
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   constructionCount = await page.evaluate(() => (globalThis as unknown as { _sseCount: number })._sseCount ?? 0);

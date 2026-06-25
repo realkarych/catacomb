@@ -213,12 +213,15 @@
     cursor: pointer;
     font-size: var(--text-sm);
     line-height: 1;
-    padding: 0 var(--s1) 0 0;
+    padding: 2px var(--s2) 2px var(--s1);
     flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    transition: background 0.12s ease;
   }
 
   .graph-node-toggle:hover {
     color: var(--text);
+    background: var(--surface-2);
   }
 
   .graph-node-toggle:focus-visible {

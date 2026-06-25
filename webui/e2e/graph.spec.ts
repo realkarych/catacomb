@@ -133,6 +133,7 @@ test.beforeEach(async ({ page }) => {
 test('session view renders graph canvas with nodes', async ({ page }) => {
   await page.goto(`/#/s/${sessionHash}`);
   await expect(page.locator('.session-view')).toBeVisible();
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
 });
 
@@ -141,12 +142,14 @@ test('graph canvas is visible when navigating from session list', async ({ page 
   await expect(page.locator('.sessions-list')).toBeVisible();
   await page.locator('.session-row').first().click();
   await expect(page.locator('.session-view')).toBeVisible();
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
 });
 
 test('deep-link to session-node route renders session view', async ({ page }) => {
   await page.goto(`/#/s/${sessionHash}/n/node-user-1`);
   await expect(page.locator('.session-view')).toBeVisible();
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
   await expect(page.locator('.session-view')).toContainText('node-user-1');
 });
@@ -174,6 +177,7 @@ test('empty session shows waiting state', async ({ page }) => {
   });
   await page.goto(`/#/s/${emptyHash}`);
   await expect(page.locator('.session-view')).toBeVisible();
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
   await expect(page.locator('.empty-state-headline')).toContainText('Waiting');
 });

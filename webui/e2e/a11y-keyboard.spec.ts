@@ -109,6 +109,7 @@ test.beforeEach(async ({ page }) => {
 
 test('ArrowRight from canvas with no selection selects root and updates URL hash', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const canvas = page.locator('[role="application"][aria-label="Session graph"]');
@@ -125,6 +126,7 @@ test('ArrowRight from canvas with no selection selects root and updates URL hash
 
 test('ArrowRight CHAINING: two consecutive arrows with no re-focus traverse two different nodes', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const canvas = page.locator('[role="application"][aria-label="Session graph"]');
@@ -156,6 +158,7 @@ test('ArrowRight CHAINING: two consecutive arrows with no re-focus traverse two 
 
 test('ArrowRight again selects neighbor and drawer title, aria-current, URL hash all agree', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const canvas = page.locator('[role="application"][aria-label="Session graph"]');
@@ -186,6 +189,7 @@ test('ArrowRight again selects neighbor and drawer title, aria-current, URL hash
 
 test('Enter opens drawer then Escape returns focus to node button (not body)', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const rootNode = page.locator('.svelte-flow__node').filter({ hasText: 'Root Node' });
@@ -210,6 +214,7 @@ test('Enter opens drawer then Escape returns focus to node button (not body)', a
 
 test('typing arrow keys in the node-search box does not move graph selection', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const canvas = page.locator('[role="application"][aria-label="Session graph"]');
