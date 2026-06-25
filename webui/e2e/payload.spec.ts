@@ -61,6 +61,31 @@ const sseEvents: SseEvent[] = [
       rev: 3,
     },
   },
+  {
+    kind: 'node_upsert',
+    rev: 4,
+    node: {
+      id: 'node-turn-pl',
+      run_id: 'run-payload',
+      type: 'assistant_turn',
+      name: 'assistant turn',
+      status: 'ok',
+      payload_hash: 'turnhash',
+      rev: 4,
+    },
+  },
+  {
+    kind: 'edge_upsert',
+    rev: 5,
+    edge: {
+      id: 'edge-pl-2',
+      run_id: 'run-payload',
+      type: 'parent_child',
+      src: 'node-session-pl',
+      dst: 'node-turn-pl',
+      rev: 5,
+    },
+  },
 ];
 
 const redactedPayload: PayloadView = {
@@ -103,7 +128,7 @@ test('content panel: collapsed by default, no fetch until reveal', async ({ page
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
   await toolNode.click();
@@ -126,7 +151,7 @@ test('content panel: 200 redacted payload shows input/output + redacted badge + 
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
   await toolNode.click();
@@ -146,6 +171,9 @@ test('content panel: 200 redacted payload shows input/output + redacted badge + 
 
   await expect(drawer.locator('.copy-btn[aria-label="Copy input content"]')).toBeVisible();
   await expect(drawer.locator('.copy-btn[aria-label="Copy output content"]')).toBeVisible();
+
+  await expect(drawer.locator('.payload-content.mono').first()).toBeVisible();
+  await expect(drawer.locator('.payload-text')).toHaveCount(0);
 });
 
 test('content panel: 403 shows disabled message with --allow-payload-access', async ({ page }) => {
@@ -154,7 +182,7 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
   await toolNode.click();
@@ -167,4 +195,31 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   await expect(drawer.locator('.payload-msg')).toBeVisible();
   await expect(drawer.locator('.payload-msg')).toContainText('--allow-payload-access');
   await expect(drawer.locator('.payload-section')).toHaveCount(0);
+});
+
+test('content panel: assistant turn renders response as text, not JSON', async ({ page }) => {
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route) => {
+    const turnPayload: PayloadView = {
+      node_id: 'node-turn-pl',
+      payload_hash: 'turnhash',
+      output: 'Here is the **answer** to your question.',
+      redactions: [],
+      redacted: false,
+    };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(turnPayload) });
+  });
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+
+  const turnNode = page.locator('.svelte-flow__node').filter({ hasText: 'assistant turn' });
+  await turnNode.click();
+
+  const drawer = page.locator('.node-drawer');
+  await expect(drawer).toBeVisible();
+  await drawer.locator('.reveal-btn').click();
+
+  await expect(drawer.locator('.payload-section-label')).toContainText('Response');
+  await expect(drawer.locator('.payload-text')).toContainText('Here is the **answer** to your question.');
+  await expect(drawer.locator('.payload-content.mono')).toHaveCount(0);
 });
