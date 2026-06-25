@@ -82,7 +82,7 @@ Binding on every task; each task's steps re-verify them.
 | `daemon/server.go` | Modify | Register `POST /v1/transcript` → `d.authed(token, d.handleTranscript)`. |
 | `daemon/server_test.go` | Modify | Route registration + bearer-gating (401 without token) for `/v1/transcript`. |
 | `README.md` | Modify | Replace the `make`-only "Development" lede for users with a **Quickstart** block: `catacomb up` (one line), what it does, `catacomb demo`, `catacomb status`; keep the `make` block under Development. |
-| `webui/web/src/lib/theme.ts` | Create | Pure theme resolver: `resolveTheme(stored, osPrefersLight) -> 'dark' \| 'light'`;`nextTheme(current) -> ...`; storage key constant. **Gated 100%.** |
+| `webui/web/src/lib/theme.ts` | Create | Pure theme resolver: `resolveTheme(stored, osPrefersLight) -> 'dark' \| 'light'`; `nextTheme(current) -> ...`; storage key constant. **Gated 100%.** |
 | `webui/web/src/lib/theme.test.ts` | Create | 100% branches: stored override wins; absent stored → OS; toggle cycles; invalid stored → default dark. |
 | `webui/web/style.css` | Modify | Add `[data-theme='light']` token block + `@media (prefers-color-scheme: light)` scoped override; bump `--text-faint` for contrast (both themes). Dark `:root` default unchanged. |
 | `webui/web/src/lib/stores/theme.svelte.ts` | Create | Thin runes wiring: `$state` current theme, init from `localStorage` + `matchMedia` (seam), `toggleTheme()` persists + sets `document.documentElement.dataset.theme`. NOT gated. |
