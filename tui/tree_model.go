@@ -30,6 +30,10 @@ func viewOffset(cursor, height int) int {
 	return cursor - height + 1
 }
 
+func collapsedByDefault(t string) bool {
+	return t == "assistant_turn" || t == "subagent"
+}
+
 func (ts treeState) seed(evs []SseEvent) treeState {
 	g := EmptyGraph()
 	for _, ev := range evs {
@@ -37,6 +41,12 @@ func (ts treeState) seed(evs []SseEvent) treeState {
 	}
 	ts.graph = g
 	ts.cursor = 0
+	ts.expanded = make(map[string]bool)
+	for _, row := range BuildTree(g) {
+		if row.HasKids && !collapsedByDefault(row.Node.Type) {
+			ts.expanded[row.Node.ID] = true
+		}
+	}
 	return ts
 }
 
