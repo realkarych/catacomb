@@ -195,3 +195,38 @@ func TestParseUserNonToolResultBlockSkipped(t *testing.T) {
 	assert.Equal(t, "tool_result", obs[0].Kind)
 	assert.Equal(t, "t2", obs[0].Correlation.ToolUseID)
 }
+
+func TestParseUserPromptTextPayload(t *testing.T) {
+	var seq uint64
+	next := func() uint64 { s := seq; seq++; return s }
+	obs, err := Parse([]byte(`{"type":"user","session_id":"s1","message":{"content":"hello there"}}`), "e", next)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "user_prompt", obs[0].Kind)
+	assert.Equal(t, "hello there", obs[0].Attrs["prompt"])
+	require.NotNil(t, obs[0].Payload)
+	assert.JSONEq(t, `"hello there"`, string(obs[0].Payload.Input))
+	assert.NotEmpty(t, obs[0].Payload.Hash)
+}
+
+func TestParseAssistantTextPayload(t *testing.T) {
+	var seq uint64
+	next := func() uint64 { s := seq; seq++; return s }
+	obs, err := Parse([]byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"text","text":"the reply"}]}}`), "e", next)
+	require.NoError(t, err)
+	turn := obs[0]
+	assert.Equal(t, "assistant_turn", turn.Kind)
+	require.NotNil(t, turn.Payload)
+	assert.JSONEq(t, `"the reply"`, string(turn.Payload.Output))
+	assert.Empty(t, turn.Payload.Input)
+}
+
+func TestParseResultTurnNoPayload(t *testing.T) {
+	var seq uint64
+	next := func() uint64 { s := seq; seq++; return s }
+	obs, err := Parse([]byte(`{"type":"result","session_id":"s1","usage":{"input_tokens":3,"output_tokens":4}}`), "e", next)
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "assistant_turn", obs[0].Kind)
+	assert.Nil(t, obs[0].Payload)
+}
