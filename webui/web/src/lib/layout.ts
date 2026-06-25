@@ -115,6 +115,18 @@ export function collapseView(
   return { nodes: visNodes, edges: visEdges, visible, hierarchy };
 }
 
+export function anchorOffset(
+  anchorId: string | null,
+  oldPos: Record<string, { x: number; y: number }>,
+  newPos: Record<string, { x: number; y: number }>,
+): { dx: number; dy: number } {
+  if (!anchorId) return { dx: 0, dy: 0 };
+  const o = oldPos[anchorId];
+  const n = newPos[anchorId];
+  if (!o || !n) return { dx: 0, dy: 0 };
+  return { dx: o.x - n.x, dy: o.y - n.y };
+}
+
 export function collapseTopologyKey(
   nodes: { id: string }[],
   edges: { id: string }[],

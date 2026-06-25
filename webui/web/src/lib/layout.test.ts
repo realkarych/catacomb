@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyLayout, dagreNodeToPosition, collapseView, collapseTopologyKey } from './layout';
+import { applyLayout, dagreNodeToPosition, collapseView, collapseTopologyKey, anchorOffset } from './layout';
 import type { Node as CNode, Edge as CEdge } from './types';
 
 function makeNode(id: string, type = 'marker'): CNode {
@@ -157,6 +157,19 @@ describe('collapseView', () => {
     const view = collapseView(nodes, edges, new Set());
     expect(view.nodes).toHaveLength(2);
     expect(view.edges).toHaveLength(1);
+  });
+});
+
+describe('anchorOffset', () => {
+  it('returns the delta that pins the anchor in place', () => {
+    const oldPos = { a: { x: 10, y: 5 } };
+    const newPos = { a: { x: 40, y: 25 } };
+    expect(anchorOffset('a', oldPos, newPos)).toEqual({ dx: -30, dy: -20 });
+  });
+
+  it('returns zero when the anchor is missing from either map', () => {
+    expect(anchorOffset('z', { a: { x: 1, y: 1 } }, {})).toEqual({ dx: 0, dy: 0 });
+    expect(anchorOffset(null, {}, {})).toEqual({ dx: 0, dy: 0 });
   });
 });
 

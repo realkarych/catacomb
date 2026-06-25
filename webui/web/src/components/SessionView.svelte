@@ -24,6 +24,7 @@
   let viewMode: 'graph' | 'timeline' = $state('graph');
   let drawerFocusOnOpen = $state(false);
   let canvasWrapEl: HTMLDivElement | undefined = $state();
+  let visibleIds = $state<Set<string>>(new Set());
 
   const graph = $derived(sessionGraph(hash));
   const hasTimingData = $derived(buildTimeline(graph.nodes).rows.length > 0);
@@ -76,7 +77,7 @@
     if (target.closest('[role="complementary"]')) return;
     e.preventDefault();
     const g = sessionGraph(hash);
-    const next = nextNodeByDirection(selectedNodeId.value, g.nodes, g.edges, dir);
+    const next = nextNodeByDirection(selectedNodeId.value, g.nodes, g.edges, dir, visibleIds);
     if (next !== null) {
       drawerFocusOnOpen = false;
       navigateToNode(hash, next);
@@ -147,7 +148,7 @@
         {#if viewMode === 'timeline'}
           <Timeline {hash} />
         {:else}
-          <GraphCanvas {hash} refit={fitKey} onNodeActivate={onNodeActivate} />
+          <GraphCanvas {hash} refit={fitKey} onNodeActivate={onNodeActivate} onVisibleChange={(ids) => (visibleIds = ids)} />
         {/if}
       </div>
       <NodeDrawer {hash} {token} focusOnOpen={drawerFocusOnOpen} />
