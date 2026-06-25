@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fetchNodePayload, ForbiddenError, NotFoundError } from '../lib/api';
   import { prettyJSON, payloadState, type PayloadState } from '../lib/payload-view';
+  import { isConversationNode, conversationText } from '../lib/conversation';
   import type { PayloadView } from '../lib/types';
 
   type DisplayState = 'idle' | 'loading' | 'not-found' | 'error' | PayloadState;
@@ -15,9 +16,10 @@
   interface Props {
     hash: string;
     nodeId: string;
+    nodeType: string;
     token: string;
   }
-  let { hash, nodeId, token }: Props = $props();
+  let { hash, nodeId, nodeType, token }: Props = $props();
 
   let revealed = $state(false);
   let fetchState: 'idle' | 'loading' | 'not-found' | 'error' | 'done' = $state('idle');
@@ -25,6 +27,7 @@
   let forbidden = $state(false);
 
   const displayState = $derived(computeDisplayState(fetchState, view, forbidden));
+  const asText = $derived(isConversationNode(nodeType));
 
   $effect(() => {
     nodeId;
@@ -113,32 +116,40 @@
       {#if view.input !== undefined && view.input !== null}
         <div class="payload-section">
           <div class="payload-section-header">
-            <span class="payload-section-label">Input</span>
+            <span class="payload-section-label">{asText ? 'Prompt' : 'Input'}</span>
             <button
               class="copy-btn"
-              onclick={() => copyText(prettyJSON(view?.input))}
+              onclick={() => copyText(asText ? conversationText(view?.input) : prettyJSON(view?.input))}
               aria-label="Copy input content"
             >
               Copy
             </button>
           </div>
-          <pre class="payload-content mono">{prettyJSON(view.input)}</pre>
+          {#if asText}
+            <pre class="payload-content payload-text">{conversationText(view.input)}</pre>
+          {:else}
+            <pre class="payload-content mono">{prettyJSON(view.input)}</pre>
+          {/if}
         </div>
       {/if}
 
       {#if view.output !== undefined && view.output !== null}
         <div class="payload-section">
           <div class="payload-section-header">
-            <span class="payload-section-label">Output</span>
+            <span class="payload-section-label">{asText ? 'Response' : 'Output'}</span>
             <button
               class="copy-btn"
-              onclick={() => copyText(prettyJSON(view?.output))}
+              onclick={() => copyText(asText ? conversationText(view?.output) : prettyJSON(view?.output))}
               aria-label="Copy output content"
             >
               Copy
             </button>
           </div>
-          <pre class="payload-content mono">{prettyJSON(view.output)}</pre>
+          {#if asText}
+            <pre class="payload-content payload-text">{conversationText(view.output)}</pre>
+          {:else}
+            <pre class="payload-content mono">{prettyJSON(view.output)}</pre>
+          {/if}
         </div>
       {/if}
     {/if}
@@ -334,5 +345,12 @@
     white-space: pre;
     word-break: normal;
     line-height: var(--lh-relaxed);
+  }
+
+  .payload-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-ui);
+    color: var(--text);
   }
 </style>
