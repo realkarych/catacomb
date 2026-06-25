@@ -116,10 +116,13 @@
   <main class="content">
     {#if route.kind === 'list'}
       <SessionsList {token} />
-    {:else if route.kind === 'session'}
-      <SessionView hash={route.hash} loadStatus={sessionLoadStatus} {token} />
-    {:else if route.kind === 'session-node'}
-      <SessionView hash={route.hash} nodeId={route.nodeId} loadStatus={sessionLoadStatus} {token} />
+    {:else if route.kind === 'session' || route.kind === 'session-node'}
+      <SessionView
+        hash={route.hash}
+        nodeId={route.kind === 'session-node' ? route.nodeId : undefined}
+        loadStatus={sessionLoadStatus}
+        {token}
+      />
     {/if}
   </main>
 </div>

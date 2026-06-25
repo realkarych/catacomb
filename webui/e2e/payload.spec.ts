@@ -147,12 +147,13 @@ test.beforeEach(async ({ page }) => {
 test('content panel: collapsed by default, no fetch until reveal', async ({ page }) => {
   let payloadFetched = false;
 
-  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route) => {
+  await page.route(`/v1/sessions/${sessionHash}/nodes/node-tool-pl/payload`, async (route) => {
     payloadFetched = true;
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(redactedPayload) });
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
@@ -176,6 +177,7 @@ test('content panel: 200 redacted payload shows input/output + redacted badge + 
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
@@ -207,6 +209,7 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
@@ -235,6 +238,7 @@ test('content panel: user prompt renders input as text, not JSON', async ({ page
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const promptNode = page.locator('.svelte-flow__node').filter({ hasText: 'user prompt' });
@@ -262,6 +266,7 @@ test('content panel: assistant turn renders response as text, not JSON', async (
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
 
   const turnNode = page.locator('.svelte-flow__node').filter({ hasText: 'assistant turn' });

@@ -85,6 +85,7 @@ test.beforeEach(async ({ page }) => {
 
 test('default view shows the spine, not the leaves', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(node(page, 's')).toBeVisible();
   await expect(node(page, 'u')).toBeVisible();
   await expect(node(page, 'at')).toBeVisible();
@@ -96,6 +97,7 @@ test('default view shows the spine, not the leaves', async ({ page }) => {
 
 test('expanding a turn reveals its tool calls', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await node(page, 'at').locator('.graph-node-toggle').click();
   await expect(node(page, 't1')).toBeVisible();
   await expect(node(page, 't2')).toBeVisible();
@@ -103,6 +105,7 @@ test('expanding a turn reveals its tool calls', async ({ page }) => {
 
 test('collapsing a turn re-hides its tool calls', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await node(page, 'at').locator('.graph-node-toggle').click();
   await expect(node(page, 't1')).toBeVisible();
   await node(page, 'at').locator('.graph-node-toggle').click();
@@ -112,12 +115,14 @@ test('collapsing a turn re-hides its tool calls', async ({ page }) => {
 
 test('expanding a subagent reveals its subtree', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await node(page, 'sub').locator('.graph-node-toggle').click();
   await expect(node(page, 'subc')).toBeVisible();
 });
 
 test('collapsed turn shows an aggregate badge', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   const badge = node(page, 'at').locator('.graph-node-badge-stat');
   await expect(badge).toBeVisible();
   await expect(badge).toContainText('2 ·');
@@ -125,6 +130,7 @@ test('collapsed turn shows an aggregate badge', async ({ page }) => {
 
 test('toggle is separate from body-click selection', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await node(page, 'at').locator('.graph-node-toggle').click();
   await expect(page).toHaveURL(new RegExp(`#/s/${hash}$`));
   await node(page, 'at').click();
@@ -133,6 +139,7 @@ test('toggle is separate from body-click selection', async ({ page }) => {
 
 test('collapse all hides everything below the roots; expand all reveals leaves', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await page.getByRole('button', { name: 'Expand all' }).click();
   await expect(node(page, 't1')).toBeVisible();
   await expect(node(page, 'subc')).toBeVisible();
@@ -143,6 +150,7 @@ test('collapse all hides everything below the roots; expand all reveals leaves',
 
 test('a collapsed subagent keeps its spine edge', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(node(page, 'sub')).toBeVisible();
   await expect(page.locator('.svelte-flow__edge')).not.toHaveCount(0);
 });
@@ -150,6 +158,7 @@ test('a collapsed subagent keeps its spine edge', async ({ page }) => {
 test('a turn streamed in live arrives collapsed per default policy', async ({ page }) => {
   await installPushableSse(page);
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(node(page, 'at')).toBeVisible();
 
   await pushSse(page, [
@@ -167,6 +176,7 @@ test('a turn streamed in live arrives collapsed per default policy', async ({ pa
 test('a turn whose child edge lags still ends up collapsed once children arrive', async ({ page }) => {
   await installPushableSse(page);
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(node(page, 'at')).toBeVisible();
 
   await pushSse(page, [
@@ -187,6 +197,7 @@ test('a turn whose child edge lags still ends up collapsed once children arrive'
 test('a user-expanded turn stays expanded across a later live delta', async ({ page }) => {
   await installPushableSse(page);
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await node(page, 'at').locator('.graph-node-toggle').click();
   await expect(node(page, 't1')).toBeVisible();
   await expect(node(page, 'at').locator('.graph-node-toggle')).toHaveText('▾');
@@ -215,6 +226,7 @@ test('a live node under a collapsed parent bumps the badge without appearing', a
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(withLate) }),
   );
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(node(page, 'at')).toBeVisible();
   await expect(node(page, 't3')).toHaveCount(0);
   await expect(node(page, 'at').locator('.graph-node-badge-stat')).toContainText('3 ·');
@@ -223,6 +235,7 @@ test('a live node under a collapsed parent bumps the badge without appearing', a
 test('a tool streamed live under a collapsed turn bumps the badge without refitting the viewport', async ({ page }) => {
   await installPushableSse(page);
   await page.goto(`/?token=test#/s/${hash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await expect(node(page, 'at')).toBeVisible();
   await expect(node(page, 'at').locator('.graph-node-badge-stat')).toContainText('2 ·');
   await expect(node(page, 't1')).toHaveCount(0);

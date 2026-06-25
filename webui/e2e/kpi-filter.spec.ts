@@ -130,6 +130,7 @@ test('filter bar is visible with search input and chips', async ({ page }) => {
 test('typing in filter search shows N of M count', async ({ page }) => {
   await page.goto(`/#/s/${sessionHash}`);
 
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
 
   await page.locator('.filter-search').fill('BashTool');
@@ -141,6 +142,7 @@ test('typing in filter search shows N of M count', async ({ page }) => {
 test('clearing filter removes count indicator', async ({ page }) => {
   await page.goto(`/#/s/${sessionHash}`);
 
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
 
   await page.locator('.filter-search').fill('BashTool');
@@ -159,6 +161,7 @@ test('has errors chip is shown when session has error_count > 0', async ({ page 
 test('status filter chips appear for node statuses present in graph', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
 
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
 
   const chips = page.locator('.filter-group').first().locator('.filter-chip');
@@ -168,6 +171,7 @@ test('status filter chips appear for node statuses present in graph', async ({ p
 test('type filter chips appear for node types present in graph', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
 
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
   await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
 
   const groups = page.locator('.filter-group');

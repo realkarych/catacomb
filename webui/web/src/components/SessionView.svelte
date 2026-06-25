@@ -3,6 +3,7 @@
   import GraphCanvas from './GraphCanvas.svelte';
   import NodeDrawer from './NodeDrawer.svelte';
   import Timeline from './Timeline.svelte';
+  import Outline from './Outline.svelte';
   import SessionHeader from './SessionHeader.svelte';
   import FilterBar from './FilterBar.svelte';
   import { sessionGraph, filterState, setFilteredNodeIds, selectedNodeId, navigateToNode } from '../lib/stores/stores.svelte';
@@ -21,7 +22,7 @@
 
   let fitKey = $state(0);
   let prevHadNode = false;
-  let viewMode: 'graph' | 'timeline' = $state('graph');
+  let viewMode: 'outline' | 'graph' | 'timeline' = $state('outline');
   let drawerFocusOnOpen = $state(false);
   let canvasWrapEl: HTMLDivElement | undefined = $state();
   let visibleIds = $state<Set<string>>(new Set());
@@ -60,6 +61,7 @@
   };
 
   function onWindowArrowKeydown(e: KeyboardEvent) {
+    if (viewMode !== 'graph') return;
     const dir = arrowDirMap[e.key];
     if (!dir) return;
     const target = e.target as HTMLElement | null;
@@ -116,22 +118,28 @@
     {#if nodeId}
       <span class="node-id-label">Node: <span class="mono">{nodeId}</span></span>
     {/if}
-    {#if hasTimingData}
-      <div class="view-switcher" role="group" aria-label="View mode">
-        <button
-          class="view-btn"
-          data-active={viewMode === 'graph' ? 'true' : undefined}
-          onclick={() => (viewMode = 'graph')}
-          aria-pressed={viewMode === 'graph'}
-        >Graph</button>
+    <div class="view-switcher" role="group" aria-label="View mode">
+      <button
+        class="view-btn"
+        data-active={viewMode === 'outline' ? 'true' : undefined}
+        onclick={() => (viewMode = 'outline')}
+        aria-pressed={viewMode === 'outline'}
+      >Outline</button>
+      <button
+        class="view-btn"
+        data-active={viewMode === 'graph' ? 'true' : undefined}
+        onclick={() => (viewMode = 'graph')}
+        aria-pressed={viewMode === 'graph'}
+      >Graph</button>
+      {#if hasTimingData}
         <button
           class="view-btn"
           data-active={viewMode === 'timeline' ? 'true' : undefined}
           onclick={() => (viewMode = 'timeline')}
           aria-pressed={viewMode === 'timeline'}
         >Timeline</button>
-      </div>
-    {/if}
+      {/if}
+    </div>
   </div>
   <SessionHeader {hash} />
   <FilterBar {hash} totalCount={graph.nodes.length} filteredCount={filteredNodes.length} />
@@ -145,7 +153,9 @@
   {:else}
     <div class="graph-area" role="presentation">
       <div class="canvas-wrap" tabindex={-1} bind:this={canvasWrapEl}>
-        {#if viewMode === 'timeline'}
+        {#if viewMode === 'outline'}
+          <Outline {hash} {token} />
+        {:else if viewMode === 'timeline'}
           <Timeline {hash} />
         {:else}
           <GraphCanvas {hash} refit={fitKey} onNodeActivate={onNodeActivate} onVisibleChange={(ids) => (visibleIds = ids)} />
