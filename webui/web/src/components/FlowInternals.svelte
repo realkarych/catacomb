@@ -15,7 +15,7 @@
 
   let { pendingFitView, pendingRestoreViewport, focusNodeId = null, onFitViewDone, onRestoreViewportDone, containerWidth, containerHeight }: Props = $props();
 
-  const { fitView, getViewport, setViewport, getNodes, getInternalNode } = useSvelteFlow();
+  const { fitView, getViewport, setViewport, getInternalNode } = useSvelteFlow();
   const store = useStore();
 
   let prevFocusNodeId: string | null = null;
