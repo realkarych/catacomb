@@ -154,7 +154,10 @@ func decodeContent(raw json.RawMessage) (string, []block, error) {
 func userParts(base model.Correlation, text string, blocks []block) []partial {
 	var parts []partial
 	if text != "" {
-		parts = append(parts, partial{kind: "user_prompt", correlation: base})
+		encoded, _ := json.Marshal(text)
+		pl := &model.Payload{Input: encoded}
+		pl.Hash = model.HashPayload(pl)
+		parts = append(parts, partial{kind: "user_prompt", correlation: base, payload: pl})
 	}
 	for _, b := range blocks {
 		if b.Type != "tool_result" {

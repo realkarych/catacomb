@@ -66,6 +66,14 @@ func TestParseReaderShapes(t *testing.T) {
 	}
 }
 
+func TestParseReaderUserPromptPayload(t *testing.T) {
+	up := byKind(parseFixture(t), "user_prompt")
+	require.Len(t, up, 1)
+	require.NotNil(t, up[0].Payload)
+	assert.NotEmpty(t, up[0].Payload.Hash)
+	assert.Equal(t, `"list files"`, string(up[0].Payload.Input))
+}
+
 func TestParseReaderToolUsePayload(t *testing.T) {
 	tu := byKind(parseFixture(t), "assistant_tool_use")
 	require.Len(t, tu, 2)
