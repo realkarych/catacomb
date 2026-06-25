@@ -46,6 +46,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
+		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
 		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 	case "assistant_turn":
@@ -61,6 +62,7 @@ func (g *Graph) Apply(o model.Observation) {
 			}
 			n.Attrs["model"] = m
 		}
+		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)

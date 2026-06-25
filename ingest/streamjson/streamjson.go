@@ -3,6 +3,7 @@ package streamjson
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -40,6 +41,7 @@ type block struct {
 	Type      string          `json:"type"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
+	Text      string          `json:"text"`
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
@@ -100,11 +102,11 @@ func build(e envelope) ([]partial, error) {
 				return nil, fmt.Errorf("streamjson.build.assistant: %w", err)
 			}
 		}
-		_, blocks, err := decodeContent(msg.Content)
+		text, blocks, err := decodeContent(msg.Content)
 		if err != nil {
 			return nil, err
 		}
-		return assistantParts(base, msg, blocks), nil
+		return assistantParts(base, msg, text, blocks), nil
 	case "user":
 		var msg message
 		if len(e.Message) > 0 {
@@ -149,7 +151,17 @@ func decodeContent(raw json.RawMessage) (string, []block, error) {
 	return "", blocks, nil
 }
 
-func assistantParts(base model.Correlation, msg message, blocks []block) []partial {
+func assistantTextFromBlocks(blocks []block) string {
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func assistantParts(base model.Correlation, msg message, text string, blocks []block) []partial {
 	turn := base
 	turn.MessageID = msg.ID
 	attrs := map[string]any{"model": msg.Model}
@@ -157,7 +169,20 @@ func assistantParts(base model.Correlation, msg message, blocks []block) []parti
 		attrs["tokens_in"] = msg.Usage.InputTokens
 		attrs["tokens_out"] = msg.Usage.OutputTokens
 	}
-	parts := []partial{{kind: "assistant_turn", correlation: turn, attrs: attrs}}
+	turnPart := partial{kind: "assistant_turn", correlation: turn, attrs: attrs}
+	resolved := text
+	if resolved == "" {
+		resolved = assistantTextFromBlocks(blocks)
+	}
+	if resolved != "" {
+		enc, err := json.Marshal(resolved)
+		if err == nil {
+			pl := &model.Payload{Output: enc}
+			pl.Hash = model.HashPayload(pl)
+			turnPart.payload = pl
+		}
+	}
+	parts := []partial{turnPart}
 	for _, b := range blocks {
 		if b.Type != "tool_use" {
 			continue
@@ -180,7 +205,14 @@ func assistantParts(base model.Correlation, msg message, blocks []block) []parti
 func userParts(base model.Correlation, text string, blocks []block) []partial {
 	var parts []partial
 	if text != "" {
-		parts = append(parts, partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt": text}})
+		p := partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt": text}}
+		enc, err := json.Marshal(text)
+		if err == nil {
+			pl := &model.Payload{Input: enc}
+			pl.Hash = model.HashPayload(pl)
+			p.payload = pl
+		}
+		parts = append(parts, p)
 	}
 	for _, b := range blocks {
 		if b.Type != "tool_result" {

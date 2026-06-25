@@ -705,6 +705,7 @@ func TestUpCmdRegisteredInRoot(t *testing.T) {
 }
 
 func TestUpCmdRunE(t *testing.T) {
+	t.Chdir(t.TempDir())
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	discPath := t.TempDir() + "/d.json"
 	require.NoError(t, daemon.WriteDiscovery(discPath, disc))

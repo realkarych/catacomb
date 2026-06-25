@@ -125,7 +125,7 @@
         />
       </div>
 
-      <PayloadPanel {hash} nodeId={node.id} {token} />
+      <PayloadPanel {hash} nodeId={node.id} nodeType={node.type} {token} />
 
       <details class="advanced-section">
         <summary class="advanced-summary">Advanced</summary>

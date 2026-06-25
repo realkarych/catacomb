@@ -322,3 +322,62 @@ func TestSetAllowPayloadAccess(t *testing.T) {
 	d.mu.Unlock()
 	assert.False(t, final)
 }
+
+func seedTextPayload(t *testing.T, d *Daemon, nodeID string, out json.RawMessage) {
+	t.Helper()
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	p := &model.Payload{Output: out}
+	p.Hash = model.HashPayload(p)
+	g.Nodes[nodeID].Payload = p
+	g.Nodes[nodeID].PayloadHash = p.Hash
+	d.mu.Unlock()
+}
+
+func TestNodePayloadViewTextReturned(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"p9","tool_input":{}}`)))
+	nodeID := model.ToolCallID("exec1", "p9")
+	seedTextPayload(t, d, nodeID, json.RawMessage(`"the assistant reply"`))
+	d.mu.Lock()
+	view, err := d.nodePayloadView("s1", nodeID)
+	d.mu.Unlock()
+	require.NoError(t, err)
+	assert.JSONEq(t, `"the assistant reply"`, string(view.Output))
+	assert.False(t, view.Redacted)
+	assert.Nil(t, view.Input)
+}
+
+func TestNodePayloadViewTextRedactsSecret(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"p10","tool_input":{}}`)))
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	nodeID := model.ToolCallID("exec1", "p10")
+	seedTextPayload(t, d, nodeID, json.RawMessage(`"my key is `+secret+`"`))
+	d.mu.Lock()
+	view, err := d.nodePayloadView("s1", nodeID)
+	d.mu.Unlock()
+	require.NoError(t, err)
+	assert.True(t, view.Redacted)
+	assert.NotContains(t, string(view.Output), secret)
+	require.NotEmpty(t, view.Redactions)
+}
+
+func TestNodePayloadViewTextGatedOff(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"p11","tool_input":{}}`)))
+	nodeID := model.ToolCallID("exec1", "p11")
+	seedTextPayload(t, d, nodeID, json.RawMessage(`"secret reply"`))
+	d.mu.Lock()
+	_, err := d.nodePayloadView("s1", nodeID)
+	d.mu.Unlock()
+	assert.True(t, errors.Is(err, ErrPayloadAccessDisabled))
+}

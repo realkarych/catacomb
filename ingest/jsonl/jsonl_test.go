@@ -66,6 +66,22 @@ func TestParseReaderShapes(t *testing.T) {
 	}
 }
 
+func TestParseReaderUserPromptTextPayload(t *testing.T) {
+	up := byKind(parseFixture(t), "user_prompt")
+	require.Len(t, up, 1)
+	require.NotNil(t, up[0].Payload)
+	assert.JSONEq(t, `"list files"`, string(up[0].Payload.Input))
+	assert.Empty(t, up[0].Payload.Output)
+	assert.NotEmpty(t, up[0].Payload.Hash)
+}
+
+func TestParseReaderUserPromptEmptyTextNoPayload(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x","is_error":false}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	assert.Empty(t, byKind(obs, "user_prompt"))
+}
+
 func TestParseReaderToolUsePayload(t *testing.T) {
 	tu := byKind(parseFixture(t), "assistant_tool_use")
 	require.Len(t, tu, 2)
@@ -190,6 +206,33 @@ func TestParseNoSidechainNoSubagent(t *testing.T) {
 		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
 	require.NoError(t, err)
 	assert.Empty(t, byKind(obs, "subagent_stop"))
+}
+
+func TestParseReaderAssistantTextPayload(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"here is the answer"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	turn := byKind(obs, "assistant_turn")
+	require.Len(t, turn, 1)
+	require.NotNil(t, turn[0].Payload)
+	assert.JSONEq(t, `"here is the answer"`, string(turn[0].Payload.Output))
+	assert.Empty(t, turn[0].Payload.Input)
+	assert.NotEmpty(t, turn[0].Payload.Hash)
+}
+
+func TestParseReaderAssistantToolUsePayloadUntouched(t *testing.T) {
+	tu := byKind(parseFixture(t), "assistant_tool_use")
+	require.Len(t, tu, 2)
+	require.NotNil(t, tu[0].Payload)
+	assert.JSONEq(t, `{"command":"ls"}`, string(tu[0].Payload.Input))
+	assert.Empty(t, tu[0].Payload.Output)
+}
+
+func TestParseReaderAssistantNoTextNoTurnPayload(t *testing.T) {
+	turn := byKind(parseFixture(t), "assistant_turn")
+	require.Len(t, turn, 2)
+	assert.Nil(t, turn[0].Payload)
+	assert.Nil(t, turn[1].Payload)
 }
 
 func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
