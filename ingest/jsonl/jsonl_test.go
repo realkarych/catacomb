@@ -208,6 +208,33 @@ func TestParseNoSidechainNoSubagent(t *testing.T) {
 	assert.Empty(t, byKind(obs, "subagent_stop"))
 }
 
+func TestParseReaderAssistantTextPayload(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"here is the answer"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	turn := byKind(obs, "assistant_turn")
+	require.Len(t, turn, 1)
+	require.NotNil(t, turn[0].Payload)
+	assert.JSONEq(t, `"here is the answer"`, string(turn[0].Payload.Output))
+	assert.Empty(t, turn[0].Payload.Input)
+	assert.NotEmpty(t, turn[0].Payload.Hash)
+}
+
+func TestParseReaderAssistantToolUsePayloadUntouched(t *testing.T) {
+	tu := byKind(parseFixture(t), "assistant_tool_use")
+	require.Len(t, tu, 2)
+	require.NotNil(t, tu[0].Payload)
+	assert.JSONEq(t, `{"command":"ls"}`, string(tu[0].Payload.Input))
+	assert.Empty(t, tu[0].Payload.Output)
+}
+
+func TestParseReaderAssistantNoTextNoTurnPayload(t *testing.T) {
+	turn := byKind(parseFixture(t), "assistant_turn")
+	require.Len(t, turn, 2)
+	assert.Nil(t, turn[0].Payload)
+	assert.Nil(t, turn[1].Payload)
+}
+
 func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)

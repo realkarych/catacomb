@@ -41,6 +41,7 @@ type block struct {
 	Type      string          `json:"type"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
+	Text      string          `json:"text"`
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
@@ -125,7 +126,7 @@ func decodeLine(raw []byte) (line, []partial, error) {
 	case "user":
 		parts = userParts(base, text, blocks)
 	case "assistant":
-		parts = assistantParts(base, msg, blocks)
+		parts = assistantParts(base, msg, text, blocks)
 	}
 	if ln.IsSidechain || ln.AgentID != "" {
 		parts = append(parts, partial{
@@ -181,7 +182,17 @@ func userParts(base model.Correlation, text string, blocks []block) []partial {
 	return parts
 }
 
-func assistantParts(base model.Correlation, msg message, blocks []block) []partial {
+func assistantTextFromBlocks(blocks []block) string {
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func assistantParts(base model.Correlation, msg message, text string, blocks []block) []partial {
 	turn := base
 	turn.MessageID = msg.ID
 	attrs := map[string]any{"model": msg.Model}
@@ -189,7 +200,19 @@ func assistantParts(base model.Correlation, msg message, blocks []block) []parti
 		attrs["tokens_in"] = msg.Usage.InputTokens
 		attrs["tokens_out"] = msg.Usage.OutputTokens
 	}
-	parts := []partial{{kind: "assistant_turn", correlation: turn, attrs: attrs}}
+	turnPart := partial{kind: "assistant_turn", correlation: turn, attrs: attrs}
+	if text == "" {
+		text = assistantTextFromBlocks(blocks)
+	}
+	if text != "" {
+		enc, err := json.Marshal(text)
+		if err == nil {
+			pl := &model.Payload{Output: enc}
+			pl.Hash = model.HashPayload(pl)
+			turnPart.payload = pl
+		}
+	}
+	parts := []partial{turnPart}
 	for _, b := range blocks {
 		if b.Type != "tool_use" {
 			continue
