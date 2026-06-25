@@ -220,6 +220,25 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer and lights the node on load',
   await expect(page.locator('.graph-node--selected')).toHaveCount(1);
 });
 
+test('clicking a visible on-screen node does NOT change the viewport transform', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await page.getByRole('button', { name: 'Graph', exact: true }).click();
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await page.waitForTimeout(1000);
+
+  const viewport = page.locator('.svelte-flow__viewport');
+  const transformBefore = await viewport.evaluate((el) => getComputedStyle(el as HTMLElement).transform);
+
+  const turn = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
+  await turn.click();
+
+  await expect(page.locator('.node-drawer.node-drawer--open')).toBeVisible();
+  await page.waitForTimeout(400);
+
+  const transformAfter = await viewport.evaluate((el) => getComputedStyle(el as HTMLElement).transform);
+  expect(transformAfter).toBe(transformBefore);
+});
+
 test('node navigation within a session does not reconnect SSE', async ({ page }) => {
   let constructionCount = 0;
   await page.addInitScript(

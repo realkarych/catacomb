@@ -178,9 +178,12 @@
     xyEdges = next;
   });
 
+  let prevHash = '';
   $effect(() => {
     const _hash = hash;
     void _hash;
+    if (_hash === prevHash) return;
+    prevHash = _hash;
     seen = new Set();
     userToggled = new Set();
     collapsed = new Set();
@@ -252,6 +255,8 @@
         focusNodeId={selectedNodeId.value}
         onFitViewDone={() => { pendingFitView = false; }}
         onRestoreViewportDone={() => { pendingRestoreViewport = false; }}
+        containerWidth={canvasEl?.clientWidth ?? 0}
+        containerHeight={canvasEl?.clientHeight ?? 0}
       />
     </SvelteFlow>
     <NodeLegend types={presentTypes} />
