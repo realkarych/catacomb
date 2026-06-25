@@ -8,7 +8,7 @@
   import { applyLayout, collapseView, collapseTopologyKey, anchorOffset } from '../lib/layout';
   import type { XyNode } from '../lib/layout';
   import { buildHierarchy } from '../lib/graph/hierarchy';
-  import { defaultCollapsed, toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
+  import { DEFAULT_COLLAPSE, toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
   import { aggregateOf } from '../lib/graph/aggregate';
   import GraphNode from './GraphNode.svelte';
   import FlowInternals from './FlowInternals.svelte';
@@ -32,13 +32,16 @@
   let pendingRestoreViewport = $state(false);
 
   let collapsed = $state.raw<Set<string>>(new Set());
-  let seeded = false;
+  let seen = new Set<string>();
+  let userToggled = new Set<string>();
   let showOrphans = $state(false);
   let anchorId: string | null = null;
   let preserveViewportOnNext = false;
 
   function handleToggle(id: string) {
     anchorId = id;
+    userToggled.add(id);
+    seen.add(id);
     collapsed = toggleCollapse(collapsed, id);
   }
 
@@ -59,10 +62,25 @@
   $effect(() => {
     const graph = sessionGraph(hash);
 
-    if (!seeded && graph.nodes.length > 0) {
+    if (graph.nodes.length > 0) {
       const h = buildHierarchy(graph.nodes, graph.edges);
-      collapsed = defaultCollapsed(graph.nodes, h);
-      seeded = true;
+      const prev = untrack(() => collapsed);
+      const next = new Set(prev);
+      let changed = false;
+      for (const n of graph.nodes) {
+        if (seen.has(n.id)) continue;
+        if (!DEFAULT_COLLAPSE(n)) {
+          seen.add(n.id);
+          continue;
+        }
+        if (h.childrenOf(n.id).length === 0) continue;
+        seen.add(n.id);
+        if (!userToggled.has(n.id) && !next.has(n.id)) {
+          next.add(n.id);
+          changed = true;
+        }
+      }
+      if (changed) collapsed = next;
     }
 
     const topologyKey = collapseTopologyKey(graph.nodes, graph.edges, collapsed) + (showOrphans ? ':o' : '');
@@ -164,7 +182,8 @@
   $effect(() => {
     const _hash = hash;
     void _hash;
-    seeded = false;
+    seen = new Set();
+    userToggled = new Set();
     collapsed = new Set();
     pendingFitView = true;
   });

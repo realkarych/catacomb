@@ -36,6 +36,41 @@ function node(page: import('@playwright/test').Page, id: string) {
   return page.locator(`.svelte-flow__node[data-id="${id}"]`);
 }
 
+async function installPushableSse(page: import('@playwright/test').Page): Promise<void> {
+  await page.addInitScript(() => {
+    const g = globalThis as unknown as {
+      EventSource: unknown;
+      __pushSse: (ev: unknown) => void;
+    };
+    let live: ((ev: { data: string }) => void) | null = null;
+    class PushableEventSource {
+      onopen: ((ev: unknown) => void) | null = null;
+      onerror: ((ev: unknown) => void) | null = null;
+      onmessage: ((ev: { data: string }) => void) | null = null;
+      constructor(_url: string) {
+        setTimeout(() => {
+          this.onopen?.({});
+          live = (ev) => this.onmessage?.(ev);
+        }, 0);
+      }
+      close() {
+        live = null;
+      }
+    }
+    g.EventSource = PushableEventSource as unknown;
+    g.__pushSse = (ev: unknown) => {
+      live?.({ data: JSON.stringify(ev) });
+    };
+  });
+}
+
+async function pushSse(page: import('@playwright/test').Page, events: SseEvent[]): Promise<void> {
+  await page.evaluate((evs) => {
+    const push = (globalThis as unknown as { __pushSse: (ev: unknown) => void }).__pushSse;
+    for (const ev of evs) push(ev);
+  }, events);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('/v1/sessions', async (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sessions) }),
@@ -110,6 +145,64 @@ test('a collapsed subagent keeps its spine edge', async ({ page }) => {
   await page.goto(`/?token=test#/s/${hash}`);
   await expect(node(page, 'sub')).toBeVisible();
   await expect(page.locator('.svelte-flow__edge')).not.toHaveCount(0);
+});
+
+test('a turn streamed in live arrives collapsed per default policy', async ({ page }) => {
+  await installPushableSse(page);
+  await page.goto(`/?token=test#/s/${hash}`);
+  await expect(node(page, 'at')).toBeVisible();
+
+  await pushSse(page, [
+    { kind: 'node_upsert', rev: 20, node: { id: 'at2', run_id: 'run1', type: 'assistant_turn', name: 'Turn2', status: 'running', tokens_in: 11, tokens_out: 22, rev: 20 } },
+    { kind: 'node_upsert', rev: 21, node: { id: 't4', run_id: 'run1', type: 'tool_call', name: 'Edit', status: 'ok', tokens_in: 1, tokens_out: 2, rev: 21 } },
+    { kind: 'edge_upsert', rev: 22, edge: { id: 'e8', run_id: 'run1', type: 'parent_child', src: 'u', dst: 'at2', rev: 22 } },
+    { kind: 'edge_upsert', rev: 23, edge: { id: 'e9', run_id: 'run1', type: 'parent_child', src: 'at2', dst: 't4', rev: 23 } },
+  ]);
+
+  await expect(node(page, 'at2')).toBeVisible();
+  await expect(node(page, 'at2').locator('.graph-node-toggle')).toHaveText('▸');
+  await expect(node(page, 't4')).toHaveCount(0);
+});
+
+test('a turn whose child edge lags still ends up collapsed once children arrive', async ({ page }) => {
+  await installPushableSse(page);
+  await page.goto(`/?token=test#/s/${hash}`);
+  await expect(node(page, 'at')).toBeVisible();
+
+  await pushSse(page, [
+    { kind: 'node_upsert', rev: 20, node: { id: 'at2', run_id: 'run1', type: 'assistant_turn', name: 'Turn2', status: 'running', rev: 20 } },
+    { kind: 'edge_upsert', rev: 21, edge: { id: 'e8', run_id: 'run1', type: 'parent_child', src: 'u', dst: 'at2', rev: 21 } },
+  ]);
+  await expect(node(page, 'at2')).toBeVisible();
+  await expect(node(page, 'at2').locator('.graph-node-toggle')).toHaveCount(0);
+
+  await pushSse(page, [
+    { kind: 'node_upsert', rev: 22, node: { id: 't4', run_id: 'run1', type: 'tool_call', name: 'Edit', status: 'ok', rev: 22 } },
+    { kind: 'edge_upsert', rev: 23, edge: { id: 'e9', run_id: 'run1', type: 'parent_child', src: 'at2', dst: 't4', rev: 23 } },
+  ]);
+  await expect(node(page, 'at2').locator('.graph-node-toggle')).toHaveText('▸');
+  await expect(node(page, 't4')).toHaveCount(0);
+});
+
+test('a user-expanded turn stays expanded across a later live delta', async ({ page }) => {
+  await installPushableSse(page);
+  await page.goto(`/?token=test#/s/${hash}`);
+  await node(page, 'at').locator('.graph-node-toggle').click();
+  await expect(node(page, 't1')).toBeVisible();
+  await expect(node(page, 'at').locator('.graph-node-toggle')).toHaveText('▾');
+
+  await pushSse(page, [
+    { kind: 'node_upsert', rev: 20, node: { id: 'at2', run_id: 'run1', type: 'assistant_turn', name: 'Turn2', status: 'ok', rev: 20 } },
+    { kind: 'edge_upsert', rev: 21, edge: { id: 'e8', run_id: 'run1', type: 'parent_child', src: 'u', dst: 'at2', rev: 21 } },
+    { kind: 'node_upsert', rev: 22, node: { id: 't4', run_id: 'run1', type: 'tool_call', name: 'Edit', status: 'ok', rev: 22 } },
+    { kind: 'edge_upsert', rev: 23, edge: { id: 'e9', run_id: 'run1', type: 'parent_child', src: 'at2', dst: 't4', rev: 23 } },
+  ]);
+
+  await expect(node(page, 'at2')).toBeVisible();
+  await expect(node(page, 'at2').locator('.graph-node-toggle')).toHaveText('▸');
+  await expect(node(page, 'at')).toBeVisible();
+  await expect(node(page, 'at').locator('.graph-node-toggle')).toHaveText('▾');
+  await expect(node(page, 't1')).toBeVisible();
 });
 
 test('a live node under a collapsed parent bumps the badge without appearing', async ({ page }) => {
