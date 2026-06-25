@@ -1,5 +1,9 @@
 import dagre from '@dagrejs/dagre';
 import type { Node as CNode, Edge as CEdge } from './types';
+import { buildHierarchy } from './graph/hierarchy';
+import { visibleNodeIds } from './graph/collapse';
+import { liftEdges } from './graph/lift-edges';
+import type { Hierarchy } from './graph/types';
 
 export interface LayoutOptions {
   rankdir?: 'LR' | 'TB';
@@ -90,4 +94,35 @@ export function applyLayout(
   }));
 
   return { nodes: outNodes, edges: outEdges };
+}
+
+export interface CollapseView {
+  nodes: CNode[];
+  edges: CEdge[];
+  visible: Set<string>;
+  hierarchy: Hierarchy;
+}
+
+export function collapseView(
+  nodes: CNode[],
+  edges: CEdge[],
+  collapsed: Set<string>,
+): CollapseView {
+  const hierarchy = buildHierarchy(nodes, edges);
+  const visible = visibleNodeIds(nodes, hierarchy, collapsed);
+  const visNodes = nodes.filter((n) => visible.has(n.id));
+  const visEdges = liftEdges(edges, visible, hierarchy);
+  return { nodes: visNodes, edges: visEdges, visible, hierarchy };
+}
+
+export function collapseTopologyKey(
+  nodes: { id: string }[],
+  edges: { id: string }[],
+  collapsed: Set<string>,
+): string {
+  return JSON.stringify([
+    [...nodes.map((n) => n.id)].sort(),
+    [...edges.map((e) => e.id)].sort(),
+    [...collapsed].sort(),
+  ]);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyLayout, dagreNodeToPosition } from './layout';
+import { applyLayout, dagreNodeToPosition, collapseView, collapseTopologyKey } from './layout';
 import type { Node as CNode, Edge as CEdge } from './types';
 
 function makeNode(id: string, type = 'marker'): CNode {
@@ -133,5 +133,53 @@ describe('applyLayout', () => {
     expect(result.edges[0]!.source).toBe('a');
     expect(result.edges[0]!.target).toBe('b');
     expect(result.edges[0]!.id).toBe('e1');
+  });
+});
+
+describe('collapseView', () => {
+  it('returns only visible nodes and lifted edges', () => {
+    const nodes = [
+      makeNode('s', 'session'),
+      makeNode('at', 'assistant_turn'),
+      makeNode('t1', 'tool_call'),
+    ];
+    const edges = [makeEdge('e1', 's', 'at'), makeEdge('e2', 'at', 't1')];
+    const view = collapseView(nodes, edges, new Set(['at']));
+    expect(view.nodes.map((n) => n.id).sort()).toEqual(['at', 's']);
+    expect(view.edges.find((e) => e.id === 'e2')).toBeUndefined();
+    expect(view.visible.has('t1')).toBe(false);
+    expect(view.hierarchy.parentOf('at')).toBe('s');
+  });
+
+  it('with nothing collapsed returns every node', () => {
+    const nodes = [makeNode('s', 'session'), makeNode('a', 'tool_call')];
+    const edges = [makeEdge('e1', 's', 'a')];
+    const view = collapseView(nodes, edges, new Set());
+    expect(view.nodes).toHaveLength(2);
+    expect(view.edges).toHaveLength(1);
+  });
+});
+
+describe('collapseTopologyKey', () => {
+  it('changes when the collapsed set changes', () => {
+    const nodes = [{ id: 'a' }, { id: 'b' }];
+    const edges = [{ id: 'e1' }];
+    const k1 = collapseTopologyKey(nodes, edges, new Set());
+    const k2 = collapseTopologyKey(nodes, edges, new Set(['a']));
+    expect(k1).not.toBe(k2);
+  });
+
+  it('is stable regardless of collapsed-set insertion order', () => {
+    const nodes = [{ id: 'a' }];
+    const edges: { id: string }[] = [];
+    const k1 = collapseTopologyKey(nodes, edges, new Set(['x', 'y']));
+    const k2 = collapseTopologyKey(nodes, edges, new Set(['y', 'x']));
+    expect(k1).toBe(k2);
+  });
+
+  it('is stable regardless of node/edge order', () => {
+    const k1 = collapseTopologyKey([{ id: 'b' }, { id: 'a' }], [{ id: 'e2' }, { id: 'e1' }], new Set());
+    const k2 = collapseTopologyKey([{ id: 'a' }, { id: 'b' }], [{ id: 'e1' }, { id: 'e2' }], new Set());
+    expect(k1).toBe(k2);
   });
 });
