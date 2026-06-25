@@ -86,7 +86,7 @@ const sseEvents: SseEvent[] = [
     edge: {
       id: 'edge-hero-2',
       run_id: 'run-hero',
-      type: 'sequence',
+      type: 'parent_child',
       src: 'node-assistant-hero',
       dst: 'node-tool-hero',
       rev: 5,
@@ -104,6 +104,14 @@ test.beforeEach(async ({ page }) => {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(fakeSessions),
+    });
+  });
+
+  await page.route(`/v1/sessions/${sessionHash}/graph`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(sseEvents),
     });
   });
 
@@ -129,7 +137,7 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
 
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
 
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const assistantNode = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
   await assistantNode.click();
@@ -167,7 +175,7 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
 test('hero flow: clicking node without metrics shows dashes for unknown fields', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
   await expect(page.locator('.graph-canvas-root')).toBeVisible();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const sessionNode = page.locator('.svelte-flow__node').filter({ hasText: 'Session Root' });
   await sessionNode.click();
@@ -183,7 +191,7 @@ test('hero flow: clicking node without metrics shows dashes for unknown fields',
 
 test('hero flow: Escape closes drawer and clears selection', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(3, { timeout: 8000 });
+  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
 
   const assistantNode = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
   await assistantNode.click();

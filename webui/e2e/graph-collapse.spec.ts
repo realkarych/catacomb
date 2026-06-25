@@ -32,10 +32,6 @@ const base: SseEvent[] = [
   { kind: 'edge_upsert', rev: 13, edge: { id: 'e6', run_id: 'run1', type: 'parent_child', src: 'sub', dst: 'subc', rev: 13 } },
 ];
 
-function buildSseBody(events: SseEvent[]): string {
-  return events.map((ev) => `data: ${JSON.stringify(ev)}\n\n`).join('');
-}
-
 function node(page: import('@playwright/test').Page, id: string) {
   return page.locator(`.svelte-flow__node[data-id="${id}"]`);
 }
@@ -48,7 +44,7 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(base) }),
   );
   await page.route('/v1/subscribe**', async (route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: buildSseBody(base) }),
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
   );
 });
 
