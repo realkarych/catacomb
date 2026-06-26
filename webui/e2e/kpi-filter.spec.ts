@@ -163,3 +163,32 @@ test('type filter chips appear for node types present in graph', async ({ page }
   const count = await groups.count();
   expect(count).toBeGreaterThanOrEqual(1);
 });
+
+test('type filter chips show human-readable labels with no underscores', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const typeGroup = page.locator('.filter-group').last();
+  await expect(typeGroup.locator('.filter-chip').first()).toBeVisible({ timeout: 8000 });
+
+  const labels = await typeGroup.locator('.filter-chip').allTextContents();
+  expect(labels.length).toBeGreaterThan(0);
+  for (const label of labels) {
+    expect(label).not.toMatch(/_/);
+  }
+  expect(labels).toContain('user prompt');
+});
+
+test('status filter chips show human-readable labels', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const statusGroup = page.locator('.filter-group').first();
+  await expect(statusGroup.locator('.filter-chip').first()).toBeVisible({ timeout: 8000 });
+
+  const labels = await statusGroup.locator('.filter-chip').allTextContents();
+  expect(labels.length).toBeGreaterThan(0);
+  for (const label of labels) {
+    expect(label).not.toMatch(/_/);
+  }
+});

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { sessionsById, filterState, resetFilter, sessionGraph } from '../lib/stores/stores.svelte';
   import { isActive } from '../lib/filters';
+  import { nodeTypeInfo } from '../lib/node-legend';
+  import { displayLabel } from '../lib/status';
 
   interface Props {
     hash: string;
@@ -61,7 +63,7 @@
           class:filter-chip--active={filterState.statuses.includes(s)}
           onclick={() => toggleStatus(s)}
           aria-pressed={filterState.statuses.includes(s)}
-        >{s}</button>
+        >{displayLabel(s)}</button>
       {/each}
     </div>
   {/if}
@@ -74,7 +76,7 @@
           class:filter-chip--active={filterState.types.includes(t)}
           onclick={() => toggleType(t)}
           aria-pressed={filterState.types.includes(t)}
-        >{t.replace(/_/g, ' ')}</button>
+        >{nodeTypeInfo(t).label}</button>
       {/each}
     </div>
   {/if}
