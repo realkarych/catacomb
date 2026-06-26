@@ -2584,11 +2584,16 @@ func TestNearLinearReparentsOnlyAffectedTurns(t *testing.T) {
 	})
 	_ = g.DrainDeltas()
 
+	m1EdgeID := pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1"))
+	revBeforeM1 := g.Edges[m1EdgeID].Rev
+
 	g.Apply(promptObs("u2", 20))
 
 	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")))
 	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m2")))
 	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u2"), model.AssistantTurnID("e1", "m3")))
+
+	assert.Equal(t, revBeforeM1, g.Edges[m1EdgeID].Rev, "m1 edge Rev must not change when turn is not in affected interval")
 
 	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
 	require.Len(t, dels, 1)
@@ -2599,6 +2604,7 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{
 		promptObs("u1", 5),
+		turnObs("m2", 7),
 		turnObs("m1", 10),
 	})
 	require.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")))
@@ -2613,6 +2619,14 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 	g.Apply(promptObs("u2", 8))
 	assert.Contains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
 	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u2"), turn))
+
+	_ = g.DrainDeltas()
+	g.Apply(promptObs("u0", 1))
+	u0 := model.UserPromptID("e1", "u0")
+	assert.Contains(t, g.Edges, pcEdge(u0, turn), "turn must reparent to prompt before it after repositionTurn")
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	assert.Equal(t, pcEdge(model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
 }
 
 func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
