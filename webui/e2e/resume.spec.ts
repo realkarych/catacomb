@@ -7,6 +7,7 @@ const fakeSession: SessionSummary = {
   session: sessionHash,
   status: 'running',
   started_at: '2026-06-01T10:00:00Z',
+  last_activity: new Date(Date.now() - 30_000).toISOString(),
   tokens_in: 100,
   tokens_out: 50,
   node_count: 1,

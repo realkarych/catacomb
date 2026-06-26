@@ -17,6 +17,7 @@ type SessionSummary struct {
 	Status         string         `json:"status"`
 	StartedAt      string         `json:"started_at,omitempty"`
 	EndedAt        string         `json:"ended_at,omitempty"`
+	LastActivity   string         `json:"last_activity,omitempty"`
 	DurationMS     *int64         `json:"duration_ms,omitempty"`
 	TokensIn       int64          `json:"tokens_in"`
 	TokensOut      int64          `json:"tokens_out"`
@@ -103,6 +104,13 @@ func foldStatus(cur string, s model.Status) string {
 	return cur
 }
 
+func nodeActivity(n *model.Node) *time.Time {
+	if n.TEnd != nil {
+		return n.TEnd
+	}
+	return n.TStart
+}
+
 func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	sum := SessionSummary{
 		Session:        hash,
@@ -113,6 +121,7 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	var (
 		tStart    *time.Time
 		tEnd      *time.Time
+		lastAct   *time.Time
 		hasCost   bool
 		totalCost float64
 		srcRank   int
@@ -153,6 +162,9 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 				continue
 			}
 			sum.NodeCount++
+			if act := nodeActivity(n); act != nil && (lastAct == nil || act.After(*lastAct)) {
+				lastAct = act
+			}
 			sum.CountsByType[string(n.Type)]++
 			sum.CountsByStatus[string(n.Status)]++
 			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall {
@@ -193,6 +205,9 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	}
 	if tEnd != nil {
 		sum.EndedAt = tEnd.UTC().Format(time.RFC3339)
+	}
+	if lastAct != nil {
+		sum.LastActivity = lastAct.UTC().Format(time.RFC3339)
 	}
 	if tStart != nil && tEnd != nil {
 		ms := tEnd.Sub(*tStart).Milliseconds()

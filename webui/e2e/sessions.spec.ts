@@ -36,6 +36,7 @@ const fakeSessions: SessionSummary[] = [
     session: 'abcd123400030000abcd123400030000',
     status: 'running',
     started_at: '2024-06-01T11:00:00Z',
+    last_activity: new Date(Date.now() - 30_000).toISOString(),
     duration_ms: undefined,
     tokens_in: 200,
     tokens_out: 400,

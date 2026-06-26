@@ -1435,6 +1435,29 @@ func TestHookSessionReparentedToTurnByJSONL(t *testing.T) {
 	assert.True(t, deletedSession, "session edge must be deleted when tool is reparented to its turn")
 }
 
+func TestStructReparentDeleteRevNotBelowDeletedEdgeRev(t *testing.T) {
+	g := NewGraph()
+	g.Apply(hookToolNoMessage(5))
+	_ = g.DrainDeltas()
+
+	tool := model.ToolCallID("e1", "t1")
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
+	deletedRev := g.Edges[sessionEdge].Rev
+
+	g.Apply(jsonlToolTurn(2))
+
+	var del *cdc.GraphDelta
+	for _, d := range g.DrainDeltas() {
+		if d.Kind == cdc.DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
+			dd := d
+			del = &dd
+		}
+	}
+	require.NotNil(t, del, "reparent must emit DeltaEdgeDelete for the superseded session edge")
+	assert.GreaterOrEqual(t, del.Rev, deletedRev, "delete rev must not be below the deleted edge's last upsert rev")
+	assert.GreaterOrEqual(t, del.Rev, uint64(2), "delete rev must be at least the establishing observation seq")
+}
+
 func TestJSONLTurnNotReplacedByHookSessionFallback(t *testing.T) {
 	g := NewGraph()
 	g.Apply(jsonlToolTurn(1))
@@ -2066,6 +2089,25 @@ func TestLatePromptReparentsTurnFromSession(t *testing.T) {
 	require.Len(t, dels, 1)
 	require.NotNil(t, dels[0].Edge)
 	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
+}
+
+func TestTurnReparentDeleteRevNotBelowDeletedEdgeRev(t *testing.T) {
+	g := NewGraph()
+	g.Apply(turnObs("m1", 2))
+	turn := model.AssistantTurnID("e1", "m1")
+	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn)
+	require.Contains(t, g.Edges, sessionEdge)
+	deletedRev := g.Edges[sessionEdge].Rev
+	_ = g.DrainDeltas()
+
+	g.Apply(promptObs("u1", 1))
+
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	require.NotNil(t, dels[0].Edge)
+	require.Equal(t, sessionEdge, dels[0].Edge.ID)
+	assert.GreaterOrEqual(t, dels[0].Rev, deletedRev, "delete rev must not be below the deleted edge's last upsert rev")
+	assert.GreaterOrEqual(t, dels[0].Rev, uint64(1), "delete rev must be at least the establishing observation seq")
 }
 
 func TestLatePromptReparentsTurnFromEarlierPrompt(t *testing.T) {

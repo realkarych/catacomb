@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel } from './status';
+import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive, LIVE_WINDOW_MS } from './status';
+import type { SessionSummary } from './types';
 
 describe('isOutcomeStatus', () => {
   it('returns true for error', () => expect(isOutcomeStatus('error')).toBe(true));
@@ -65,4 +66,51 @@ describe('displayLabel', () => {
   it('returns "pending" for pending', () => expect(displayLabel('pending')).toBe('pending'));
   it('returns "unknown" for unknown', () => expect(displayLabel('unknown')).toBe('unknown'));
   it('returns the raw value for an unrecognized status', () => expect(displayLabel('superseded')).toBe('superseded'));
+});
+
+describe('isSessionLive', () => {
+
+  function session(overrides: Partial<SessionSummary>): SessionSummary {
+    return {
+      session: 'abc',
+      status: 'running',
+      tokens_in: 0,
+      tokens_out: 0,
+      node_count: 0,
+      tool_count: 0,
+      error_count: 0,
+      run_ids: [],
+      ...overrides,
+    };
+  }
+
+  it('returns true for running session with recent last_activity', () => {
+    const nowMs = Date.now();
+    const recentActivity = new Date(nowMs - LIVE_WINDOW_MS + 1000).toISOString();
+    expect(isSessionLive(session({ last_activity: recentActivity }), nowMs)).toBe(true);
+  });
+
+  it('returns false for running session with old last_activity (> 5 min ago)', () => {
+    const nowMs = Date.now();
+    const oldActivity = new Date(nowMs - LIVE_WINDOW_MS - 1000).toISOString();
+    expect(isSessionLive(session({ last_activity: oldActivity }), nowMs)).toBe(false);
+  });
+
+  it('returns false for running session with no last_activity', () => {
+    expect(isSessionLive(session({ last_activity: undefined }), Date.now())).toBe(false);
+  });
+
+  it('returns false for non-running session', () => {
+    const nowMs = Date.now();
+    const recentActivity = new Date(nowMs - 1000).toISOString();
+    expect(isSessionLive(session({ status: 'ok', last_activity: recentActivity }), nowMs)).toBe(false);
+  });
+
+  it('returns false for undefined session', () => {
+    expect(isSessionLive(undefined, Date.now())).toBe(false);
+  });
+
+  it('returns false for unparseable last_activity', () => {
+    expect(isSessionLive(session({ last_activity: 'not-a-date' }), Date.now())).toBe(false);
+  });
 });

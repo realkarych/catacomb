@@ -2,7 +2,8 @@
   import { sessionsById, filterState, resetFilter, sessionGraph } from '../lib/stores/stores.svelte';
   import { isActive } from '../lib/filters';
   import { nodeTypeInfo } from '../lib/node-legend';
-  import { displayLabel } from '../lib/status';
+  import { displayLabel, isOutcomeStatus, isSessionLive } from '../lib/status';
+  import { untrack } from 'svelte';
 
   interface Props {
     hash: string;
@@ -16,7 +17,9 @@
   const graph = $derived(sessionGraph(hash));
 
   const presentStatuses = $derived(
-    [...new Set(graph.nodes.map((n) => n.status).filter((s): s is string => s !== undefined))]
+    [...new Set(graph.nodes.map((n) => n.status).filter((s): s is string => s !== undefined))].filter(
+      (s) => isOutcomeStatus(s) || (s === 'running' && isSessionLive(session, Date.now()))
+    )
   );
 
   const presentTypes = $derived(
@@ -26,6 +29,16 @@
   const hasErrors = $derived((session?.error_count ?? 0) > 0);
 
   const active = $derived(isActive(filterState));
+
+  $effect(() => {
+    const present = new Set(presentStatuses);
+    const current = untrack(() => filterState.statuses);
+    const toRemove = current.filter((s) => !present.has(s));
+    for (const s of toRemove) {
+      const idx = filterState.statuses.indexOf(s);
+      if (idx >= 0) filterState.statuses.splice(idx, 1);
+    }
+  });
 
   function toggleStatus(s: string) {
     const idx = filterState.statuses.indexOf(s);

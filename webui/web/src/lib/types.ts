@@ -48,6 +48,7 @@ export interface SessionSummary {
   status: string;
   started_at?: string;
   ended_at?: string;
+  last_activity?: string;
   duration_ms?: number;
   tokens_in: number;
   tokens_out: number;

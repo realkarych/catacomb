@@ -3,7 +3,7 @@
   import { sessionGraph, selectedNodeId, navigateToNode, filterState, sessionsById } from '../lib/stores/stores.svelte';
   import { buildHierarchy } from '../lib/graph/hierarchy';
   import { flattenOutline, defaultOutlineCollapsed, outlineLabel, isSystemPrompt } from '../lib/graph/outline';
-  import { shouldShowStatus } from '../lib/status';
+  import { shouldShowStatus, isSessionLive } from '../lib/status';
   import type { OutlineRow } from '../lib/graph/outline';
   import { toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
   import { aggregateOf } from '../lib/graph/aggregate';
@@ -26,7 +26,7 @@
   }
   let { hash, token }: Props = $props();
 
-  const isLive = $derived(sessionsById[hash]?.status === 'running');
+  const isLive = $derived(isSessionLive(sessionsById[hash], Date.now()));
   let showSystem = $state(false);
 
   const ROW_H = 30;
