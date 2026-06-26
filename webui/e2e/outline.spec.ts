@@ -27,6 +27,7 @@ const sseEvents: SseEvent[] = [
   { kind: 'node_upsert', rev: 2, node: { id: 'n-prompt', run_id: 'run-out', type: 'user_prompt', name: 'user prompt', status: 'ok', t_start: '2026-06-20T10:00:01Z', payload_hash: 'ph-prompt', rev: 2 } },
   { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt', rev: 3 } },
   { kind: 'node_upsert', rev: 4, node: { id: 'n-turn', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'ok', t_start: '2026-06-20T10:00:02Z', tokens_in: 80, tokens_out: 40, cost_usd: 0.0009, payload_hash: 'ph-turn', rev: 4 } },
+  { kind: 'edge_upsert', rev: 5, edge: { id: 'e2', run_id: 'run-out', type: 'parent_child', src: 'n-prompt', dst: 'n-turn', rev: 5 } },
   { kind: 'node_upsert', rev: 6, node: { id: 'n-tool', run_id: 'run-out', type: 'tool_call', name: 'BashTool', status: 'ok', t_start: '2026-06-20T10:00:03Z', tokens_in: 10, tokens_out: 5, rev: 6 } },
   { kind: 'edge_upsert', rev: 7, edge: { id: 'e3', run_id: 'run-out', type: 'parent_child', src: 'n-turn', dst: 'n-tool', rev: 7 } },
 ];
