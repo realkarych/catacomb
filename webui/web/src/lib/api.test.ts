@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchSessions, fetchSessionGraph, fetchNodePayload, NotFoundError, ForbiddenError } from './api';
+import {
+  fetchSessions,
+  fetchSessionGraph,
+  fetchSubagentSubtree,
+  fetchNodePayload,
+  NotFoundError,
+  ForbiddenError,
+} from './api';
 import type { SessionSummary, SseEvent, PayloadView } from './types';
 
 function mockFetch(status: number, body: unknown): typeof fetch {
@@ -70,6 +77,36 @@ describe('fetchSessionGraph', () => {
   it('throws Error on 500', async () => {
     const f = mockFetch(500, null);
     await expect(fetchSessionGraph('hash', 'tok', f)).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('fetchSubagentSubtree', () => {
+  it('returns events on 200', async () => {
+    const events: SseEvent[] = [{ kind: 'node_upsert', rev: 2 }];
+    const f = mockFetch(200, events);
+    const result = await fetchSubagentSubtree('hash123', 'agent-1', 'mytoken', f);
+    expect(result).toEqual(events);
+    expect(f).toHaveBeenCalledWith('/v1/sessions/hash123/subagent/agent-1', {
+      headers: { Authorization: 'Bearer mytoken' },
+    });
+  });
+
+  it('encodes hash and agentId in URL', async () => {
+    const f = mockFetch(200, []);
+    await fetchSubagentSubtree('hash/with/slash', 'agent/x', 'tok', f);
+    expect(f).toHaveBeenCalledWith('/v1/sessions/hash%2Fwith%2Fslash/subagent/agent%2Fx', {
+      headers: { Authorization: 'Bearer tok' },
+    });
+  });
+
+  it('throws NotFoundError on 404', async () => {
+    const f = mockFetch(404, null);
+    await expect(fetchSubagentSubtree('hash', 'a', 'tok', f)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('throws Error on 500', async () => {
+    const f = mockFetch(500, null);
+    await expect(fetchSubagentSubtree('hash', 'a', 'tok', f)).rejects.toBeInstanceOf(Error);
   });
 });
 

@@ -28,6 +28,21 @@ export async function fetchSessionGraph(hash: string, token: string, f = fetch):
   return res.json() as Promise<SseEvent[]>;
 }
 
+export async function fetchSubagentSubtree(
+  hash: string,
+  agentId: string,
+  token: string,
+  f = fetch,
+): Promise<SseEvent[]> {
+  const res = await f(
+    `/v1/sessions/${encodeURIComponent(hash)}/subagent/${encodeURIComponent(agentId)}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (res.status === 404) throw new NotFoundError(`subagent ${agentId} not found`);
+  if (!res.ok) throw new Error(`fetchSubagentSubtree failed: ${res.status}`);
+  return res.json() as Promise<SseEvent[]>;
+}
+
 export async function fetchNodePayload(
   hash: string,
   nodeId: string,

@@ -1,12 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { sessionGraph, selectedNodeId, navigateToNode, filterState, sessionsById } from '../lib/stores/stores.svelte';
+  import { sessionGraph, selectedNodeId, navigateToNode, filterState, sessionsById, handleEvent } from '../lib/stores/stores.svelte';
   import { buildHierarchy } from '../lib/graph/hierarchy';
   import { flattenOutline, defaultOutlineCollapsed, outlineLabel, isSystemPrompt } from '../lib/graph/outline';
   import { shouldShowStatus, isSessionLive } from '../lib/status';
   import type { OutlineRow } from '../lib/graph/outline';
+  import type { Node } from '../lib/types';
   import { toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
-  import { aggregateOf } from '../lib/graph/aggregate';
+  import { rowAggregate, descendantCount } from '../lib/graph/aggregate';
   import { rowStatLine } from '../lib/graph/outline-stats';
   import { nodeTypeInfo } from '../lib/node-legend';
   import { filterNodes, isActive } from '../lib/filters';
@@ -18,7 +19,7 @@
     toolOutputSnippet,
     cleanRedacted,
   } from '../lib/conversation';
-  import { fetchNodePayload, NotFoundError, ForbiddenError } from '../lib/api';
+  import { fetchNodePayload, fetchSubagentSubtree, NotFoundError, ForbiddenError } from '../lib/api';
 
   interface Props {
     hash: string;
@@ -40,6 +41,8 @@
   let collapsed = $state.raw<Set<string>>(new Set());
   let seen = new Set<string>();
   let userToggled = new Set<string>();
+  let loadedAgents = new Set<string>();
+  let loadingAgents = $state.raw<Set<string>>(new Set());
   let prevHash: string | null = null;
 
   $effect(() => {
@@ -51,6 +54,8 @@
         seen = new Set();
         userToggled = new Set();
         collapsed = new Set();
+        loadedAgents = new Set();
+        loadingAgents = new Set();
         snippets = {};
         attempted = new Set();
         scrollTop = 0;
@@ -171,8 +176,62 @@
     return () => { stale = true; };
   });
 
+  function isExpandable(row: OutlineRow): boolean {
+    return row.hasChildren || (row.node.type === 'subagent' && descendantCount(row.node) > 0);
+  }
+
+  function isAgentLoading(node: Node): boolean {
+    return node.type === 'subagent' && !!node.agent_id && loadingAgents.has(node.agent_id);
+  }
+
+  function needsLoad(node: Node): boolean {
+    return (
+      node.type === 'subagent' &&
+      !!node.agent_id &&
+      !loadedAgents.has(node.agent_id) &&
+      descendantCount(node) > 0
+    );
+  }
+
+  async function expandWithLoad(node: Node, currentHash: string, currentToken: string) {
+    const agentId = node.agent_id;
+    if (!agentId || loadingAgents.has(agentId)) return;
+    loadingAgents = new Set(loadingAgents).add(agentId);
+    try {
+      const events = await fetchSubagentSubtree(currentHash, agentId, currentToken);
+      for (const ev of events) handleEvent(ev);
+      loadedAgents.add(agentId);
+      if (collapsed.has(node.id)) {
+        const next = new Set(collapsed);
+        next.delete(node.id);
+        collapsed = next;
+      }
+    } catch {
+      // Leave the agent collapsed and unmarked so the next expand retries.
+    } finally {
+      const next = new Set(loadingAgents);
+      next.delete(agentId);
+      loadingAgents = next;
+    }
+  }
+
+  function expandRow(id: string, node: Node) {
+    userToggled.add(id);
+    seen.add(id);
+    if (needsLoad(node)) {
+      void expandWithLoad(node, hash, token);
+    } else {
+      collapsed = toggleCollapse(collapsed, id);
+    }
+  }
+
   function handleToggle(id: string, e: Event) {
     e.stopPropagation();
+    const node = byId[id];
+    if (collapsed.has(id) && node) {
+      expandRow(id, node);
+      return;
+    }
     userToggled.add(id);
     seen.add(id);
     collapsed = toggleCollapse(collapsed, id);
@@ -248,12 +307,10 @@
     } else if (e.key === 'ArrowRight') {
       const idx = selectedIndex();
       const row = idx >= 0 ? rows[idx] : undefined;
-      if (row && row.hasChildren && row.collapsed) {
+      if (row && isExpandable(row) && row.collapsed) {
         e.preventDefault();
-        userToggled.add(row.id);
-        seen.add(row.id);
-        collapsed = toggleCollapse(collapsed, row.id);
-      } else if (row && row.hasChildren && !row.collapsed) {
+        expandRow(row.id, row.node);
+      } else if (row && isExpandable(row) && !row.collapsed) {
         e.preventDefault();
         moveSelection(1);
       }
@@ -261,7 +318,7 @@
       const idx = selectedIndex();
       const row = idx >= 0 ? rows[idx] : undefined;
       if (!row) return;
-      if (row.hasChildren && !row.collapsed) {
+      if (isExpandable(row) && !row.collapsed) {
         e.preventDefault();
         userToggled.add(row.id);
         seen.add(row.id);
@@ -288,9 +345,10 @@
   }
 
   function rowStats(row: OutlineRow): { text: string; title: string; color: string } {
+    const expandable = isExpandable(row);
     const aggregate =
-      row.collapsed && row.hasChildren ? aggregateOf(row.id, hierarchy, byId) : undefined;
-    return rowStatLine(row.node, { collapsed: row.collapsed, hasChildren: row.hasChildren, aggregate });
+      row.collapsed && expandable ? rowAggregate(row.node, hierarchy, byId) : undefined;
+    return rowStatLine(row.node, { collapsed: row.collapsed, hasChildren: expandable, aggregate });
   }
 </script>
 
@@ -335,11 +393,13 @@
           {@const isSelected = selectedNodeId.value === row.id}
           {@const isFilteredOut = matching !== null && !matching.has(row.id)}
           {@const snippet = isConversationNode(row.node.type) || isToolNode(row.node.type) ? snippets[row.id] : undefined}
+          {@const expandable = isExpandable(row)}
+          {@const loading = isAgentLoading(row.node)}
           <div
             class="outline-row"
             role="treeitem"
             aria-level={row.depth + 1}
-            aria-expanded={row.hasChildren ? !row.collapsed : undefined}
+            aria-expanded={expandable ? !row.collapsed : undefined}
             aria-selected={isSelected ? 'true' : undefined}
             data-selected={isSelected ? 'true' : undefined}
             data-node-id={row.id}
@@ -349,13 +409,14 @@
             onclick={() => navigateToNode(hash, row.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateToNode(hash, row.id); } }}
           >
-            {#if row.hasChildren}
+            {#if expandable}
               <button
                 class="outline-chevron"
                 type="button"
                 aria-label={row.collapsed ? 'Expand' : 'Collapse'}
+                aria-busy={loading ? 'true' : undefined}
                 onclick={(e) => handleToggle(row.id, e)}
-              >{row.collapsed ? '▸' : '▾'}</button>
+              >{loading ? '⋯' : row.collapsed ? '▸' : '▾'}</button>
             {:else}
               <span class="outline-chevron outline-chevron--empty" aria-hidden="true"></span>
             {/if}
