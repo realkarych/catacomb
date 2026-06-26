@@ -392,3 +392,53 @@ test('show system toggle reveals system prompt rows', async ({ page }) => {
   await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(2);
 });
 
+test('unknown status node shows NO status dot', async ({ page }) => {
+  const unknownEvents: SseEvent[] = [
+    { kind: 'node_upsert', rev: 1, node: { id: 'n-session', run_id: 'run-out', type: 'session', name: 'Session Root', status: 'ok', rev: 1 } },
+    { kind: 'node_upsert', rev: 2, node: { id: 'n-turn-unknown', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'unknown', t_start: '2026-06-20T10:00:02Z', rev: 2 } },
+    { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-turn-unknown', rev: 3 } },
+  ];
+  await page.route('/v1/sessions', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fakeSessions) }),
+  );
+  await page.route('/v1/subscribe**', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: buildSseBody(unknownEvents) }),
+  );
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>
+    route.fulfill({ status: 403, body: 'payload access disabled' }),
+  );
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+
+  const unknownRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await expect(unknownRow).toBeVisible();
+  await expect(unknownRow.locator('.outline-dot')).toHaveCount(0);
+});
+
+test('Escape-closing the drawer returns focus into the outline', async ({ page }) => {
+  await routeBase(page);
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptPayload) }),
+  );
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const promptRow = page.locator('.outline-row').filter({ hasText: 'prompt' }).first();
+  await promptRow.click();
+  await expect(page.locator('.node-drawer--open')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.node-drawer--open')).toHaveCount(0);
+
+  const activeInOutline = await page.evaluate(() => {
+    const outline = document.querySelector('[role="tree"][aria-label="Session outline"]');
+    const active = document.activeElement;
+    return outline !== null && (outline === active || outline.contains(active));
+  });
+  expect(activeInOutline).toBe(true);
+});
+

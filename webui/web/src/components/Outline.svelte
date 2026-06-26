@@ -139,10 +139,11 @@
     return clip(combined);
   }
 
-  async function loadSnippet(id: string, isTool: boolean) {
+  async function loadSnippet(id: string, isTool: boolean, currentHash: string, currentToken: string, isStale: () => boolean) {
     attempted.add(id);
     try {
-      const view = await fetchNodePayload(hash, id, token);
+      const view = await fetchNodePayload(currentHash, id, currentToken);
+      if (isStale()) return;
       const snippet = isTool ? toolSnippet(view) : conversationSnippet(view);
       if (!snippet) return;
       untrack(() => {
@@ -155,15 +156,19 @@
 
   $effect(() => {
     const vis = visibleRows;
+    const currentHash = hash;
+    const currentToken = token;
+    let stale = false;
     untrack(() => {
       for (const row of vis) {
         const tool = isToolNode(row.node.type);
         if (!isConversationNode(row.node.type) && !tool) continue;
         if (!row.node.payload_hash) continue;
         if (attempted.has(row.id)) continue;
-        void loadSnippet(row.id, tool);
+        void loadSnippet(row.id, tool, currentHash, currentToken, () => stale);
       }
     });
+    return () => { stale = true; };
   });
 
   function handleToggle(id: string, e: Event) {
@@ -337,6 +342,7 @@
             aria-expanded={row.hasChildren ? !row.collapsed : undefined}
             aria-selected={isSelected ? 'true' : undefined}
             data-selected={isSelected ? 'true' : undefined}
+            data-node-id={row.id}
             data-filtered-out={isFilteredOut ? 'true' : undefined}
             style="position: absolute; top: {(startIndex + i) * ROW_H}px; height: {ROW_H}px; padding-left: {row.depth * 16 + 8}px;{isFilteredOut ? ' opacity: 0.4;' : ''}"
             tabindex="-1"

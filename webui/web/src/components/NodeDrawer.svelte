@@ -36,13 +36,10 @@
       const target =
         (closingId
           ? document.querySelector<HTMLElement>(
-              `.svelte-flow__node[data-id="${CSS.escape(closingId)}"] [role="button"]`,
-            ) ??
-            document.querySelector<HTMLElement>(
-              `.svelte-flow__node[data-id="${CSS.escape(closingId)}"]`,
+              `[role="treeitem"][data-node-id="${CSS.escape(closingId)}"]`,
             )
           : null) ??
-        document.querySelector<HTMLElement>('[role="application"][aria-label="Session graph"]');
+        document.querySelector<HTMLElement>('[role="tree"][aria-label="Session outline"]');
       if (target && target.isConnected) {
         target.focus();
       }
