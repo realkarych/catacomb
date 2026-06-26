@@ -278,8 +278,6 @@ test('finished session does not render pending or unknown status chips', async (
   await page.goto(`/?token=test#/s/${finishedHash}`);
   await expect(page.locator('.outline-root')).toBeVisible();
 
-  await page.waitForTimeout(500);
-
   const filterGroups = page.locator('.filter-group');
   const groupCount = await filterGroups.count();
 

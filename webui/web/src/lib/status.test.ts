@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive } from './status';
+import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive, LIVE_WINDOW_MS } from './status';
 import type { SessionSummary } from './types';
 
 describe('isOutcomeStatus', () => {
@@ -69,7 +69,6 @@ describe('displayLabel', () => {
 });
 
 describe('isSessionLive', () => {
-  const FIVE_MIN = 5 * 60_000;
 
   function session(overrides: Partial<SessionSummary>): SessionSummary {
     return {
@@ -87,13 +86,13 @@ describe('isSessionLive', () => {
 
   it('returns true for running session with recent last_activity', () => {
     const nowMs = Date.now();
-    const recentActivity = new Date(nowMs - FIVE_MIN + 1000).toISOString();
+    const recentActivity = new Date(nowMs - LIVE_WINDOW_MS + 1000).toISOString();
     expect(isSessionLive(session({ last_activity: recentActivity }), nowMs)).toBe(true);
   });
 
   it('returns false for running session with old last_activity (> 5 min ago)', () => {
     const nowMs = Date.now();
-    const oldActivity = new Date(nowMs - FIVE_MIN - 1000).toISOString();
+    const oldActivity = new Date(nowMs - LIVE_WINDOW_MS - 1000).toISOString();
     expect(isSessionLive(session({ last_activity: oldActivity }), nowMs)).toBe(false);
   });
 
