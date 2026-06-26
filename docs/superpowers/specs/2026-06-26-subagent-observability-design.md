@@ -72,6 +72,20 @@ CPU regression.
   write. Truncation and rotation stay detected via the existing
   `size < offset` and head-fingerprint checks.
 
+### Perf (persistence) — found by live profiling
+
+Live-verifying on the real session exposed a latent quadratic the unit gates
+could not see: `applyAndPersist` wrote the ENTIRE graph (`g.Snapshot()`) to
+SQLite on every observation — O(N) per observation, O(N²) per run. Small
+sessions tolerated it; subagent ingestion (N≈3300+, thousands of observations)
+pegged a core for minutes. The `nodes`/`edges` tables are a write-only cache
+(nothing reads them; restart replays the `observations` table), so the fix
+persists the per-observation deltas from `g.DrainDeltas()` instead — upserting
+changed nodes/edges and, for the first time, DELETING tombstoned edges
+(reparents previously left stale rows). Persistence is now linear in the deltas;
+frozen-scope ingest of the full session settles in ~20 s with CPU returning to
+idle (≈0.6%).
+
 ### Frontend
 
 None required for nesting — the outline is a generic, virtualized,

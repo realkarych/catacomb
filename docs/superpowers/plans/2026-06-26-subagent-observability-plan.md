@@ -232,6 +232,39 @@ no other label regressions.
 
 ---
 
+## Task 5: Incremental persist — kill the O(N²) full-graph snapshot (live-found)
+
+**Files:**
+
+- Modify: `daemon/daemon.go` (`applyAndPersist`)
+- Modify: `store/sqlite.go` (new `AppendDeltas`, `deleteEdge`; drop dead `AppendAndApply`)
+- Test: `daemon/*_test.go`, `store/*_test.go`
+
+**Problem (found during live-verify):** `applyAndPersist` wrote the whole graph
+(`g.Snapshot()`) via `store.AppendAndApply` on every observation — O(N²) over a
+run; subagent ingestion pegged a core for minutes. The `nodes`/`edges` tables
+are a write-only cache (restart replays the `observations` table), so persisting
+the per-observation delta is correct and linear.
+
+**Behavior:** add `store.AppendDeltas(o, deltas)` that, in one transaction,
+inserts the observation and applies `g.DrainDeltas()`: upsert nodes
+(NodeUpsert/NodeStatus/NodeMerge), upsert edges (EdgeUpsert), and DELETE edges
+(EdgeDelete — the snapshot path never deleted, leaving stale reparent rows).
+`applyAndPersist` drains once and uses the same slice for persist + publish;
+`UpsertRun` and the `storeWriteErrors` error path are preserved. Remove the now
+dead `AppendAndApply` (keep `Persist`/`applyGraph` — still used by
+`cmd/catacomb/replay.go`).
+
+**Tests:** store delta-apply (incl. edge-delete removes the row, rollback);
+restart/replay yields the correct graph with a reparent tombstone absent; an
+O(N²) regression guard that asserts only delta-sized writes per observation and
+provably FAILS if reverted to `g.Snapshot()`; 100% coverage.
+
+**Acceptance:** persistence linear in deltas; frozen-scope full-session ingest
+settles in ~20 s with CPU returning to idle.
+
+---
+
 ## Execution notes
 
 - Order: Task 1 → Task 2 → Task 3 → Task 4 (Task 1/2 share `tail.go`; Task 3
