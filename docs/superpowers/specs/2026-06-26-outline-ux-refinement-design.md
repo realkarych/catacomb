@@ -148,6 +148,7 @@ Changes:
 - Do **not** render raw `prettyJSON` in rows. Keep fetch lazy (visible window only). Stay silent (tool name + duration only) when payload access is off — acceptable graceful degradation.
 
 Result row examples:
+
 ```
 Bash   ls -la /some/path → exit 0…            307ms  •
 Read   /src/components/Foo.svelte → import …  124ms  •
@@ -175,6 +176,7 @@ Deferred (not v1): orphan-node visual marker, session-list relative time, `filte
 **Recommendation: reparent `assistant_turn` under its preceding `user_prompt` in `reduce.go`. Retire the frontend `outline-tree.ts` synthesis (collapse it to plain `buildHierarchy`).**
 
 Verified facts:
+
 - `reduce.go` `user_prompt` case creates a `session → prompt` edge (`upsertEdge(SessionNodeID, n.ID)`).
 - `reduce.go` `assistant_turn` case creates **no parent edge at all** — turns are genuinely parentless at the source.
 - `reduce.go` `applyTool` already parents tool calls under their turn via `MessageID` correlation (`setStructParent(structKindTurn, AssistantTurnID(...), id)`), else under the session.
@@ -183,6 +185,7 @@ Verified facts:
 So the *only* missing edge is `prompt → turn`. The frontend reconstructs it heuristically (by `t_start` ordering) on every render.
 
 Why reparent in the reducer:
+
 - **Single source of truth.** The hierarchy is correct for *all* consumers — web Outline, the bubbletea TUI, any future exporter — not just this one Svelte file.
 - **Deletes ~120 lines** of `outline-tree.ts` heuristic + its cycle/ordering tests; the Outline can call `buildHierarchy` directly. Less surface, easier 100% coverage.
 - **The reducer already has the ordering signal** (sequence / event time) more reliably than the frontend's `t_start ?? id` fallback. The `precedingPrompt` heuristic can mis-attribute a turn when timestamps are missing; the reducer sees the event stream in order.
@@ -190,6 +193,7 @@ Why reparent in the reducer:
 The reducer change: in the `assistant_turn` case, attach the turn to the most-recent `user_prompt` for that execution (track "current prompt id" per execution in graph state), falling back to the session node when no prompt precedes it. This mirrors the existing `structKindTurn` tool-parenting machinery, so the pattern is already in the codebase.
 
 Tradeoff / cost:
+
 - It is a **backend behavioral change** touching `reduce.go` and its golden/reducer tests (`reduce_test.go`), under the 100% coverage + no-comments rules.
 - Edge IDs and the emitted delta stream change shape; any snapshot tests and the TUI's assumptions need updating in the same PR.
 - Slightly higher blast radius than a pure-frontend tweak.
@@ -201,6 +205,7 @@ Net: the synthesis is a workaround for a backend modeling gap. Fixing it at the 
 ## Prioritized change list (one task per item)
 
 **P0 — graph removal (unblocks everything, shrinks bundle)**
+
 1. Delete graph components + `layout.ts`/`lift-edges.ts` + their tests + 3 graph e2e specs (Complaint 3 DELETE list).
 2. Edit `SessionView.svelte`: strip graph scaffolding, narrow `viewMode` type, remove Graph button + branch.
 3. Drop `@xyflow/svelte` + `@dagrejs/dagre` from `package.json`; `npm install`.
