@@ -76,7 +76,7 @@ export function outlineLabel(node: Node): { primary: string; secondary: string }
       return { primary: node.name || 'mcp', secondary: '' };
     case 'subagent':
       return {
-        primary: 'subagent',
+        primary: node.name || 'subagent',
         secondary: node.subagent_type || String(node.attrs?.subagent_type ?? ''),
       };
     default:

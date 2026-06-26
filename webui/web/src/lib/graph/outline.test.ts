@@ -194,7 +194,13 @@ describe('outlineLabel', () => {
     expect(outlineLabel(n('mc', 'mcp_call'))).toEqual({ primary: 'mcp', secondary: '' });
   });
 
-  it('subagent: secondary from node.subagent_type then attrs.subagent_type', () => {
+  it('subagent: primary uses node.name when present', () => {
+    expect(
+      outlineLabel(n('sa', 'subagent', { name: 'Review PR1 reparent', subagent_type: 'claude-code' })),
+    ).toEqual({ primary: 'Review PR1 reparent', secondary: 'claude-code' });
+  });
+
+  it('subagent: primary falls back to "subagent" when name absent', () => {
     expect(outlineLabel(n('sa', 'subagent', { subagent_type: 'claude-code' }))).toEqual({
       primary: 'subagent',
       secondary: 'claude-code',
