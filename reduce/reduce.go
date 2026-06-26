@@ -218,7 +218,7 @@ func (g *Graph) setStructParent(o model.Observation, kind int, src, dst string) 
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, fs.structSrc, dst)
 		if old, ok := g.Edges[oldID]; ok {
 			delete(g.Edges, oldID)
-			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: o.Seq, Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
+			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
 		}
 	}
 	fs.structKind = kind
@@ -278,7 +278,7 @@ func (g *Graph) setTurnParent(o model.Observation, t *turnRef, parent string) {
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, t.parent, t.id)
 		if old, ok := g.Edges[oldID]; ok {
 			delete(g.Edges, oldID)
-			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: o.Seq, Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
+			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
 		}
 	}
 	t.parent = parent

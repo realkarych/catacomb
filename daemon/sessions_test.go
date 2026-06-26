@@ -595,3 +595,66 @@ func TestSessionSummaryModelIDFromIngestedObservation(t *testing.T) {
 	require.Len(t, sums, 1)
 	assert.Equal(t, "claude-sonnet-4-6", sums[0].ModelID)
 }
+
+func TestSessionSummaryLastActivityUsesMaxNodeTEnd(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	early := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	earlyEnd := time.Date(2026, 6, 1, 10, 0, 5, 0, time.UTC)
+	latest := time.Date(2026, 6, 1, 12, 30, 0, 0, time.UTC)
+	for _, n := range g.Nodes {
+		n.TStart = &early
+		n.TEnd = &earlyEnd
+	}
+	g.Nodes["n-latest"] = &model.Node{ID: "n-latest", RunID: "s1", Type: model.NodeToolCall, TStart: &early, TEnd: &latest}
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, latest.UTC().Format(time.RFC3339), sum.LastActivity)
+}
+
+func TestSessionSummaryLastActivityFallsBackToTStart(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	for k := range g.Nodes {
+		delete(g.Nodes, k)
+	}
+	started := time.Date(2026, 6, 2, 9, 15, 0, 0, time.UTC)
+	g.Nodes["n-open"] = &model.Node{ID: "n-open", RunID: "s1", Type: model.NodeToolCall, TStart: &started}
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, started.UTC().Format(time.RFC3339), sum.LastActivity)
+}
+
+func TestSessionSummaryLastActivityAbsentWhenNoTimestamps(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	for _, n := range g.Nodes {
+		n.TStart = nil
+		n.TEnd = nil
+	}
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.LastActivity)
+
+	b, err := json.Marshal(sum)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+	_, ok := m["last_activity"]
+	assert.False(t, ok, "last_activity must be omitted when no node timestamps")
+}
