@@ -1,3 +1,7 @@
+import type { SessionSummary } from './types';
+
+export const LIVE_WINDOW_MS = 5 * 60_000;
+
 const OUTCOME_STATUSES = new Set(['error', 'ok', 'blocked']);
 
 export function isOutcomeStatus(s: string): boolean {
@@ -30,4 +34,9 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function displayLabel(status: string): string {
 	return STATUS_LABELS[status] ?? status;
+}
+
+export function isSessionLive(session: SessionSummary | undefined, nowMs: number): boolean {
+	if (!session || session.status !== 'running' || !session.last_activity) return false;
+	return nowMs - Date.parse(session.last_activity) < LIVE_WINDOW_MS;
 }

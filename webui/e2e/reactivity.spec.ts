@@ -10,6 +10,7 @@ const fakeSessions: SessionSummary[] = [
     session: sessionHash,
     status: 'running',
     started_at: '2026-06-20T10:00:01Z',
+    last_activity: new Date(Date.now() - 30_000).toISOString(),
     tokens_in: 10,
     tokens_out: 5,
     cost_usd: 0.000175,

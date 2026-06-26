@@ -1,6 +1,7 @@
 <script lang="ts">
   import { sessionsById } from '../lib/stores/stores.svelte';
   import { formatCost, formatTokens, formatDuration } from '../lib/format/format';
+  import { isSessionLive } from '../lib/status';
 
   interface Props {
     hash: string;
@@ -8,6 +9,7 @@
   let { hash }: Props = $props();
 
   const session = $derived(sessionsById[hash]);
+  const isLive = $derived(isSessionLive(session, Date.now()));
 </script>
 
 {#if session}
@@ -37,7 +39,7 @@
         <span class="kpi-value kpi-model">{session.model_id}</span>
       </span>
     {/if}
-    {#if session.status === 'running'}
+    {#if isLive}
       <span class="kpi-sep" aria-hidden="true">·</span>
       <span class="live-badge" aria-label="Session is live">
         <span class="live-dot" aria-hidden="true"></span>
