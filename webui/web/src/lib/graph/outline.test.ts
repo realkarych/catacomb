@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { flattenOutline, defaultOutlineCollapsed, outlineLabel } from './outline';
+import { flattenOutline, defaultOutlineCollapsed, outlineLabel, isSystemPrompt } from './outline';
 import { buildHierarchy } from './hierarchy';
 import type { Node, Edge } from '../types';
 
@@ -211,5 +211,28 @@ describe('outlineLabel', () => {
       secondary: '',
     });
     expect(outlineLabel(n('m', 'marker'))).toEqual({ primary: 'marker', secondary: '' });
+  });
+});
+
+describe('isSystemPrompt', () => {
+  it('returns false for a user_prompt with no attrs', () => {
+    const nd = n('x', 'user_prompt');
+    expect(isSystemPrompt(nd)).toBe(false);
+  });
+  it('returns false for a user_prompt with prompt_kind=human', () => {
+    const nd = n('x', 'user_prompt', { attrs: { prompt_kind: 'human' } });
+    expect(isSystemPrompt(nd)).toBe(false);
+  });
+  it('returns true for a user_prompt with prompt_kind=system', () => {
+    const nd = n('x', 'user_prompt', { attrs: { prompt_kind: 'system' } });
+    expect(isSystemPrompt(nd)).toBe(true);
+  });
+  it('returns false for a non-user_prompt node even with prompt_kind=system', () => {
+    const nd = n('x', 'assistant_turn', { attrs: { prompt_kind: 'system' } });
+    expect(isSystemPrompt(nd)).toBe(false);
+  });
+  it('returns false for a user_prompt with an unknown prompt_kind value', () => {
+    const nd = n('x', 'user_prompt', { attrs: { prompt_kind: 'command' } });
+    expect(isSystemPrompt(nd)).toBe(false);
   });
 });

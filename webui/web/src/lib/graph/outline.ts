@@ -83,3 +83,7 @@ export function outlineLabel(node: Node): { primary: string; secondary: string }
       return { primary: node.name || node.type, secondary: '' };
   }
 }
+
+export function isSystemPrompt(node: Node): boolean {
+  return node.type === 'user_prompt' && node.attrs?.['prompt_kind'] === 'system';
+}
