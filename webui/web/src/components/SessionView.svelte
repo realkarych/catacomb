@@ -5,6 +5,7 @@
   import Outline from './Outline.svelte';
   import SessionHeader from './SessionHeader.svelte';
   import FilterBar from './FilterBar.svelte';
+  import { untrack } from 'svelte';
   import { sessionGraph, filterState, setFilteredNodeIds } from '../lib/stores/stores.svelte';
   import { filterNodes, isActive } from '../lib/filters';
   import { buildTimeline } from '../lib/timeline';
@@ -25,11 +26,22 @@
   const filteredNodes = $derived(filterNodes(graph.nodes, filterState));
   const filterActive = $derived(isActive(filterState));
 
+  let prevIds: Set<string> | null = null;
+
   $effect(() => {
     if (filterActive) {
-      setFilteredNodeIds(new Set(filteredNodes.map((n) => n.id)));
+      const newIds = new Set(filteredNodes.map((n) => n.id));
+      const prev = untrack(() => prevIds);
+      if (prev === null || prev.size !== newIds.size || ![...newIds].every((id) => prev.has(id))) {
+        prevIds = newIds;
+        setFilteredNodeIds(newIds);
+      }
     } else {
-      setFilteredNodeIds(null);
+      const prev = untrack(() => prevIds);
+      if (prev !== null) {
+        prevIds = null;
+        setFilteredNodeIds(null);
+      }
     }
   });
 
