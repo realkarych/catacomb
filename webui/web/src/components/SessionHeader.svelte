@@ -37,6 +37,13 @@
         <span class="kpi-value kpi-model">{session.model_id}</span>
       </span>
     {/if}
+    {#if session.status === 'running'}
+      <span class="kpi-sep" aria-hidden="true">·</span>
+      <span class="live-badge" aria-label="Session is live">
+        <span class="live-dot" aria-hidden="true"></span>
+        live
+      </span>
+    {/if}
     <span class="kpi-sep" aria-hidden="true">·</span>
     <span class="kpi-item">
       <span class="kpi-value mono">{session.node_count} nodes</span>
@@ -128,5 +135,36 @@
 
   .kpi-chip--error {
     color: var(--error);
+  }
+
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--running);
+  }
+
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--running);
+    flex-shrink: 0;
+    animation: live-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot {
+      animation: none;
+    }
   }
 </style>

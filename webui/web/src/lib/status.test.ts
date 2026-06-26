@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOutcomeStatus, shouldShowStatus, statusColor } from './status';
+import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel } from './status';
 
 describe('isOutcomeStatus', () => {
   it('returns true for error', () => expect(isOutcomeStatus('error')).toBe(true));
@@ -54,4 +54,14 @@ describe('statusColor', () => {
   it('returns running token for running', () => expect(statusColor('running')).toBe('var(--running)'));
   it('returns transparent for unknown status', () => expect(statusColor('unknown')).toBe('transparent'));
   it('returns transparent for empty string', () => expect(statusColor('')).toBe('transparent'));
+});
+
+describe('displayLabel', () => {
+  it('returns "error" for error', () => expect(displayLabel('error')).toBe('error'));
+  it('returns "ok" for ok', () => expect(displayLabel('ok')).toBe('ok'));
+  it('returns "blocked" for blocked', () => expect(displayLabel('blocked')).toBe('blocked'));
+  it('returns "running" for running', () => expect(displayLabel('running')).toBe('running'));
+  it('returns "pending" for pending', () => expect(displayLabel('pending')).toBe('pending'));
+  it('returns "unknown" for unknown', () => expect(displayLabel('unknown')).toBe('unknown'));
+  it('returns the raw value for an unrecognized status', () => expect(displayLabel('superseded')).toBe('superseded'));
 });

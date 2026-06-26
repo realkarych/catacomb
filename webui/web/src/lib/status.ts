@@ -18,3 +18,16 @@ export function statusColor(status: string): string {
 	if (status === 'running') return 'var(--running)';
 	return 'transparent';
 }
+
+const STATUS_LABELS: Record<string, string> = {
+	error: 'error',
+	ok: 'ok',
+	blocked: 'blocked',
+	running: 'running',
+	pending: 'pending',
+	unknown: 'unknown',
+};
+
+export function displayLabel(status: string): string {
+	return STATUS_LABELS[status] ?? status;
+}

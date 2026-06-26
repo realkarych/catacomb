@@ -170,6 +170,16 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer on load', async ({ page }) =>
   await expect(drawer.locator('.metric-row')).toHaveCount(5);
 });
 
+test('running session shows a live badge in the session header', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const badge = page.locator('.live-badge');
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText('live');
+  await expect(badge.locator('.live-dot')).toBeVisible();
+});
+
 test('node navigation within a session does not reconnect SSE', async ({ page }) => {
   let constructionCount = 0;
   await page.addInitScript(
