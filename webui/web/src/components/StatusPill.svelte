@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { displayLabel } from '../lib/status';
+
   interface Props {
     status: string;
   }
@@ -7,7 +9,7 @@
 
 <span class="status-pill" data-status={status}>
   <span class="status-dot" aria-hidden="true"></span>
-  {status}
+  {displayLabel(status)}
 </span>
 
 <style>
