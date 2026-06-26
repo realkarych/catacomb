@@ -5,6 +5,8 @@
   import StatusPill from './StatusPill.svelte';
   import MetricRow from './MetricRow.svelte';
   import PayloadPanel from './PayloadPanel.svelte';
+  import { shouldShowStatus } from '../lib/status';
+  import { sessionsById } from '../lib/stores/stores.svelte';
 
   interface Props {
     hash: string;
@@ -12,6 +14,8 @@
     focusOnOpen?: boolean;
   }
   let { hash, token, focusOnOpen = false }: Props = $props();
+
+  const isLive = $derived(sessionsById[hash]?.status === 'running');
 
   const node = $derived(
     selectedNodeId.value ? (nodesById[selectedNodeId.value] ?? null) : null
@@ -32,13 +36,10 @@
       const target =
         (closingId
           ? document.querySelector<HTMLElement>(
-              `.svelte-flow__node[data-id="${CSS.escape(closingId)}"] [role="button"]`,
-            ) ??
-            document.querySelector<HTMLElement>(
-              `.svelte-flow__node[data-id="${CSS.escape(closingId)}"]`,
+              `[role="treeitem"][data-node-id="${CSS.escape(closingId)}"]`,
             )
           : null) ??
-        document.querySelector<HTMLElement>('[role="application"][aria-label="Session graph"]');
+        document.querySelector<HTMLElement>('[role="tree"][aria-label="Session outline"]');
       if (target && target.isConnected) {
         target.focus();
       }
@@ -104,32 +105,47 @@
       <div class="drawer-header">
         <div class="drawer-title-row">
           <span class="drawer-title">{node.name ?? node.type}</span>
-          <StatusPill status={node.status ?? 'pending'} />
+          {#if node.status !== undefined && shouldShowStatus(node.status, isLive)}
+            <StatusPill status={node.status} />
+          {/if}
         </div>
         <button class="close-btn" onclick={close} aria-label="Close node details">×</button>
       </div>
 
-      <div class="metrics-section">
-        <MetricRow label="Duration" value={formatDuration(node.duration_ms)} />
-        <MetricRow label="Tokens in" value={formatTokens(node.tokens_in)} />
-        <MetricRow label="Tokens out" value={formatTokens(node.tokens_out)} />
-        <div class="metric-row-cost">
-          <MetricRow label="Cost" value={formatCost(node.cost_usd)} />
-          {#if provenance !== 'unknown'}
-            <span class="provenance-badge" data-provenance={provenance}>{provenance}</span>
-          {/if}
-        </div>
-        <MetricRow
-          label="Model"
-          value={(node.attrs?.['model_id'] as string | undefined) ?? (node.attrs?.['model'] as string | undefined) ?? '—'}
-        />
-      </div>
+      {#if node.payload_hash}
+        <PayloadPanel {hash} nodeId={node.id} nodeType={node.type} {token} payloadHash={node.payload_hash} />
+      {/if}
 
-      <PayloadPanel {hash} nodeId={node.id} nodeType={node.type} {token} />
+      <div class="meta-summary">
+        {#if node.duration_ms !== undefined || node.cost_usd !== undefined}
+          <span class="meta-text">
+            {[
+              node.duration_ms !== undefined ? formatDuration(node.duration_ms) : null,
+              node.cost_usd !== undefined ? formatCost(node.cost_usd) : null,
+            ].filter(Boolean).join(' · ')}
+          </span>
+        {/if}
+      </div>
 
       <details class="advanced-section">
         <summary class="advanced-summary">Advanced</summary>
         <div class="advanced-body">
+          <div class="metrics-grid">
+            <MetricRow label="Duration" value={formatDuration(node.duration_ms)} />
+            <MetricRow label="Tokens in" value={formatTokens(node.tokens_in)} />
+            <MetricRow label="Tokens out" value={formatTokens(node.tokens_out)} />
+            <div class="metric-row-cost">
+              <MetricRow label="Cost" value={formatCost(node.cost_usd)} />
+              {#if provenance !== 'unknown'}
+                <span class="provenance-badge" data-provenance={provenance}>{provenance}</span>
+              {/if}
+            </div>
+            <MetricRow
+              label="Model"
+              value={(node.attrs?.['model_id'] as string | undefined) ?? (node.attrs?.['model'] as string | undefined) ?? '—'}
+            />
+          </div>
+
           <div class="advanced-row">
             <span class="advanced-label">ID</span>
             <span class="advanced-value mono">{node.id}</span>
@@ -288,10 +304,15 @@
     outline-offset: 2px;
   }
 
-  .metrics-section {
-    padding: var(--s3) var(--s4);
+  .meta-summary {
+    padding: var(--s2) var(--s4);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+  }
+
+  .meta-text {
+    font-size: var(--text-xs);
+    color: var(--text-faint);
   }
 
   .metric-row-cost {
@@ -365,6 +386,12 @@
     display: flex;
     flex-direction: column;
     gap: var(--s1);
+  }
+
+  .metrics-grid {
+    padding-bottom: var(--s2);
+    margin-bottom: var(--s1);
+    border-bottom: 1px solid var(--border);
   }
 
   .advanced-row {

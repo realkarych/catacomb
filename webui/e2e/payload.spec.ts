@@ -144,7 +144,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('content panel: collapsed by default, no fetch until reveal', async ({ page }) => {
+test('content panel: payload fetched eagerly on node selection, no reveal button', async ({ page }) => {
   let payloadFetched = false;
 
   await page.route(`/v1/sessions/${sessionHash}/nodes/node-tool-pl/payload`, async (route) => {
@@ -153,18 +153,17 @@ test('content panel: collapsed by default, no fetch until reveal', async ({ page
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
-  await toolNode.click();
+  const toolRow = page.locator('.outline-row').filter({ hasText: 'BashTool' });
+  await toolRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
 
-  await expect(drawer.locator('.reveal-btn')).toBeVisible();
-  await expect(drawer.locator('.payload-section')).toHaveCount(0);
-  expect(payloadFetched).toBe(false);
+  await expect(drawer.locator('.payload-section')).toHaveCount(2);
+  await expect(drawer.locator('.reveal-btn')).toHaveCount(0);
+  expect(payloadFetched).toBe(true);
 });
 
 test('content panel: 200 redacted payload shows input/output + redacted badge + copy', async ({ page }) => {
@@ -177,16 +176,13 @@ test('content panel: 200 redacted payload shows input/output + redacted badge + 
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
-  await toolNode.click();
+  const toolRow = page.locator('.outline-row').filter({ hasText: 'BashTool' });
+  await toolRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.redacted-badge')).toBeVisible();
   await expect(drawer.locator('.redacted-badge')).toContainText('redacted');
@@ -209,16 +205,13 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const toolNode = page.locator('.svelte-flow__node').filter({ hasText: 'BashTool' });
-  await toolNode.click();
+  const toolRow = page.locator('.outline-row').filter({ hasText: 'BashTool' });
+  await toolRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.payload-msg')).toBeVisible();
   await expect(drawer.locator('.payload-msg')).toContainText('--allow-payload-access');
@@ -238,15 +231,13 @@ test('content panel: user prompt renders input as text, not JSON', async ({ page
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const promptNode = page.locator('.svelte-flow__node').filter({ hasText: 'user prompt' });
-  await promptNode.click();
+  const promptRow = page.locator('.outline-row').filter({ hasText: 'prompt' }).first();
+  await promptRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.payload-section-label')).toContainText('Prompt');
   await expect(drawer.locator('.payload-text')).toContainText('What is the meaning of life?');
@@ -266,17 +257,59 @@ test('content panel: assistant turn renders response as text, not JSON', async (
   });
 
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(4, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const turnNode = page.locator('.svelte-flow__node').filter({ hasText: 'assistant turn' });
-  await turnNode.click();
+  const turnRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await turnRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.payload-section-label')).toContainText('Response');
   await expect(drawer.locator('.payload-text')).toContainText('Here is the **answer** to your question.');
   await expect(drawer.locator('.payload-content.mono')).toHaveCount(0);
+});
+
+test('structural node (no payload_hash) shows no content section', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const sessionRow = page.locator('.outline-row').filter({ hasText: 'Session Root' });
+  await sessionRow.click();
+
+  const drawer = page.locator('.node-drawer');
+  await expect(drawer).toBeVisible();
+
+  await expect(drawer.locator('.payload-panel')).toHaveCount(0);
+});
+
+test('long conversation content shows show-more toggle and expands', async ({ page }) => {
+  const longOutput = Array.from({ length: 30 }, (_, i) => `Line ${i + 1}: some content here that makes this longer`).join('\n');
+
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route) => {
+    const turnPayload: PayloadView = {
+      node_id: 'node-turn-pl',
+      payload_hash: 'turnhash',
+      output: longOutput,
+      redactions: [],
+      redacted: false,
+    };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(turnPayload) });
+  });
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const turnRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await turnRow.click();
+
+  const drawer = page.locator('.node-drawer');
+  await expect(drawer).toBeVisible();
+
+  await expect(drawer.locator('.show-more-btn')).toBeVisible();
+
+  await drawer.locator('.show-more-btn').click();
+
+  await expect(drawer.locator('.show-more-btn')).toContainText('show less');
+  await expect(drawer.locator('.payload-text')).toContainText('Line 30:');
 });

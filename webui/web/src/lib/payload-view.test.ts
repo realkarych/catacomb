@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { prettyJSON, payloadState } from './payload-view';
+import { prettyJSON, payloadState, truncateAtNewline, remainingLineCount } from './payload-view';
 import type { PayloadView } from './types';
 
 describe('prettyJSON', () => {
@@ -62,5 +62,62 @@ describe('payloadState', () => {
   it('returns ready when view has only output', () => {
     const view: PayloadView = { ...baseView, output: { result: 'ok' } };
     expect(payloadState(view, false)).toBe('ready');
+  });
+});
+
+describe('truncateAtNewline', () => {
+  it('short text within limit returns full text with hasMore false', () => {
+    const result = truncateAtNewline('hello', 10);
+    expect(result).toEqual({ shown: 'hello', hasMore: false, remaining: '' });
+  });
+
+  it('exact limit match returns full text with hasMore false', () => {
+    const text = 'abcde';
+    const result = truncateAtNewline(text, 5);
+    expect(result).toEqual({ shown: text, hasMore: false, remaining: '' });
+  });
+
+  it('text longer than limit with newline before limit cuts at last newline', () => {
+    const text = 'line1\nline2\nline3';
+    const result = truncateAtNewline(text, 10);
+    expect(result.hasMore).toBe(true);
+    expect(result.shown).toBe('line1\n');
+    expect(result.remaining).toBe('line2\nline3');
+  });
+
+  it('hasMore is true when text is longer than limit', () => {
+    const result = truncateAtNewline('abcdefgh', 4);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it('remaining contains the rest after the cut', () => {
+    const text = 'aa\nbb\ncc';
+    const result = truncateAtNewline(text, 5);
+    expect(result.shown).toBe('aa\n');
+    expect(result.remaining).toBe('bb\ncc');
+  });
+
+  it('no newline before limit hard cuts at limit', () => {
+    const text = 'abcdefghij';
+    const result = truncateAtNewline(text, 4);
+    expect(result).toEqual({ shown: 'abcd', hasMore: true, remaining: 'efghij' });
+  });
+});
+
+describe('remainingLineCount', () => {
+  it('empty remaining returns 0', () => {
+    expect(remainingLineCount('')).toBe(0);
+  });
+
+  it('single line returns 1', () => {
+    expect(remainingLineCount('hello')).toBe(1);
+  });
+
+  it('multiple lines returns correct count', () => {
+    expect(remainingLineCount('line1\nline2\nline3')).toBe(3);
+  });
+
+  it('trailing newline does not add phantom line', () => {
+    expect(remainingLineCount('line1\nline2\n')).toBe(2);
   });
 });

@@ -1,8 +1,11 @@
 <script lang="ts">
   import { fetchNodePayload, ForbiddenError, NotFoundError } from '../lib/api';
-  import { prettyJSON, payloadState, type PayloadState } from '../lib/payload-view';
+  import { prettyJSON, payloadState, truncateAtNewline, remainingLineCount, type PayloadState } from '../lib/payload-view';
   import { isConversationNode, conversationText } from '../lib/conversation';
   import type { PayloadView } from '../lib/types';
+
+  const CONV_LIMIT = 1200;
+  const TOOL_LIMIT = 3000;
 
   type DisplayState = 'idle' | 'loading' | 'not-found' | 'error' | PayloadState;
 
@@ -18,34 +21,36 @@
     nodeId: string;
     nodeType: string;
     token: string;
+    payloadHash: string;
   }
-  let { hash, nodeId, nodeType, token }: Props = $props();
+  let { hash, nodeId, nodeType, token, payloadHash }: Props = $props();
 
-  let revealed = $state(false);
+  let expanded = $state(false);
   let fetchState: 'idle' | 'loading' | 'not-found' | 'error' | 'done' = $state('idle');
   let view: PayloadView | null = $state(null);
   let forbidden = $state(false);
 
   const displayState = $derived(computeDisplayState(fetchState, view, forbidden));
   const asText = $derived(isConversationNode(nodeType));
+  const limit = $derived(asText ? CONV_LIMIT : TOOL_LIMIT);
 
   $effect(() => {
-    nodeId;
-    revealed = false;
+    const id = nodeId;
+    let stale = false;
+    expanded = false;
     fetchState = 'idle';
     view = null;
     forbidden = false;
-  });
 
-  async function reveal() {
-    revealed = true;
+    if (!payloadHash) return () => { stale = true; };
+
     fetchState = 'loading';
-    forbidden = false;
-    view = null;
-    try {
-      view = await fetchNodePayload(hash, nodeId, token);
+    fetchNodePayload(hash, id, token).then((result) => {
+      if (stale) return;
+      view = result;
       fetchState = 'done';
-    } catch (e) {
+    }).catch((e) => {
+      if (stale) return;
       if (e instanceof ForbiddenError) {
         forbidden = true;
         fetchState = 'done';
@@ -54,104 +59,105 @@
       } else {
         fetchState = 'error';
       }
-    }
-  }
-
-  function collapse() {
-    revealed = false;
-    fetchState = 'idle';
-    view = null;
-    forbidden = false;
-  }
+    });
+    return () => { stale = true; };
+  });
 
   async function copyText(text: string) {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(text);
     }
   }
+
+  function getInputText(): string {
+    if (!view) return '';
+    return asText ? conversationText(view.input) : prettyJSON(view.input);
+  }
+
+  function getOutputText(): string {
+    if (!view) return '';
+    return asText ? conversationText(view.output) : prettyJSON(view.output);
+  }
 </script>
 
 <div class="payload-panel">
-  {#if !revealed}
-    <button
-      class="reveal-btn"
-      onclick={reveal}
-      aria-label="Reveal node content"
-    >
-      Reveal content
-    </button>
-  {:else}
-    <div class="payload-header">
-      <span class="payload-label">Content</span>
-      <button
-        class="collapse-btn"
-        onclick={collapse}
-        aria-label="Collapse content"
-      >
-        Hide
-      </button>
+  {#if displayState === 'loading'}
+    <div class="payload-skeleton" role="status" aria-live="polite">
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line skeleton-line--mid"></div>
+      <div class="skeleton-line skeleton-line--short"></div>
+      <span class="sr-only">Loading…</span>
     </div>
-
-    {#if displayState === 'loading'}
-      <div class="payload-loading" role="status" aria-live="polite">
-        <span class="spinner" aria-hidden="true"></span>
-        <span class="sr-only">Loading…</span>
+  {:else if displayState === 'disabled'}
+    <p class="payload-msg">
+      Content viewing is off. Start the daemon with <code class="mono">--allow-payload-access</code> to enable.
+    </p>
+  {:else if displayState === 'not-found' || displayState === 'empty'}
+    <p class="payload-msg">No stored payload for this node.</p>
+  {:else if displayState === 'error'}
+    <p class="payload-msg payload-msg--error">Failed to load content.</p>
+  {:else if (displayState === 'redacted' || displayState === 'ready') && view}
+    {#if view.redacted}
+      <div class="redacted-notice" aria-label="Content was redacted">
+        <span class="redacted-badge">redacted</span>
+        <span class="redacted-count">{view.redactions.length} secret{view.redactions.length === 1 ? '' : 's'} redacted</span>
       </div>
-    {:else if displayState === 'disabled'}
-      <p class="payload-msg">
-        Content viewing is off. Start the daemon with <code class="mono">--allow-payload-access</code> to enable.
-      </p>
-    {:else if displayState === 'not-found' || displayState === 'empty'}
-      <p class="payload-msg">No stored payload for this node.</p>
-    {:else if displayState === 'error'}
-      <p class="payload-msg payload-msg--error">Failed to load content.</p>
-    {:else if (displayState === 'redacted' || displayState === 'ready') && view}
-      {#if view.redacted}
-        <div class="redacted-notice" aria-label="Content was redacted">
-          <span class="redacted-badge">redacted</span>
-          <span class="redacted-count">{view.redactions.length} secret{view.redactions.length === 1 ? '' : 's'} redacted</span>
-        </div>
-      {/if}
+    {/if}
 
-      {#if view.input !== undefined && view.input !== null}
-        <div class="payload-section">
-          <div class="payload-section-header">
-            <span class="payload-section-label">{asText ? 'Prompt' : 'Input'}</span>
-            <button
-              class="copy-btn"
-              onclick={() => copyText(asText ? conversationText(view?.input) : prettyJSON(view?.input))}
-              aria-label="Copy input content"
-            >
-              Copy
-            </button>
-          </div>
-          {#if asText}
-            <pre class="payload-content payload-text">{conversationText(view.input)}</pre>
-          {:else}
-            <pre class="payload-content mono">{prettyJSON(view.input)}</pre>
-          {/if}
+    {#if view.input !== undefined && view.input !== null}
+      {@const inputText = getInputText()}
+      {@const inputResult = truncateAtNewline(inputText, limit)}
+      <div class="payload-section">
+        <div class="payload-section-header">
+          <span class="payload-section-label">{asText ? 'Prompt' : 'Input'}</span>
+          <button
+            class="copy-btn"
+            onclick={() => copyText(inputText)}
+            aria-label="Copy input content"
+          >
+            Copy
+          </button>
         </div>
-      {/if}
+        <pre class="payload-content" class:payload-text={asText} class:mono={!asText}>{expanded ? inputText : inputResult.shown}</pre>
+        {#if !expanded && inputResult.hasMore}
+          {@const n = remainingLineCount(inputResult.remaining)}
+          <button class="show-more-btn" onclick={() => { expanded = true; }}>
+            +{n} more {n === 1 ? 'line' : 'lines'}
+          </button>
+        {:else if expanded}
+          <button class="show-more-btn" onclick={() => { expanded = false; }}>
+            show less
+          </button>
+        {/if}
+      </div>
+    {/if}
 
-      {#if view.output !== undefined && view.output !== null}
-        <div class="payload-section">
-          <div class="payload-section-header">
-            <span class="payload-section-label">{asText ? 'Response' : 'Output'}</span>
-            <button
-              class="copy-btn"
-              onclick={() => copyText(asText ? conversationText(view?.output) : prettyJSON(view?.output))}
-              aria-label="Copy output content"
-            >
-              Copy
-            </button>
-          </div>
-          {#if asText}
-            <pre class="payload-content payload-text">{conversationText(view.output)}</pre>
-          {:else}
-            <pre class="payload-content mono">{prettyJSON(view.output)}</pre>
-          {/if}
+    {#if view.output !== undefined && view.output !== null}
+      {@const outputText = getOutputText()}
+      {@const outputResult = truncateAtNewline(outputText, limit)}
+      <div class="payload-section">
+        <div class="payload-section-header">
+          <span class="payload-section-label">{asText ? 'Response' : 'Output'}</span>
+          <button
+            class="copy-btn"
+            onclick={() => copyText(outputText)}
+            aria-label="Copy output content"
+          >
+            Copy
+          </button>
         </div>
-      {/if}
+        <pre class="payload-content" class:payload-text={asText} class:mono={!asText}>{expanded ? outputText : outputResult.shown}</pre>
+        {#if !expanded && outputResult.hasMore}
+          {@const n = remainingLineCount(outputResult.remaining)}
+          <button class="show-more-btn" onclick={() => { expanded = true; }}>
+            +{n} more {n === 1 ? 'line' : 'lines'}
+          </button>
+        {:else if expanded}
+          <button class="show-more-btn" onclick={() => { expanded = false; }}>
+            show less
+          </button>
+        {/if}
+      </div>
     {/if}
   {/if}
 </div>
@@ -162,93 +168,41 @@
     padding: var(--s3) var(--s4);
   }
 
-  .reveal-btn {
-    font-size: var(--text-sm);
-    color: var(--text-faint);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: var(--s1) var(--s3);
-    cursor: pointer;
-    font-family: var(--font-ui);
-    transition: color 0.12s, border-color 0.12s;
-    width: 100%;
-    text-align: left;
-  }
-
-  .reveal-btn:hover {
-    color: var(--text-dim);
-    border-color: var(--border-strong);
-  }
-
-  .reveal-btn:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
-
-  .payload-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: var(--s2);
-  }
-
-  .payload-label {
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .collapse-btn {
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 1px var(--s2);
-    cursor: pointer;
-    font-family: var(--font-ui);
-    transition: color 0.12s, border-color 0.12s;
-  }
-
-  .collapse-btn:hover {
-    color: var(--text-dim);
-    border-color: var(--border-strong);
-  }
-
-  .collapse-btn:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
-
-  .payload-loading {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
+  .payload-skeleton {
     padding: var(--s2) 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    min-height: 60px;
   }
 
-  .spinner {
-    width: 12px;
-    height: 12px;
-    border: 1px solid var(--border);
-    border-top-color: var(--text-faint);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    flex-shrink: 0;
+  .skeleton-line {
+    height: 10px;
+    background: linear-gradient(90deg, var(--border) 25%, var(--surface) 50%, var(--border) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+    border-radius: var(--radius-sm);
+    width: 100%;
+  }
+
+  .skeleton-line--mid {
+    width: 75%;
+  }
+
+  .skeleton-line--short {
+    width: 50%;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .spinner {
+    .skeleton-line {
       animation: none;
-      border-top-color: var(--border);
+      background: var(--border);
     }
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   .sr-only {
@@ -352,5 +306,25 @@
     word-break: break-word;
     font-family: var(--font-ui);
     color: var(--text);
+  }
+
+  .show-more-btn {
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+    background: transparent;
+    border: none;
+    padding: var(--s1) 0;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    text-align: left;
+  }
+
+  .show-more-btn:hover {
+    color: var(--text-dim);
+  }
+
+  .show-more-btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 </style>

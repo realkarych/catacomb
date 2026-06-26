@@ -28,7 +28,7 @@ const sseEvents: SseEvent[] = [
   { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt', rev: 3 } },
   { kind: 'node_upsert', rev: 4, node: { id: 'n-turn', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'ok', t_start: '2026-06-20T10:00:02Z', tokens_in: 80, tokens_out: 40, cost_usd: 0.0009, payload_hash: 'ph-turn', rev: 4 } },
   { kind: 'edge_upsert', rev: 5, edge: { id: 'e2', run_id: 'run-out', type: 'parent_child', src: 'n-prompt', dst: 'n-turn', rev: 5 } },
-  { kind: 'node_upsert', rev: 6, node: { id: 'n-tool', run_id: 'run-out', type: 'tool_call', name: 'BashTool', status: 'ok', t_start: '2026-06-20T10:00:03Z', tokens_in: 10, tokens_out: 5, rev: 6 } },
+  { kind: 'node_upsert', rev: 6, node: { id: 'n-tool', run_id: 'run-out', type: 'tool_call', name: 'BashTool', status: 'ok', t_start: '2026-06-20T10:00:03Z', duration_ms: 307, tokens_in: 10, tokens_out: 5, payload_hash: 'ph-tool', rev: 6 } },
   { kind: 'edge_upsert', rev: 7, edge: { id: 'e3', run_id: 'run-out', type: 'parent_child', src: 'n-turn', dst: 'n-tool', rev: 7 } },
 ];
 
@@ -39,6 +39,26 @@ const promptPayload: PayloadView = {
   redactions: [],
   redacted: false,
 };
+
+const toolPayload: PayloadView = {
+  node_id: 'n-tool',
+  payload_hash: 'ph-tool',
+  input: { command: 'ls -la /some/path' },
+  output: { stdout: 'total 0\ndrwxr-xr-x  2 user  staff  64 Jun 20 10:00 .' },
+  redactions: [],
+  redacted: false,
+};
+
+async function routeNodePayloads(page: Page): Promise<void> {
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) => {
+    const url = route.request().url();
+    if (url.includes('n-tool')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(toolPayload) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptPayload) });
+    }
+  });
+}
 
 function buildSseBody(events: SseEvent[]): string {
   return events.map((ev) => `data: ${JSON.stringify(ev)}\n\n`).join('');
@@ -233,3 +253,192 @@ test('collapse all and expand all toolbar buttons work', async ({ page }) => {
   await expect(page.locator('.outline-row').filter({ hasText: 'BashTool' })).toHaveCount(0);
   await expect(page.locator('.outline-row').filter({ hasText: 'session' }).first()).toBeVisible();
 });
+
+test('the legend strip explains the stat columns', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const legend = page.locator('.outline-legend');
+  await expect(legend).toBeVisible();
+  await expect(legend).toContainText('assistant');
+  await expect(legend).toContainText('in · out · cost · duration');
+  await expect(legend).toContainText('tool');
+  await expect(legend).toContainText('collapsed');
+});
+
+test('an assistant row shows labeled token/cost/duration stats with no bare arrow', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+  const turnRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  const stat = turnRow.locator('.outline-stat-text');
+  await expect(stat).toContainText('in 80');
+  await expect(stat).toContainText('out 40');
+  await expect(stat).toContainText('$');
+  await expect(stat).not.toContainText('→');
+  await expect(stat).toHaveAttribute('title', /input/);
+});
+
+test('a tool row shows duration and an inline command/output snippet, no token columns', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+  const toolRow = page.locator('.outline-row').filter({ hasText: 'BashTool' }).first();
+  await expect(toolRow).toBeVisible();
+
+  const stat = toolRow.locator('.outline-stat-text');
+  await expect(stat).toHaveText('307ms');
+  await expect(stat).not.toContainText('in ');
+  await expect(stat).not.toContainText('$');
+  await expect(stat).not.toContainText('→');
+
+  await expect(toolRow.locator('.outline-snippet')).toContainText('ls -la /some/path', { timeout: 5000 });
+  await expect(toolRow.locator('.outline-snippet')).toContainText('→');
+  await expect(toolRow.locator('.outline-snippet')).toContainText('total 0');
+});
+
+const sseEventsWithStatusVariants: SseEvent[] = [
+  { kind: 'node_upsert', rev: 1, node: { id: 'n-session', run_id: 'run-out', type: 'session', name: 'Session Root', status: 'ok', t_start: '2026-06-20T10:00:00Z', rev: 1 } },
+  { kind: 'node_upsert', rev: 2, node: { id: 'n-prompt-human', run_id: 'run-out', type: 'user_prompt', name: 'user prompt', status: 'pending', t_start: '2026-06-20T10:00:01Z', rev: 2 } },
+  { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt-human', rev: 3 } },
+  { kind: 'node_upsert', rev: 4, node: { id: 'n-turn-error', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'error', t_start: '2026-06-20T10:00:02Z', rev: 4 } },
+  { kind: 'edge_upsert', rev: 5, edge: { id: 'e2', run_id: 'run-out', type: 'parent_child', src: 'n-prompt-human', dst: 'n-turn-error', rev: 5 } },
+  { kind: 'node_upsert', rev: 6, node: { id: 'n-prompt-system', run_id: 'run-out', type: 'user_prompt', name: 'command-name', status: 'ok', t_start: '2026-06-20T10:00:03Z', attrs: { prompt_kind: 'system' }, rev: 6 } },
+  { kind: 'edge_upsert', rev: 7, edge: { id: 'e3', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt-system', rev: 7 } },
+];
+
+const fakeSessionsHistorical: SessionSummary[] = [
+  {
+    session: sessionHash,
+    status: 'ok',
+    started_at: '2026-06-20T10:00:00Z',
+    duration_ms: 2100,
+    tokens_in: 100,
+    tokens_out: 50,
+    cost_usd: 0.001,
+    cost_source: 'reported',
+    node_count: 5,
+    tool_count: 0,
+    error_count: 1,
+    model_id: 'claude-opus-4-8',
+    run_ids: ['run-out'],
+  },
+];
+
+async function routeStatusVariants(page: Page): Promise<void> {
+  await page.route('/v1/sessions', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fakeSessionsHistorical) }),
+  );
+  await page.route('/v1/subscribe**', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: buildSseBody(sseEventsWithStatusVariants) }),
+  );
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>
+    route.fulfill({ status: 403, body: 'payload access disabled' }),
+  );
+}
+
+test('historical session: pending node shows NO status dot', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+
+  const pendingRow = page.locator('.outline-row').filter({ hasText: 'prompt' }).first();
+  await expect(pendingRow).toBeVisible();
+  await expect(pendingRow.locator('.outline-dot')).toHaveCount(0);
+});
+
+test('historical session: error node shows a status dot', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+
+  const errorRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await expect(errorRow).toBeVisible();
+  await expect(errorRow.locator('.outline-dot')).toHaveCount(1);
+});
+
+test('system prompt row is hidden by default', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(1);
+});
+
+test('show system toggle reveals system prompt rows', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Show system' }).click();
+
+  await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(2);
+});
+
+test('unknown status node shows NO status dot', async ({ page }) => {
+  const unknownEvents: SseEvent[] = [
+    { kind: 'node_upsert', rev: 1, node: { id: 'n-session', run_id: 'run-out', type: 'session', name: 'Session Root', status: 'ok', rev: 1 } },
+    { kind: 'node_upsert', rev: 2, node: { id: 'n-turn-unknown', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'unknown', t_start: '2026-06-20T10:00:02Z', rev: 2 } },
+    { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-turn-unknown', rev: 3 } },
+  ];
+  await page.route('/v1/sessions', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fakeSessions) }),
+  );
+  await page.route('/v1/subscribe**', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: buildSseBody(unknownEvents) }),
+  );
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>
+    route.fulfill({ status: 403, body: 'payload access disabled' }),
+  );
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+
+  const unknownRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await expect(unknownRow).toBeVisible();
+  await expect(unknownRow.locator('.outline-dot')).toHaveCount(0);
+});
+
+test('Escape-closing the drawer returns focus into the outline', async ({ page }) => {
+  await routeBase(page);
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptPayload) }),
+  );
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const promptRow = page.locator('.outline-row').filter({ hasText: 'prompt' }).first();
+  await promptRow.click();
+  await expect(page.locator('.node-drawer--open')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.node-drawer--open')).toHaveCount(0);
+
+  const activeInOutline = await page.evaluate(() => {
+    const outline = document.querySelector('[role="tree"][aria-label="Session outline"]');
+    const active = document.activeElement;
+    return outline !== null && (outline === active || outline.contains(active));
+  });
+  expect(activeInOutline).toBe(true);
+});
+

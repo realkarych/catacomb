@@ -296,6 +296,28 @@ func TestSubagentStopMinimal(t *testing.T) {
 	assert.Empty(t, n.SubagentType)
 }
 
+func TestUserPromptAttrsPromptKindSystem(t *testing.T) {
+	o := ob("user_prompt", "", time.Unix(0, 0).UTC())
+	o.Correlation.UUID = "u2"
+	o.Attrs = map[string]any{"prompt_kind": "system"}
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.UserPromptID(execID, "u2")]
+	require.NotNil(t, n)
+	assert.Equal(t, "system", n.Attrs["prompt_kind"])
+}
+
+func TestUserPromptAttrsPromptKindHuman(t *testing.T) {
+	o := ob("user_prompt", "", time.Unix(0, 0).UTC())
+	o.Correlation.UUID = "u3"
+	o.Attrs = map[string]any{"prompt_kind": "human"}
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.UserPromptID(execID, "u3")]
+	require.NotNil(t, n)
+	assert.Equal(t, "human", n.Attrs["prompt_kind"])
+}
+
 func TestSnapshotReturnsAllNodesAndEdges(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	up := ob("user_prompt", "", t0)

@@ -16,3 +16,22 @@ export function payloadState(view: PayloadView | null, forbidden: boolean): Payl
   if (view.redacted) return 'redacted';
   return 'ready';
 }
+
+export function truncateAtNewline(
+  text: string,
+  limit: number,
+): { shown: string; hasMore: boolean; remaining: string } {
+  if (text.length <= limit) {
+    return { shown: text, hasMore: false, remaining: '' };
+  }
+  const cutAt = text.lastIndexOf('\n', limit - 1);
+  if (cutAt !== -1) {
+    return { shown: text.slice(0, cutAt + 1), hasMore: true, remaining: text.slice(cutAt + 1) };
+  }
+  return { shown: text.slice(0, limit), hasMore: true, remaining: text.slice(limit) };
+}
+
+export function remainingLineCount(remaining: string): number {
+  if (remaining === '') return 0;
+  return remaining.split('\n').filter((s) => s !== '').length;
+}

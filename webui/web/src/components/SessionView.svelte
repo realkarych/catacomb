@@ -1,16 +1,13 @@
 <script lang="ts">
   import { toHash } from '../lib/router';
-  import GraphCanvas from './GraphCanvas.svelte';
   import NodeDrawer from './NodeDrawer.svelte';
   import Timeline from './Timeline.svelte';
   import Outline from './Outline.svelte';
   import SessionHeader from './SessionHeader.svelte';
   import FilterBar from './FilterBar.svelte';
-  import { sessionGraph, filterState, setFilteredNodeIds, selectedNodeId, navigateToNode } from '../lib/stores/stores.svelte';
+  import { sessionGraph, filterState, setFilteredNodeIds } from '../lib/stores/stores.svelte';
   import { filterNodes, isActive } from '../lib/filters';
   import { buildTimeline } from '../lib/timeline';
-  import { nextNodeByDirection } from '../lib/graph-nav';
-  import type { NavDir } from '../lib/graph-nav';
 
   interface Props {
     hash: string;
@@ -20,12 +17,7 @@
   }
   let { hash, nodeId, loadStatus = 'idle', token }: Props = $props();
 
-  let fitKey = $state(0);
-  let prevHadNode = false;
-  let viewMode: 'outline' | 'graph' | 'timeline' = $state('outline');
-  let drawerFocusOnOpen = $state(false);
-  let canvasWrapEl: HTMLDivElement | undefined = $state();
-  let visibleIds = $state<Set<string>>(new Set());
+  let viewMode: 'outline' | 'timeline' = $state('outline');
 
   const graph = $derived(sessionGraph(hash));
   const hasTimingData = $derived(buildTimeline(graph.nodes).rows.length > 0);
@@ -41,71 +33,8 @@
     }
   });
 
-  $effect(() => {
-    const hasNode = !!nodeId;
-    if (!hasNode && prevHadNode) {
-      fitKey += 1;
-    }
-    prevHadNode = hasNode;
-  });
-
   function goBack() {
     window.location.hash = toHash({ kind: 'list' });
-  }
-
-  const arrowDirMap: Record<string, NavDir> = {
-    ArrowRight: 'right',
-    ArrowLeft: 'left',
-    ArrowUp: 'up',
-    ArrowDown: 'down',
-  };
-
-  function onWindowArrowKeydown(e: KeyboardEvent) {
-    if (viewMode !== 'graph') return;
-    const dir = arrowDirMap[e.key];
-    if (!dir) return;
-    const target = e.target as HTMLElement | null;
-    if (!target) return;
-    const tag = target.tagName.toLowerCase();
-    if (
-      tag === 'input' ||
-      tag === 'textarea' ||
-      tag === 'select' ||
-      target.getAttribute('role') === 'searchbox' ||
-      target.isContentEditable
-    ) {
-      return;
-    }
-    if (target.closest('[role="complementary"]')) return;
-    e.preventDefault();
-    const g = sessionGraph(hash);
-    const next = nextNodeByDirection(selectedNodeId.value, g.nodes, g.edges, dir, visibleIds);
-    if (next !== null) {
-      drawerFocusOnOpen = false;
-      navigateToNode(hash, next);
-      const targetId = next;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const btn = document.querySelector<HTMLElement>(
-            `.svelte-flow__node[data-id="${CSS.escape(targetId)}"] [role="button"]`
-          ) ?? document.querySelector<HTMLElement>(
-            `.svelte-flow__node[data-id="${CSS.escape(targetId)}"]`
-          ) ?? canvasWrapEl ?? null;
-          if (btn && btn.isConnected) btn.focus();
-        });
-      });
-    }
-  }
-
-  $effect(() => {
-    window.addEventListener('keydown', onWindowArrowKeydown);
-    return () => {
-      window.removeEventListener('keydown', onWindowArrowKeydown);
-    };
-  });
-
-  function onNodeActivate() {
-    drawerFocusOnOpen = true;
   }
 </script>
 
@@ -125,12 +54,6 @@
         onclick={() => (viewMode = 'outline')}
         aria-pressed={viewMode === 'outline'}
       >Outline</button>
-      <button
-        class="view-btn"
-        data-active={viewMode === 'graph' ? 'true' : undefined}
-        onclick={() => (viewMode = 'graph')}
-        aria-pressed={viewMode === 'graph'}
-      >Graph</button>
       {#if hasTimingData}
         <button
           class="view-btn"
@@ -152,16 +75,14 @@
     </div>
   {:else}
     <div class="graph-area" role="presentation">
-      <div class="canvas-wrap" tabindex={-1} bind:this={canvasWrapEl}>
+      <div class="canvas-wrap" tabindex={-1}>
         {#if viewMode === 'outline'}
           <Outline {hash} {token} />
         {:else if viewMode === 'timeline'}
           <Timeline {hash} />
-        {:else}
-          <GraphCanvas {hash} refit={fitKey} onNodeActivate={onNodeActivate} onVisibleChange={(ids) => (visibleIds = ids)} />
         {/if}
       </div>
-      <NodeDrawer {hash} {token} focusOnOpen={drawerFocusOnOpen} />
+      <NodeDrawer {hash} {token} focusOnOpen={false} />
     </div>
   {/if}
 </div>
