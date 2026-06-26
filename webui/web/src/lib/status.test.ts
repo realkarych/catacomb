@@ -54,6 +54,7 @@ describe('statusColor', () => {
   it('returns running token for running', () => expect(statusColor('running')).toBe('var(--running)'));
   it('returns transparent for unknown status', () => expect(statusColor('unknown')).toBe('transparent'));
   it('returns transparent for empty string', () => expect(statusColor('')).toBe('transparent'));
+  it('returns transparent for pending', () => expect(statusColor('pending')).toBe('transparent'));
 });
 
 describe('displayLabel', () => {

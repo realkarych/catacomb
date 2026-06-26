@@ -1,6 +1,7 @@
 import type { Node, Aggregate } from './types';
 import { formatTokens, formatCost, formatDuration } from '../format/format';
 import { isToolNode } from '../conversation';
+import { statusColor } from '../status';
 
 export interface RowStatOptions {
   collapsed: boolean;
@@ -12,13 +13,6 @@ export interface RowStat {
   text: string;
   title: string;
   color: string;
-}
-
-function statusColor(status?: string): string {
-  if (status === 'error') return 'var(--error)';
-  if (status === 'blocked') return 'var(--blocked)';
-  if (status === 'running') return 'var(--running)';
-  return 'var(--ok)';
 }
 
 function aggregateStat(agg: Aggregate): RowStat {
@@ -46,15 +40,15 @@ function assistantStat(node: Node): RowStat {
     parts.push(formatDuration(node.duration_ms));
     titleParts.push(`duration ${formatDuration(node.duration_ms)}`);
   }
-  return { text: parts.join(' · '), title: titleParts.join(' · '), color: statusColor(node.status) };
+  return { text: parts.join(' · '), title: titleParts.join(' · '), color: statusColor(node.status ?? '') };
 }
 
 function toolStat(node: Node): RowStat {
   if (node.duration_ms === undefined) {
-    return { text: '', title: '', color: statusColor(node.status) };
+    return { text: '', title: '', color: statusColor(node.status ?? '') };
   }
   const dur = formatDuration(node.duration_ms);
-  return { text: dur, title: `Duration ${dur}`, color: statusColor(node.status) };
+  return { text: dur, title: `Duration ${dur}`, color: statusColor(node.status ?? '') };
 }
 
 export function rowStatLine(node: Node, opts: RowStatOptions): RowStat {
@@ -67,5 +61,5 @@ export function rowStatLine(node: Node, opts: RowStatOptions): RowStat {
   if (isToolNode(node.type)) {
     return toolStat(node);
   }
-  return { text: '', title: '', color: statusColor(node.status) };
+  return { text: '', title: '', color: statusColor(node.status ?? '') };
 }

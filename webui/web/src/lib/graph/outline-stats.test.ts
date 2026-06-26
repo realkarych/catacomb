@@ -195,4 +195,25 @@ describe('rowStatLine — empty leaf', () => {
     const res = rowStatLine(node({ type: 'session' }), { collapsed: true, hasChildren: true });
     expect(res.text).toBe('');
   });
+
+  it('returns transparent color for a user_prompt with no status', () => {
+    const res = rowStatLine(node({ type: 'user_prompt' }), { collapsed: false, hasChildren: false });
+    expect(res.color).toBe('transparent');
+  });
+
+  it('returns transparent color for unknown status', () => {
+    const res = rowStatLine(node({ type: 'assistant_turn', status: 'unknown' }), {
+      collapsed: false,
+      hasChildren: false,
+    });
+    expect(res.color).toBe('transparent');
+  });
+
+  it('returns transparent color for pending status', () => {
+    const res = rowStatLine(node({ type: 'assistant_turn', status: 'pending' }), {
+      collapsed: false,
+      hasChildren: false,
+    });
+    expect(res.color).toBe('transparent');
+  });
 });
