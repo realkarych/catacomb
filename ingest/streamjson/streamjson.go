@@ -205,7 +205,7 @@ func assistantParts(base model.Correlation, msg message, text string, blocks []b
 func userParts(base model.Correlation, text string, blocks []block) []partial {
 	var parts []partial
 	if text != "" {
-		p := partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt": text}}
+		p := partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt": text, "prompt_kind": model.PromptKind(text)}}
 		enc, err := json.Marshal(text)
 		if err == nil {
 			pl := &model.Payload{Input: enc}

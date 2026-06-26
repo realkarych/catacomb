@@ -46,6 +46,12 @@ func (g *Graph) Apply(o model.Observation) {
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
+		if pk, ok := o.Attrs["prompt_kind"].(string); ok && pk != "" {
+			if n.Attrs == nil {
+				n.Attrs = map[string]any{}
+			}
+			n.Attrs["prompt_kind"] = pk
+		}
 		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
 		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)

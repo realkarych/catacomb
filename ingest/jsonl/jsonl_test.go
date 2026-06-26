@@ -235,6 +235,24 @@ func TestParseReaderAssistantNoTextNoTurnPayload(t *testing.T) {
 	assert.Nil(t, turn[1].Payload)
 }
 
+func TestParseReaderUserPromptSyntheticKind(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"user","message":{"role":"user","content":"<system-reminder>foo"}}`+"\n"), "e")
+	require.NoError(t, err)
+	up := byKind(obs, "user_prompt")
+	require.Len(t, up, 1)
+	assert.Equal(t, "system", up[0].Attrs["prompt_kind"])
+}
+
+func TestParseReaderUserPromptHumanKind(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"user","message":{"role":"user","content":"hello friend"}}`+"\n"), "e")
+	require.NoError(t, err)
+	up := byKind(obs, "user_prompt")
+	require.Len(t, up, 1)
+	assert.Equal(t, "human", up[0].Attrs["prompt_kind"])
+}
+
 func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)

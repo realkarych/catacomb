@@ -101,6 +101,24 @@ func TestParseUserPromptText(t *testing.T) {
 	assert.Equal(t, "hello there", obs[0].Attrs["prompt"])
 }
 
+func TestParseUserPromptSyntheticKind(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"user","session_id":"s","message":{"content":"<system-reminder>reminder text"}}`)
+	obs, err := Parse(line, "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "system", obs[0].Attrs["prompt_kind"])
+}
+
+func TestParseUserPromptHumanKind(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"user","session_id":"s","message":{"content":"hello there"}}`)
+	obs, err := Parse(line, "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "human", obs[0].Attrs["prompt_kind"])
+}
+
 func TestParseStreamEventYieldsNoObs(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"stream_event","session_id":"s","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
