@@ -94,6 +94,35 @@ polish: `outlineLabel` for a `subagent` shows its `Name` (the meta
 `description`, e.g. "Review PR1 reparent") when present, falling back to
 `subagent_type` — directly answering the "zero context" complaint.
 
+## Lazy-loading subagent subtrees (scale)
+
+Full ingestion makes a subagent-heavy session large: the example session is
+~17.9k nodes and its graph snapshot is ~24 MB, which streams to the web client on
+connect and re-derives the outline on every live delta — the browser becomes
+sluggish even though subagents render collapsed. Since the inner work is hidden
+by default, it should not be shipped until the user asks for it.
+
+- **Filtered snapshot + SSE.** `sessionGraphDeltas` (the `/graph` snapshot) and the
+  SSE matcher omit a subagent's inner nodes/edges — a node is "inner" when
+  `AgentID != "" && ID != SubagentID(exec, AgentID)`. The subagent node itself and
+  the top-level spine (session/prompt/turn/tool/mcp/subagent) are kept. This cuts
+  the initial payload to the spine (~1.7k nodes here).
+- **Aggregate on the collapsed subagent.** Each subagent node carries an
+  `attrs.descendant_count` (and token/cost totals) computed server-side from its
+  inner nodes, so the collapsed row shows "N steps" without shipping them.
+- **On-demand subtree.** `GET /v1/sessions/{hash}/subagent/{agentId}` returns that
+  subagent's inner nodes + edges (+ the subagent→root edge). The web client fetches
+  it the first time a subagent is expanded and feeds it through the same idempotent
+  reducer; the existing hierarchy/outline then renders the inner work.
+- **Expand trigger.** A lazy subagent has zero client-side children, so the chevron
+  and the fetch are keyed on `type === 'subagent' && attrs.descendant_count > 0`
+  (not on `hasChildren`); a `loadedAgents` set prevents refetching.
+- **Tradeoff (v1):** the SSE bus is broadcast with a connect-time filter and no
+  client→server expand channel, so an expanded subagent shows the snapshot fetched
+  at expand time; its inner steps do not live-update while it runs (re-expand to
+  refresh). The collapsed descendant count stays live. Live inner streaming is a
+  possible later enhancement (a per-connection subscribe-to-agent control channel).
+
 ## Redaction / safety
 
 Unchanged. Inner content is served only through the existing gated,

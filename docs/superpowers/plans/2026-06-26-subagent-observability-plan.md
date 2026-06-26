@@ -265,6 +265,79 @@ settles in ~20 s with CPU returning to idle.
 
 ---
 
+## Task 6: Lazy-load — filtered snapshot/SSE + subagent aggregate (backend)
+
+**Files:** `daemon/sessions.go` (`sessionGraphDeltas`), `daemon/subscribe.go`
+(`matchDelta`/`matchNode`), a small aggregate helper; tests in
+`daemon/sessions_test.go`, `daemon/subscribe_test.go`.
+
+**Behavior:** define "inner" node = `node.AgentID != "" && node.ID !=
+model.SubagentID(execID, node.AgentID)`. The `/graph` snapshot and the SSE matcher
+must OMIT inner nodes and any edge incident to an inner node. Keep the subagent
+node and the top-level spine. On each subagent node in the snapshot/stream, set
+`Attrs["descendant_count"]` = number of its inner nodes and token/cost totals
+(summed from inner nodes), computed from the in-memory `reduce.Graph` (deep-copy
+the node before mutating Attrs — `copyNode` already deep-copies Attrs). Aggregate
+must update as inner nodes arrive (recompute from current graph state).
+
+**Tests:** snapshot excludes inner nodes + their edges, keeps spine + subagent
+nodes; subagent node carries a correct `descendant_count`/token totals; SSE does
+not stream an inner-node delta but does stream spine deltas + subagent updates;
+100% coverage.
+
+**Acceptance:** the big session's `/graph` payload drops from ~24 MB to the spine;
+collapsed subagents show a live count.
+
+---
+
+## Task 7: Lazy-load — subagent subtree endpoint (backend)
+
+**Files:** `daemon/server.go` (route), a handler (e.g. `daemon/sessions.go` or a new
+`daemon/subagent.go`); tests.
+
+**Behavior:** `GET /v1/sessions/{hash}/subagent/{agentId}` (clone the
+`handleNodePayload` routing/auth pattern, `daemon/payload.go` + `server.go:50`)
+returns, for the session's execution, the inner nodes (`AgentID == agentId`,
+excluding the subagent node itself) + every edge among them + the subagent→inner-root
+edge, serialized as the same `[]sseEvent`/delta shape the snapshot uses. Unknown
+session/agent → 404; same auth/token gate as the other endpoints.
+
+**Tests:** returns exactly the agent's inner nodes+edges (not other agents', not the
+spine); 404 on unknown; auth enforced; 100% coverage.
+
+**Acceptance:** a single subagent's inner work is fetchable on demand.
+
+---
+
+## Task 8: Lazy-load — client fetch-on-expand + aggregate fallback (frontend)
+
+**Files:** `webui/web/src/lib/api.ts` (`fetchSubagentSubtree`),
+`webui/web/src/components/Outline.svelte` (expand hook + chevron),
+`webui/web/src/lib/graph/aggregate.ts` (backend-count fallback); vitest beside each.
+
+**Behavior:**
+
+- `fetchSubagentSubtree(hash, agentId)` mirrors `fetchSessionGraph`; its events flow
+  through the existing `handleEvent`/`applyDelta` (idempotent merge).
+- In `Outline.svelte`, a `subagent` row shows the chevron when
+  `attrs.descendant_count > 0` (NOT when it has client-side children). Expanding it
+  (chevron click + ArrowRight) first calls `fetchSubagentSubtree` if its agentId is
+  not in a `loadedAgents` set, then toggles collapse; show a transient loading state;
+  guard against double-fetch.
+- `aggregateOf`: when a collapsed node has no client-side descendants but is a
+  subagent with `attrs.descendant_count`, build the `Aggregate` from the backend
+  attrs (count + tokens/cost) so the row reads "N steps", not "0".
+
+**Tests (vitest):** `fetchSubagentSubtree` shape; aggregate fallback uses backend
+attrs when descendants absent and real descendants once loaded; chevron shown for a
+childless subagent with `descendant_count>0`; expand triggers exactly one fetch then
+renders inner rows. 100% on the touched lib logic.
+
+**Acceptance:** the big live session loads fast and stays responsive; expanding a
+subagent fetches + shows its inner work; collapsed rows show live counts.
+
+---
+
 ## Execution notes
 
 - Order: Task 1 → Task 2 → Task 3 → Task 4 (Task 1/2 share `tail.go`; Task 3
