@@ -178,6 +178,22 @@ func TestBuildTreeRootTStartNilVsNonNil(t *testing.T) {
 	assert.Equal(t, "y", rows[1].Node.ID)
 }
 
+func TestSortNodesTimestampAsymmetry(t *testing.T) {
+	ts := "2026-01-01T00:00:01Z"
+	withTS := Node{ID: "w", Type: "tool_call", TStart: &ts}
+	noTS := Node{ID: "n", Type: "tool_call", TStart: nil}
+
+	asc := []Node{withTS, noTS}
+	sortNodes(asc)
+	assert.Equal(t, "w", asc[0].ID)
+	assert.Equal(t, "n", asc[1].ID)
+
+	desc := []Node{noTS, withTS}
+	sortNodes(desc)
+	assert.Equal(t, "w", desc[0].ID)
+	assert.Equal(t, "n", desc[1].ID)
+}
+
 func TestBuildTreeSequenceCycleFallsBack(t *testing.T) {
 	g := EmptyGraph()
 	Apply(&g, nodeEv("node_upsert", "p", "session", "ok", 1))
