@@ -144,7 +144,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('content panel: collapsed by default, no fetch until reveal', async ({ page }) => {
+test('content panel: payload fetched eagerly on node selection, no reveal button', async ({ page }) => {
   let payloadFetched = false;
 
   await page.route(`/v1/sessions/${sessionHash}/nodes/node-tool-pl/payload`, async (route) => {
@@ -161,9 +161,9 @@ test('content panel: collapsed by default, no fetch until reveal', async ({ page
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
 
-  await expect(drawer.locator('.reveal-btn')).toBeVisible();
-  await expect(drawer.locator('.payload-section')).toHaveCount(0);
-  expect(payloadFetched).toBe(false);
+  await expect(drawer.locator('.payload-section')).toHaveCount(2);
+  await expect(drawer.locator('.reveal-btn')).toHaveCount(0);
+  expect(payloadFetched).toBe(true);
 });
 
 test('content panel: 200 redacted payload shows input/output + redacted badge + copy', async ({ page }) => {
@@ -183,8 +183,6 @@ test('content panel: 200 redacted payload shows input/output + redacted badge + 
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.redacted-badge')).toBeVisible();
   await expect(drawer.locator('.redacted-badge')).toContainText('redacted');
@@ -215,8 +213,6 @@ test('content panel: 403 shows disabled message with --allow-payload-access', as
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
 
-  await drawer.locator('.reveal-btn').click();
-
   await expect(drawer.locator('.payload-msg')).toBeVisible();
   await expect(drawer.locator('.payload-msg')).toContainText('--allow-payload-access');
   await expect(drawer.locator('.payload-section')).toHaveCount(0);
@@ -242,7 +238,6 @@ test('content panel: user prompt renders input as text, not JSON', async ({ page
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.payload-section-label')).toContainText('Prompt');
   await expect(drawer.locator('.payload-text')).toContainText('What is the meaning of life?');
@@ -269,9 +264,52 @@ test('content panel: assistant turn renders response as text, not JSON', async (
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
-  await drawer.locator('.reveal-btn').click();
 
   await expect(drawer.locator('.payload-section-label')).toContainText('Response');
   await expect(drawer.locator('.payload-text')).toContainText('Here is the **answer** to your question.');
   await expect(drawer.locator('.payload-content.mono')).toHaveCount(0);
+});
+
+test('structural node (no payload_hash) shows no content section', async ({ page }) => {
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const sessionRow = page.locator('.outline-row').filter({ hasText: 'Session Root' });
+  await sessionRow.click();
+
+  const drawer = page.locator('.node-drawer');
+  await expect(drawer).toBeVisible();
+
+  await expect(drawer.locator('.payload-panel')).toHaveCount(0);
+});
+
+test('long conversation content shows show-more toggle and expands', async ({ page }) => {
+  const longOutput = Array.from({ length: 30 }, (_, i) => `Line ${i + 1}: some content here that makes this longer`).join('\n');
+
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route) => {
+    const turnPayload: PayloadView = {
+      node_id: 'node-turn-pl',
+      payload_hash: 'turnhash',
+      output: longOutput,
+      redactions: [],
+      redacted: false,
+    };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(turnPayload) });
+  });
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const turnRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await turnRow.click();
+
+  const drawer = page.locator('.node-drawer');
+  await expect(drawer).toBeVisible();
+
+  await expect(drawer.locator('.show-more-btn')).toBeVisible();
+
+  await drawer.locator('.show-more-btn').click();
+
+  await expect(drawer.locator('.show-more-btn')).toContainText('show less');
+  await expect(drawer.locator('.payload-text')).toContainText('Line 30:');
 });
