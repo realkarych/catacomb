@@ -120,7 +120,7 @@ func decodeLine(raw []byte) (line, []partial, error) {
 	if err != nil {
 		return ln, nil, err
 	}
-	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID, ParentToolUseID: ln.ParentToolUseID}
+	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID, ParentToolUseID: ln.ParentToolUseID, AgentID: ln.AgentID}
 	var parts []partial
 	switch ln.Type {
 	case "user":

@@ -1082,6 +1082,83 @@ func TestMarkLossyUpsertRunError(t *testing.T) {
 	assert.Equal(t, int64(1), d.LossyForTest())
 }
 
+func TestIngestSubagentMetaCreatesNode(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	m := model.SubagentMeta{
+		SessionID:   "s1",
+		AgentID:     "agent_42",
+		ToolUseID:   "toolu_parent",
+		AgentType:   "general-purpose",
+		Description: "Review PR",
+	}
+	require.NoError(t, d.IngestSubagentMeta(m))
+	g := d.graphs["exec1"]
+	require.NotNil(t, g)
+	assert.NotEmpty(t, g.Nodes)
+}
+
+func TestIngestSubagentMetaNewSession(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	m := model.SubagentMeta{
+		SessionID: "fresh-session",
+		AgentID:   "agent_1",
+	}
+	require.NoError(t, d.IngestSubagentMeta(m))
+	assert.NotEmpty(t, d.execBySession["fresh-session"])
+}
+
+func TestIngestSubagentMetaQuarantinesOnStoreError(t *testing.T) {
+	s := &appendErrStore{Store: tempStore(t)}
+	d := New(s)
+	m := model.SubagentMeta{SessionID: "s1", AgentID: "a1"}
+	require.NoError(t, d.IngestSubagentMeta(m))
+	n, err := s.QuarantineCount()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestIngestSubagentMetaRecoversPanic(t *testing.T) {
+	orig := applyFn
+	applyFn = func(*reduce.Graph, model.Observation) { panic("boom") }
+	t.Cleanup(func() { applyFn = orig })
+	d := New(tempStore(t))
+	m := model.SubagentMeta{SessionID: "s1", AgentID: "a1"}
+	require.NoError(t, d.IngestSubagentMeta(m))
+}
+
+func TestIngestSubagentMetaKnownSessionLoadsGraph(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	d2.dropShardForTest("s1")
+	m := model.SubagentMeta{SessionID: "s1", AgentID: "a1", ToolUseID: "toolu_x"}
+	require.NoError(t, d2.IngestSubagentMeta(m))
+	require.NotNil(t, d2.graphs["exec1"])
+}
+
+func TestIngestSubagentMetaKnownSessionReloadError(t *testing.T) {
+	d := New(&reloadErrStore{Store: tempStore(t)})
+	d.mu.Lock()
+	d.execBySession["s1"] = "exec1"
+	d.mu.Unlock()
+	m := model.SubagentMeta{SessionID: "s1", AgentID: "a1"}
+	require.NoError(t, d.IngestSubagentMeta(m))
+	assert.Equal(t, int64(1), d.QuarantinedForTest())
+}
+
 func TestCwdTranscriptExcludeEncodes(t *testing.T) {
 	orig := getwdFn
 	getwdFn = func() (string, error) { return "/Users/test/.cache/proj.v2", nil }

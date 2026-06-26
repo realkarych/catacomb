@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +41,7 @@ var (
 type Sink interface {
 	IngestTranscript(line []byte, sessionID string) error
 	MarkLossy(sessionID string)
+	IngestSubagentMeta(m model.SubagentMeta) error
 }
 
 type Store interface {
@@ -48,7 +50,9 @@ type Store interface {
 }
 
 type fileState struct {
-	cursor model.TailCursor
+	cursor       model.TailCursor
+	metaEmitted  bool
+	agentSession string
 }
 
 type Tailer struct {
@@ -88,13 +92,46 @@ func (tl *Tailer) Run(ctx context.Context, tick time.Duration) {
 }
 
 func (tl *Tailer) glob() []string {
+	seen := map[string]bool{}
 	var out []string
+	addPath := func(p string) {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			resolved = p
+		}
+		if seen[resolved] {
+			return
+		}
+		seen[resolved] = true
+		out = append(out, p)
+	}
 	main, _ := filepath.Glob(filepath.Join(tl.dir, "*.jsonl"))
 	sub, _ := filepath.Glob(filepath.Join(tl.dir, "*", "*.jsonl"))
 	sub2, _ := filepath.Glob(filepath.Join(tl.dir, "*", "*", "subagents", "agent-*.jsonl"))
-	out = append(out, main...)
-	out = append(out, sub...)
-	out = append(out, sub2...)
+	for _, p := range main {
+		addPath(p)
+	}
+	for _, p := range sub {
+		addPath(p)
+	}
+	for _, p := range sub2 {
+		addPath(p)
+	}
+	mainPaths := make([]string, 0, len(main)+len(sub))
+	mainPaths = append(mainPaths, main...)
+	mainPaths = append(mainPaths, sub...)
+	for _, mp := range mainPaths {
+		resolved, err := filepath.EvalSymlinks(mp)
+		if err != nil {
+			continue
+		}
+		base := strings.TrimSuffix(filepath.Base(resolved), ".jsonl")
+		dir := filepath.Dir(resolved)
+		agents, _ := filepath.Glob(filepath.Join(dir, base, "subagents", "agent-*.jsonl"))
+		for _, ap := range agents {
+			addPath(ap)
+		}
+	}
 	return out
 }
 
@@ -115,6 +152,58 @@ func (tl *Tailer) excluded(path string) bool {
 
 func sessionOf(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), ".jsonl")
+}
+
+func agentIDOf(path string) string {
+	base := filepath.Base(path)
+	if !strings.HasPrefix(base, "agent-") || !strings.HasSuffix(base, ".jsonl") {
+		return ""
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(base, "agent-"), ".jsonl")
+	return id
+}
+
+type agentMetaJSON struct {
+	AgentType   string `json:"agentType"`
+	Description string `json:"description"`
+	ToolUseID   string `json:"toolUseId"`
+}
+
+func readAgentMeta(path string) (agentMetaJSON, bool) {
+	base := strings.TrimSuffix(path, ".jsonl")
+	metaPath := base + ".meta.json"
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return agentMetaJSON{}, false
+	}
+	var m agentMetaJSON
+	if err := json.Unmarshal(data, &m); err != nil {
+		return agentMetaJSON{}, false
+	}
+	return m, true
+}
+
+func sniffSessionID(path string) string {
+	f, err := openFile(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, 4096)
+	n, _ := f.Read(buf)
+	data := buf[:n]
+	nl := bytes.IndexByte(data, '\n')
+	if nl >= 0 {
+		data = data[:nl]
+	}
+	data = bytes.TrimSpace(data)
+	var ln struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(data, &ln); err != nil {
+		return ""
+	}
+	return ln.SessionID
 }
 
 func fingerprint(b []byte) string {
@@ -171,7 +260,16 @@ func (tl *Tailer) pollFile(path string) error {
 		return nil
 	}
 	size := info.Size()
+	agentID := agentIDOf(path)
 	session := sessionOf(path)
+	if agentID != "" {
+		if st.agentSession == "" {
+			st.agentSession = sniffSessionID(path)
+		}
+		if st.agentSession != "" {
+			session = st.agentSession
+		}
+	}
 
 	if size < st.cursor.Offset {
 		st.cursor.Offset = 0
@@ -184,6 +282,19 @@ func (tl *Tailer) pollFile(path string) error {
 			st.cursor.Fingerprint = ""
 			tl.sink.MarkLossy(session)
 		}
+	}
+
+	if agentID != "" && !st.metaEmitted {
+		if meta, ok := readAgentMeta(path); ok {
+			_ = tl.sink.IngestSubagentMeta(model.SubagentMeta{
+				SessionID:   session,
+				AgentID:     agentID,
+				ToolUseID:   meta.ToolUseID,
+				AgentType:   meta.AgentType,
+				Description: meta.Description,
+			})
+		}
+		st.metaEmitted = true
 	}
 
 	if size == st.cursor.Offset {

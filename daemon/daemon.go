@@ -373,6 +373,59 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 	return nil
 }
 
+func (d *Daemon) IngestSubagentMeta(m model.SubagentMeta) (err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			d.quarantine("subagent_meta", nil, fmt.Sprintf("panic: %v", r))
+			err = nil
+		}
+	}()
+	execID, known := d.execBySession[m.SessionID]
+	if !known {
+		execID = d.newExecID()
+		d.execBySession[m.SessionID] = execID
+	}
+	g, inMem := d.graphs[execID]
+	if !inMem {
+		g = reduce.NewGraphWithPricer(d.pricer)
+		if known {
+			prior, loadErr := d.store.ObservationsForExecution(execID)
+			if loadErr != nil {
+				d.quarantine("subagent_meta", nil, loadErr.Error())
+				return nil
+			}
+			g.ApplyAll(prior)
+			_ = g.DrainDeltas()
+		}
+		d.graphs[execID] = g
+	}
+	now := nowFn().UTC()
+	o := model.Observation{
+		ObsID:       ulid.Make().String(),
+		RunID:       m.SessionID,
+		ExecutionID: execID,
+		Source:      model.SourceJSONL,
+		Kind:        "subagent_stop",
+		Correlation: model.Correlation{
+			AgentID:         m.AgentID,
+			ParentToolUseID: m.ToolUseID,
+			SessionID:       m.SessionID,
+		},
+		Attrs:      map[string]any{"subagent_type": m.AgentType, "description": m.Description},
+		EventTime:  now,
+		ObservedAt: now,
+		Seq:        d.next(),
+	}
+	if err := d.applyAndPersist(g, o); err != nil {
+		d.quarantine("subagent_meta", nil, err.Error())
+		return nil
+	}
+	d.lastSeen[o.RunID] = o.ObservedAt
+	return nil
+}
+
 func (d *Daemon) MarkLossy(sessionID string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

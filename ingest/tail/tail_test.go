@@ -21,6 +21,7 @@ type fakeSink struct {
 	lines []string
 	sess  []string
 	lossy []string
+	metas []model.SubagentMeta
 }
 
 func (s *fakeSink) IngestTranscript(line []byte, sessionID string) error {
@@ -35,6 +36,13 @@ func (s *fakeSink) MarkLossy(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lossy = append(s.lossy, sessionID)
+}
+
+func (s *fakeSink) IngestSubagentMeta(m model.SubagentMeta) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metas = append(s.metas, m)
+	return nil
 }
 
 type memStore struct {
@@ -72,8 +80,9 @@ func (upsertErrStore) UpsertTailCursor(model.TailCursor) error { return errors.N
 
 type errSink struct{ lossy []string }
 
-func (s *errSink) IngestTranscript([]byte, string) error { return errors.New("boom") }
-func (s *errSink) MarkLossy(id string)                   { s.lossy = append(s.lossy, id) }
+func (s *errSink) IngestTranscript([]byte, string) error       { return errors.New("boom") }
+func (s *errSink) MarkLossy(id string)                         { s.lossy = append(s.lossy, id) }
+func (s *errSink) IngestSubagentMeta(model.SubagentMeta) error { return nil }
 
 func write(t *testing.T, path, s string) {
 	t.Helper()
@@ -506,3 +515,165 @@ type fakeSizeModTime struct {
 
 func (f *fakeSizeModTime) Size() int64        { return f.size }
 func (f *fakeSizeModTime) ModTime() time.Time { return f.mtime }
+
+func TestAgentIDOf(t *testing.T) {
+	assert.Equal(t, "abc123", agentIDOf("/some/path/agent-abc123.jsonl"))
+	assert.Equal(t, "", agentIDOf("/some/path/main.jsonl"))
+	assert.Equal(t, "", agentIDOf("/some/path/agent-.jsonl"))
+}
+
+func TestReadAgentMetaBadJSON(t *testing.T) {
+	dir := t.TempDir()
+	agentPath := filepath.Join(dir, "agent-x.jsonl")
+	metaPath := filepath.Join(dir, "agent-x.meta.json")
+	require.NoError(t, os.WriteFile(metaPath, []byte("not-json"), 0o600))
+	_, ok := readAgentMeta(agentPath)
+	assert.False(t, ok)
+}
+
+func TestSniffSessionIDEdgeCases(t *testing.T) {
+	assert.Equal(t, "", sniffSessionID("/nonexistent/path.jsonl"))
+
+	dir := t.TempDir()
+	emptyFile := filepath.Join(dir, "empty.jsonl")
+	require.NoError(t, os.WriteFile(emptyFile, []byte{}, 0o600))
+	assert.Equal(t, "", sniffSessionID(emptyFile))
+
+	badFile := filepath.Join(dir, "bad.jsonl")
+	require.NoError(t, os.WriteFile(badFile, []byte("not-json\n"), 0o600))
+	assert.Equal(t, "", sniffSessionID(badFile))
+}
+
+func TestPollOnceIngestsAgentTranscriptViaSymlink(t *testing.T) {
+	real := t.TempDir()
+
+	sessionID := "main-session-id"
+	agentLine := `{"type":"assistant","sessionId":"` + sessionID + `","agentId":"agX","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"done"}]}}` + "\n"
+
+	agentDir := filepath.Join(real, sessionID, "subagents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	agentFile := filepath.Join(agentDir, "agent-agX.jsonl")
+	write(t, agentFile, agentLine)
+
+	metaJSON := `{"agentType":"general-purpose","description":"Test agent","toolUseId":"toolu_abc"}`
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "agent-agX.meta.json"), []byte(metaJSON), 0o600))
+
+	symlinkDir := t.TempDir()
+	mainFile := filepath.Join(symlinkDir, sessionID+".jsonl")
+	target := filepath.Join(real, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(target, []byte(`{"type":"assistant","sessionId":"`+sessionID+`","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m2","content":[{"type":"text","text":"main"}]}}`+"\n"), 0o600))
+	require.NoError(t, os.Symlink(target, mainFile))
+
+	sink := &fakeSink{}
+	tl := New(symlinkDir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+
+	sink.mu.Lock()
+	metas := sink.metas
+	sink.mu.Unlock()
+	require.Len(t, metas, 1)
+	assert.Equal(t, sessionID, metas[0].SessionID)
+	assert.Equal(t, "agX", metas[0].AgentID)
+	assert.Equal(t, "toolu_abc", metas[0].ToolUseID)
+	assert.Equal(t, "general-purpose", metas[0].AgentType)
+	assert.Equal(t, "Test agent", metas[0].Description)
+
+	require.NoError(t, tl.PollOnce(context.Background()))
+	sink.mu.Lock()
+	assert.Len(t, sink.metas, 1, "meta should not be re-emitted")
+	sink.mu.Unlock()
+}
+
+func TestPollOnceAgentMissingMetaNoError(t *testing.T) {
+	real := t.TempDir()
+	sessionID := "sess-nometa"
+	agentLine := `{"type":"assistant","sessionId":"` + sessionID + `","agentId":"agY","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"done"}]}}` + "\n"
+
+	agentDir := filepath.Join(real, sessionID, "subagents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	agentFile := filepath.Join(agentDir, "agent-agY.jsonl")
+	write(t, agentFile, agentLine)
+
+	target := filepath.Join(real, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(target, []byte(`{"type":"assistant","sessionId":"`+sessionID+`","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m2","content":[{"type":"text","text":"main"}]}}`+"\n"), 0o600))
+
+	symlinkDir := t.TempDir()
+	mainFile := filepath.Join(symlinkDir, sessionID+".jsonl")
+	require.NoError(t, os.Symlink(target, mainFile))
+
+	_ = agentFile
+	sink := &fakeSink{}
+	tl := New(symlinkDir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+
+	sink.mu.Lock()
+	assert.Empty(t, sink.metas)
+	sink.mu.Unlock()
+}
+
+func TestGlobSubDirJSONL(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "subdir")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	p := filepath.Join(subDir, "s8.jsonl")
+	write(t, p, tickLine)
+	sink := &fakeSink{}
+	tl := New(dir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Len(t, sink.lines, 1)
+}
+
+func TestGlobBrokenSymlinkSkipped(t *testing.T) {
+	dir := t.TempDir()
+	brokenLink := filepath.Join(dir, "broken.jsonl")
+	require.NoError(t, os.Symlink("/nonexistent/target.jsonl", brokenLink))
+	sink := &fakeSink{}
+	tl := New(dir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Empty(t, sink.lines)
+}
+
+func TestGlobDuplicatePathDeduped(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.jsonl")
+	require.NoError(t, os.WriteFile(real, []byte(tickLine), 0o600))
+
+	link1 := filepath.Join(dir, "link1.jsonl")
+	link2 := filepath.Join(dir, "link2.jsonl")
+	require.NoError(t, os.Symlink(real, link1))
+	require.NoError(t, os.Symlink(real, link2))
+
+	tl := New(dir, nil, newMemStore(), &fakeSink{})
+	require.NoError(t, tl.Load())
+	paths := tl.glob()
+	resolvedSeen := map[string]int{}
+	for _, p := range paths {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			resolved = p
+		}
+		resolvedSeen[resolved]++
+	}
+	for rp, count := range resolvedSeen {
+		assert.Equal(t, 1, count, "resolved path %s appears %d times", rp, count)
+	}
+}
+
+func TestGlobSub2DirectAgentPath(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, "level1", "level2", "subagents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	agentFile := filepath.Join(agentDir, "agent-xyz.jsonl")
+	agentLine := `{"type":"assistant","sessionId":"sub2-sess","agentId":"xyz","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"sub2"}]}}` + "\n"
+	write(t, agentFile, agentLine)
+
+	sink := &fakeSink{}
+	tl := New(dir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Len(t, sink.lines, 1)
+}

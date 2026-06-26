@@ -143,6 +143,24 @@ func TestParseReaderNonToolResultBlock(t *testing.T) {
 	assert.Empty(t, obs)
 }
 
+func TestSidechainLineCorrelationAgentIDSet(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","sessionId":"s1","agentId":"agent_99","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	turns := byKind(obs, "assistant_turn")
+	require.Len(t, turns, 1)
+	assert.Equal(t, "agent_99", turns[0].Correlation.AgentID)
+}
+
+func TestMainLineCorrelationAgentIDEmpty(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	turns := byKind(obs, "assistant_turn")
+	require.Len(t, turns, 1)
+	assert.Empty(t, turns[0].Correlation.AgentID)
+}
+
 func TestParseReaderAssistantTextOnly(t *testing.T) {
 	obs, err := ParseReader(strings.NewReader(`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "exec-T")
 	require.NoError(t, err)
