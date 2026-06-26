@@ -307,3 +307,88 @@ test('a tool row shows duration and an inline command/output snippet, no token c
   await expect(toolRow.locator('.outline-snippet')).toContainText('→');
   await expect(toolRow.locator('.outline-snippet')).toContainText('total 0');
 });
+
+const sseEventsWithStatusVariants: SseEvent[] = [
+  { kind: 'node_upsert', rev: 1, node: { id: 'n-session', run_id: 'run-out', type: 'session', name: 'Session Root', status: 'ok', t_start: '2026-06-20T10:00:00Z', rev: 1 } },
+  { kind: 'node_upsert', rev: 2, node: { id: 'n-prompt-human', run_id: 'run-out', type: 'user_prompt', name: 'user prompt', status: 'pending', t_start: '2026-06-20T10:00:01Z', rev: 2 } },
+  { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt-human', rev: 3 } },
+  { kind: 'node_upsert', rev: 4, node: { id: 'n-turn-error', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'error', t_start: '2026-06-20T10:00:02Z', rev: 4 } },
+  { kind: 'edge_upsert', rev: 5, edge: { id: 'e2', run_id: 'run-out', type: 'parent_child', src: 'n-prompt-human', dst: 'n-turn-error', rev: 5 } },
+  { kind: 'node_upsert', rev: 6, node: { id: 'n-prompt-system', run_id: 'run-out', type: 'user_prompt', name: 'command-name', status: 'ok', t_start: '2026-06-20T10:00:03Z', attrs: { prompt_kind: 'system' }, rev: 6 } },
+  { kind: 'edge_upsert', rev: 7, edge: { id: 'e3', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt-system', rev: 7 } },
+];
+
+const fakeSessionsHistorical: SessionSummary[] = [
+  {
+    session: sessionHash,
+    status: 'ok',
+    started_at: '2026-06-20T10:00:00Z',
+    duration_ms: 2100,
+    tokens_in: 100,
+    tokens_out: 50,
+    cost_usd: 0.001,
+    cost_source: 'reported',
+    node_count: 5,
+    tool_count: 0,
+    error_count: 1,
+    model_id: 'claude-opus-4-8',
+    run_ids: ['run-out'],
+  },
+];
+
+async function routeStatusVariants(page: Page): Promise<void> {
+  await page.route('/v1/sessions', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fakeSessionsHistorical) }),
+  );
+  await page.route('/v1/subscribe**', async (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: buildSseBody(sseEventsWithStatusVariants) }),
+  );
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) =>
+    route.fulfill({ status: 403, body: 'payload access disabled' }),
+  );
+}
+
+test('historical session: pending node shows NO status dot', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+
+  const pendingRow = page.locator('.outline-row').filter({ hasText: 'prompt' }).first();
+  await expect(pendingRow).toBeVisible();
+  await expect(pendingRow.locator('.outline-dot')).toHaveCount(0);
+});
+
+test('historical session: error node shows a status dot', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+
+  const errorRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await expect(errorRow).toBeVisible();
+  await expect(errorRow.locator('.outline-dot')).toHaveCount(1);
+});
+
+test('system prompt row is hidden by default', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(1);
+});
+
+test('show system toggle reveals system prompt rows', async ({ page }) => {
+  await routeStatusVariants(page);
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Show system' }).click();
+
+  await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(2);
+});
+
