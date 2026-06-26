@@ -84,4 +84,50 @@ describe('conversationText', () => {
   it('returns string representation for boolean', () => {
     expect(conversationText(true)).toBe('true');
   });
+
+  it('single text block array returns its text', () => {
+    expect(conversationText([{ type: 'text', text: 'Hello world' }])).toBe('Hello world');
+  });
+
+  it('multiple text blocks are concatenated without separator', () => {
+    expect(
+      conversationText([
+        { type: 'text', text: 'Hello' },
+        { type: 'text', text: ' world' },
+      ])
+    ).toBe('Hello world');
+  });
+
+  it('mixed text and tool_use blocks returns only text blocks concatenated', () => {
+    expect(
+      conversationText([
+        { type: 'text', text: 'Before' },
+        { type: 'tool_use', id: 'abc', name: 'fn', input: {} },
+        { type: 'text', text: 'After' },
+      ])
+    ).toBe('BeforeAfter');
+  });
+
+  it('array of all tool_use blocks returns empty string', () => {
+    expect(
+      conversationText([
+        { type: 'tool_use', id: 'x', name: 'fn', input: {} },
+        { type: 'tool_result', tool_use_id: 'x', content: 'ok' },
+      ])
+    ).toBe('');
+  });
+
+  it('empty array returns empty string', () => {
+    expect(conversationText([])).toBe('');
+  });
+
+  it('text block with missing text field contributes empty string', () => {
+    expect(conversationText([{ type: 'text' }, { type: 'text', text: 'hi' }])).toBe('hi');
+  });
+
+  it('array where elements have no type field falls back to JSON.stringify', () => {
+    expect(conversationText([{ text: 'hello' }, { text: 'world' }])).toBe(
+      '[\n  {\n    "text": "hello"\n  },\n  {\n    "text": "world"\n  }\n]'
+    );
+  });
 });
