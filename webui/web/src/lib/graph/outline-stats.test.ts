@@ -122,6 +122,14 @@ describe('rowStatLine — assistant_turn leaf', () => {
     });
     expect(res.color).toBe('var(--running)');
   });
+
+  it('uses the blocked color for a blocked turn', () => {
+    const res = rowStatLine(node({ type: 'assistant_turn', status: 'blocked', tokens_in: 1 }), {
+      collapsed: false,
+      hasChildren: false,
+    });
+    expect(res.color).toBe('var(--blocked)');
+  });
 });
 
 describe('rowStatLine — tool / mcp leaf', () => {

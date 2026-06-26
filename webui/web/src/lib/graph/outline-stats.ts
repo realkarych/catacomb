@@ -16,6 +16,7 @@ export interface RowStat {
 
 function statusColor(status?: string): string {
   if (status === 'error') return 'var(--error)';
+  if (status === 'blocked') return 'var(--blocked)';
   if (status === 'running') return 'var(--running)';
   return 'var(--ok)';
 }
