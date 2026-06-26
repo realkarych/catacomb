@@ -7,7 +7,7 @@
   import type { OutlineRow } from '../lib/graph/outline';
   import type { Node } from '../lib/types';
   import { toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
-  import { rowAggregate, descendantCount } from '../lib/graph/aggregate';
+  import { rowAggregate, descendantCount, isLazySubagent } from '../lib/graph/aggregate';
   import { rowStatLine } from '../lib/graph/outline-stats';
   import { nodeTypeInfo } from '../lib/node-legend';
   import { filterNodes, isActive } from '../lib/filters';
@@ -72,7 +72,7 @@
     for (const n of g.nodes) {
       if (seen.has(n.id)) continue;
       if (rootSet.has(n.id)) continue;
-      if (h.childrenOf(n.id).length === 0) continue;
+      if (h.childrenOf(n.id).length === 0 && !isLazySubagent(n)) continue;
       seen.add(n.id);
       if (!userToggled.has(n.id) && !next.has(n.id)) {
         next.add(n.id);
@@ -177,7 +177,7 @@
   });
 
   function isExpandable(row: OutlineRow): boolean {
-    return row.hasChildren || (row.node.type === 'subagent' && descendantCount(row.node) > 0);
+    return row.hasChildren || isLazySubagent(row.node);
   }
 
   function isAgentLoading(node: Node): boolean {

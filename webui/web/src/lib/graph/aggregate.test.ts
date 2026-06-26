@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateOf, rowAggregate, descendantCount } from './aggregate';
+import { aggregateOf, rowAggregate, descendantCount, isLazySubagent } from './aggregate';
 import { buildHierarchy } from './hierarchy';
 import type { Node, Edge } from '../types';
 
@@ -180,5 +180,20 @@ describe('rowAggregate', () => {
     const node = n('s', { type: 'subagent' });
     const h = buildHierarchy([node], []);
     expect(rowAggregate(node, h, index([node])).count).toBe(0);
+  });
+});
+
+describe('isLazySubagent', () => {
+  it('true for a subagent with a positive backend descendant_count', () => {
+    expect(isLazySubagent(n('s', { type: 'subagent', attrs: { descendant_count: 3 } }))).toBe(true);
+  });
+
+  it('false for a subagent whose descendant_count is zero or absent', () => {
+    expect(isLazySubagent(n('s', { type: 'subagent', attrs: { descendant_count: 0 } }))).toBe(false);
+    expect(isLazySubagent(n('s', { type: 'subagent' }))).toBe(false);
+  });
+
+  it('false for a non-subagent even with a positive descendant_count', () => {
+    expect(isLazySubagent(n('p', { type: 'tool_call', attrs: { descendant_count: 9 } }))).toBe(false);
   });
 });

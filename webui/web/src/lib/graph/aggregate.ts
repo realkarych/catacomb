@@ -36,6 +36,10 @@ export function descendantCount(node: Node): number {
   return attrNumber(node, 'descendant_count');
 }
 
+export function isLazySubagent(node: Node): boolean {
+  return node.type === 'subagent' && descendantCount(node) > 0;
+}
+
 function hasBackendCount(node: Node): boolean {
   return node.type === 'subagent' && typeof node.attrs?.descendant_count === 'number';
 }

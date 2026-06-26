@@ -138,6 +138,24 @@ describe('defaultOutlineCollapsed', () => {
     expect(collapsed.has('p')).toBe(false);
   });
 
+  it('includes a childless lazy subagent with a positive backend descendant_count', () => {
+    const nodes = [n('s', 'session'), n('sa', 'subagent', { attrs: { descendant_count: 4 } })];
+    const edges = [e('s', 'sa')];
+    const h = buildHierarchy(nodes, edges);
+    const collapsed = defaultOutlineCollapsed(nodes, h);
+
+    expect(collapsed.has('sa')).toBe(true);
+  });
+
+  it('excludes a childless subagent whose descendant_count is zero', () => {
+    const nodes = [n('s', 'session'), n('sa', 'subagent', { attrs: { descendant_count: 0 } })];
+    const edges = [e('s', 'sa')];
+    const h = buildHierarchy(nodes, edges);
+    const collapsed = defaultOutlineCollapsed(nodes, h);
+
+    expect(collapsed.has('sa')).toBe(false);
+  });
+
   it('returns a new Set', () => {
     const nodes = [n('s', 'session'), n('p', 'user_prompt')];
     const edges = [e('s', 'p')];
