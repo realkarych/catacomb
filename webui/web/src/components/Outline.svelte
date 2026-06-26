@@ -1,8 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { sessionGraph, selectedNodeId, navigateToNode, filterState } from '../lib/stores/stores.svelte';
+  import { sessionGraph, selectedNodeId, navigateToNode, filterState, sessionsById } from '../lib/stores/stores.svelte';
   import { buildHierarchy } from '../lib/graph/hierarchy';
-  import { flattenOutline, defaultOutlineCollapsed, outlineLabel } from '../lib/graph/outline';
+  import { flattenOutline, defaultOutlineCollapsed, outlineLabel, isSystemPrompt } from '../lib/graph/outline';
+  import { shouldShowStatus } from '../lib/status';
   import type { OutlineRow } from '../lib/graph/outline';
   import { toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
   import { aggregateOf } from '../lib/graph/aggregate';
@@ -24,6 +25,9 @@
     token: string;
   }
   let { hash, token }: Props = $props();
+
+  const isLive = $derived(sessionsById[hash]?.status === 'running');
+  let showSystem = $state(false);
 
   const ROW_H = 30;
   const OVERSCAN = 8;
@@ -72,7 +76,15 @@
     if (changed) collapsed = next;
   });
 
-  const rows = $derived(flattenOutline(graph.nodes, hierarchy, collapsed));
+  const systemIds = $derived(
+    showSystem ? new Set<string>() : new Set(graph.nodes.filter(isSystemPrompt).map((n) => n.id)),
+  );
+
+  const rows = $derived(
+    flattenOutline(graph.nodes, hierarchy, collapsed).filter(
+      (r) => !systemIds.has(r.id) && !hierarchy.ancestorsOf(r.id).some((a) => systemIds.has(a)),
+    ),
+  );
 
   const matching = $derived(
     isActive(filterState) ? new Set(filterNodes(graph.nodes, filterState).map((n) => n.id)) : null,
@@ -288,6 +300,12 @@
       <button class="outline-toolbar-btn" type="button" onclick={handleCollapseAll}>Collapse all</button>
       <button class="outline-toolbar-btn" type="button" onclick={handleExpandAll}>Expand all</button>
       <button class="outline-toolbar-btn" type="button" onclick={handleReset}>Reset</button>
+      <button
+        class="outline-toolbar-btn"
+        type="button"
+        aria-pressed={showSystem}
+        onclick={() => (showSystem = !showSystem)}
+      >Show system</button>
     </div>
     <div class="outline-legend" aria-label="Stat legend">
       <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> in · out · cost · duration</span>
@@ -342,7 +360,9 @@
             </span>
             <span class="outline-stats">
               <span class="outline-stat-text" title={stats.title || undefined}>{stats.text}</span>
-              <span class="outline-dot" style="background: {stats.color};" aria-hidden="true"></span>
+              {#if shouldShowStatus(row.node.status, isLive)}
+                <span class="outline-dot" style="background: {stats.color};" aria-hidden="true"></span>
+              {/if}
             </span>
           </div>
         {/each}
