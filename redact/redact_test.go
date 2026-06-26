@@ -398,6 +398,26 @@ func TestRedact_ValueScan_HighEntropy(t *testing.T) {
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted)
 	})
+	t.Run("long absolute file path not redacted", func(t *testing.T) {
+		path := "/Users/karych/src/catacomb/webui/web/src/components/SessionView.svelte"
+		input := []byte(`{"file_path":"` + path + `"}`)
+		result := redact.Redact(input)
+		assert.False(t, result.Redacted, "absolute file path must not be redacted as high-entropy")
+		assert.Empty(t, result.Findings)
+	})
+	t.Run("another long absolute path not redacted", func(t *testing.T) {
+		path := "/Users/somebody/projects/my-awesome-project/internal/handlers/authentication.go"
+		input := []byte(`{"note":"` + path + `"}`)
+		result := redact.Redact(input)
+		assert.False(t, result.Redacted, "absolute file path must not be redacted as high-entropy")
+	})
+	t.Run("base64 blob with sparse slash still redacted via contiguous run", func(t *testing.T) {
+		blob := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqr/stuvwxyz01234567"
+		input := []byte(`{"note":"` + blob + `"}`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "base64 blob with sparse slash must still be redacted via its contiguous >=40 run")
+		assert.Contains(t, findingReasons(result.Findings), "high-entropy")
+	})
 }
 
 func TestRedact_KeyGlob_Password(t *testing.T) {

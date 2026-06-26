@@ -48,7 +48,7 @@ var (
 
 	reHexEntropy = regexp.MustCompile(`\b[0-9a-fA-F]{40,}\b`)
 
-	reBase64Entropy = regexp.MustCompile(`\b[A-Za-z0-9+/]{40,}={0,2}\b`)
+	reBase64Entropy = regexp.MustCompile(`\b[A-Za-z0-9+]{40,}={0,2}\b`)
 )
 
 type valueRule struct {
