@@ -5,12 +5,30 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
+type promptRef struct {
+	seq uint64
+	id  string
+}
+
+type turnRef struct {
+	seq    uint64
+	rev    uint64
+	id     string
+	parent string
+}
+
+type execState struct {
+	prompts []promptRef
+	turns   map[string]*turnRef
+}
+
 type Graph struct {
 	Nodes        map[string]*model.Node
 	Edges        map[string]*model.Edge
 	Runs         map[string]*model.Run
 	spanChildren map[string]bool
 	stamps       map[string]*fieldStamps
+	execs        map[string]*execState
 	deltas       []cdc.GraphDelta
 	pricer       Pricer
 }
@@ -30,8 +48,18 @@ func newGraph(p Pricer) *Graph {
 		Runs:         map[string]*model.Run{},
 		spanChildren: map[string]bool{},
 		stamps:       map[string]*fieldStamps{},
+		execs:        map[string]*execState{},
 		pricer:       p,
 	}
+}
+
+func (g *Graph) execState(executionID string) *execState {
+	s, ok := g.execs[executionID]
+	if !ok {
+		s = &execState{turns: map[string]*turnRef{}}
+		g.execs[executionID] = s
+	}
+	return s
 }
 
 func (g *Graph) RunsSnapshot() []model.Run {

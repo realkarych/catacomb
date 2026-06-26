@@ -49,6 +49,7 @@ func (g *Graph) Apply(o model.Observation) {
 		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
 		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
+		g.recordPrompt(o, n.ID)
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
@@ -64,6 +65,7 @@ func (g *Graph) Apply(o model.Observation) {
 		}
 		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
+		g.parentTurn(o, n.ID)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
 	case "subagent_stop":
@@ -218,6 +220,63 @@ func (g *Graph) setStructParent(o model.Observation, kind int, src, dst string) 
 	fs.haveStruct = true
 	fs.structSrc = src
 	g.upsertEdge(o.ExecutionID, o.RunID, src, dst, o.Seq)
+}
+
+func (g *Graph) precedingPromptID(executionID string, seq uint64) string {
+	s := g.execState(executionID)
+	parent := model.SessionNodeID(executionID)
+	var best uint64
+	var found bool
+	for _, p := range s.prompts {
+		if p.seq < seq && (!found || p.seq > best) {
+			best = p.seq
+			parent = p.id
+			found = true
+		}
+	}
+	return parent
+}
+
+func (g *Graph) parentTurn(o model.Observation, turnID string) {
+	s := g.execState(o.ExecutionID)
+	t, ok := s.turns[turnID]
+	if !ok {
+		t = &turnRef{seq: o.Seq, rev: o.Seq, id: turnID}
+		s.turns[turnID] = t
+	}
+	if o.Seq < t.seq {
+		t.seq = o.Seq
+	}
+	if o.Seq > t.rev {
+		t.rev = o.Seq
+	}
+	parent := g.precedingPromptID(o.ExecutionID, t.seq)
+	g.setTurnParent(o, t, parent)
+}
+
+func (g *Graph) recordPrompt(o model.Observation, promptID string) {
+	s := g.execState(o.ExecutionID)
+	s.prompts = append(s.prompts, promptRef{seq: o.Seq, id: promptID})
+	for _, t := range s.turns {
+		parent := g.precedingPromptID(o.ExecutionID, t.seq)
+		g.setTurnParent(o, t, parent)
+	}
+}
+
+func (g *Graph) setTurnParent(o model.Observation, t *turnRef, parent string) {
+	if t.parent == parent {
+		g.upsertEdge(o.ExecutionID, o.RunID, parent, t.id, t.rev)
+		return
+	}
+	if t.parent != "" {
+		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, t.parent, t.id)
+		if old, ok := g.Edges[oldID]; ok {
+			delete(g.Edges, oldID)
+			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: o.Seq, Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
+		}
+	}
+	t.parent = parent
+	g.upsertEdge(o.ExecutionID, o.RunID, parent, t.id, t.rev)
 }
 
 type fieldStamps struct {

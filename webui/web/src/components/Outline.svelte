@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { sessionGraph, selectedNodeId, navigateToNode, filterState } from '../lib/stores/stores.svelte';
-  import { buildOutlineHierarchy } from '../lib/graph/outline-tree';
+  import { buildHierarchy } from '../lib/graph/hierarchy';
   import { flattenOutline, defaultOutlineCollapsed, outlineLabel } from '../lib/graph/outline';
   import type { OutlineRow } from '../lib/graph/outline';
   import { toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
@@ -25,7 +25,7 @@
 
   const graph = $derived(sessionGraph(hash));
   const byId = $derived(Object.fromEntries(graph.nodes.map((n) => [n.id, n])));
-  const hierarchy = $derived(buildOutlineHierarchy(graph.nodes, graph.edges));
+  const hierarchy = $derived(buildHierarchy(graph.nodes, graph.edges));
 
   let collapsed = $state.raw<Set<string>>(new Set());
   let seen = new Set<string>();
@@ -48,7 +48,7 @@
       }
     });
     if (g.nodes.length === 0) return;
-    const h = buildOutlineHierarchy(g.nodes, g.edges);
+    const h = buildHierarchy(g.nodes, g.edges);
     const rootSet = new Set(h.roots);
     const prev = untrack(() => collapsed);
     const next = new Set(prev);
