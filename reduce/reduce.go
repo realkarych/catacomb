@@ -2,6 +2,7 @@ package reduce
 
 import (
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/realkarych/catacomb/cdc"
@@ -54,7 +55,7 @@ func (g *Graph) Apply(o model.Observation) {
 		}
 		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
-		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
+		g.upsertEdge(o.ExecutionID, o.RunID, groupRoot(o.ExecutionID, o.Correlation.AgentID), n.ID, o.Seq)
 		g.recordPrompt(o, n.ID)
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
@@ -133,7 +134,8 @@ func (g *Graph) applyTool(o model.Observation) {
 }
 
 func (g *Graph) applySubagent(o model.Observation) {
-	n := g.node(model.SubagentID(o.ExecutionID, o.Correlation.AgentID), o.RunID, model.NodeSubagent)
+	id := model.SubagentID(o.ExecutionID, o.Correlation.AgentID)
+	n := g.node(id, o.RunID, model.NodeSubagent)
 	g.stamp(n, o)
 	if o.Correlation.AgentID != "" {
 		n.AgentID = o.Correlation.AgentID
@@ -141,10 +143,17 @@ func (g *Graph) applySubagent(o model.Observation) {
 	if t, ok := o.Attrs["subagent_type"].(string); ok && n.SubagentType == "" {
 		n.SubagentType = t
 	}
+	if d, ok := o.Attrs["description"].(string); ok && d != "" && n.Name == "" {
+		n.Name = d
+	}
 	g.stampEnd(n, o)
 	n.Status = resolveStatus(n.Status, model.StatusOK)
 	g.emitNode(n, o)
-	g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
+	if o.Correlation.ParentToolUseID != "" {
+		g.setStructParent(o, structKindParentTool, model.ToolCallID(o.ExecutionID, o.Correlation.ParentToolUseID), id)
+		return
+	}
+	g.setStructParent(o, structKindSession, model.SessionNodeID(o.ExecutionID), id)
 }
 
 func sourceRank(s model.Source) int {
@@ -228,45 +237,71 @@ func (g *Graph) setStructParent(o model.Observation, kind int, src, dst string) 
 	g.upsertEdge(o.ExecutionID, o.RunID, src, dst, o.Seq)
 }
 
-func (g *Graph) precedingPromptID(executionID string, seq uint64) string {
-	s := g.execState(executionID)
-	parent := model.SessionNodeID(executionID)
-	var best uint64
-	var found bool
-	for _, p := range s.prompts {
-		if p.seq < seq && (!found || p.seq > best) {
-			best = p.seq
-			parent = p.id
-			found = true
-		}
+func precedingPromptID(gp *agentGroup, seq uint64) string {
+	i := sort.Search(len(gp.prompts), func(i int) bool { return gp.prompts[i].seq >= seq })
+	if i == 0 {
+		return gp.root
 	}
-	return parent
+	return gp.prompts[i-1].id
 }
 
 func (g *Graph) parentTurn(o model.Observation, turnID string) {
 	s := g.execState(o.ExecutionID)
-	t, ok := s.turns[turnID]
+	t, ok := s.turnsByID[turnID]
 	if !ok {
-		t = &turnRef{seq: o.Seq, rev: o.Seq, id: turnID}
-		s.turns[turnID] = t
-	}
-	if o.Seq < t.seq {
-		t.seq = o.Seq
+		t = &turnRef{seq: o.Seq, rev: o.Seq, id: turnID, agentID: o.Correlation.AgentID}
+		s.turnsByID[turnID] = t
+		gp := s.group(t.agentID)
+		gp.turns = insertTurnSorted(gp.turns, t)
 	}
 	if o.Seq > t.rev {
 		t.rev = o.Seq
 	}
-	parent := g.precedingPromptID(o.ExecutionID, t.seq)
-	g.setTurnParent(o, t, parent)
+	if o.Seq < t.seq {
+		t.seq = o.Seq
+		gp := s.group(t.agentID)
+		gp.turns = repositionTurn(gp.turns, t)
+	}
+	gp := s.group(t.agentID)
+	g.setTurnParent(o, t, precedingPromptID(gp, t.seq))
 }
 
 func (g *Graph) recordPrompt(o model.Observation, promptID string) {
 	s := g.execState(o.ExecutionID)
-	s.prompts = append(s.prompts, promptRef{seq: o.Seq, id: promptID})
-	for _, t := range s.turns {
-		parent := g.precedingPromptID(o.ExecutionID, t.seq)
-		g.setTurnParent(o, t, parent)
+	gp := s.group(o.Correlation.AgentID)
+	p := promptRef{seq: o.Seq, id: promptID, agentID: o.Correlation.AgentID}
+	i := sort.Search(len(gp.prompts), func(i int) bool { return gp.prompts[i].seq >= p.seq })
+	gp.prompts = append(gp.prompts, promptRef{})
+	copy(gp.prompts[i+1:], gp.prompts[i:])
+	gp.prompts[i] = p
+	next := ^uint64(0)
+	if i+1 < len(gp.prompts) {
+		next = gp.prompts[i+1].seq
 	}
+	lo := sort.Search(len(gp.turns), func(j int) bool { return gp.turns[j].seq > p.seq })
+	for j := lo; j < len(gp.turns) && gp.turns[j].seq < next; j++ {
+		g.setTurnParent(o, gp.turns[j], precedingPromptID(gp, gp.turns[j].seq))
+	}
+}
+
+func insertTurnSorted(turns []*turnRef, t *turnRef) []*turnRef {
+	i := sort.Search(len(turns), func(i int) bool { return turns[i].seq >= t.seq })
+	turns = append(turns, nil)
+	copy(turns[i+1:], turns[i:])
+	turns[i] = t
+	return turns
+}
+
+func repositionTurn(turns []*turnRef, t *turnRef) []*turnRef {
+	var idx int
+	for i, x := range turns {
+		if x == t {
+			idx = i
+			break
+		}
+	}
+	turns = append(turns[:idx], turns[idx+1:]...)
+	return insertTurnSorted(turns, t)
 }
 
 func (g *Graph) setTurnParent(o model.Observation, t *turnRef, parent string) {
