@@ -107,14 +107,6 @@ test.beforeEach(async ({ page }) => {
     });
   });
 
-  await page.route(`/v1/sessions/${sessionHash}/graph`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(sseEvents),
-    });
-  });
-
   await page.route('/v1/subscribe**', async (route) => {
     await route.fulfill({
       status: 200,
@@ -135,13 +127,10 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
   await expect(page).toHaveURL(new RegExp(`#/s/${sessionHash}`));
   await expect(page.locator('.session-view')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.graph-canvas-root')).toBeVisible();
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
-
-  const assistantNode = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
-  await assistantNode.click();
+  const assistantRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await assistantRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
@@ -175,12 +164,10 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
 
 test('hero flow: clicking node without metrics shows dashes for unknown fields', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.graph-canvas-root')).toBeVisible();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const sessionNode = page.locator('.svelte-flow__node').filter({ hasText: 'Session Root' });
-  await sessionNode.click();
+  const sessionRow = page.locator('.outline-row').filter({ hasText: 'Session Root' }).first();
+  await sessionRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
@@ -193,11 +180,10 @@ test('hero flow: clicking node without metrics shows dashes for unknown fields',
 
 test('hero flow: Escape closes drawer and clears selection', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.svelte-flow__node')).toHaveCount(2, { timeout: 8000 });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
-  const assistantNode = page.locator('.svelte-flow__node').filter({ hasText: 'Assistant Turn' });
-  await assistantNode.click();
+  const assistantRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  await assistantRow.click();
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
@@ -211,14 +197,12 @@ test('hero flow: Escape closes drawer and clears selection', async ({ page }) =>
 test('deep-link to #/s/{hash} opens session view directly', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
   await expect(page.locator('.session-view')).toBeVisible();
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.graph-canvas-root')).toBeVisible();
+  await expect(page.locator('.outline-root')).toBeVisible();
   await expect(page.locator('.session-view')).toContainText('abc123def456');
 });
 
 test('deep-link to #/s/{hash}/n/{nodeId} opens session view', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}/n/node-assistant-hero`);
   await expect(page.locator('.session-view')).toBeVisible();
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await expect(page.locator('.graph-canvas-root')).toBeVisible();
+  await expect(page.locator('.node-drawer.node-drawer--open')).toBeVisible({ timeout: 8000 });
 });

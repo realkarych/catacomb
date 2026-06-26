@@ -71,14 +71,6 @@ test.beforeEach(async ({ page }) => {
     });
   });
 
-  await page.route(`/v1/sessions/${sessionHash}/graph`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      body: buildSseBody(sseEvents),
-    });
-  });
-
   await page.route('/v1/events**', async (route) => {
     await route.fulfill({
       status: 200,
@@ -128,10 +120,8 @@ test('filter bar is visible with search input and chips', async ({ page }) => {
 });
 
 test('typing in filter search shows N of M count', async ({ page }) => {
-  await page.goto(`/#/s/${sessionHash}`);
-
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
 
   await page.locator('.filter-search').fill('BashTool');
 
@@ -140,10 +130,8 @@ test('typing in filter search shows N of M count', async ({ page }) => {
 });
 
 test('clearing filter removes count indicator', async ({ page }) => {
-  await page.goto(`/#/s/${sessionHash}`);
-
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
 
   await page.locator('.filter-search').fill('BashTool');
   await expect(page.locator('.filter-count')).toBeVisible();
@@ -160,9 +148,7 @@ test('has errors chip is shown when session has error_count > 0', async ({ page 
 
 test('status filter chips appear for node statuses present in graph', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
-
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
   const chips = page.locator('.filter-group').first().locator('.filter-chip');
   await expect(chips.first()).toBeVisible({ timeout: 8000 });
@@ -170,9 +156,7 @@ test('status filter chips appear for node statuses present in graph', async ({ p
 
 test('type filter chips appear for node types present in graph', async ({ page }) => {
   await page.goto(`/?token=test#/s/${sessionHash}`);
-
-  await page.getByRole('button', { name: 'Graph', exact: true }).click();
-  await page.locator('.graph-canvas-root').waitFor({ state: 'visible' });
+  await expect(page.locator('.outline-root')).toBeVisible();
 
   const groups = page.locator('.filter-group');
   await expect(groups.first()).toBeVisible({ timeout: 8000 });

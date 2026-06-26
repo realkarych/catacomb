@@ -1,4 +1,4 @@
-import type { Node, Edge } from './types';
+import type { Node } from './types';
 
 export interface FilterState {
   query: string;
@@ -18,16 +18,6 @@ export function isActive(f: FilterState): boolean {
     f.types.length > 0 ||
     f.hasError
   );
-}
-
-export function dimmedEdgeIds(edges: Edge[], matchingNodeIds: Set<string>): Set<string> {
-  const dimmed = new Set<string>();
-  for (const e of edges) {
-    if (!matchingNodeIds.has(e.src) || !matchingNodeIds.has(e.dst)) {
-      dimmed.add(e.id);
-    }
-  }
-  return dimmed;
 }
 
 export function filterNodes(nodes: Node[], f: FilterState): Node[] {

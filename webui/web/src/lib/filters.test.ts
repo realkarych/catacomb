@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { emptyFilter, isActive, filterNodes, dimmedEdgeIds } from './filters';
-import type { Node, Edge } from './types';
+import { emptyFilter, isActive, filterNodes } from './filters';
+import type { Node } from './types';
 
 function makeNode(overrides: Partial<Node> = {}): Node {
   return {
@@ -136,52 +136,3 @@ describe('filterNodes', () => {
   });
 });
 
-describe('dimmedEdgeIds', () => {
-  function makeEdge(id: string, src: string, dst: string): Edge {
-    return { id, run_id: 'r1', type: 'call', src, dst, rev: 1 };
-  }
-
-  const edges: Edge[] = [
-    makeEdge('e1', 'n1', 'n2'),
-    makeEdge('e2', 'n2', 'n3'),
-    makeEdge('e3', 'n3', 'n4'),
-  ];
-
-  it('returns empty set when all endpoints match', () => {
-    const matching = new Set(['n1', 'n2', 'n3', 'n4']);
-    expect(dimmedEdgeIds(edges, matching).size).toBe(0);
-  });
-
-  it('dims edge when src is not matching', () => {
-    const matching = new Set(['n2', 'n3', 'n4']);
-    const dimmed = dimmedEdgeIds(edges, matching);
-    expect(dimmed.has('e1')).toBe(true);
-    expect(dimmed.has('e2')).toBe(false);
-    expect(dimmed.has('e3')).toBe(false);
-  });
-
-  it('dims edge when dst is not matching', () => {
-    const matching = new Set(['n1', 'n2', 'n3']);
-    const dimmed = dimmedEdgeIds(edges, matching);
-    expect(dimmed.has('e3')).toBe(true);
-    expect(dimmed.has('e1')).toBe(false);
-    expect(dimmed.has('e2')).toBe(false);
-  });
-
-  it('dims edge when both endpoints are not matching', () => {
-    const matching = new Set(['n1', 'n2']);
-    const dimmed = dimmedEdgeIds(edges, matching);
-    expect(dimmed.has('e1')).toBe(false);
-    expect(dimmed.has('e2')).toBe(true);
-    expect(dimmed.has('e3')).toBe(true);
-  });
-
-  it('returns empty set for empty edges', () => {
-    expect(dimmedEdgeIds([], new Set(['n1'])).size).toBe(0);
-  });
-
-  it('returns all edges dimmed when matching set is empty', () => {
-    const dimmed = dimmedEdgeIds(edges, new Set());
-    expect(dimmed.size).toBe(edges.length);
-  });
-});
