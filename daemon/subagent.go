@@ -1,6 +1,11 @@
 package daemon
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 )
@@ -85,4 +90,62 @@ func decorateSubagent(nc *model.Node, rollups map[string]*subAgg) {
 		a = &subAgg{}
 	}
 	applyAggregate(nc, a)
+}
+
+func (d *Daemon) subagentSubtreeDeltas(hash, agentID string) ([]sseEvent, error) {
+	execs := d.executionsForSession(hash)
+	if len(execs) == 0 {
+		return nil, ErrSessionNotFound
+	}
+	out := []sseEvent{}
+	for _, execID := range execs {
+		g := d.graphs[execID]
+		subNodeID := model.SubagentID(execID, agentID)
+		innerSet := map[string]bool{}
+		for _, n := range g.Nodes {
+			if n.AgentID == agentID && n.ID != subNodeID {
+				innerSet[n.ID] = true
+			}
+		}
+		for _, n := range g.Nodes {
+			if !innerSet[n.ID] {
+				continue
+			}
+			nc := copyNode(n)
+			nc.Payload = nil
+			out = append(out, deltaToSSE(cdc.GraphDelta{
+				Kind:        cdc.DeltaNodeUpsert,
+				Rev:         n.Rev,
+				Node:        nc,
+				RunID:       n.RunID,
+				ExecutionID: execID,
+			}))
+		}
+		for _, e := range g.Edges {
+			if (innerSet[e.Src] && innerSet[e.Dst]) || e.Src == subNodeID {
+				out = append(out, deltaToSSE(cdc.GraphDelta{
+					Kind:        cdc.DeltaEdgeUpsert,
+					Rev:         e.Rev,
+					Edge:        copyEdge(e),
+					RunID:       e.RunID,
+					ExecutionID: execID,
+				}))
+			}
+		}
+	}
+	return out, nil
+}
+
+func (d *Daemon) handleSubagentSubtree(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	agentID := r.PathValue("agentId")
+	d.mu.Lock()
+	evs, err := d.subagentSubtreeDeltas(hash, agentID)
+	d.mu.Unlock()
+	if errors.Is(err, ErrSessionNotFound) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(evs)
 }

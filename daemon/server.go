@@ -48,6 +48,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /v1/sessions", d.authedAllowQuery(token, d.handleSessions))
 	mux.HandleFunc("GET /v1/sessions/{hash}/graph", d.authedAllowQuery(token, d.handleSessionGraph))
 	mux.HandleFunc("GET /v1/sessions/{hash}/nodes/{nodeId}/payload", d.authedAllowQuery(token, d.handleNodePayload))
+	mux.HandleFunc("GET /v1/sessions/{hash}/subagent/{agentId}", d.authedAllowQuery(token, d.handleSubagentSubtree))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

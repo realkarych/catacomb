@@ -1,6 +1,10 @@
 package daemon
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -411,4 +415,199 @@ func TestTransformSubagentDeltaMissingGraphZero(t *testing.T) {
 	out, keep := sub.transform(delta)
 	require.True(t, keep)
 	assert.Equal(t, 0, out.Node.Attrs["descendant_count"])
+}
+
+func TestSubagentSubtreeDeltasReturnsInnerNodes(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.subagentSubtreeDeltas("s1", "ag1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	nodeIDs := map[string]bool{}
+	edgeIDs := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodeIDs[ev.Node.ID] = true
+		}
+		if ev.Edge != nil {
+			edgeIDs[ev.Edge.ID] = true
+		}
+	}
+
+	assert.True(t, nodeIDs[model.UserPromptID("exec1", "u-inner")])
+	assert.True(t, nodeIDs[model.AssistantTurnID("exec1", "m-inner")])
+	assert.True(t, nodeIDs[model.ToolCallID("exec1", "toolu_inner")])
+
+	assert.False(t, nodeIDs[model.SubagentID("exec1", "ag1")])
+	assert.False(t, nodeIDs[model.SessionNodeID("exec1")])
+	assert.False(t, nodeIDs[model.ToolCallID("exec1", "toolu_agent")])
+
+	assert.True(t, edgeIDs["e-sub-prompt"])
+	assert.True(t, edgeIDs["e-prompt-turn"])
+	assert.True(t, edgeIDs["e-turn-tool"])
+
+	assert.False(t, edgeIDs["e-agent"])
+}
+
+func TestSubagentSubtreeDeltasUnknownSession(t *testing.T) {
+	d := New(tempStore(t))
+	d.mu.Lock()
+	_, err := d.subagentSubtreeDeltas("ghost", "ag1")
+	d.mu.Unlock()
+	assert.True(t, errors.Is(err, ErrSessionNotFound))
+}
+
+func TestSubagentSubtreeDeltasUnknownAgent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.subagentSubtreeDeltas("s1", "ghost")
+	d.mu.Unlock()
+	require.NoError(t, err)
+	assert.Empty(t, evs)
+}
+
+func TestSubagentSubtreeDeltasExcludesOtherAgent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	sub2 := model.SubagentID("exec1", "ag2")
+	g.Nodes[sub2] = &model.Node{ID: sub2, RunID: "s1", Type: model.NodeSubagent, AgentID: "ag2", Rev: 20}
+	inner2 := model.UserPromptID("exec1", "u-ag2")
+	g.Nodes[inner2] = &model.Node{ID: inner2, RunID: "s1", Type: model.NodeUserPrompt, AgentID: "ag2", Rev: 21}
+
+	evs, err := d.subagentSubtreeDeltas("s1", "ag1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	nodeIDs := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodeIDs[ev.Node.ID] = true
+		}
+	}
+
+	assert.False(t, nodeIDs[sub2])
+	assert.False(t, nodeIDs[inner2])
+	assert.True(t, nodeIDs[model.UserPromptID("exec1", "u-inner")])
+}
+
+func TestSubagentSubtreeDeltasPayloadNil(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	innerID := model.UserPromptID("exec1", "u-inner")
+	g.Nodes[innerID].Payload = &model.Payload{Input: []byte(`"hi"`)}
+	evs, err := d.subagentSubtreeDeltas("s1", "ag1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	for _, ev := range evs {
+		if ev.Node != nil {
+			assert.Nil(t, ev.Node.Payload)
+		}
+	}
+}
+
+func TestSubagentSubtreeDeltasDoesNotMutateLive(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	innerID := model.UserPromptID("exec1", "u-inner")
+	g.Nodes[innerID].Payload = &model.Payload{Input: []byte(`"hi"`)}
+	_, err := d.subagentSubtreeDeltas("s1", "ag1")
+	live := g.Nodes[innerID]
+	d.mu.Unlock()
+	require.NoError(t, err)
+	assert.NotNil(t, live.Payload)
+}
+
+func TestSubagentSubtreeHandlerOK(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/v1/sessions/s1/subagent/ag1?token=tok")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var evs []sseEvent
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&evs))
+	assert.NotEmpty(t, evs)
+}
+
+func TestSubagentSubtreeHandlerUnknownSession404(t *testing.T) {
+	d := New(tempStore(t))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/v1/sessions/ghost/subagent/ag1?token=tok")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestSubagentSubtreeHandlerUnknownAgent200Empty(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/v1/sessions/s1/subagent/ghost?token=tok")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var evs []sseEvent
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&evs))
+	assert.Empty(t, evs)
+}
+
+func TestSubagentSubtreeHandlerAuthRejected(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/v1/sessions/s1/subagent/ag1")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestSubagentSubtreeHandlerBearerAuth(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedSubagentGraph(t, d)
+	srv := httptest.NewServer(d.Handler("tok"))
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/v1/sessions/s1/subagent/ag1", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer tok")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
