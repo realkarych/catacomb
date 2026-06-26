@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -531,17 +532,11 @@ func TestReadAgentMetaBadJSON(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestSniffSessionIDEdgeCases(t *testing.T) {
-	assert.Equal(t, "", sniffSessionID("/nonexistent/path.jsonl"))
-
-	dir := t.TempDir()
-	emptyFile := filepath.Join(dir, "empty.jsonl")
-	require.NoError(t, os.WriteFile(emptyFile, []byte{}, 0o600))
-	assert.Equal(t, "", sniffSessionID(emptyFile))
-
-	badFile := filepath.Join(dir, "bad.jsonl")
-	require.NoError(t, os.WriteFile(badFile, []byte("not-json\n"), 0o600))
-	assert.Equal(t, "", sniffSessionID(badFile))
+func TestMainSessionOf(t *testing.T) {
+	assert.Equal(t, "main-session-id", mainSessionOf("/some/dir/main-session-id/subagents/agent-agX.jsonl"))
+	assert.Equal(t, "", mainSessionOf("/some/dir/main.jsonl"))
+	assert.Equal(t, "", mainSessionOf("/some/dir/sess.jsonl"))
+	assert.Equal(t, "", mainSessionOf("agent-x.jsonl"))
 }
 
 func TestPollOnceIngestsAgentTranscriptViaSymlink(t *testing.T) {
@@ -591,6 +586,58 @@ func TestPollOnceIngestsAgentTranscriptViaSymlink(t *testing.T) {
 	sink.mu.Lock()
 	assert.Len(t, sink.metas, 1, "meta should not be re-emitted")
 	sink.mu.Unlock()
+}
+
+func TestPollOnceAgentLargeFirstLineUsesGrandparentSession(t *testing.T) {
+	real := t.TempDir()
+
+	sessionID := "157a2d02-8471-4c53-8612-4d87bd410ca0"
+	bigTask := strings.Repeat("x", 8192)
+	agentLine := `{"type":"user","sessionId":"` + sessionID + `","agentId":"agBig","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"` + bigTask + `"}]}}` + "\n"
+	require.Greater(t, len(agentLine), 4096)
+
+	agentDir := filepath.Join(real, sessionID, "subagents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	agentFile := filepath.Join(agentDir, "agent-agBig.jsonl")
+	write(t, agentFile, agentLine)
+
+	metaJSON := `{"agentType":"general-purpose","description":"Big agent","toolUseId":"toolu_big"}`
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "agent-agBig.meta.json"), []byte(metaJSON), 0o600))
+
+	target := filepath.Join(real, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(target, []byte(`{"type":"assistant","sessionId":"`+sessionID+`","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m2","content":[{"type":"text","text":"main"}]}}`+"\n"), 0o600))
+
+	symlinkDir := t.TempDir()
+	mainFile := filepath.Join(symlinkDir, sessionID+".jsonl")
+	require.NoError(t, os.Symlink(target, mainFile))
+
+	sink := &fakeSink{}
+	tl := New(symlinkDir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+
+	sink.mu.Lock()
+	metas := sink.metas
+	sessIDs := sink.sess
+	lossy := sink.lossy
+	sink.mu.Unlock()
+
+	require.Len(t, metas, 1)
+	assert.Equal(t, sessionID, metas[0].SessionID)
+	assert.Equal(t, "agBig", metas[0].AgentID)
+	assert.Equal(t, "toolu_big", metas[0].ToolUseID)
+
+	require.NotEmpty(t, sessIDs)
+	for _, s := range sessIDs {
+		assert.Equal(t, sessionID, s)
+		assert.NotContains(t, s, "agent-")
+	}
+	for _, m := range metas {
+		assert.NotContains(t, m.SessionID, "agent-")
+	}
+	for _, l := range lossy {
+		assert.NotContains(t, l, "agent-")
+	}
 }
 
 func TestPollOnceAgentMissingMetaNoError(t *testing.T) {

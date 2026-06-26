@@ -50,9 +50,8 @@ type Store interface {
 }
 
 type fileState struct {
-	cursor       model.TailCursor
-	metaEmitted  bool
-	agentSession string
+	cursor      model.TailCursor
+	metaEmitted bool
 }
 
 type Tailer struct {
@@ -154,6 +153,13 @@ func sessionOf(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), ".jsonl")
 }
 
+func mainSessionOf(path string) string {
+	if filepath.Base(filepath.Dir(path)) != "subagents" {
+		return ""
+	}
+	return filepath.Base(filepath.Dir(filepath.Dir(path)))
+}
+
 func agentIDOf(path string) string {
 	base := filepath.Base(path)
 	if !strings.HasPrefix(base, "agent-") || !strings.HasSuffix(base, ".jsonl") {
@@ -181,29 +187,6 @@ func readAgentMeta(path string) (agentMetaJSON, bool) {
 		return agentMetaJSON{}, false
 	}
 	return m, true
-}
-
-func sniffSessionID(path string) string {
-	f, err := openFile(path)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = f.Close() }()
-	buf := make([]byte, 4096)
-	n, _ := f.Read(buf)
-	data := buf[:n]
-	nl := bytes.IndexByte(data, '\n')
-	if nl >= 0 {
-		data = data[:nl]
-	}
-	data = bytes.TrimSpace(data)
-	var ln struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := json.Unmarshal(data, &ln); err != nil {
-		return ""
-	}
-	return ln.SessionID
 }
 
 func fingerprint(b []byte) string {
@@ -265,11 +248,8 @@ func (tl *Tailer) pollFile(path string) error {
 	size := info.Size()
 	session := sessionOf(path)
 	if agentID != "" {
-		if st.agentSession == "" {
-			st.agentSession = sniffSessionID(path)
-		}
-		if st.agentSession != "" {
-			session = st.agentSession
+		if main := mainSessionOf(path); main != "" {
+			session = main
 		}
 	}
 
