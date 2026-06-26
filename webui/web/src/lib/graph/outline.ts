@@ -1,4 +1,5 @@
 import type { Node, Hierarchy } from './types';
+import { isLazySubagent } from './aggregate';
 
 export interface OutlineRow {
   id: string;
@@ -54,7 +55,7 @@ export function defaultOutlineCollapsed(nodes: Node[], hierarchy: Hierarchy): Se
   const out = new Set<string>();
   for (const node of nodes) {
     if (rootSet.has(node.id)) continue;
-    if (hierarchy.childrenOf(node.id).length > 0) out.add(node.id);
+    if (hierarchy.childrenOf(node.id).length > 0 || isLazySubagent(node)) out.add(node.id);
   }
   return out;
 }
@@ -76,7 +77,7 @@ export function outlineLabel(node: Node): { primary: string; secondary: string }
       return { primary: node.name || 'mcp', secondary: '' };
     case 'subagent':
       return {
-        primary: 'subagent',
+        primary: node.name || 'subagent',
         secondary: node.subagent_type || String(node.attrs?.subagent_type ?? ''),
       };
     default:

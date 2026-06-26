@@ -157,10 +157,11 @@ func (d *Daemon) streamSSE(
 			if !ok {
 				return
 			}
-			if !sub.match(delta) {
+			out, keep := sub.transform(delta)
+			if !keep {
 				continue
 			}
-			if !writeEvent(delta) {
+			if !writeEvent(out) {
 				return
 			}
 		case <-ticker.C:

@@ -138,6 +138,24 @@ describe('defaultOutlineCollapsed', () => {
     expect(collapsed.has('p')).toBe(false);
   });
 
+  it('includes a childless lazy subagent with a positive backend descendant_count', () => {
+    const nodes = [n('s', 'session'), n('sa', 'subagent', { attrs: { descendant_count: 4 } })];
+    const edges = [e('s', 'sa')];
+    const h = buildHierarchy(nodes, edges);
+    const collapsed = defaultOutlineCollapsed(nodes, h);
+
+    expect(collapsed.has('sa')).toBe(true);
+  });
+
+  it('excludes a childless subagent whose descendant_count is zero', () => {
+    const nodes = [n('s', 'session'), n('sa', 'subagent', { attrs: { descendant_count: 0 } })];
+    const edges = [e('s', 'sa')];
+    const h = buildHierarchy(nodes, edges);
+    const collapsed = defaultOutlineCollapsed(nodes, h);
+
+    expect(collapsed.has('sa')).toBe(false);
+  });
+
   it('returns a new Set', () => {
     const nodes = [n('s', 'session'), n('p', 'user_prompt')];
     const edges = [e('s', 'p')];
@@ -194,7 +212,13 @@ describe('outlineLabel', () => {
     expect(outlineLabel(n('mc', 'mcp_call'))).toEqual({ primary: 'mcp', secondary: '' });
   });
 
-  it('subagent: secondary from node.subagent_type then attrs.subagent_type', () => {
+  it('subagent: primary uses node.name when present', () => {
+    expect(
+      outlineLabel(n('sa', 'subagent', { name: 'Review PR1 reparent', subagent_type: 'claude-code' })),
+    ).toEqual({ primary: 'Review PR1 reparent', secondary: 'claude-code' });
+  });
+
+  it('subagent: primary falls back to "subagent" when name absent', () => {
     expect(outlineLabel(n('sa', 'subagent', { subagent_type: 'claude-code' }))).toEqual({
       primary: 'subagent',
       secondary: 'claude-code',

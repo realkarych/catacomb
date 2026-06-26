@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -28,6 +29,15 @@ func count(t *testing.T, s *sqliteStore, table string) int {
 	var n int
 	require.NoError(t, s.db.QueryRow("SELECT count(*) FROM "+table).Scan(&n))
 	return n
+}
+
+func nodeStatus(t *testing.T, s *sqliteStore, id string) string {
+	t.Helper()
+	var body string
+	require.NoError(t, s.db.QueryRow("SELECT body FROM nodes WHERE id = ?", id).Scan(&body))
+	var n model.Node
+	require.NoError(t, json.Unmarshal([]byte(body), &n))
+	return string(n.Status)
 }
 
 func TestPersistRoundTripCounts(t *testing.T) {
@@ -123,31 +133,83 @@ func TestOpenSQLitePublicHappyPath(t *testing.T) {
 	require.NoError(t, s.Close())
 }
 
-func TestAppendAndApplyRoundTrip(t *testing.T) {
+func TestAppendDeltasInsertsObservation(t *testing.T) {
 	s := fileStore(t)
 	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
-	nodes := []*model.Node{{ID: "n1", RunID: "s1", Type: model.NodeSession}}
-	edges := []*model.Edge{{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}}
-	require.NoError(t, s.AppendAndApply(o, nodes, edges))
-
+	require.NoError(t, s.AppendDeltas(o, nil))
 	assert.Equal(t, 1, count(t, s, "observations"))
+	assert.Equal(t, 0, count(t, s, "nodes"))
+	assert.Equal(t, 0, count(t, s, "edges"))
+}
+
+func TestAppendDeltasUpsertsNode(t *testing.T) {
+	s := fileStore(t)
+	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
+	n := &model.Node{ID: "n1", RunID: "s1", Type: model.NodeSession}
+	require.NoError(t, s.AppendDeltas(o, []cdc.GraphDelta{{Kind: cdc.DeltaNodeUpsert, Node: n}}))
 	assert.Equal(t, 1, count(t, s, "nodes"))
+
+	o2 := model.Observation{ObsID: "o2", RunID: "s1", ExecutionID: "exec1", Seq: 2}
+	n2 := &model.Node{ID: "n1", RunID: "s1", Type: model.NodeSession, Status: model.StatusOK}
+	require.NoError(t, s.AppendDeltas(o2, []cdc.GraphDelta{{Kind: cdc.DeltaNodeStatus, Node: n2}}))
+	assert.Equal(t, 1, count(t, s, "nodes"))
+	assert.Equal(t, string(model.StatusOK), nodeStatus(t, s, "n1"))
+}
+
+func TestAppendDeltasUpsertsEdge(t *testing.T) {
+	s := fileStore(t)
+	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
+	e := &model.Edge{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}
+	require.NoError(t, s.AppendDeltas(o, []cdc.GraphDelta{{Kind: cdc.DeltaEdgeUpsert, Edge: e}}))
 	assert.Equal(t, 1, count(t, s, "edges"))
 }
 
-func TestAppendAndApplyBeginError(t *testing.T) {
+func TestAppendDeltasDeletesEdge(t *testing.T) {
+	s := fileStore(t)
+	e := &model.Edge{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}
+	require.NoError(t, s.AppendDeltas(
+		model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1},
+		[]cdc.GraphDelta{{Kind: cdc.DeltaEdgeUpsert, Edge: e}},
+	))
+	assert.Equal(t, 1, count(t, s, "edges"))
+
+	require.NoError(t, s.AppendDeltas(
+		model.Observation{ObsID: "o2", RunID: "s1", ExecutionID: "exec1", Seq: 2},
+		[]cdc.GraphDelta{{Kind: cdc.DeltaEdgeDelete, Edge: e}},
+	))
+	assert.Equal(t, 0, count(t, s, "edges"))
+}
+
+func TestAppendDeltasIgnoresNilAndRunKinds(t *testing.T) {
+	s := fileStore(t)
+	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
+	deltas := []cdc.GraphDelta{
+		{Kind: cdc.DeltaNodeUpsert},
+		{Kind: cdc.DeltaEdgeUpsert},
+		{Kind: cdc.DeltaEdgeDelete},
+		{Kind: cdc.DeltaRunStarted, RunID: "s1"},
+		{Kind: cdc.DeltaSessionEnded, RunID: "s1"},
+		{Kind: cdc.DeltaRunEnded, RunID: "s1"},
+	}
+	require.NoError(t, s.AppendDeltas(o, deltas))
+	assert.Equal(t, 1, count(t, s, "observations"))
+	assert.Equal(t, 0, count(t, s, "nodes"))
+	assert.Equal(t, 0, count(t, s, "edges"))
+}
+
+func TestAppendDeltasBeginError(t *testing.T) {
 	s := fileStore(t)
 	require.NoError(t, s.db.Close())
-	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "x"}, nil, nil))
+	require.Error(t, s.AppendDeltas(model.Observation{ObsID: "x"}, nil))
 }
 
-func TestAppendAndApplyObsError(t *testing.T) {
+func TestAppendDeltasObsError(t *testing.T) {
 	s := fileStore(t)
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "dup"}, nil, nil))
-	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "dup"}, nil, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "dup"}, nil))
+	require.Error(t, s.AppendDeltas(model.Observation{ObsID: "dup"}, nil))
 }
 
-func TestAppendAndApplyNodeMarshalError(t *testing.T) {
+func TestAppendDeltasNodeMarshalErrorRollsBack(t *testing.T) {
 	s := fileStore(t)
 	s.marshal = func(v any) ([]byte, error) {
 		if _, ok := v.(*model.Node); ok {
@@ -155,7 +217,30 @@ func TestAppendAndApplyNodeMarshalError(t *testing.T) {
 		}
 		return json.Marshal(v)
 	}
-	require.Error(t, s.AppendAndApply(model.Observation{ObsID: "o"}, []*model.Node{{ID: "n"}}, nil))
+	err := s.AppendDeltas(model.Observation{ObsID: "o"}, []cdc.GraphDelta{{Kind: cdc.DeltaNodeUpsert, Node: &model.Node{ID: "n"}}})
+	require.Error(t, err)
+	assert.Equal(t, 0, count(t, s, "observations"))
+}
+
+func TestAppendDeltasEdgeMarshalErrorRollsBack(t *testing.T) {
+	s := fileStore(t)
+	s.marshal = func(v any) ([]byte, error) {
+		if _, ok := v.(*model.Edge); ok {
+			return nil, errors.New("boom")
+		}
+		return json.Marshal(v)
+	}
+	err := s.AppendDeltas(model.Observation{ObsID: "o"}, []cdc.GraphDelta{{Kind: cdc.DeltaEdgeUpsert, Edge: &model.Edge{ID: "e"}}})
+	require.Error(t, err)
+	assert.Equal(t, 0, count(t, s, "observations"))
+}
+
+func TestAppendDeltasEdgeDeleteExecErrorRollsBack(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE edges")
+	require.NoError(t, err)
+	err = s.AppendDeltas(model.Observation{ObsID: "o"}, []cdc.GraphDelta{{Kind: cdc.DeltaEdgeDelete, Edge: &model.Edge{ID: "e"}}})
+	require.Error(t, err)
 	assert.Equal(t, 0, count(t, s, "observations"))
 }
 
@@ -168,8 +253,8 @@ func TestMaxSeqEmpty(t *testing.T) {
 
 func TestMaxSeqAfterAppend(t *testing.T) {
 	s := fileStore(t)
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "a", Seq: 3}, nil, nil))
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "b", Seq: 7}, nil, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "a", Seq: 3}, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "b", Seq: 7}, nil))
 	v, err := s.MaxSeq()
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), v)
@@ -184,9 +269,9 @@ func TestMaxSeqQueryError(t *testing.T) {
 
 func TestObservationsSince(t *testing.T) {
 	s := fileStore(t)
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "a", RunID: "s1", ExecutionID: "e", Seq: 1, Kind: "session_start"}, nil, nil))
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "b", RunID: "s1", ExecutionID: "e", Seq: 2, Kind: "user_prompt"}, nil, nil))
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "c", RunID: "s1", ExecutionID: "e", Seq: 3, Kind: "session_end"}, nil, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "a", RunID: "s1", ExecutionID: "e", Seq: 1, Kind: "session_start"}, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "b", RunID: "s1", ExecutionID: "e", Seq: 2, Kind: "user_prompt"}, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "c", RunID: "s1", ExecutionID: "e", Seq: 3, Kind: "session_end"}, nil))
 
 	got, err := s.ObservationsSince(1)
 	require.NoError(t, err)
@@ -351,9 +436,9 @@ func TestQuarantineCountQueryError(t *testing.T) {
 
 func TestObservationsForExecution(t *testing.T) {
 	s := fileStore(t)
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "a", RunID: "s1", ExecutionID: "e1", Seq: 1, Kind: "session_start"}, nil, nil))
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "b", RunID: "s2", ExecutionID: "e2", Seq: 2, Kind: "session_start"}, nil, nil))
-	require.NoError(t, s.AppendAndApply(model.Observation{ObsID: "c", RunID: "s1", ExecutionID: "e1", Seq: 3, Kind: "session_end"}, nil, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "a", RunID: "s1", ExecutionID: "e1", Seq: 1, Kind: "session_start"}, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "b", RunID: "s2", ExecutionID: "e2", Seq: 2, Kind: "session_start"}, nil))
+	require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "c", RunID: "s1", ExecutionID: "e1", Seq: 3, Kind: "session_end"}, nil))
 	obs, err := s.ObservationsForExecution("e1")
 	require.NoError(t, err)
 	require.Len(t, obs, 2)

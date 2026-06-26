@@ -26,3 +26,37 @@ export function aggregateOf(
   const status: Aggregate['status'] = anyError ? 'error' : anyRunning ? 'running' : 'ok';
   return { count, tokensIn, tokensOut, costUsd, status, hasError: anyError };
 }
+
+function attrNumber(node: Node, key: string): number {
+  const v = node.attrs?.[key];
+  return typeof v === 'number' ? v : 0;
+}
+
+export function descendantCount(node: Node): number {
+  return attrNumber(node, 'descendant_count');
+}
+
+export function isLazySubagent(node: Node): boolean {
+  return node.type === 'subagent' && descendantCount(node) > 0;
+}
+
+function hasBackendCount(node: Node): boolean {
+  return node.type === 'subagent' && typeof node.attrs?.descendant_count === 'number';
+}
+
+export function rowAggregate(
+  node: Node,
+  hierarchy: Hierarchy,
+  byId: Record<string, Node>,
+): Aggregate {
+  const agg = aggregateOf(node.id, hierarchy, byId);
+  if (agg.count > 0 || !hasBackendCount(node)) return agg;
+  return {
+    count: attrNumber(node, 'descendant_count'),
+    tokensIn: attrNumber(node, 'descendant_tokens_in'),
+    tokensOut: attrNumber(node, 'descendant_tokens_out'),
+    costUsd: attrNumber(node, 'descendant_cost_usd'),
+    status: 'ok',
+    hasError: false,
+  };
+}

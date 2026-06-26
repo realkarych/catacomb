@@ -6,20 +6,45 @@ import (
 )
 
 type promptRef struct {
-	seq uint64
-	id  string
+	seq     uint64
+	id      string
+	agentID string
 }
 
 type turnRef struct {
-	seq    uint64
-	rev    uint64
-	id     string
-	parent string
+	seq     uint64
+	rev     uint64
+	id      string
+	parent  string
+	agentID string
+}
+
+type agentGroup struct {
+	root    string
+	prompts []promptRef
+	turns   []*turnRef
 }
 
 type execState struct {
-	prompts []promptRef
-	turns   map[string]*turnRef
+	executionID string
+	turnsByID   map[string]*turnRef
+	groups      map[string]*agentGroup
+}
+
+func (s *execState) group(agentID string) *agentGroup {
+	gp, ok := s.groups[agentID]
+	if !ok {
+		gp = &agentGroup{root: groupRoot(s.executionID, agentID)}
+		s.groups[agentID] = gp
+	}
+	return gp
+}
+
+func groupRoot(executionID, agentID string) string {
+	if agentID == "" {
+		return model.SessionNodeID(executionID)
+	}
+	return model.SubagentID(executionID, agentID)
 }
 
 type Graph struct {
@@ -56,7 +81,7 @@ func newGraph(p Pricer) *Graph {
 func (g *Graph) execState(executionID string) *execState {
 	s, ok := g.execs[executionID]
 	if !ok {
-		s = &execState{turns: map[string]*turnRef{}}
+		s = &execState{executionID: executionID, turnsByID: map[string]*turnRef{}, groups: map[string]*agentGroup{}}
 		g.execs[executionID] = s
 	}
 	return s

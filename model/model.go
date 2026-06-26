@@ -149,3 +149,11 @@ type TailCursor struct {
 	Size        int64  `json:"size"`
 	Mtime       int64  `json:"mtime"`
 }
+
+type SubagentMeta struct {
+	SessionID   string
+	AgentID     string
+	ToolUseID   string
+	AgentType   string
+	Description string
+}

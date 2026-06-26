@@ -1,4 +1,5 @@
 import type { Node, Hierarchy } from './types';
+import { isLazySubagent } from './aggregate';
 
 export type CollapsePredicate = (node: Node) => boolean;
 
@@ -32,7 +33,7 @@ export function toggle(collapsed: Set<string>, id: string): Set<string> {
 export function collapseAll(nodes: Node[], hierarchy: Hierarchy): Set<string> {
   const out = new Set<string>();
   for (const node of nodes) {
-    if (hasChildren(hierarchy, node.id)) out.add(node.id);
+    if (hasChildren(hierarchy, node.id) || isLazySubagent(node)) out.add(node.id);
   }
   return out;
 }

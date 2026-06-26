@@ -103,6 +103,22 @@ describe('collapseAll / expandAll', () => {
     expect(collapseAll(nodes, h)).toEqual(new Set(['s', 'u', 'at', 'sub']));
   });
 
+  it('collapseAll includes a childless lazy subagent (backend descendant_count > 0)', () => {
+    const lazy: Node = { ...n('lazy', 'subagent'), attrs: { descendant_count: 5 } };
+    const nodes = [n('s', 'session'), lazy];
+    const h = buildHierarchy(nodes, [e('e1', 's', 'lazy')]);
+    expect(collapseAll(nodes, h).has('lazy')).toBe(true);
+  });
+
+  it('collapseAll excludes a childless non-subagent and a zero-count subagent', () => {
+    const zero: Node = { ...n('z', 'subagent'), attrs: { descendant_count: 0 } };
+    const nodes = [n('s', 'session'), n('leaf', 'tool_call'), zero];
+    const h = buildHierarchy(nodes, [e('e1', 's', 'leaf'), e('e2', 's', 'z')]);
+    const collapsed = collapseAll(nodes, h);
+    expect(collapsed.has('leaf')).toBe(false);
+    expect(collapsed.has('z')).toBe(false);
+  });
+
   it('expandAll is the empty set', () => {
     expect(expandAll()).toEqual(new Set<string>());
   });

@@ -2198,3 +2198,491 @@ func TestMultiSourceTurnSelectsByFirstAppearanceDeterministic(t *testing.T) {
 		assert.Equal(t, want, got, "permutation %d diverged", i)
 	}
 }
+
+func agentPromptObs(uuid, agentID string, seq uint64) model.Observation {
+	o := promptObs(uuid, seq)
+	o.Correlation.AgentID = agentID
+	return o
+}
+
+func agentTurnObs(msg, agentID string, seq uint64) model.Observation {
+	o := turnObs(msg, seq)
+	o.Correlation.AgentID = agentID
+	return o
+}
+
+func subagentStopObs(parentToolUseID, subagentType, description string, seq uint64) model.Observation {
+	o := model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
+		Source: model.SourceJSONL, Kind: "subagent_stop",
+		Correlation: model.Correlation{SessionID: "s1", AgentID: "ag1", ParentToolUseID: parentToolUseID},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+	attrs := map[string]any{}
+	if subagentType != "" {
+		attrs["subagent_type"] = subagentType
+	}
+	if description != "" {
+		attrs["description"] = description
+	}
+	if len(attrs) > 0 {
+		o.Attrs = attrs
+	}
+	return o
+}
+
+func pcEdge(src, dst string) string {
+	return model.EdgeID("e1", model.EdgeParentChild, src, dst)
+}
+
+func TestInnerRootPromptParentsUnderSubagent(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentPromptObs("u1", "ag1", 1))
+
+	prompt := model.UserPromptID("e1", "u1")
+	assert.Contains(t, g.Edges, pcEdge(model.SubagentID("e1", "ag1"), prompt))
+	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), prompt))
+}
+
+func TestMainPromptStillParentsUnderSession(t *testing.T) {
+	g := NewGraph()
+	g.Apply(promptObs("u1", 1))
+	prompt := model.UserPromptID("e1", "u1")
+	assert.Contains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), prompt))
+}
+
+func TestSubagentParentsUnderAgentToolCall(t *testing.T) {
+	g := NewGraph()
+	g.Apply(subagentStopObs("toolu_agent", "researcher", "Review PR1 reparent", 5))
+
+	sub := model.SubagentID("e1", "ag1")
+	n := g.Nodes[sub]
+	require.NotNil(t, n)
+	assert.Equal(t, "researcher", n.SubagentType)
+	assert.Equal(t, "Review PR1 reparent", n.Name)
+	assert.Contains(t, g.Edges, pcEdge(model.ToolCallID("e1", "toolu_agent"), sub))
+	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), sub))
+}
+
+func TestSubagentMetaUpgradesSessionParentDropsStaleEdge(t *testing.T) {
+	g := NewGraph()
+	g.Apply(subagentStopObs("", "", "", 1))
+	sub := model.SubagentID("e1", "ag1")
+	sessionEdge := pcEdge(model.SessionNodeID("e1"), sub)
+	require.Contains(t, g.Edges, sessionEdge)
+	deletedRev := g.Edges[sessionEdge].Rev
+	_ = g.DrainDeltas()
+
+	g.Apply(subagentStopObs("toolu_agent", "researcher", "desc", 4))
+
+	toolEdge := pcEdge(model.ToolCallID("e1", "toolu_agent"), sub)
+	assert.Contains(t, g.Edges, toolEdge)
+	assert.NotContains(t, g.Edges, sessionEdge)
+
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	require.NotNil(t, dels[0].Edge)
+	assert.Equal(t, sessionEdge, dels[0].Edge.ID)
+	assert.GreaterOrEqual(t, dels[0].Rev, deletedRev)
+	assert.GreaterOrEqual(t, dels[0].Rev, uint64(4))
+
+	n := g.Nodes[sub]
+	assert.Equal(t, "researcher", n.SubagentType)
+	assert.Equal(t, "desc", n.Name)
+}
+
+func TestSubagentSessionStopAfterMetaLeavesNoStaleEdge(t *testing.T) {
+	g := NewGraph()
+	g.Apply(subagentStopObs("toolu_agent", "researcher", "desc", 1))
+	sub := model.SubagentID("e1", "ag1")
+	toolEdge := pcEdge(model.ToolCallID("e1", "toolu_agent"), sub)
+	require.Contains(t, g.Edges, toolEdge)
+	_ = g.DrainDeltas()
+
+	g.Apply(subagentStopObs("", "", "", 4))
+
+	assert.Contains(t, g.Edges, toolEdge)
+	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), sub))
+	assert.Empty(t, deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete))
+
+	edges := 0
+	for id, e := range g.Edges {
+		if e.Type == model.EdgeParentChild && e.Dst == sub {
+			assert.Equal(t, toolEdge, id)
+			edges++
+		}
+	}
+	assert.Equal(t, 1, edges)
+}
+
+func TestInnerPromptCarriesAgentID(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentPromptObs("u1", "ag1", 1))
+	n := g.Nodes[model.UserPromptID("e1", "u1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "ag1", n.AgentID)
+}
+
+func TestInnerTurnCarriesAgentID(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentTurnObs("m1", "ag1", 1))
+	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "ag1", n.AgentID)
+}
+
+func TestInnerToolCarriesAgentID(t *testing.T) {
+	o := toolObs("e1", "s1", "toolu_1", "Bash", string(model.StatusOK), 1)
+	o.Correlation.AgentID = "ag1"
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.ToolCallID("e1", "toolu_1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "ag1", n.AgentID)
+}
+
+func TestTopLevelNodesHaveNoAgentID(t *testing.T) {
+	g := NewGraph()
+	g.Apply(promptObs("u1", 1))
+	g.Apply(turnObs("m1", 2))
+	g.Apply(toolObs("e1", "s1", "toolu_1", "Bash", string(model.StatusOK), 3))
+	assert.Empty(t, g.Nodes[model.UserPromptID("e1", "u1")].AgentID)
+	assert.Empty(t, g.Nodes[model.AssistantTurnID("e1", "m1")].AgentID)
+	assert.Empty(t, g.Nodes[model.ToolCallID("e1", "toolu_1")].AgentID)
+}
+
+func TestSubagentParentOrderIndependent(t *testing.T) {
+	obs := []model.Observation{
+		subagentStopObs("", "", "", 1),
+		subagentStopObs("toolu_agent", "researcher", "desc", 2),
+		subagentStopObs("", "", "", 3),
+	}
+	sub := model.SubagentID("e1", "ag1")
+	toolEdge := pcEdge(model.ToolCallID("e1", "toolu_agent"), sub)
+	sessionEdge := pcEdge(model.SessionNodeID("e1"), sub)
+	for i, p := range permute(obs) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		assert.Contains(t, g.Edges, toolEdge, "permutation %d", i)
+		assert.NotContains(t, g.Edges, sessionEdge, "permutation %d", i)
+		n := g.Nodes[sub]
+		assert.Equal(t, "researcher", n.SubagentType, "permutation %d", i)
+		assert.Equal(t, "desc", n.Name, "permutation %d", i)
+	}
+}
+
+func TestSubagentMetaDescriptionFirstNonEmptyWins(t *testing.T) {
+	g := NewGraph()
+	g.Apply(subagentStopObs("toolu_agent", "researcher", "first", 1))
+	g.Apply(subagentStopObs("toolu_agent", "other", "second", 2))
+	n := g.Nodes[model.SubagentID("e1", "ag1")]
+	assert.Equal(t, "researcher", n.SubagentType)
+	assert.Equal(t, "first", n.Name)
+}
+
+func TestSubagentTurnBeforeInnerPromptHangsUnderSubagent(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentTurnObs("m1", "ag1", 2))
+
+	sub := model.SubagentID("e1", "ag1")
+	turn := model.AssistantTurnID("e1", "m1")
+	assert.Contains(t, g.Edges, pcEdge(sub, turn))
+	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
+}
+
+func TestSubagentTurnReparentsToInnerPrompt(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentTurnObs("m1", "ag1", 2))
+	sub := model.SubagentID("e1", "ag1")
+	turn := model.AssistantTurnID("e1", "m1")
+	subEdge := pcEdge(sub, turn)
+	require.Contains(t, g.Edges, subEdge)
+	_ = g.DrainDeltas()
+
+	g.Apply(agentPromptObs("u1", "ag1", 1))
+
+	prompt := model.UserPromptID("e1", "u1")
+	assert.Contains(t, g.Edges, pcEdge(prompt, turn))
+	assert.NotContains(t, g.Edges, subEdge)
+
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	assert.Equal(t, subEdge, dels[0].Edge.ID)
+}
+
+func TestAgentScopedTurnIgnoresForeignPrompt(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("uMain", 1),
+		agentTurnObs("mAg", "ag1", 2),
+	})
+	turn := model.AssistantTurnID("e1", "mAg")
+	assert.Contains(t, g.Edges, pcEdge(model.SubagentID("e1", "ag1"), turn))
+	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "uMain"), turn))
+}
+
+func TestMainTurnIgnoresSubagentPrompt(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		agentPromptObs("uAg", "ag1", 1),
+		turnObs("mMain", 2),
+	})
+	turn := model.AssistantTurnID("e1", "mMain")
+	assert.Contains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
+	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "uAg"), turn))
+}
+
+func TestAgentIsolationInterleavedExactEdgeSet(t *testing.T) {
+	obs := []model.Observation{
+		promptObs("uM1", 1),
+		agentPromptObs("uA1", "ag1", 2),
+		turnObs("mM1", 3),
+		agentTurnObs("mA1", "ag1", 4),
+		agentPromptObs("uB1", "ag2", 5),
+		agentTurnObs("mB1", "ag2", 6),
+		promptObs("uM2", 7),
+		turnObs("mM2", 8),
+		agentTurnObs("mA2", "ag1", 9),
+		agentTurnObs("mB2", "ag2", 10),
+	}
+	want := map[string]bool{
+		pcEdge(model.UserPromptID("e1", "uM1"), model.AssistantTurnID("e1", "mM1")): true,
+		pcEdge(model.UserPromptID("e1", "uM2"), model.AssistantTurnID("e1", "mM2")): true,
+		pcEdge(model.UserPromptID("e1", "uA1"), model.AssistantTurnID("e1", "mA1")): true,
+		pcEdge(model.UserPromptID("e1", "uA1"), model.AssistantTurnID("e1", "mA2")): true,
+		pcEdge(model.UserPromptID("e1", "uB1"), model.AssistantTurnID("e1", "mB1")): true,
+		pcEdge(model.UserPromptID("e1", "uB1"), model.AssistantTurnID("e1", "mB2")): true,
+		pcEdge(model.SessionNodeID("e1"), model.UserPromptID("e1", "uM1")):          true,
+		pcEdge(model.SessionNodeID("e1"), model.UserPromptID("e1", "uM2")):          true,
+		pcEdge(model.SubagentID("e1", "ag1"), model.UserPromptID("e1", "uA1")):      true,
+		pcEdge(model.SubagentID("e1", "ag2"), model.UserPromptID("e1", "uB1")):      true,
+	}
+	for i, p := range sampleOrders(obs, 64) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := map[string]bool{}
+		for id, e := range g.Edges {
+			if e.Type == model.EdgeParentChild {
+				got[id] = true
+			}
+		}
+		assert.Equal(t, want, got, "ordering %d edge set mismatch", i)
+	}
+}
+
+func sampleOrders(obs []model.Observation, n int) [][]model.Observation {
+	out := [][]model.Observation{append([]model.Observation(nil), obs...)}
+	state := uint64(0x9e3779b97f4a7c15)
+	next := func() uint64 {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		return state
+	}
+	for k := 1; k < n; k++ {
+		p := append([]model.Observation(nil), obs...)
+		for i := len(p) - 1; i > 0; i-- {
+			j := int(next() % uint64(i+1))
+			p[i], p[j] = p[j], p[i]
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func TestMainSessionRegressionByteIdentical(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		turnObs("m1", 2),
+		promptObs("u1", 1),
+		promptObs("u2", 5),
+		turnObs("m2", 3),
+		turnObs("m3", 6),
+		turnObs("m4", 4),
+	})
+
+	wantEdges := map[string]uint64{
+		pcEdge(model.SessionNodeID("e1"), model.UserPromptID("e1", "u1")):         1,
+		pcEdge(model.SessionNodeID("e1"), model.UserPromptID("e1", "u2")):         5,
+		pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")): 2,
+		pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m2")): 3,
+		pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m4")): 4,
+		pcEdge(model.UserPromptID("e1", "u2"), model.AssistantTurnID("e1", "m3")): 6,
+	}
+	gotEdges := map[string]uint64{}
+	for id, e := range g.Edges {
+		if e.Type == model.EdgeParentChild {
+			gotEdges[id] = e.Rev
+		}
+	}
+	assert.Equal(t, wantEdges, gotEdges)
+
+	wantDeletes := map[string]uint64{
+		pcEdge(model.SessionNodeID("e1"), model.AssistantTurnID("e1", "m1")): 2,
+	}
+	gotDeletes := map[string]uint64{}
+	for _, d := range deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete) {
+		gotDeletes[d.Edge.ID] = d.Rev
+	}
+	assert.Equal(t, wantDeletes, gotDeletes)
+}
+
+func TestLargeInterleavedParentInvariant(t *testing.T) {
+	groups := []string{"", "ag1", "ag2", "ag3"}
+	type rec struct {
+		isPrompt bool
+		group    string
+		seq      uint64
+	}
+	var obs []model.Observation
+	var recs []rec
+	var seq uint64
+	for i := 0; i < 240; i++ {
+		seq++
+		grp := groups[i%len(groups)]
+		if i%3 == 0 {
+			obs = append(obs, agentPromptObs("u"+strconv.Itoa(i), grp, seq))
+			recs = append(recs, rec{isPrompt: true, group: grp, seq: seq})
+		} else {
+			obs = append(obs, agentTurnObs("m"+strconv.Itoa(i), grp, seq))
+			recs = append(recs, rec{isPrompt: false, group: grp, seq: seq})
+		}
+	}
+	rng := func(n int) int { return (n*1103515245 + 12345) & 0x7fffffff }
+	for i := len(obs) - 1; i > 0; i-- {
+		j := rng(i) % (i + 1)
+		obs[i], obs[j] = obs[j], obs[i]
+	}
+
+	g := NewGraph()
+	g.ApplyAll(obs)
+
+	promptSeqs := map[string][]uint64{}
+	promptID := map[string]map[uint64]string{}
+	for i, r := range recs {
+		if !r.isPrompt {
+			continue
+		}
+		promptSeqs[r.group] = append(promptSeqs[r.group], r.seq)
+		if promptID[r.group] == nil {
+			promptID[r.group] = map[uint64]string{}
+		}
+		promptID[r.group][r.seq] = model.UserPromptID("e1", "u"+strconv.Itoa(i))
+	}
+	for _, s := range promptSeqs {
+		sort.Slice(s, func(a, b int) bool { return s[a] < s[b] })
+	}
+	root := func(group string) string {
+		if group == "" {
+			return model.SessionNodeID("e1")
+		}
+		return model.SubagentID("e1", group)
+	}
+	expectedParent := func(group string, turnSeq uint64) string {
+		seqs := promptSeqs[group]
+		var best uint64
+		found := false
+		for _, ps := range seqs {
+			if ps < turnSeq && (!found || ps > best) {
+				best = ps
+				found = true
+			}
+		}
+		if !found {
+			return root(group)
+		}
+		return promptID[group][best]
+	}
+	for i, r := range recs {
+		if r.isPrompt {
+			continue
+		}
+		turn := model.AssistantTurnID("e1", "m"+strconv.Itoa(i))
+		parent := expectedParent(r.group, r.seq)
+		assert.Contains(t, g.Edges, pcEdge(parent, turn), "turn %d (group %q seq %d)", i, r.group, r.seq)
+		childEdges := 0
+		for _, e := range g.Edges {
+			if e.Type == model.EdgeParentChild && e.Dst == turn {
+				childEdges++
+			}
+		}
+		assert.Equal(t, 1, childEdges, "turn %d must have exactly one parent", i)
+	}
+}
+
+func TestNearLinearReparentsOnlyAffectedTurns(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("u1", 10),
+		turnObs("m1", 11),
+		turnObs("m2", 12),
+		turnObs("m3", 30),
+	})
+	_ = g.DrainDeltas()
+
+	m1EdgeID := pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1"))
+	revBeforeM1 := g.Edges[m1EdgeID].Rev
+
+	g.Apply(promptObs("u2", 20))
+
+	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")))
+	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m2")))
+	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u2"), model.AssistantTurnID("e1", "m3")))
+
+	assert.Equal(t, revBeforeM1, g.Edges[m1EdgeID].Rev, "m1 edge Rev must not change when turn is not in affected interval")
+
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	assert.Equal(t, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m3")), dels[0].Edge.ID)
+}
+
+func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("u1", 5),
+		turnObs("m2", 7),
+		turnObs("m1", 10),
+	})
+	require.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")))
+	_ = g.DrainDeltas()
+
+	g.Apply(turnObs("m1", 3))
+
+	turn := model.AssistantTurnID("e1", "m1")
+	assert.Contains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
+	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), turn))
+
+	g.Apply(promptObs("u2", 8))
+	assert.Contains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
+	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u2"), turn))
+
+	_ = g.DrainDeltas()
+	g.Apply(promptObs("u0", 1))
+	u0 := model.UserPromptID("e1", "u0")
+	assert.Contains(t, g.Edges, pcEdge(u0, turn), "turn must reparent to prompt before it after repositionTurn")
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	assert.Equal(t, pcEdge(model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
+}
+
+func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
+	obs := []model.Observation{
+		promptObs("uM", 1),
+		agentPromptObs("uA", "ag1", 2),
+		turnObs("mM", 3),
+		agentTurnObs("mA", "ag1", 4),
+		subagentStopObs("toolu_agent", "researcher", "desc", 5),
+		agentTurnObs("mA2", "ag1", 6),
+	}
+	var want string
+	for i, p := range permute(obs) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateOf } from './aggregate';
+import { aggregateOf, rowAggregate, descendantCount, isLazySubagent } from './aggregate';
 import { buildHierarchy } from './hierarchy';
 import type { Node, Edge } from '../types';
 
@@ -108,5 +108,92 @@ describe('aggregateOf', () => {
     const agg = aggregateOf('p', h, partial);
     expect(agg.count).toBe(0);
     expect(agg.tokensIn).toBe(0);
+  });
+});
+
+describe('descendantCount', () => {
+  it('reads a numeric descendant_count from attrs', () => {
+    expect(descendantCount(n('s', { type: 'subagent', attrs: { descendant_count: 5 } }))).toBe(5);
+  });
+
+  it('returns 0 when the attr is absent or non-numeric', () => {
+    expect(descendantCount(n('s', { type: 'subagent' }))).toBe(0);
+    expect(descendantCount(n('s', { type: 'subagent', attrs: { descendant_count: 'x' } }))).toBe(0);
+  });
+});
+
+describe('rowAggregate', () => {
+  it('uses the live descendant sum once the subtree is loaded', () => {
+    const nodes = [
+      n('s', { type: 'subagent', attrs: { descendant_count: 99 } }),
+      n('a', { tokens_in: 10, tokens_out: 20, cost_usd: 0.1 }),
+    ];
+    const edges = [e('e1', 's', 'a')];
+    const h = buildHierarchy(nodes, edges);
+    const agg = rowAggregate(nodes[0]!, h, index(nodes));
+    expect(agg.count).toBe(1);
+    expect(agg.tokensIn).toBe(10);
+    expect(agg.tokensOut).toBe(20);
+  });
+
+  it('falls back to backend attrs for an unloaded subagent', () => {
+    const node = n('s', {
+      type: 'subagent',
+      attrs: {
+        descendant_count: 7,
+        descendant_tokens_in: 100,
+        descendant_tokens_out: 40,
+        descendant_cost_usd: 0.5,
+      },
+    });
+    const h = buildHierarchy([node], []);
+    expect(rowAggregate(node, h, index([node]))).toEqual({
+      count: 7,
+      tokensIn: 100,
+      tokensOut: 40,
+      costUsd: 0.5,
+      status: 'ok',
+      hasError: false,
+    });
+  });
+
+  it('defaults missing token/cost attrs to 0 in the fallback', () => {
+    const node = n('s', { type: 'subagent', attrs: { descendant_count: 3 } });
+    const h = buildHierarchy([node], []);
+    expect(rowAggregate(node, h, index([node]))).toEqual({
+      count: 3,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+      status: 'ok',
+      hasError: false,
+    });
+  });
+
+  it('does not fall back for a non-subagent node without descendants', () => {
+    const node = n('p');
+    const h = buildHierarchy([node], []);
+    expect(rowAggregate(node, h, index([node])).count).toBe(0);
+  });
+
+  it('does not fall back for a subagent lacking descendant_count', () => {
+    const node = n('s', { type: 'subagent' });
+    const h = buildHierarchy([node], []);
+    expect(rowAggregate(node, h, index([node])).count).toBe(0);
+  });
+});
+
+describe('isLazySubagent', () => {
+  it('true for a subagent with a positive backend descendant_count', () => {
+    expect(isLazySubagent(n('s', { type: 'subagent', attrs: { descendant_count: 3 } }))).toBe(true);
+  });
+
+  it('false for a subagent whose descendant_count is zero or absent', () => {
+    expect(isLazySubagent(n('s', { type: 'subagent', attrs: { descendant_count: 0 } }))).toBe(false);
+    expect(isLazySubagent(n('s', { type: 'subagent' }))).toBe(false);
+  });
+
+  it('false for a non-subagent even with a positive descendant_count', () => {
+    expect(isLazySubagent(n('p', { type: 'tool_call', attrs: { descendant_count: 9 } }))).toBe(false);
   });
 });
