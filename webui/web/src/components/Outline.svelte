@@ -54,6 +54,7 @@
         snippets = {};
         attempted = new Set();
         scrollTop = 0;
+        showSystem = false;
         if (scrollEl) scrollEl.scrollTop = 0;
       }
     });
