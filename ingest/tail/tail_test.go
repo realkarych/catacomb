@@ -366,3 +366,143 @@ func TestPollFileReadAtError(t *testing.T) {
 	require.NoError(t, tl.PollOnce(context.Background()))
 	assert.Empty(t, sink.lines)
 }
+
+type countingStore struct {
+	*memStore
+	mu      sync.Mutex
+	upserts int
+}
+
+func (s *countingStore) UpsertTailCursor(c model.TailCursor) error {
+	s.mu.Lock()
+	s.upserts++
+	s.mu.Unlock()
+	return s.memStore.UpsertTailCursor(c)
+}
+
+func (s *countingStore) upsertCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upserts
+}
+
+func TestPollFileSkipsUnchangedSizeMtime(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "idle.jsonl")
+	write(t, p, tickLine)
+
+	st := &countingStore{memStore: newMemStore()}
+	sink := &fakeSink{}
+	tl := New(dir, nil, st, sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	firstUpserts := st.upsertCount()
+	require.Greater(t, firstUpserts, 0)
+
+	openCalls := 0
+	withOpen(t, func(path string) (fileHandle, error) {
+		openCalls++
+		return os.Open(path)
+	})
+
+	upsertsBefore := st.upsertCount()
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Equal(t, 0, openCalls)
+	assert.Equal(t, upsertsBefore, st.upsertCount())
+}
+
+func TestPollFileNewFileNotSkipped(t *testing.T) {
+	dir := t.TempDir()
+	st := &countingStore{memStore: newMemStore()}
+	sink := &fakeSink{}
+	tl := New(dir, nil, st, sink)
+	require.NoError(t, tl.Load())
+
+	openCalls := 0
+	withOpen(t, func(path string) (fileHandle, error) {
+		openCalls++
+		return os.Open(path)
+	})
+
+	p := filepath.Join(dir, "newf.jsonl")
+	write(t, p, tickLine)
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Greater(t, openCalls, 0)
+	assert.Greater(t, st.upsertCount(), 0)
+	assert.Len(t, sink.lines, 1)
+}
+
+func TestPollFileGrownFileIngested(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "grow.jsonl")
+	write(t, p, tickLine)
+
+	sink := &fakeSink{}
+	tl := New(dir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	require.Len(t, sink.lines, 1)
+
+	write(t, p, tickLine)
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Len(t, sink.lines, 2)
+}
+
+func TestPollFileMtimeChangedNotSizeStillPolled(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mtime.jsonl")
+	write(t, p, tickLine)
+
+	sink := &fakeSink{}
+	tl := New(dir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	require.Len(t, sink.lines, 1)
+
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+	origSize := info.Size()
+	origMtime := info.ModTime().UnixNano()
+
+	fakeMtime := origMtime + int64(time.Second)
+	withStat(t, func(path string) (os.FileInfo, error) {
+		real, serr := os.Stat(path)
+		if serr != nil {
+			return nil, serr
+		}
+		return &fakeSizeModTime{FileInfo: real, size: origSize, mtime: time.Unix(0, fakeMtime)}, nil
+	})
+
+	openCalls := 0
+	withOpen(t, func(path string) (fileHandle, error) {
+		openCalls++
+		return os.Open(path)
+	})
+
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Greater(t, openCalls, 0)
+}
+
+func TestPollFileTruncationStillResetsAndLossy(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "trunc2.jsonl")
+	write(t, p, tickLine+tickLine)
+	sink := &fakeSink{}
+	tl := New(dir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+	require.Len(t, sink.lines, 2)
+
+	require.NoError(t, os.WriteFile(p, []byte(tickLine), 0o600))
+	require.NoError(t, tl.PollOnce(context.Background()))
+	assert.Contains(t, sink.lossy, "trunc2")
+}
+
+type fakeSizeModTime struct {
+	os.FileInfo
+	size  int64
+	mtime time.Time
+}
+
+func (f *fakeSizeModTime) Size() int64        { return f.size }
+func (f *fakeSizeModTime) ModTime() time.Time { return f.mtime }

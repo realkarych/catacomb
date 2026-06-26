@@ -167,6 +167,9 @@ func (tl *Tailer) pollFile(path string) error {
 		st = &fileState{cursor: model.TailCursor{Path: path}}
 		tl.files[path] = st
 	}
+	if ok && info.Size() == st.cursor.Size && info.ModTime().UnixNano() == st.cursor.Mtime {
+		return nil
+	}
 	size := info.Size()
 	session := sessionOf(path)
 
