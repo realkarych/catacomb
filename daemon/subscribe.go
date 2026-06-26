@@ -19,6 +19,7 @@ type Subscription struct {
 	Consumer *cdc.Consumer
 	filter   SubFilter
 	execSet  map[string]bool
+	daemon   *Daemon
 }
 
 func matchNode(f SubFilter, n *model.Node) bool {
@@ -71,11 +72,13 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 			continue
 		}
 		nodes, edges := g.Snapshot()
+		rollups := subagentRollups(g, execID)
 		for _, n := range nodes {
-			if !matchNode(f, n) {
+			if !matchNode(f, n) || isInnerNode(execID, n) {
 				continue
 			}
 			nc := copyNode(n)
+			decorateSubagent(nc, rollups)
 			snapshot = append(snapshot, cdc.GraphDelta{
 				Kind:        cdc.DeltaNodeUpsert,
 				Rev:         n.Rev,
@@ -85,7 +88,7 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 			})
 		}
 		for _, e := range edges {
-			if !matchEdge(f, e) {
+			if !matchEdge(f, e) || isInnerNode(execID, g.Nodes[e.Src]) || isInnerNode(execID, g.Nodes[e.Dst]) {
 				continue
 			}
 			ec := copyEdge(e)
@@ -99,7 +102,7 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 		}
 	}
 	consumer := d.bus.Subscribe(bufSize)
-	return &Subscription{Snapshot: snapshot, Consumer: consumer, filter: f, execSet: execSet}
+	return &Subscription{Snapshot: snapshot, Consumer: consumer, filter: f, execSet: execSet, daemon: d}
 }
 
 func (s *Subscription) match(d cdc.GraphDelta) bool {
@@ -107,6 +110,53 @@ func (s *Subscription) match(d cdc.GraphDelta) bool {
 		return false
 	}
 	return matchDelta(s.filter, d)
+}
+
+func (s *Subscription) transform(d cdc.GraphDelta) (cdc.GraphDelta, bool) {
+	if !s.match(d) {
+		return d, false
+	}
+	switch d.Kind {
+	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus, cdc.DeltaNodeMerge:
+		if d.Node == nil {
+			return d, true
+		}
+		if isInnerNode(d.ExecutionID, d.Node) {
+			return d, false
+		}
+		if d.Node.Type == model.NodeSubagent && d.Node.AgentID != "" {
+			d.Node = s.decorate(d.ExecutionID, d.Node)
+		}
+		return d, true
+	case cdc.DeltaEdgeUpsert, cdc.DeltaEdgeDelete:
+		if d.Edge == nil {
+			return d, true
+		}
+		if s.edgeIsInner(d.ExecutionID, d.Edge) {
+			return d, false
+		}
+		return d, true
+	}
+	return d, true
+}
+
+func (s *Subscription) decorate(execID string, n *model.Node) *model.Node {
+	nc := copyNode(n)
+	s.daemon.mu.Lock()
+	agg := subagentAggregate(s.daemon.graphs[execID], execID, n.AgentID)
+	s.daemon.mu.Unlock()
+	applyAggregate(nc, &agg)
+	return nc
+}
+
+func (s *Subscription) edgeIsInner(execID string, e *model.Edge) bool {
+	s.daemon.mu.Lock()
+	defer s.daemon.mu.Unlock()
+	g := s.daemon.graphs[execID]
+	if g == nil {
+		return false
+	}
+	return isInnerNode(execID, g.Nodes[e.Src]) || isInnerNode(execID, g.Nodes[e.Dst])
 }
 
 func (d *Daemon) Unsubscribe(s *Subscription) {

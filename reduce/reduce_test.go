@@ -2315,6 +2315,42 @@ func TestSubagentSessionStopAfterMetaLeavesNoStaleEdge(t *testing.T) {
 	assert.Equal(t, 1, edges)
 }
 
+func TestInnerPromptCarriesAgentID(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentPromptObs("u1", "ag1", 1))
+	n := g.Nodes[model.UserPromptID("e1", "u1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "ag1", n.AgentID)
+}
+
+func TestInnerTurnCarriesAgentID(t *testing.T) {
+	g := NewGraph()
+	g.Apply(agentTurnObs("m1", "ag1", 1))
+	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "ag1", n.AgentID)
+}
+
+func TestInnerToolCarriesAgentID(t *testing.T) {
+	o := toolObs("e1", "s1", "toolu_1", "Bash", string(model.StatusOK), 1)
+	o.Correlation.AgentID = "ag1"
+	g := NewGraph()
+	g.Apply(o)
+	n := g.Nodes[model.ToolCallID("e1", "toolu_1")]
+	require.NotNil(t, n)
+	assert.Equal(t, "ag1", n.AgentID)
+}
+
+func TestTopLevelNodesHaveNoAgentID(t *testing.T) {
+	g := NewGraph()
+	g.Apply(promptObs("u1", 1))
+	g.Apply(turnObs("m1", 2))
+	g.Apply(toolObs("e1", "s1", "toolu_1", "Bash", string(model.StatusOK), 3))
+	assert.Empty(t, g.Nodes[model.UserPromptID("e1", "u1")].AgentID)
+	assert.Empty(t, g.Nodes[model.AssistantTurnID("e1", "m1")].AgentID)
+	assert.Empty(t, g.Nodes[model.ToolCallID("e1", "toolu_1")].AgentID)
+}
+
 func TestSubagentParentOrderIndependent(t *testing.T) {
 	obs := []model.Observation{
 		subagentStopObs("", "", "", 1),

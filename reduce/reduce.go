@@ -13,6 +13,12 @@ func (g *Graph) emitNode(n *model.Node, o model.Observation) {
 	g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: o.Seq, Node: n, RunID: o.RunID, ExecutionID: o.ExecutionID})
 }
 
+func setAgentID(n *model.Node, o model.Observation) {
+	if o.Correlation.AgentID != "" {
+		n.AgentID = o.Correlation.AgentID
+	}
+}
+
 func (g *Graph) ApplyAll(obs []model.Observation) {
 	for _, o := range obs {
 		g.Apply(o)
@@ -47,6 +53,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
+		setAgentID(n, o)
 		if pk, ok := o.Attrs["prompt_kind"].(string); ok && pk != "" {
 			if n.Attrs == nil {
 				n.Attrs = map[string]any{}
@@ -60,6 +67,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "assistant_turn":
 		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
+		setAgentID(n, o)
 		g.stampEnd(n, o)
 		if g.applyTokens(n, o.Attrs, o.Source) {
 			g.applyCost(n, o.Attrs)
@@ -108,6 +116,7 @@ func (g *Graph) applyTool(o model.Observation) {
 		n.Type = model.NodeMCPCall
 	}
 	g.stamp(n, o)
+	setAgentID(n, o)
 	if o.Kind == "tool_result" {
 		g.stampEnd(n, o)
 	}
