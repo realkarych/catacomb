@@ -145,6 +145,7 @@ test('clicking an outline row opens the drawer with metric values', async ({ pag
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toHaveClass(/node-drawer--open/);
+  await drawer.locator('.advanced-summary').click();
   await expect(drawer.locator('.metric-row')).toHaveCount(5);
   await expect(drawer).toContainText('Tokens in');
   await expect(drawer).toContainText('10');
@@ -165,6 +166,7 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer on load', async ({ page }) =>
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toHaveClass(/node-drawer--open/, { timeout: 8000 });
   await expect(drawer).toContainText('Assistant Turn');
+  await drawer.locator('.advanced-summary').click();
   await expect(drawer.locator('.metric-row')).toHaveCount(5);
 });
 

@@ -135,6 +135,11 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
 
+  await expect(drawer.locator('.meta-summary')).toContainText('4.2s');
+  await expect(drawer.locator('.meta-summary')).toContainText('$0.0031');
+
+  await drawer.locator('.advanced-summary').click();
+
   await expect(drawer.locator('.metric-row')).toHaveCount(5);
 
   await expect(drawer).toContainText('Duration');
@@ -171,6 +176,8 @@ test('hero flow: clicking node without metrics shows dashes for unknown fields',
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
+
+  await drawer.locator('.advanced-summary').click();
 
   await expect(drawer).toContainText('Duration');
   await expect(drawer).toContainText('—');
