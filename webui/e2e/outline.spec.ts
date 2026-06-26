@@ -28,7 +28,7 @@ const sseEvents: SseEvent[] = [
   { kind: 'edge_upsert', rev: 3, edge: { id: 'e1', run_id: 'run-out', type: 'parent_child', src: 'n-session', dst: 'n-prompt', rev: 3 } },
   { kind: 'node_upsert', rev: 4, node: { id: 'n-turn', run_id: 'run-out', type: 'assistant_turn', name: 'assistant turn', status: 'ok', t_start: '2026-06-20T10:00:02Z', tokens_in: 80, tokens_out: 40, cost_usd: 0.0009, payload_hash: 'ph-turn', rev: 4 } },
   { kind: 'edge_upsert', rev: 5, edge: { id: 'e2', run_id: 'run-out', type: 'parent_child', src: 'n-prompt', dst: 'n-turn', rev: 5 } },
-  { kind: 'node_upsert', rev: 6, node: { id: 'n-tool', run_id: 'run-out', type: 'tool_call', name: 'BashTool', status: 'ok', t_start: '2026-06-20T10:00:03Z', tokens_in: 10, tokens_out: 5, rev: 6 } },
+  { kind: 'node_upsert', rev: 6, node: { id: 'n-tool', run_id: 'run-out', type: 'tool_call', name: 'BashTool', status: 'ok', t_start: '2026-06-20T10:00:03Z', duration_ms: 307, tokens_in: 10, tokens_out: 5, payload_hash: 'ph-tool', rev: 6 } },
   { kind: 'edge_upsert', rev: 7, edge: { id: 'e3', run_id: 'run-out', type: 'parent_child', src: 'n-turn', dst: 'n-tool', rev: 7 } },
 ];
 
@@ -39,6 +39,26 @@ const promptPayload: PayloadView = {
   redactions: [],
   redacted: false,
 };
+
+const toolPayload: PayloadView = {
+  node_id: 'n-tool',
+  payload_hash: 'ph-tool',
+  input: { command: 'ls -la /some/path' },
+  output: { stdout: 'total 0\ndrwxr-xr-x  2 user  staff  64 Jun 20 10:00 .' },
+  redactions: [],
+  redacted: false,
+};
+
+async function routeNodePayloads(page: Page): Promise<void> {
+  await page.route(`/v1/sessions/${sessionHash}/nodes/**`, async (route: Route) => {
+    const url = route.request().url();
+    if (url.includes('n-tool')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(toolPayload) });
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptPayload) });
+    }
+  });
+}
 
 function buildSseBody(events: SseEvent[]): string {
   return events.map((ev) => `data: ${JSON.stringify(ev)}\n\n`).join('');
@@ -232,4 +252,58 @@ test('collapse all and expand all toolbar buttons work', async ({ page }) => {
   await page.getByRole('button', { name: 'Collapse all' }).click();
   await expect(page.locator('.outline-row').filter({ hasText: 'BashTool' })).toHaveCount(0);
   await expect(page.locator('.outline-row').filter({ hasText: 'session' }).first()).toBeVisible();
+});
+
+test('the legend strip explains the stat columns', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const legend = page.locator('.outline-legend');
+  await expect(legend).toBeVisible();
+  await expect(legend).toContainText('assistant');
+  await expect(legend).toContainText('in · out · cost · duration');
+  await expect(legend).toContainText('tool');
+  await expect(legend).toContainText('collapsed');
+});
+
+test('an assistant row shows labeled token/cost/duration stats with no bare arrow', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+  const turnRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
+  const stat = turnRow.locator('.outline-stat-text');
+  await expect(stat).toContainText('in 80');
+  await expect(stat).toContainText('out 40');
+  await expect(stat).toContainText('$');
+  await expect(stat).not.toContainText('→');
+  await expect(stat).toHaveAttribute('title', /input/);
+});
+
+test('a tool row shows duration and an inline command/output snippet, no token columns', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Expand all' }).click();
+  const toolRow = page.locator('.outline-row').filter({ hasText: 'BashTool' }).first();
+  await expect(toolRow).toBeVisible();
+
+  const stat = toolRow.locator('.outline-stat-text');
+  await expect(stat).toHaveText('307ms');
+  await expect(stat).not.toContainText('in ');
+  await expect(stat).not.toContainText('$');
+  await expect(stat).not.toContainText('→');
+
+  await expect(toolRow.locator('.outline-snippet')).toContainText('ls -la /some/path', { timeout: 5000 });
+  await expect(toolRow.locator('.outline-snippet')).toContainText('→');
+  await expect(toolRow.locator('.outline-snippet')).toContainText('total 0');
 });

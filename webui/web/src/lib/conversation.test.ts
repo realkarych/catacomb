@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { isConversationNode, conversationText } from './conversation';
+import {
+  isConversationNode,
+  conversationText,
+  isToolNode,
+  toolKeyArg,
+  toolOutputSnippet,
+  cleanRedacted,
+} from './conversation';
 
 describe('isConversationNode', () => {
   it('returns true for user_prompt', () => {
@@ -129,5 +136,176 @@ describe('conversationText', () => {
     expect(conversationText([{ text: 'hello' }, { text: 'world' }])).toBe(
       '[\n  {\n    "text": "hello"\n  },\n  {\n    "text": "world"\n  }\n]'
     );
+  });
+});
+
+describe('isToolNode', () => {
+  it('returns true for tool_call', () => {
+    expect(isToolNode('tool_call')).toBe(true);
+  });
+
+  it('returns true for mcp_call', () => {
+    expect(isToolNode('mcp_call')).toBe(true);
+  });
+
+  it('returns false for user_prompt', () => {
+    expect(isToolNode('user_prompt')).toBe(false);
+  });
+
+  it('returns false for assistant_turn', () => {
+    expect(isToolNode('assistant_turn')).toBe(false);
+  });
+
+  it('returns false for empty string', () => {
+    expect(isToolNode('')).toBe(false);
+  });
+});
+
+describe('toolKeyArg', () => {
+  it('returns the Bash command', () => {
+    expect(toolKeyArg({ command: 'ls -la /tmp' })).toBe('ls -la /tmp');
+  });
+
+  it('returns the file_path for Read/Edit/Write', () => {
+    expect(toolKeyArg({ file_path: '/src/components/Foo.svelte' })).toBe('/src/components/Foo.svelte');
+  });
+
+  it('prefers command over file_path when both present', () => {
+    expect(toolKeyArg({ file_path: '/x', command: 'echo hi' })).toBe('echo hi');
+  });
+
+  it('returns the path key', () => {
+    expect(toolKeyArg({ path: '/etc/hosts' })).toBe('/etc/hosts');
+  });
+
+  it('returns the url key', () => {
+    expect(toolKeyArg({ url: 'https://example.com' })).toBe('https://example.com');
+  });
+
+  it('returns the query key', () => {
+    expect(toolKeyArg({ query: 'select 1' })).toBe('select 1');
+  });
+
+  it('joins compact key args for mcp/other inputs', () => {
+    expect(toolKeyArg({ owner: 'octo', repo: 'cat' })).toBe('owner: octo · repo: cat');
+  });
+
+  it('skips empty and non-scalar values when joining', () => {
+    expect(toolKeyArg({ a: '', b: 'x', c: { nested: 1 }, d: 7 })).toBe('b: x · d: 7');
+  });
+
+  it('returns empty string for an empty object', () => {
+    expect(toolKeyArg({})).toBe('');
+  });
+
+  it('returns empty string for null', () => {
+    expect(toolKeyArg(null)).toBe('');
+  });
+
+  it('returns empty string for undefined', () => {
+    expect(toolKeyArg(undefined)).toBe('');
+  });
+
+  it('returns empty string for a non-object', () => {
+    expect(toolKeyArg('a string')).toBe('');
+  });
+
+  it('returns empty string for an array', () => {
+    expect(toolKeyArg(['a', 'b'])).toBe('');
+  });
+
+  it('coerces a preferred numeric/boolean value to string', () => {
+    expect(toolKeyArg({ command: 0 })).toBe('0');
+    expect(toolKeyArg({ command: true })).toBe('true');
+  });
+
+  it('falls through to the join when a preferred key holds a non-scalar', () => {
+    expect(toolKeyArg({ command: { nested: 1 }, repo: 'cat' })).toBe('repo: cat');
+  });
+
+  it('truncates a long key arg', () => {
+    const long = 'x'.repeat(120);
+    const out = toolKeyArg({ command: long });
+    expect(out.length).toBe(81);
+    expect(out.endsWith('…')).toBe(true);
+  });
+});
+
+describe('toolOutputSnippet', () => {
+  it('returns the first non-empty line of a string', () => {
+    expect(toolOutputSnippet('\n\n  hello world  \nsecond')).toBe('hello world');
+  });
+
+  it('reads stdout from an object', () => {
+    expect(toolOutputSnippet({ stdout: 'exit 0\nmore' })).toBe('exit 0');
+  });
+
+  it('reads content from an object', () => {
+    expect(toolOutputSnippet({ content: 'file body' })).toBe('file body');
+  });
+
+  it('reads result from an object', () => {
+    expect(toolOutputSnippet({ result: 'done' })).toBe('done');
+  });
+
+  it('reads text from an object', () => {
+    expect(toolOutputSnippet({ text: 'a line' })).toBe('a line');
+  });
+
+  it('flattens a content-block array via conversationText', () => {
+    expect(toolOutputSnippet([{ type: 'text', text: 'block line' }])).toBe('block line');
+  });
+
+  it('returns empty string for an object with no known keys', () => {
+    expect(toolOutputSnippet({ foo: 'bar' })).toBe('');
+  });
+
+  it('returns empty string for null', () => {
+    expect(toolOutputSnippet(null)).toBe('');
+  });
+
+  it('returns empty string for undefined', () => {
+    expect(toolOutputSnippet(undefined)).toBe('');
+  });
+
+  it('returns empty string when every line is blank', () => {
+    expect(toolOutputSnippet('   \n\t\n  ')).toBe('');
+  });
+
+  it('truncates a long first line to ~80 chars', () => {
+    const long = 'y'.repeat(200);
+    const out = toolOutputSnippet(long);
+    expect(out.length).toBe(81);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('ignores a non-string known key and falls through to empty', () => {
+    expect(toolOutputSnippet({ stdout: 42 })).toBe('');
+  });
+});
+
+describe('cleanRedacted', () => {
+  it('returns [redacted] when text is the high-entropy placeholder', () => {
+    expect(cleanRedacted('‹redacted:high-entropy›')).toBe('[redacted]');
+  });
+
+  it('returns [redacted] for any redaction reason', () => {
+    expect(cleanRedacted('‹redacted:aws-key›')).toBe('[redacted]');
+  });
+
+  it('returns [redacted] when the placeholder is embedded in a line', () => {
+    expect(cleanRedacted('token=‹redacted:github-token›')).toBe('[redacted]');
+  });
+
+  it('returns [redacted] for a binary placeholder', () => {
+    expect(cleanRedacted('‹binary:12,deadbeef›')).toBe('[redacted]');
+  });
+
+  it('passes through normal text unchanged', () => {
+    expect(cleanRedacted('hello world')).toBe('hello world');
+  });
+
+  it('passes through empty string unchanged', () => {
+    expect(cleanRedacted('')).toBe('');
   });
 });

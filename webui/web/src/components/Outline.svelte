@@ -6,11 +6,17 @@
   import type { OutlineRow } from '../lib/graph/outline';
   import { toggle as toggleCollapse, collapseAll, expandAll } from '../lib/graph/collapse';
   import { aggregateOf } from '../lib/graph/aggregate';
-  import { badgeStatLine, badgeStatusColor } from '../lib/graph/badge';
+  import { rowStatLine } from '../lib/graph/outline-stats';
   import { nodeTypeInfo } from '../lib/node-legend';
   import { filterNodes, isActive } from '../lib/filters';
-  import { formatTokens, formatCost, formatDuration } from '../lib/format/format';
-  import { isConversationNode, conversationText } from '../lib/conversation';
+  import {
+    isConversationNode,
+    isToolNode,
+    conversationText,
+    toolKeyArg,
+    toolOutputSnippet,
+    cleanRedacted,
+  } from '../lib/conversation';
   import { fetchNodePayload, NotFoundError, ForbiddenError } from '../lib/api';
 
   interface Props {
@@ -101,14 +107,31 @@
   let snippets = $state.raw<Record<string, string>>({});
   let attempted = new Set<string>();
 
-  async function loadSnippet(id: string) {
+  function clip(text: string): string {
+    return text.length > SNIPPET_MAX ? text.slice(0, SNIPPET_MAX) + '…' : text;
+  }
+
+  function conversationSnippet(view: { input?: unknown; output?: unknown }): string {
+    const raw = conversationText(view.input ?? view.output);
+    const firstLine = raw.split('\n', 1)[0]?.trim() ?? '';
+    if (!firstLine) return '';
+    return clip(cleanRedacted(firstLine));
+  }
+
+  function toolSnippet(view: { input?: unknown; output?: unknown }): string {
+    const keyArg = cleanRedacted(toolKeyArg(view.input));
+    const out = cleanRedacted(toolOutputSnippet(view.output));
+    const combined = keyArg && out ? `${keyArg} → ${out}` : keyArg || out;
+    if (!combined) return '';
+    return clip(combined);
+  }
+
+  async function loadSnippet(id: string, isTool: boolean) {
     attempted.add(id);
     try {
       const view = await fetchNodePayload(hash, id, token);
-      const raw = conversationText(view.input ?? view.output);
-      const firstLine = raw.split('\n', 1)[0]?.trim() ?? '';
-      if (!firstLine) return;
-      const snippet = firstLine.length > SNIPPET_MAX ? firstLine.slice(0, SNIPPET_MAX) + '…' : firstLine;
+      const snippet = isTool ? toolSnippet(view) : conversationSnippet(view);
+      if (!snippet) return;
       untrack(() => {
         snippets = { ...snippets, [id]: snippet };
       });
@@ -121,10 +144,11 @@
     const vis = visibleRows;
     untrack(() => {
       for (const row of vis) {
-        if (!isConversationNode(row.node.type)) continue;
+        const tool = isToolNode(row.node.type);
+        if (!isConversationNode(row.node.type) && !tool) continue;
         if (!row.node.payload_hash) continue;
         if (attempted.has(row.id)) continue;
-        void loadSnippet(row.id);
+        void loadSnippet(row.id, tool);
       }
     });
   });
@@ -245,14 +269,10 @@
     }
   }
 
-  function rowStats(row: OutlineRow): { text: string; color: string } {
-    if (row.collapsed && row.hasChildren) {
-      const agg = aggregateOf(row.id, hierarchy, byId);
-      return { text: badgeStatLine(agg), color: badgeStatusColor(agg.status) };
-    }
-    const n = row.node;
-    const text = `${formatTokens(n.tokens_in)}→${formatTokens(n.tokens_out)} · ${formatCost(n.cost_usd)} · ${formatDuration(n.duration_ms)}`;
-    return { text, color: badgeStatusColor(n.status === 'error' ? 'error' : n.status === 'running' ? 'running' : 'ok') };
+  function rowStats(row: OutlineRow): { text: string; title: string; color: string } {
+    const aggregate =
+      row.collapsed && row.hasChildren ? aggregateOf(row.id, hierarchy, byId) : undefined;
+    return rowStatLine(row.node, { collapsed: row.collapsed, hasChildren: row.hasChildren, aggregate });
   }
 </script>
 
@@ -268,6 +288,11 @@
       <button class="outline-toolbar-btn" type="button" onclick={handleCollapseAll}>Collapse all</button>
       <button class="outline-toolbar-btn" type="button" onclick={handleExpandAll}>Expand all</button>
       <button class="outline-toolbar-btn" type="button" onclick={handleReset}>Reset</button>
+    </div>
+    <div class="outline-legend" aria-label="Stat legend">
+      <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> in · out · cost · duration</span>
+      <span class="outline-legend-item"><span class="outline-legend-key">tool</span> arg → output · duration</span>
+      <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> N nodes · in · out · cost</span>
     </div>
     <div
       bind:this={scrollEl}
@@ -285,7 +310,7 @@
           {@const stats = rowStats(row)}
           {@const isSelected = selectedNodeId.value === row.id}
           {@const isFilteredOut = matching !== null && !matching.has(row.id)}
-          {@const snippet = isConversationNode(row.node.type) ? snippets[row.id] : undefined}
+          {@const snippet = isConversationNode(row.node.type) || isToolNode(row.node.type) ? snippets[row.id] : undefined}
           <div
             class="outline-row"
             role="treeitem"
@@ -316,7 +341,7 @@
               {#if snippet}<span class="outline-snippet">{snippet}</span>{/if}
             </span>
             <span class="outline-stats">
-              <span class="outline-stat-text">{stats.text}</span>
+              <span class="outline-stat-text" title={stats.title || undefined}>{stats.text}</span>
               <span class="outline-dot" style="background: {stats.color};" aria-hidden="true"></span>
             </span>
           </div>
@@ -361,6 +386,26 @@
   .outline-toolbar-btn:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+  }
+
+  .outline-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s4);
+    padding: var(--s1) var(--s4);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  .outline-legend-item {
+    white-space: nowrap;
+  }
+
+  .outline-legend-key {
+    color: var(--text-dim);
   }
 
   .outline-scroll {
