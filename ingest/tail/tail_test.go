@@ -579,6 +579,14 @@ func TestPollOnceIngestsAgentTranscriptViaSymlink(t *testing.T) {
 	assert.Equal(t, "general-purpose", metas[0].AgentType)
 	assert.Equal(t, "Test agent", metas[0].Description)
 
+	sink.mu.Lock()
+	sessIDs := sink.sess
+	sink.mu.Unlock()
+	require.NotEmpty(t, sessIDs)
+	for _, s := range sessIDs {
+		assert.Equal(t, sessionID, s)
+	}
+
 	require.NoError(t, tl.PollOnce(context.Background()))
 	sink.mu.Lock()
 	assert.Len(t, sink.metas, 1, "meta should not be re-emitted")
@@ -610,6 +618,50 @@ func TestPollOnceAgentMissingMetaNoError(t *testing.T) {
 
 	sink.mu.Lock()
 	assert.Empty(t, sink.metas)
+	sink.mu.Unlock()
+}
+
+func TestPollOnceMissingMetaRetriedOnNextPoll(t *testing.T) {
+	real := t.TempDir()
+
+	sessionID := "main-sess-retry"
+	agentLine := `{"type":"assistant","sessionId":"` + sessionID + `","agentId":"agZ","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"done"}]}}` + "\n"
+
+	agentDir := filepath.Join(real, sessionID, "subagents")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	agentFile := filepath.Join(agentDir, "agent-agZ.jsonl")
+	write(t, agentFile, agentLine)
+
+	target := filepath.Join(real, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(target, []byte(`{"type":"assistant","sessionId":"`+sessionID+`","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m2","content":[{"type":"text","text":"main"}]}}`+"\n"), 0o600))
+
+	symlinkDir := t.TempDir()
+	mainFile := filepath.Join(symlinkDir, sessionID+".jsonl")
+	require.NoError(t, os.Symlink(target, mainFile))
+
+	sink := &fakeSink{}
+	tl := New(symlinkDir, nil, newMemStore(), sink)
+	require.NoError(t, tl.Load())
+	require.NoError(t, tl.PollOnce(context.Background()))
+
+	sink.mu.Lock()
+	assert.NotEmpty(t, sink.lines, "lines must be ingested on first poll")
+	assert.Empty(t, sink.metas, "no meta without .meta.json")
+	sink.mu.Unlock()
+
+	metaJSON := `{"agentType":"general-purpose","description":"Retry agent","toolUseId":"toolu_retry"}`
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "agent-agZ.meta.json"), []byte(metaJSON), 0o600))
+
+	require.NoError(t, tl.PollOnce(context.Background()))
+
+	sink.mu.Lock()
+	assert.Len(t, sink.metas, 1, "meta must be emitted after .meta.json appears")
+	sink.mu.Unlock()
+
+	require.NoError(t, tl.PollOnce(context.Background()))
+
+	sink.mu.Lock()
+	assert.Len(t, sink.metas, 1, "meta must not be re-emitted on third poll")
 	sink.mu.Unlock()
 }
 

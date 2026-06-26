@@ -256,11 +256,13 @@ func (tl *Tailer) pollFile(path string) error {
 		st = &fileState{cursor: model.TailCursor{Path: path}}
 		tl.files[path] = st
 	}
+	agentID := agentIDOf(path)
 	if ok && info.Size() == st.cursor.Size && info.ModTime().UnixNano() == st.cursor.Mtime {
-		return nil
+		if agentID == "" || st.metaEmitted {
+			return nil
+		}
 	}
 	size := info.Size()
-	agentID := agentIDOf(path)
 	session := sessionOf(path)
 	if agentID != "" {
 		if st.agentSession == "" {
@@ -293,8 +295,8 @@ func (tl *Tailer) pollFile(path string) error {
 				AgentType:   meta.AgentType,
 				Description: meta.Description,
 			})
+			st.metaEmitted = true
 		}
-		st.metaEmitted = true
 	}
 
 	if size == st.cursor.Offset {
