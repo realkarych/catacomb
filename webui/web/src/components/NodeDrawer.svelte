@@ -5,6 +5,8 @@
   import StatusPill from './StatusPill.svelte';
   import MetricRow from './MetricRow.svelte';
   import PayloadPanel from './PayloadPanel.svelte';
+  import { shouldShowStatus } from '../lib/status';
+  import { sessionsById } from '../lib/stores/stores.svelte';
 
   interface Props {
     hash: string;
@@ -12,6 +14,8 @@
     focusOnOpen?: boolean;
   }
   let { hash, token, focusOnOpen = false }: Props = $props();
+
+  const isLive = $derived(sessionsById[hash]?.status === 'running');
 
   const node = $derived(
     selectedNodeId.value ? (nodesById[selectedNodeId.value] ?? null) : null
@@ -104,7 +108,9 @@
       <div class="drawer-header">
         <div class="drawer-title-row">
           <span class="drawer-title">{node.name ?? node.type}</span>
-          <StatusPill status={node.status ?? 'pending'} />
+          {#if node.status !== undefined && shouldShowStatus(node.status, isLive)}
+            <StatusPill status={node.status} />
+          {/if}
         </div>
         <button class="close-btn" onclick={close} aria-label="Close node details">×</button>
       </div>
