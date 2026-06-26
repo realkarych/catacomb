@@ -1977,3 +1977,160 @@ func TestCumulativeCostNoDoubleCount(t *testing.T) {
 	require.True(t, found, "expected at least one assistant_turn node with cost")
 	assert.InDelta(t, 0.30, costUSD, 1e-9)
 }
+
+func promptObs(uuid string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
+		Source: model.SourceHook, Kind: "user_prompt",
+		Correlation: model.Correlation{SessionID: "s1", UUID: uuid},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func turnObs(msg string, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
+		Source: model.SourceHook, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: "s1", MessageID: msg},
+		EventTime:   time.Unix(int64(seq), 0).UTC(), ObservedAt: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestTurnParentsToPrecedingPrompt(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("u1", 1),
+		turnObs("m1", 2),
+	})
+	prompt := model.UserPromptID("e1", "u1")
+	turn := model.AssistantTurnID("e1", "m1")
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, prompt, turn))
+	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn))
+}
+
+func TestTurnParentsToGreatestPrecedingPrompt(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("u1", 1),
+		promptObs("u2", 3),
+		turnObs("m1", 4),
+	})
+	turn := model.AssistantTurnID("e1", "m1")
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u2"), turn))
+	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
+}
+
+func TestTurnWithoutPrecedingPromptParentsToSession(t *testing.T) {
+	g := NewGraph()
+	g.Apply(turnObs("m1", 2))
+	turn := model.AssistantTurnID("e1", "m1")
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn))
+}
+
+func TestLatePromptReparentsTurnFromSession(t *testing.T) {
+	g := NewGraph()
+	g.Apply(turnObs("m1", 2))
+	turn := model.AssistantTurnID("e1", "m1")
+	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn))
+	_ = g.DrainDeltas()
+
+	g.Apply(promptObs("u1", 1))
+	prompt := model.UserPromptID("e1", "u1")
+	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn))
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, prompt, turn))
+
+	ds := g.DrainDeltas()
+	dels := deltaByKind(ds, cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	require.NotNil(t, dels[0].Edge)
+	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
+}
+
+func TestLatePromptReparentsTurnFromEarlierPrompt(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("u1", 1),
+		turnObs("m1", 4),
+	})
+	turn := model.AssistantTurnID("e1", "m1")
+	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
+	_ = g.DrainDeltas()
+
+	g.Apply(promptObs("u2", 3))
+	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u2"), turn))
+
+	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	require.Len(t, dels, 1)
+	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn), dels[0].Edge.ID)
+}
+
+func TestLatePromptAfterTurnDoesNotReparentEarlierTurn(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		promptObs("u1", 1),
+		turnObs("m1", 2),
+	})
+	turn := model.AssistantTurnID("e1", "m1")
+	_ = g.DrainDeltas()
+
+	g.Apply(promptObs("u2", 5))
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
+	assert.Empty(t, deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete))
+}
+
+func TestToolStillParentsToTurnUnderReparentedTurn(t *testing.T) {
+	g := NewGraph()
+	prompt := promptObs("u1", 1)
+	turn := turnObs("m1", 2)
+	use := toolObs("e1", "s1", "tA", "Bash", "running", 3)
+	use.Correlation.MessageID = "m1"
+	g.ApplyAll([]model.Observation{prompt, turn, use})
+
+	turnID := model.AssistantTurnID("e1", "m1")
+	tool := model.ToolCallID("e1", "tA")
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turnID))
+	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, turnID, tool))
+}
+
+func TestTurnParentDeterministicAcrossOrder(t *testing.T) {
+	obs := []model.Observation{
+		promptObs("u1", 1),
+		promptObs("u2", 3),
+		turnObs("m1", 2),
+		turnObs("m2", 4),
+	}
+	var want string
+	for i, p := range permute(obs) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}
+
+func TestMultiSourceTurnSelectsByFirstAppearanceDeterministic(t *testing.T) {
+	obs := []model.Observation{
+		turnObs("m1", 2),
+		promptObs("u1", 3),
+		hookTurn("e1", "s1", "m1", 5, 2, time.Unix(4, 0).UTC(), 4),
+	}
+	var want string
+	for i, p := range permute(obs) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		turn := model.AssistantTurnID("e1", "m1")
+		assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn), "permutation %d", i)
+		assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn), "permutation %d", i)
+		got := canonGraph(g)
+		if i == 0 {
+			want = got
+			continue
+		}
+		assert.Equal(t, want, got, "permutation %d diverged", i)
+	}
+}
