@@ -36,18 +36,21 @@
 
   $effect(() => {
     const id = nodeId;
+    let stale = false;
     expanded = false;
     fetchState = 'idle';
     view = null;
     forbidden = false;
 
-    if (!payloadHash) return;
+    if (!payloadHash) return () => { stale = true; };
 
     fetchState = 'loading';
     fetchNodePayload(hash, id, token).then((result) => {
+      if (stale) return;
       view = result;
       fetchState = 'done';
     }).catch((e) => {
+      if (stale) return;
       if (e instanceof ForbiddenError) {
         forbidden = true;
         fetchState = 'done';
@@ -57,6 +60,7 @@
         fetchState = 'error';
       }
     });
+    return () => { stale = true; };
   });
 
   async function copyText(text: string) {
