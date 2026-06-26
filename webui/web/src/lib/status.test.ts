@@ -1,0 +1,57 @@
+import { describe, it, expect } from 'vitest';
+import { isOutcomeStatus, shouldShowStatus, statusColor } from './status';
+
+describe('isOutcomeStatus', () => {
+  it('returns true for error', () => expect(isOutcomeStatus('error')).toBe(true));
+  it('returns true for ok', () => expect(isOutcomeStatus('ok')).toBe(true));
+  it('returns true for blocked', () => expect(isOutcomeStatus('blocked')).toBe(true));
+  it('returns false for pending', () => expect(isOutcomeStatus('pending')).toBe(false));
+  it('returns false for unknown', () => expect(isOutcomeStatus('unknown')).toBe(false));
+  it('returns false for running', () => expect(isOutcomeStatus('running')).toBe(false));
+  it('returns false for empty string', () => expect(isOutcomeStatus('')).toBe(false));
+  it('returns false for undefined cast to string', () => expect(isOutcomeStatus('undefined')).toBe(false));
+});
+
+describe('shouldShowStatus', () => {
+  it('shows error regardless of isLive', () => {
+    expect(shouldShowStatus('error', false)).toBe(true);
+    expect(shouldShowStatus('error', true)).toBe(true);
+  });
+  it('shows ok regardless of isLive', () => {
+    expect(shouldShowStatus('ok', false)).toBe(true);
+    expect(shouldShowStatus('ok', true)).toBe(true);
+  });
+  it('shows blocked regardless of isLive', () => {
+    expect(shouldShowStatus('blocked', false)).toBe(true);
+    expect(shouldShowStatus('blocked', true)).toBe(true);
+  });
+  it('shows running only when isLive=true', () => {
+    expect(shouldShowStatus('running', true)).toBe(true);
+    expect(shouldShowStatus('running', false)).toBe(false);
+  });
+  it('never shows pending', () => {
+    expect(shouldShowStatus('pending', false)).toBe(false);
+    expect(shouldShowStatus('pending', true)).toBe(false);
+  });
+  it('never shows unknown', () => {
+    expect(shouldShowStatus('unknown', false)).toBe(false);
+    expect(shouldShowStatus('unknown', true)).toBe(false);
+  });
+  it('never shows undefined status', () => {
+    expect(shouldShowStatus(undefined, false)).toBe(false);
+    expect(shouldShowStatus(undefined, true)).toBe(false);
+  });
+  it('never shows empty string status', () => {
+    expect(shouldShowStatus('', false)).toBe(false);
+    expect(shouldShowStatus('', true)).toBe(false);
+  });
+});
+
+describe('statusColor', () => {
+  it('returns error token for error', () => expect(statusColor('error')).toBe('var(--error)'));
+  it('returns ok token for ok', () => expect(statusColor('ok')).toBe('var(--ok)'));
+  it('returns blocked token for blocked', () => expect(statusColor('blocked')).toBe('var(--blocked)'));
+  it('returns running token for running', () => expect(statusColor('running')).toBe('var(--running)'));
+  it('returns transparent for unknown status', () => expect(statusColor('unknown')).toBe('transparent'));
+  it('returns transparent for empty string', () => expect(statusColor('')).toBe('transparent'));
+});
