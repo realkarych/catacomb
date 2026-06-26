@@ -2,7 +2,7 @@
   import { sessionsById, filterState, resetFilter, sessionGraph } from '../lib/stores/stores.svelte';
   import { isActive } from '../lib/filters';
   import { nodeTypeInfo } from '../lib/node-legend';
-  import { displayLabel } from '../lib/status';
+  import { displayLabel, isOutcomeStatus, isSessionLive } from '../lib/status';
 
   interface Props {
     hash: string;
@@ -16,7 +16,9 @@
   const graph = $derived(sessionGraph(hash));
 
   const presentStatuses = $derived(
-    [...new Set(graph.nodes.map((n) => n.status).filter((s): s is string => s !== undefined))]
+    [...new Set(graph.nodes.map((n) => n.status).filter((s): s is string => s !== undefined))].filter(
+      (s) => isOutcomeStatus(s) || (s === 'running' && isSessionLive(session, Date.now()))
+    )
   );
 
   const presentTypes = $derived(

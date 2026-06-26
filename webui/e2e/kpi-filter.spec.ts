@@ -192,3 +192,104 @@ test('status filter chips show human-readable labels', async ({ page }) => {
     expect(label).not.toMatch(/_/);
   }
 });
+
+test('finished session does not render pending or unknown status chips', async ({ page }) => {
+  const finishedHash = 'bbccddee2233bbccddee2233bbccddee';
+
+  const finishedSession: SessionSummary = {
+    session: finishedHash,
+    status: 'ok',
+    started_at: '2024-06-01T10:00:00Z',
+    ended_at: '2024-06-01T10:05:00Z',
+    duration_ms: 300000,
+    tokens_in: 500,
+    tokens_out: 800,
+    node_count: 3,
+    tool_count: 1,
+    error_count: 0,
+    run_ids: ['run-finished'],
+  };
+
+  const finishedEvents: SseEvent[] = [
+    {
+      kind: 'node_upsert',
+      rev: 1,
+      node: {
+        id: 'n-root',
+        run_id: 'run-finished',
+        type: 'session',
+        name: 'Session Root',
+        status: 'ok',
+        rev: 1,
+      },
+    },
+    {
+      kind: 'node_upsert',
+      rev: 2,
+      node: {
+        id: 'n-pending',
+        run_id: 'run-finished',
+        type: 'tool_call',
+        name: 'PendingTool',
+        status: 'pending',
+        rev: 2,
+      },
+    },
+    {
+      kind: 'node_upsert',
+      rev: 3,
+      node: {
+        id: 'n-unknown',
+        run_id: 'run-finished',
+        type: 'tool_call',
+        name: 'UnknownTool',
+        status: 'unknown',
+        rev: 3,
+      },
+    },
+  ];
+
+  const finishedBody = finishedEvents.map((ev) => `data: ${JSON.stringify(ev)}\n\n`).join('');
+
+  await page.route('/v1/sessions', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([finishedSession]),
+    });
+  });
+
+  await page.route('/v1/events**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: finishedBody,
+    });
+  });
+
+  await page.route('/v1/subscribe**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: finishedBody,
+    });
+  });
+
+  await page.goto(`/?token=test#/s/${finishedHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  await page.waitForTimeout(500);
+
+  const filterGroups = page.locator('.filter-group');
+  const groupCount = await filterGroups.count();
+
+  for (let i = 0; i < groupCount; i++) {
+    const group = filterGroups.nth(i);
+    const ariaLabel = await group.getAttribute('aria-label');
+    if (ariaLabel === 'Filter by status') {
+      const chips = await group.locator('.filter-chip').allTextContents();
+      expect(chips).not.toContain('pending');
+      expect(chips).not.toContain('unknown');
+    }
+  }
+});
