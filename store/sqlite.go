@@ -7,6 +7,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -33,6 +34,7 @@ const (
 	insertObservation = `INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES(?,?,?,?,?)`
 	upsertNode        = `INSERT INTO nodes(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	upsertEdge        = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
+	deleteEdge        = `DELETE FROM edges WHERE id = ?`
 	upsertRun         = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
 	insertQuarantine  = `INSERT INTO quarantine(body) VALUES(?)`
 	upsertTailCursor  = `INSERT INTO tail_cursors(path, offset, fingerprint, size, mtime) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, fingerprint=excluded.fingerprint, size=excluded.size, mtime=excluded.mtime`
@@ -89,20 +91,47 @@ func (s *sqliteStore) Persist(obs []model.Observation, nodes []*model.Node, edge
 	return tx.Commit()
 }
 
-func (s *sqliteStore) AppendAndApply(o model.Observation, nodes []*model.Node, edges []*model.Edge) error {
+func (s *sqliteStore) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("store.AppendAndApply begin: %w", err)
+		return fmt.Errorf("store.AppendDeltas begin: %w", err)
 	}
 	if err := s.write(tx, insertObservation, o, o.ObsID, o.RunID, o.ExecutionID, o.Seq); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
-	if err := s.applyGraph(tx, nodes, edges); err != nil {
-		_ = tx.Rollback()
-		return err
+	for _, d := range deltas {
+		if err := s.applyDelta(tx, d); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+func (s *sqliteStore) applyDelta(tx *sql.Tx, d cdc.GraphDelta) error {
+	switch d.Kind {
+	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus, cdc.DeltaNodeMerge:
+		if d.Node == nil {
+			return nil
+		}
+		return s.write(tx, upsertNode, d.Node, d.Node.ID, d.Node.RunID)
+	case cdc.DeltaEdgeUpsert:
+		if d.Edge == nil {
+			return nil
+		}
+		return s.write(tx, upsertEdge, d.Edge, d.Edge.ID, d.Edge.RunID)
+	case cdc.DeltaEdgeDelete:
+		if d.Edge == nil {
+			return nil
+		}
+		if _, err := tx.Exec(deleteEdge, d.Edge.ID); err != nil {
+			return fmt.Errorf("store.AppendDeltas delete edge: %w", err)
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (s *sqliteStore) MaxSeq() (uint64, error) {

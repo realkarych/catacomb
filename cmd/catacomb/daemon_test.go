@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/daemon"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/store"
@@ -24,7 +25,7 @@ func (f *failSinceStore) Persist([]model.Observation, []*model.Node, []*model.Ed
 	return nil
 }
 
-func (f *failSinceStore) AppendAndApply(model.Observation, []*model.Node, []*model.Edge) error {
+func (f *failSinceStore) AppendDeltas(model.Observation, []cdc.GraphDelta) error {
 	return nil
 }
 func (f *failSinceStore) MaxSeq() (uint64, error) { return 0, nil }

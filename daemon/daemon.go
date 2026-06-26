@@ -479,18 +479,16 @@ func (d *Daemon) SetDBPath(s string) {
 
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
-	nodes, edges := g.Snapshot()
-	if err := d.store.AppendAndApply(o, nodes, edges); err != nil {
+	deltas := g.DrainDeltas()
+	if err := d.store.AppendDeltas(o, deltas); err != nil {
 		d.storeWriteErrors++
-		_ = g.DrainDeltas()
 		return err
 	}
 	if err := d.store.UpsertRun(*g.Runs[o.RunID]); err != nil {
 		d.storeWriteErrors++
-		_ = g.DrainDeltas()
 		return err
 	}
-	for _, delta := range g.DrainDeltas() {
+	for _, delta := range deltas {
 		d.publishDelta(delta)
 	}
 	return nil
