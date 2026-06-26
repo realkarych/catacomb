@@ -45,6 +45,30 @@ func seedSubagentGraph(t *testing.T, d *Daemon) {
 	g.Edges["e-turn-tool"] = &model.Edge{ID: "e-turn-tool", RunID: "s1", Type: model.EdgeParentChild, Src: turn, Dst: tool, Rev: 13}
 }
 
+func seedNestedSubagentGraph(t *testing.T, d *Daemon) {
+	t.Helper()
+	seedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g := d.graphs["exec1"]
+
+	innerTool := model.ToolCallID("exec1", "toolu_inner")
+
+	sub2 := model.SubagentID("exec1", "ag2")
+	g.Nodes[sub2] = &model.Node{ID: sub2, RunID: "s1", Type: model.NodeSubagent, AgentID: "ag2", SubagentType: "nested", Rev: 20}
+
+	prompt2 := model.UserPromptID("exec1", "u-inner2")
+	g.Nodes[prompt2] = &model.Node{ID: prompt2, RunID: "s1", Type: model.NodeUserPrompt, AgentID: "ag2", Rev: 21}
+
+	turn2 := model.AssistantTurnID("exec1", "m-inner2")
+	g.Nodes[turn2] = &model.Node{ID: turn2, RunID: "s1", Type: model.NodeAssistantTurn, AgentID: "ag2", Rev: 22, TokensIn: i64(50), TokensOut: i64(20), CostUSD: f64(0.1)}
+
+	g.Edges["e-agent2"] = &model.Edge{ID: "e-agent2", RunID: "s1", Type: model.EdgeParentChild, Src: innerTool, Dst: sub2, Rev: 20}
+	g.Edges["e-sub2-prompt2"] = &model.Edge{ID: "e-sub2-prompt2", RunID: "s1", Type: model.EdgeParentChild, Src: sub2, Dst: prompt2, Rev: 21}
+	g.Edges["e-prompt2-turn2"] = &model.Edge{ID: "e-prompt2-turn2", RunID: "s1", Type: model.EdgeParentChild, Src: prompt2, Dst: turn2, Rev: 22}
+}
+
 func TestIsInnerNode(t *testing.T) {
 	sub := &model.Node{ID: model.SubagentID("exec1", "ag1"), AgentID: "ag1", Type: model.NodeSubagent}
 	assert.False(t, isInnerNode("exec1", sub), "subagent node itself is not inner")
@@ -610,4 +634,250 @@ func TestSubagentSubtreeHandlerBearerAuth(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestParentNodeLookup(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g := d.graphs["exec1"]
+	parents := parentEdgeSources(g)
+
+	top := parentNode(g, parents, model.SubagentID("exec1", "ag1"))
+	require.NotNil(t, top)
+	assert.Equal(t, model.ToolCallID("exec1", "toolu_agent"), top.ID)
+
+	nested := parentNode(g, parents, model.SubagentID("exec1", "ag2"))
+	require.NotNil(t, nested)
+	assert.Equal(t, model.ToolCallID("exec1", "toolu_inner"), nested.ID)
+
+	assert.Nil(t, parentNode(g, parents, "orphan"))
+	assert.Nil(t, parentNode(nil, parents, "x"))
+}
+
+func TestSessionGraphExcludesNestedSubagent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.sessionGraphDeltas("s1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	nodes := map[string]bool{}
+	edges := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodes[ev.Node.ID] = true
+		}
+		if ev.Edge != nil {
+			edges[ev.Edge.ID] = true
+		}
+	}
+	assert.True(t, nodes[model.SubagentID("exec1", "ag1")], "top-level subagent kept")
+	assert.False(t, nodes[model.SubagentID("exec1", "ag2")], "nested subagent excluded")
+	assert.True(t, edges["e-agent"], "top-level tool->subagent edge kept")
+	assert.False(t, edges["e-agent2"], "inner tool->nested subagent edge excluded")
+}
+
+func TestSessionGraphNestedSubagentNoDanglingEdges(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.sessionGraphDeltas("s1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	nodes := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodes[ev.Node.ID] = true
+		}
+	}
+	for _, ev := range evs {
+		if ev.Edge != nil {
+			assert.True(t, nodes[ev.Edge.Src], "edge %s src present", ev.Edge.ID)
+			assert.True(t, nodes[ev.Edge.Dst], "edge %s dst present", ev.Edge.ID)
+		}
+	}
+}
+
+func TestSubscribeSnapshotExcludesNestedSubagent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d.Unsubscribe(sub)
+
+	nodes := map[string]bool{}
+	edges := map[string]bool{}
+	for _, delta := range sub.Snapshot {
+		if delta.Node != nil {
+			nodes[delta.Node.ID] = true
+		}
+		if delta.Edge != nil {
+			edges[delta.Edge.ID] = true
+		}
+	}
+	assert.True(t, nodes[model.SubagentID("exec1", "ag1")])
+	assert.False(t, nodes[model.SubagentID("exec1", "ag2")])
+	assert.False(t, edges["e-agent2"])
+}
+
+func TestTransformDropsNestedSubagentDelta(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d.Unsubscribe(sub)
+
+	sub2ID := model.SubagentID("exec1", "ag2")
+	delta := cdc.GraphDelta{
+		Kind:        cdc.DeltaNodeUpsert,
+		ExecutionID: "exec1",
+		RunID:       "s1",
+		Node:        &model.Node{ID: sub2ID, RunID: "s1", Type: model.NodeSubagent, AgentID: "ag2"},
+		Rev:         30,
+	}
+	_, keep := sub.transform(delta)
+	assert.False(t, keep, "nested subagent node delta must be dropped from top level")
+}
+
+func TestTransformKeepsTopLevelSubagentDelta(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d.Unsubscribe(sub)
+
+	subID := model.SubagentID("exec1", "ag1")
+	delta := cdc.GraphDelta{
+		Kind:        cdc.DeltaNodeUpsert,
+		ExecutionID: "exec1",
+		RunID:       "s1",
+		Node:        &model.Node{ID: subID, RunID: "s1", Type: model.NodeSubagent, AgentID: "ag1"},
+		Rev:         31,
+	}
+	out, keep := sub.transform(delta)
+	require.True(t, keep, "top-level subagent must pass")
+	assert.Equal(t, 3, out.Node.Attrs["descendant_count"])
+}
+
+func TestTransformDropsNestedSubagentParentEdge(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	sub := d.SubscribeFiltered(SubFilter{SessionID: "s1"}, 64)
+	defer d.Unsubscribe(sub)
+
+	edge := &model.Edge{ID: "e-agent2", RunID: "s1", Type: model.EdgeParentChild, Src: model.ToolCallID("exec1", "toolu_inner"), Dst: model.SubagentID("exec1", "ag2")}
+	delta := cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, ExecutionID: "exec1", RunID: "s1", Edge: edge, Rev: 32}
+	_, keep := sub.transform(delta)
+	assert.False(t, keep, "edge into nested subagent must be dropped")
+}
+
+func TestSubagentSubtreeIncludesNestedSubagent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.subagentSubtreeDeltas("s1", "ag1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	var sub2 *model.Node
+	nodeIDs := map[string]bool{}
+	edgeIDs := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodeIDs[ev.Node.ID] = true
+			if ev.Node.ID == model.SubagentID("exec1", "ag2") {
+				sub2 = ev.Node
+			}
+		}
+		if ev.Edge != nil {
+			edgeIDs[ev.Edge.ID] = true
+		}
+	}
+
+	assert.True(t, nodeIDs[model.UserPromptID("exec1", "u-inner")])
+	assert.True(t, nodeIDs[model.AssistantTurnID("exec1", "m-inner")])
+	assert.True(t, nodeIDs[model.ToolCallID("exec1", "toolu_inner")])
+
+	require.NotNil(t, sub2, "nested subagent node present in parent subtree")
+	assert.Equal(t, 2, sub2.Attrs["descendant_count"])
+	assert.Equal(t, int64(50), sub2.Attrs["descendant_tokens_in"])
+	assert.Equal(t, int64(20), sub2.Attrs["descendant_tokens_out"])
+	assert.InDelta(t, 0.1, sub2.Attrs["descendant_cost_usd"], 1e-9)
+
+	assert.False(t, nodeIDs[model.UserPromptID("exec1", "u-inner2")], "nested inner work hidden")
+	assert.False(t, nodeIDs[model.AssistantTurnID("exec1", "m-inner2")], "nested inner work hidden")
+
+	assert.True(t, edgeIDs["e-agent2"], "inner tool -> nested subagent edge present")
+	assert.False(t, edgeIDs["e-sub2-prompt2"], "nested subagent -> inner edge hidden")
+}
+
+func TestSubagentSubtreeNestedRecursion(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.subagentSubtreeDeltas("s1", "ag2")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	nodeIDs := map[string]bool{}
+	edgeIDs := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodeIDs[ev.Node.ID] = true
+		}
+		if ev.Edge != nil {
+			edgeIDs[ev.Edge.ID] = true
+		}
+	}
+
+	assert.True(t, nodeIDs[model.UserPromptID("exec1", "u-inner2")])
+	assert.True(t, nodeIDs[model.AssistantTurnID("exec1", "m-inner2")])
+	assert.False(t, nodeIDs[model.SubagentID("exec1", "ag2")])
+	assert.False(t, nodeIDs[model.UserPromptID("exec1", "u-inner")])
+	assert.True(t, edgeIDs["e-sub2-prompt2"])
+	assert.True(t, edgeIDs["e-prompt2-turn2"])
+}
+
+func TestSubagentSubtreeNestedNoDanglingExceptAnchor(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	seedNestedSubagentGraph(t, d)
+
+	d.mu.Lock()
+	evs, err := d.subagentSubtreeDeltas("s1", "ag1")
+	d.mu.Unlock()
+	require.NoError(t, err)
+
+	anchor := model.SubagentID("exec1", "ag1")
+	nodes := map[string]bool{}
+	for _, ev := range evs {
+		if ev.Node != nil {
+			nodes[ev.Node.ID] = true
+		}
+	}
+	for _, ev := range evs {
+		if ev.Edge != nil {
+			ok := (nodes[ev.Edge.Src] && nodes[ev.Edge.Dst]) || ev.Edge.Src == anchor
+			assert.True(t, ok, "edge %s endpoints present or anchored", ev.Edge.ID)
+		}
+	}
 }

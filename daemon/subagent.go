@@ -25,6 +25,49 @@ func isInnerNode(execID string, n *model.Node) bool {
 	return n.ID != model.SubagentID(execID, n.AgentID)
 }
 
+func parentEdgeSources(g *reduce.Graph) map[string]string {
+	out := map[string]string{}
+	if g == nil {
+		return out
+	}
+	for _, e := range g.Edges {
+		if e.Type == model.EdgeParentChild {
+			out[e.Dst] = e.Src
+		}
+	}
+	return out
+}
+
+func parentNode(g *reduce.Graph, parents map[string]string, nodeID string) *model.Node {
+	if g == nil {
+		return nil
+	}
+	return g.Nodes[parents[nodeID]]
+}
+
+func nestedSubagent(g *reduce.Graph, parents map[string]string, execID string, n *model.Node) bool {
+	if n == nil || n.Type != model.NodeSubagent {
+		return false
+	}
+	return isInnerNode(execID, parentNode(g, parents, n.ID))
+}
+
+func topLevelExcluded(g *reduce.Graph, parents map[string]string, execID string, n *model.Node) bool {
+	return isInnerNode(execID, n) || nestedSubagent(g, parents, execID, n)
+}
+
+func subtreeMember(g *reduce.Graph, parents map[string]string, execID, agentID string, n *model.Node) bool {
+	if isInnerNode(execID, n) && n.AgentID == agentID {
+		return true
+	}
+	if n.Type == model.NodeSubagent {
+		if p := parentNode(g, parents, n.ID); p != nil && p.AgentID == agentID {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *subAgg) add(n *model.Node) {
 	a.count++
 	if n.TokensIn != nil {
@@ -101,18 +144,21 @@ func (d *Daemon) subagentSubtreeDeltas(hash, agentID string) ([]sseEvent, error)
 	for _, execID := range execs {
 		g := d.graphs[execID]
 		subNodeID := model.SubagentID(execID, agentID)
-		innerSet := map[string]bool{}
+		parents := parentEdgeSources(g)
+		rollups := subagentRollups(g, execID)
+		included := map[string]bool{}
 		for _, n := range g.Nodes {
-			if n.AgentID == agentID && n.ID != subNodeID {
-				innerSet[n.ID] = true
+			if subtreeMember(g, parents, execID, agentID, n) {
+				included[n.ID] = true
 			}
 		}
 		for _, n := range g.Nodes {
-			if !innerSet[n.ID] {
+			if !included[n.ID] {
 				continue
 			}
 			nc := copyNode(n)
 			nc.Payload = nil
+			decorateSubagent(nc, rollups)
 			out = append(out, deltaToSSE(cdc.GraphDelta{
 				Kind:        cdc.DeltaNodeUpsert,
 				Rev:         n.Rev,
@@ -122,7 +168,7 @@ func (d *Daemon) subagentSubtreeDeltas(hash, agentID string) ([]sseEvent, error)
 			}))
 		}
 		for _, e := range g.Edges {
-			if (innerSet[e.Src] && innerSet[e.Dst]) || e.Src == subNodeID {
+			if (included[e.Src] && included[e.Dst]) || e.Src == subNodeID {
 				out = append(out, deltaToSSE(cdc.GraphDelta{
 					Kind:        cdc.DeltaEdgeUpsert,
 					Rev:         e.Rev,

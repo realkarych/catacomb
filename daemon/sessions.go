@@ -42,9 +42,10 @@ func (d *Daemon) sessionGraphDeltas(hash string) ([]sseEvent, error) {
 	for _, execID := range execs {
 		g := d.graphs[execID]
 		nodes, edges := g.Snapshot()
+		parents := parentEdgeSources(g)
 		rollups := subagentRollups(g, execID)
 		for _, n := range nodes {
-			if isInnerNode(execID, n) {
+			if topLevelExcluded(g, parents, execID, n) {
 				continue
 			}
 			nc := copyNode(n)
@@ -59,7 +60,7 @@ func (d *Daemon) sessionGraphDeltas(hash string) ([]sseEvent, error) {
 			}))
 		}
 		for _, e := range edges {
-			if isInnerNode(execID, g.Nodes[e.Src]) || isInnerNode(execID, g.Nodes[e.Dst]) {
+			if topLevelExcluded(g, parents, execID, g.Nodes[e.Src]) || topLevelExcluded(g, parents, execID, g.Nodes[e.Dst]) {
 				continue
 			}
 			out = append(out, deltaToSSE(cdc.GraphDelta{

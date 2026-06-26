@@ -72,9 +72,10 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 			continue
 		}
 		nodes, edges := g.Snapshot()
+		parents := parentEdgeSources(g)
 		rollups := subagentRollups(g, execID)
 		for _, n := range nodes {
-			if !matchNode(f, n) || isInnerNode(execID, n) {
+			if !matchNode(f, n) || topLevelExcluded(g, parents, execID, n) {
 				continue
 			}
 			nc := copyNode(n)
@@ -88,7 +89,7 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 			})
 		}
 		for _, e := range edges {
-			if !matchEdge(f, e) || isInnerNode(execID, g.Nodes[e.Src]) || isInnerNode(execID, g.Nodes[e.Dst]) {
+			if !matchEdge(f, e) || topLevelExcluded(g, parents, execID, g.Nodes[e.Src]) || topLevelExcluded(g, parents, execID, g.Nodes[e.Dst]) {
 				continue
 			}
 			ec := copyEdge(e)
@@ -125,7 +126,11 @@ func (s *Subscription) transform(d cdc.GraphDelta) (cdc.GraphDelta, bool) {
 			return d, false
 		}
 		if d.Node.Type == model.NodeSubagent && d.Node.AgentID != "" {
-			d.Node = s.decorate(d.ExecutionID, d.Node)
+			nc, keep := s.subagentTransform(d.ExecutionID, d.Node)
+			if !keep {
+				return d, false
+			}
+			d.Node = nc
 		}
 		return d, true
 	case cdc.DeltaEdgeUpsert, cdc.DeltaEdgeDelete:
@@ -140,13 +145,17 @@ func (s *Subscription) transform(d cdc.GraphDelta) (cdc.GraphDelta, bool) {
 	return d, true
 }
 
-func (s *Subscription) decorate(execID string, n *model.Node) *model.Node {
-	nc := copyNode(n)
+func (s *Subscription) subagentTransform(execID string, n *model.Node) (*model.Node, bool) {
 	s.daemon.mu.Lock()
-	agg := subagentAggregate(s.daemon.graphs[execID], execID, n.AgentID)
-	s.daemon.mu.Unlock()
+	defer s.daemon.mu.Unlock()
+	g := s.daemon.graphs[execID]
+	if nestedSubagent(g, parentEdgeSources(g), execID, n) {
+		return nil, false
+	}
+	nc := copyNode(n)
+	agg := subagentAggregate(g, execID, n.AgentID)
 	applyAggregate(nc, &agg)
-	return nc
+	return nc, true
 }
 
 func (s *Subscription) edgeIsInner(execID string, e *model.Edge) bool {
