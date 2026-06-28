@@ -610,10 +610,51 @@ func TestBuildInstallHooksOsExecutableError(t *testing.T) {
 	osExecutable = func() (string, error) { return "", errors.New("no exe") }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
 
-	fn := buildInstallHooks(t.TempDir() + "/d.json")
+	fn := buildInstallHooks(t.TempDir()+"/d.json", false)
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolve executable for hooks")
+}
+
+func TestBuildInstallHooksGlobalPath(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+
+	require.NoError(t, buildInstallHooks(t.TempDir()+"/d.json", true)())
+	_, err := os.Stat(filepath.Join(home, ".claude", "settings.json"))
+	require.NoError(t, err)
+}
+
+func TestBuildInstallHooksProjectPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+
+	require.NoError(t, buildInstallHooks(t.TempDir()+"/d.json", false)())
+	_, err := os.Stat(filepath.Join(".claude", "settings.json"))
+	require.NoError(t, err)
+}
+
+func TestBuildInstallHooksGlobalHomeError(t *testing.T) {
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+
+	err := buildInstallHooks(t.TempDir()+"/d.json", true)()
+	require.Error(t, err)
+}
+
+func TestUpCmdHasGlobalFlag(t *testing.T) {
+	assert.NotNil(t, newUpCmd().Flags().Lookup("global"))
 }
 
 func TestProdSessionCountCallsFetchSessionCounts(t *testing.T) {

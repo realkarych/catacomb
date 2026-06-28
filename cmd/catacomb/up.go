@@ -32,7 +32,7 @@ type upDeps struct {
 }
 
 func newUpCmd() *cobra.Command {
-	var noOpen, noDemo bool
+	var noOpen, noDemo, global bool
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Start the daemon (if needed), install hooks, and open the UI",
@@ -42,7 +42,7 @@ func newUpCmd() *cobra.Command {
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
 				startDaemon:   buildStartDaemon(discPath),
-				installHooks:  buildInstallHooks(discPath),
+				installHooks:  buildInstallHooks(discPath, global),
 				pollHealthz:   prodPollHealthz,
 				sessionCount:  prodSessionCount,
 				openBrowser:   openBrowser,
@@ -57,6 +57,7 @@ func newUpCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "print the URL without opening a browser")
 	cmd.Flags().BoolVar(&noDemo, "no-demo", false, "skip the demo fallback if no session appears")
+	cmd.Flags().BoolVar(&global, "global", false, "install hooks for all projects (~/.claude/settings.json) instead of the current directory")
 	return cmd
 }
 
@@ -86,13 +87,17 @@ func buildStartDaemon(discPath string) func() error {
 	}
 }
 
-func buildInstallHooks(discPath string) func() error {
+func buildInstallHooks(discPath string, global bool) func() error {
 	return func() error {
 		exe, err := osExecutable()
 		if err != nil {
 			return fmt.Errorf("up: resolve executable for hooks: %w", err)
 		}
-		return installHooks(".claude/settings.json", discPath, exe, false)
+		path, err := settingsPath(false, global)
+		if err != nil {
+			return fmt.Errorf("up: resolve settings path: %w", err)
+		}
+		return installHooks(path, discPath, exe, false)
 	}
 }
 
