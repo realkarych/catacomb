@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { selectedNodeId, navigateToNode, nodesById } from '../lib/stores/stores.svelte';
+  import { selectedNodeId, navigateToNode, nodesById, sessionGraph } from '../lib/stores/stores.svelte';
   import { formatDuration, formatTokens, formatCost, shortHash } from '../lib/format/format';
   import { costProvenance } from '../lib/pricing/provenance';
   import StatusPill from './StatusPill.svelte';
   import PayloadPanel from './PayloadPanel.svelte';
   import { shouldShowStatus, isSessionLive } from '../lib/status';
   import { sessionsById } from '../lib/stores/stores.svelte';
+  import { annotationEntries } from '../lib/annotations';
+  import { markerSpanMembers, markerSpanAggregate } from '../lib/graph/marker-span';
 
   interface Props {
     hash: string;
@@ -40,6 +42,17 @@
     (node?.attrs?.['model_id'] as string | undefined) ??
       (node?.attrs?.['model'] as string | undefined) ??
       '—',
+  );
+
+  const spanInfo = $derived(
+    node && node.type === 'marker'
+      ? (() => {
+          const graph = sessionGraph(hash);
+          const members = markerSpanMembers(node.id, graph.edges);
+          if (members.length === 0) return null;
+          return markerSpanAggregate(members, Object.fromEntries(graph.nodes.map((n) => [n.id, n])));
+        })()
+      : null
   );
 
   let drawerEl: HTMLDivElement | undefined = $state();
@@ -161,6 +174,59 @@
             <span class="advanced-value mono">{model}</span>
           </div>
 
+          {#if node.step_key}
+            <div class="advanced-row">
+              <span class="advanced-label">Step key</span>
+              <span class="advanced-value mono">{shortHash(node.step_key, 16)}</span>
+              {#if node.step_key_method}
+                <span class="advanced-value" style="color: var(--text-faint); font-size: var(--text-xs);">{node.step_key_method}</span>
+              {/if}
+              <button
+                class="copy-btn"
+                class:copied={copied.has('step_key')}
+                onclick={() => copyToClipboard(node.step_key ?? '', 'step_key')}
+                aria-label="Copy step key"
+              >
+                {copied.has('step_key') ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          {/if}
+
+          {#if node.type === 'marker' && node.phase_key}
+            <div class="advanced-row">
+              <span class="advanced-label">Phase key</span>
+              <span class="advanced-value mono">{shortHash(node.phase_key, 16)}</span>
+              <button
+                class="copy-btn"
+                class:copied={copied.has('phase_key')}
+                onclick={() => copyToClipboard(node.phase_key ?? '', 'phase_key')}
+                aria-label="Copy phase key"
+              >
+                {copied.has('phase_key') ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          {/if}
+
+          {#if node.type === 'marker'}
+            {#if spanInfo}
+              <div class="advanced-row">
+                <span class="advanced-label">Span</span>
+                <span class="advanced-value mono">
+                  {spanInfo.memberCount} nodes
+                  {#if spanInfo.tokensIn > 0 || spanInfo.tokensOut > 0}
+                    · in {formatTokens(spanInfo.tokensIn)} out {formatTokens(spanInfo.tokensOut)}
+                  {/if}
+                  {#if spanInfo.costUsd > 0}
+                    · {formatCost(spanInfo.costUsd)}
+                  {/if}
+                  {#if spanInfo.durationMs > 0}
+                    · {formatDuration(spanInfo.durationMs)}
+                  {/if}
+                </span>
+              </div>
+            {/if}
+          {/if}
+
           <div class="advanced-row">
             <span class="advanced-label">ID</span>
             <span class="advanced-value mono">{node.id}</span>
@@ -218,6 +284,22 @@
                     <span class="mono">{src.source}</span>
                     <span class="source-sep">/</span>
                     <span class="mono">{shortHash(src.obs_id)}</span>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+
+          {#if annotationEntries(node).length > 0}
+            <div class="advanced-section-divider"></div>
+            <div class="annotations-section">
+              <span class="advanced-label">Annotations</span>
+              <ul class="annotations-list">
+                {#each annotationEntries(node) as entry}
+                  <li class="annotation-item">
+                    <span class="annotation-key">{entry.key}</span>
+                    <span class="annotation-sep">:</span>
+                    <span class="annotation-value mono">{entry.value}</span>
                   </li>
                 {/each}
               </ul>
@@ -477,5 +559,45 @@
     padding: var(--s4);
     font-size: var(--text-sm);
     color: var(--text-faint);
+  }
+
+  .advanced-section-divider {
+    height: 1px;
+    background: var(--border);
+    margin: var(--s2) 0;
+  }
+
+  .annotations-section {
+    padding: var(--s1) 0;
+  }
+
+  .annotations-list {
+    list-style: none;
+    margin-top: var(--s1);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .annotation-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    font-size: var(--text-xs);
+    color: var(--text-dim);
+  }
+
+  .annotation-key {
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  .annotation-sep {
+    color: var(--text-faint);
+  }
+
+  .annotation-value {
+    color: var(--text-dim);
+    word-break: break-all;
   }
 </style>

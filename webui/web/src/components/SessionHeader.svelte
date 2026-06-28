@@ -2,6 +2,8 @@
   import { sessionsById } from '../lib/stores/stores.svelte';
   import { formatCost, formatTokens, formatDuration } from '../lib/format/format';
   import { isSessionLive } from '../lib/status';
+  import { hasRepro, reproFingerprint } from '../lib/repro';
+  import type { ReproMeta } from '../lib/types';
 
   interface Props {
     hash: string;
@@ -10,6 +12,9 @@
 
   const session = $derived(sessionsById[hash]);
   const isLive = $derived(isSessionLive(session, Date.now()));
+  const repro = $derived(session?.repro);
+  const fingerprint = $derived(repro ? reproFingerprint(repro) : '');
+  const showRepro = $derived(hasRepro(repro));
 </script>
 
 {#if session}
@@ -59,6 +64,49 @@
       </span>
     {/if}
   </div>
+{/if}
+
+{#if showRepro && repro}
+  <details class="repro-section">
+    <summary class="repro-summary">
+      <span class="repro-version">{repro.claude_code_version ?? ''}</span>
+      {#if fingerprint}
+        <span class="repro-fp mono">{fingerprint}</span>
+      {/if}
+    </summary>
+    <div class="repro-body">
+      {#if repro.cwd}
+        <div class="repro-row">
+          <span class="repro-label">cwd</span>
+          <span class="repro-value mono">{repro.cwd}</span>
+        </div>
+      {/if}
+      {#if repro.prompts_hash}
+        <div class="repro-row">
+          <span class="repro-label">prompts</span>
+          <span class="repro-value mono">{repro.prompts_hash}</span>
+        </div>
+      {/if}
+      {#if repro.skills_hash}
+        <div class="repro-row">
+          <span class="repro-label">skills</span>
+          <span class="repro-value mono">{repro.skills_hash}</span>
+        </div>
+      {/if}
+      {#if repro.subagents_hash}
+        <div class="repro-row">
+          <span class="repro-label">subagents</span>
+          <span class="repro-value mono">{repro.subagents_hash}</span>
+        </div>
+      {/if}
+      {#if repro.catacomb_config_hash}
+        <div class="repro-row">
+          <span class="repro-label">config</span>
+          <span class="repro-value mono">{repro.catacomb_config_hash}</span>
+        </div>
+      {/if}
+    </div>
+  </details>
 {/if}
 
 <style>
@@ -168,5 +216,61 @@
     .live-dot {
       animation: none;
     }
+  }
+
+  .repro-section {
+    font-size: var(--text-xs);
+    color: var(--text-faint);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .repro-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s1) var(--s4);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+
+  .repro-summary::marker,
+  .repro-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .repro-version {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+  }
+
+  .repro-fp {
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+  }
+
+  .repro-body {
+    padding: var(--s1) var(--s4) var(--s2);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .repro-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .repro-label {
+    color: var(--text-faint);
+    flex-shrink: 0;
+    width: 56px;
+  }
+
+  .repro-value {
+    color: var(--text-faint);
+    word-break: break-all;
   }
 </style>

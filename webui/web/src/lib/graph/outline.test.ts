@@ -229,12 +229,17 @@ describe('outlineLabel', () => {
     expect(outlineLabel(n('sa', 'subagent'))).toEqual({ primary: 'subagent', secondary: '' });
   });
 
+  it('marker: uses node.name or falls back to "phase"', () => {
+    expect(outlineLabel(n('m', 'marker', { name: 'init-phase' }))).toEqual({ primary: 'init-phase', secondary: '' });
+    expect(outlineLabel(n('m', 'marker'))).toEqual({ primary: 'phase', secondary: '' });
+  });
+
   it('default: primary is node.name or node.type, secondary is empty', () => {
     expect(outlineLabel(n('h', 'hook_event', { name: 'pre-tool' }))).toEqual({
       primary: 'pre-tool',
       secondary: '',
     });
-    expect(outlineLabel(n('m', 'marker'))).toEqual({ primary: 'marker', secondary: '' });
+    expect(outlineLabel(n('h', 'hook_event'))).toEqual({ primary: 'hook_event', secondary: '' });
   });
 });
 

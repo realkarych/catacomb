@@ -448,7 +448,7 @@
             </span>
             <span class="outline-stats">
               <span class="outline-stat-text" title={stats.title || undefined}>{stats.text}</span>
-              {#if shouldShowStatus(row.node.status, isLive)}
+              {#if row.node.type !== 'marker' && shouldShowStatus(row.node.status, isLive)}
                 <span class="outline-dot" style="background: {stats.color};" aria-hidden="true"></span>
               {/if}
             </span>
