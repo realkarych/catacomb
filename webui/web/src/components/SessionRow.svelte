@@ -30,9 +30,18 @@
   tabindex="0"
   onclick={navigate}
   onkeydown={onKeyDown}
-  aria-label="Session {shortHash(session.session, 12)}"
+  aria-label={session.label
+    ? `Session ${session.label} ${shortHash(session.session, 12)}`
+    : `Session ${shortHash(session.session, 12)}`}
 >
-  <td class="cell cell-hash mono">{shortHash(session.session, 12)}</td>
+  <td class="cell cell-session">
+    {#if session.label}
+      <span class="session-label" title={session.label}>{session.label}</span>
+      <span class="session-hash-sub mono">{shortHash(session.session, 12)}</span>
+    {:else}
+      <span class="cell-hash mono">{shortHash(session.session, 12)}</span>
+    {/if}
+  </td>
   <td class="cell cell-status">{#if displayStatus}<StatusPill status={displayStatus} />{/if}</td>
   <td class="cell cell-num">{formatDate(session.started_at)}</td>
   <td class="cell cell-num">{formatDuration(elapsedMs)}</td>
@@ -73,8 +82,26 @@
     white-space: nowrap;
   }
 
+  .cell-session {
+    max-width: 320px;
+  }
+
   .cell-hash {
     color: var(--accent);
+  }
+
+  .session-label {
+    display: block;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .session-hash-sub {
+    display: block;
+    color: var(--text-faint);
+    font-size: var(--text-xs);
   }
 
   .cell-num {
