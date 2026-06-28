@@ -3,8 +3,6 @@
   import { formatCost, formatTokens, formatDuration } from '../lib/format/format';
   import { isSessionLive } from '../lib/status';
   import { hasRepro, reproFingerprint } from '../lib/repro';
-  import type { ReproMeta } from '../lib/types';
-
   interface Props {
     hash: string;
   }
@@ -238,6 +236,16 @@
   .repro-summary::marker,
   .repro-summary::-webkit-details-marker {
     display: none;
+  }
+
+  .repro-summary::after {
+    content: ' ▸';
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+  }
+
+  details[open] .repro-summary::after {
+    content: ' ▾';
   }
 
   .repro-version {

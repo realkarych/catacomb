@@ -117,6 +117,8 @@
     };
   });
 
+  const nodeAnnotations = $derived(node ? annotationEntries(node) : []);
+
   async function copyToClipboard(text: string, key: string) {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(text);
@@ -290,12 +292,12 @@
             </div>
           {/if}
 
-          {#if annotationEntries(node).length > 0}
+          {#if nodeAnnotations.length > 0}
             <div class="advanced-section-divider"></div>
             <div class="annotations-section">
               <span class="advanced-label">Annotations</span>
               <ul class="annotations-list">
-                {#each annotationEntries(node) as entry}
+                {#each nodeAnnotations as entry}
                   <li class="annotation-item">
                     <span class="annotation-key">{entry.key}</span>
                     <span class="annotation-sep">:</span>
@@ -573,6 +575,7 @@
 
   .annotations-list {
     list-style: none;
+    padding: 0;
     margin-top: var(--s1);
     display: flex;
     flex-direction: column;
