@@ -610,3 +610,131 @@ func TestOpenSQLiteReadOnlyPathWithSpace(t *testing.T) {
 	require.Len(t, runs, 1)
 	assert.Equal(t, "r1", runs[0].ID)
 }
+
+func TestAnnotationsRoundTripAndLWW(t *testing.T) {
+	s := fileStore(t)
+	v5 := json.RawMessage(`5`)
+	v7 := json.RawMessage(`9`)
+	v4 := json.RawMessage(`1`)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: v5, WriteSeq: 5}))
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: v7, WriteSeq: 7}))
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: v4, WriteSeq: 4}))
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "other", Key: "score", Value: json.RawMessage(`2`), WriteSeq: 2}))
+	anns, err := s.AnnotationsForExecution("e1")
+	require.NoError(t, err)
+	require.Len(t, anns, 2)
+	evalAnn := anns[0]
+	if evalAnn.Owner != "eval" {
+		evalAnn = anns[1]
+	}
+	assert.Equal(t, "eval", evalAnn.Owner)
+	assert.Equal(t, "score", evalAnn.Key)
+	assert.Equal(t, string(v7), string(evalAnn.Value))
+}
+
+func TestMoveAnnotations(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "from", Owner: "eval", Key: "score", Value: json.RawMessage(`9`), WriteSeq: 1}))
+	require.NoError(t, s.MoveAnnotations("e1", "from", "to"))
+	anns, err := s.AnnotationsForExecution("e1")
+	require.NoError(t, err)
+	require.Len(t, anns, 1)
+	assert.Equal(t, "to", anns[0].SourceKey)
+	assert.Equal(t, "eval", anns[0].Owner)
+}
+
+func TestMoveAnnotationsBeginError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.Close())
+	err := s.MoveAnnotations("e1", "from", "to")
+	require.Error(t, err)
+}
+
+func TestUpsertAnnotationError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	err := s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: json.RawMessage(`9`), WriteSeq: 1})
+	require.Error(t, err)
+}
+
+func TestAnnotationsForExecutionError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.AnnotationsForExecution("e1")
+	require.Error(t, err)
+}
+
+func TestAnnotationsStepKeyScanned(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{
+		ExecutionID: "e1",
+		SourceKey:   "k1",
+		StepKey:     "step-abc",
+		Owner:       "eval",
+		Key:         "score",
+		Value:       json.RawMessage(`9`),
+		WriteSeq:    1,
+	}))
+	anns, err := s.AnnotationsForExecution("e1")
+	require.NoError(t, err)
+	require.Len(t, anns, 1)
+	assert.Equal(t, "step-abc", anns[0].StepKey)
+}
+
+func TestScanAnnotationsScanError(t *testing.T) {
+	_, err := scanAnnotations(&fakeRows{bodies: []string{"x"}, scanErr: errors.New("scan")})
+	require.Error(t, err)
+}
+
+func TestScanAnnotationsRowsErr(t *testing.T) {
+	_, err := scanAnnotations(&fakeRows{errErr: errors.New("iter")})
+	require.Error(t, err)
+}
+
+func TestMoveAnnotationsQueryError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE annotations")
+	require.NoError(t, err)
+	err = s.MoveAnnotations("e1", "from", "to")
+	require.Error(t, err)
+}
+
+func TestScanMoveAnnotationRowsScanError(t *testing.T) {
+	_, err := scanMoveAnnotationRows(&fakeRows{bodies: []string{"x"}, scanErr: errors.New("scan")})
+	require.Error(t, err)
+}
+
+func TestScanMoveAnnotationRowsRowsErr(t *testing.T) {
+	_, err := scanMoveAnnotationRows(&fakeRows{errErr: errors.New("iter")})
+	require.Error(t, err)
+}
+
+func TestMoveAnnotationsScanError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE annotations")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`CREATE TABLE annotations (execution_id TEXT NOT NULL, source_key TEXT NOT NULL, step_key TEXT, owner TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, write_seq TEXT NOT NULL, PRIMARY KEY (execution_id, source_key, owner, key))`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO annotations VALUES('e1','from',NULL,'eval','score','9','not-an-int')`)
+	require.NoError(t, err)
+	err = s.MoveAnnotations("e1", "from", "to")
+	require.Error(t, err)
+}
+
+func TestMoveAnnotationsDeleteError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "from", Owner: "eval", Key: "score", Value: json.RawMessage(`9`), WriteSeq: 1}))
+	_, err := s.db.Exec(`CREATE TRIGGER block_del BEFORE DELETE ON annotations BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
+	require.NoError(t, err)
+	err = s.MoveAnnotations("e1", "from", "to")
+	require.Error(t, err)
+}
+
+func TestMoveAnnotationsInsertError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "from", Owner: "eval", Key: "score", Value: json.RawMessage(`9`), WriteSeq: 1}))
+	_, err := s.db.Exec(`CREATE TRIGGER block_ins BEFORE INSERT ON annotations BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
+	require.NoError(t, err)
+	err = s.MoveAnnotations("e1", "from", "to")
+	require.Error(t, err)
+}

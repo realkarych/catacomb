@@ -19,6 +19,7 @@ type Discovery struct {
 	TranscriptDir      string `json:"transcript_dir,omitempty"`
 	DBPath             string `json:"db_path,omitempty"`
 	AllowPayloadAccess bool   `json:"allow_payload_access,omitempty"`
+	AllowAnnotations   bool   `json:"allow_annotations,omitempty"`
 }
 
 var (

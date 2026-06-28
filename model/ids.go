@@ -1,6 +1,24 @@
 package model
 
+import "strings"
+
 func SessionNodeID(executionID string) string { return "session:" + executionID }
+
+func NodeSourceKey(nodeID string) string {
+	if strings.HasPrefix(nodeID, "session:") {
+		return nodeID[len("session:"):]
+	}
+	i := strings.Index(nodeID, ":")
+	if i < 0 {
+		return ""
+	}
+	rest := nodeID[i+1:]
+	j := strings.Index(rest, ":")
+	if j < 0 {
+		return ""
+	}
+	return rest[j+1:]
+}
 
 func UserPromptID(executionID, uuid string) string { return executionID + ":prompt:" + uuid }
 

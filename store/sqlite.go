@@ -30,17 +30,34 @@ CREATE INDEX IF NOT EXISTS idx_observations_exec_seq ON observations(execution_i
 CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
 CREATE INDEX IF NOT EXISTS idx_edges_run ON edges(run_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+CREATE TABLE IF NOT EXISTS annotations (
+    execution_id TEXT NOT NULL,
+    source_key   TEXT NOT NULL,
+    step_key     TEXT,
+    owner        TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    write_seq    INTEGER NOT NULL,
+    PRIMARY KEY (execution_id, source_key, owner, key)
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_exec ON annotations(execution_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_exec_step ON annotations(execution_id, step_key);
 `
 
 const (
-	insertObservation = `INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES(?,?,?,?,?)`
-	upsertNode        = `INSERT INTO nodes(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
-	upsertEdge        = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
-	deleteEdge        = `DELETE FROM edges WHERE id = ?`
-	upsertRun         = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
-	insertQuarantine  = `INSERT INTO quarantine(body) VALUES(?)`
-	upsertTailCursor  = `INSERT INTO tail_cursors(path, offset, fingerprint, size, mtime) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, fingerprint=excluded.fingerprint, size=excluded.size, mtime=excluded.mtime`
-	selectTailCursors = `SELECT path, offset, fingerprint, size, mtime FROM tail_cursors ORDER BY path`
+	insertObservation            = `INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES(?,?,?,?,?)`
+	upsertNode                   = `INSERT INTO nodes(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
+	upsertEdge                   = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
+	deleteEdge                   = `DELETE FROM edges WHERE id = ?`
+	upsertRun                    = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
+	insertQuarantine             = `INSERT INTO quarantine(body) VALUES(?)`
+	upsertTailCursor             = `INSERT INTO tail_cursors(path, offset, fingerprint, size, mtime) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, fingerprint=excluded.fingerprint, size=excluded.size, mtime=excluded.mtime`
+	selectTailCursors            = `SELECT path, offset, fingerprint, size, mtime FROM tail_cursors ORDER BY path`
+	upsertAnnotation             = `INSERT INTO annotations(execution_id,source_key,step_key,owner,key,value,write_seq) VALUES(?,?,?,?,?,?,?) ON CONFLICT(execution_id,source_key,owner,key) DO UPDATE SET value=excluded.value,step_key=excluded.step_key,write_seq=excluded.write_seq WHERE excluded.write_seq>=annotations.write_seq`
+	selectAnnotations            = `SELECT execution_id,source_key,step_key,owner,key,value FROM annotations WHERE execution_id=? ORDER BY source_key,owner,key`
+	selectAnnotationsBySourceKey = `SELECT execution_id,source_key,step_key,owner,key,value,write_seq FROM annotations WHERE execution_id=? AND source_key=?`
+	deleteAnnotationsBySourceKey = `DELETE FROM annotations WHERE execution_id=? AND source_key=?`
+	insertAnnotation             = `INSERT INTO annotations(execution_id,source_key,step_key,owner,key,value,write_seq) VALUES(?,?,?,?,?,?,?)`
 )
 
 func OpenSQLite(path string) (Store, error) {
@@ -343,6 +360,97 @@ func (s *sqliteStore) QuarantineCount() (int64, error) {
 		return 0, fmt.Errorf("store.QuarantineCount: %w", err)
 	}
 	return n, nil
+}
+
+func (s *sqliteStore) UpsertAnnotation(a model.Annotation) error {
+	stepKey := sql.NullString{String: a.StepKey, Valid: a.StepKey != ""}
+	if _, err := s.db.Exec(upsertAnnotation, a.ExecutionID, a.SourceKey, stepKey, a.Owner, a.Key, string(a.Value), a.WriteSeq); err != nil {
+		return fmt.Errorf("store.UpsertAnnotation: %w", err)
+	}
+	return nil
+}
+
+func scanAnnotations(rows rowScanner) ([]model.Annotation, error) {
+	defer func() { _ = rows.Close() }()
+	var out []model.Annotation
+	for rows.Next() {
+		var a model.Annotation
+		var stepKey sql.NullString
+		var value string
+		if err := rows.Scan(&a.ExecutionID, &a.SourceKey, &stepKey, &a.Owner, &a.Key, &value); err != nil {
+			return nil, fmt.Errorf("store.AnnotationsForExecution scan: %w", err)
+		}
+		if stepKey.Valid {
+			a.StepKey = stepKey.String
+		}
+		a.Value = json.RawMessage(value)
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.AnnotationsForExecution rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *sqliteStore) AnnotationsForExecution(executionID string) ([]model.Annotation, error) {
+	rows, err := s.db.Query(selectAnnotations, executionID)
+	if err != nil {
+		return nil, fmt.Errorf("store.AnnotationsForExecution: %w", err)
+	}
+	out, err := scanAnnotations(rows)
+	_ = rows.Err()
+	return out, err
+}
+
+type moveAnnotationRow struct {
+	execID, srcKey, owner, key, value string
+	stepKey                           sql.NullString
+	writeSeq                          uint64
+}
+
+func scanMoveAnnotationRows(rows rowScanner) ([]moveAnnotationRow, error) {
+	defer func() { _ = rows.Close() }()
+	var out []moveAnnotationRow
+	for rows.Next() {
+		var r moveAnnotationRow
+		if err := rows.Scan(&r.execID, &r.srcKey, &r.stepKey, &r.owner, &r.key, &r.value, &r.writeSeq); err != nil {
+			return nil, fmt.Errorf("store.MoveAnnotations scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.MoveAnnotations rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *sqliteStore) MoveAnnotations(executionID, fromKey, toKey string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store.MoveAnnotations begin: %w", err)
+	}
+	rows, err := tx.Query(selectAnnotationsBySourceKey, executionID, fromKey)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("store.MoveAnnotations select: %w", err)
+	}
+	anns, err := scanMoveAnnotationRows(rows)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	_ = rows.Err()
+	if _, err := tx.Exec(deleteAnnotationsBySourceKey, executionID, fromKey); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("store.MoveAnnotations delete: %w", err)
+	}
+	for _, r := range anns {
+		if _, err := tx.Exec(insertAnnotation, executionID, toKey, r.stepKey, r.owner, r.key, r.value, r.writeSeq); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("store.MoveAnnotations insert: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *sqliteStore) Close() error { return s.db.Close() }

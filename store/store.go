@@ -18,5 +18,8 @@ type Store interface {
 	QuarantineCount() (int64, error)
 	UpsertTailCursor(c model.TailCursor) error
 	LoadTailCursors() ([]model.TailCursor, error)
+	UpsertAnnotation(a model.Annotation) error
+	AnnotationsForExecution(executionID string) ([]model.Annotation, error)
+	MoveAnnotations(executionID, fromKey, toKey string) error
 	Close() error
 }

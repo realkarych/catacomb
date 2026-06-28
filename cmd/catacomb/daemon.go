@@ -22,6 +22,7 @@ func newDaemonCmd() *cobra.Command {
 	var transcriptDir string
 	var transcriptExclude []string
 	var allowPayloadAccess bool
+	var allowAnnotations bool
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the catacomb daemon (receives hook events, builds the live graph)",
@@ -42,7 +43,7 @@ to enable the token-gated content endpoint (off by default).`,
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, otlpProject, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude, allowPayloadAccess)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, otlpProject, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude, allowPayloadAccess, allowAnnotations)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
@@ -58,6 +59,7 @@ to enable the token-gated content endpoint (off by default).`,
 	cmd.Flags().StringVar(&transcriptDir, "transcript-dir", "", "Claude Code transcript dir to tail (empty = disabled; recommended: ~/.claude/projects)")
 	cmd.Flags().StringArrayVar(&transcriptExclude, "transcript-exclude", nil, "glob(s) of transcript paths to never tail (repeatable; the daemon db + cwd are always excluded)")
 	cmd.Flags().BoolVar(&allowPayloadAccess, "allow-payload-access", false, "enable the node payload content endpoint (default off)")
+	cmd.Flags().BoolVar(&allowAnnotations, "allow-annotations", false, "enable the node annotation write endpoint (default off)")
 	return cmd
 }
 
@@ -79,6 +81,7 @@ func runDaemonWith(
 	transcriptDir string,
 	transcriptExclude []string,
 	allowPayloadAccess bool,
+	allowAnnotations bool,
 ) error {
 	s, err := open(dbPath)
 	if err != nil {
@@ -97,6 +100,7 @@ func runDaemonWith(
 	d.SetTranscriptDir(transcriptDir)
 	d.SetTranscriptExclude(transcriptExclude)
 	d.SetAllowPayloadAccess(allowPayloadAccess)
+	d.SetAllowAnnotations(allowAnnotations)
 	err = d.Recover()
 	if err != nil {
 		return err
@@ -124,6 +128,7 @@ func runDaemonWith(
 		TranscriptDir:      transcriptDir,
 		DBPath:             dbPath,
 		AllowPayloadAccess: allowPayloadAccess,
+		AllowAnnotations:   allowAnnotations,
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)

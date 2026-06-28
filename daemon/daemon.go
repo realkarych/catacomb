@@ -36,6 +36,7 @@ var (
 	nowFn         = time.Now
 	getwdFn       = os.Getwd
 	applyFn       = func(g *reduce.Graph, o model.Observation) { g.Apply(o) }
+	drainFn       = func(g *reduce.Graph) []cdc.GraphDelta { return g.DrainDeltas() }
 	parseFn       = otelingest.Parse
 	streamParseFn = streamjsoningest.Parse
 	tailParseFn   = ijsonl.Parse
@@ -80,6 +81,7 @@ type Daemon struct {
 	lossyRuns          int64
 	pricer             reduce.Pricer
 	allowPayloadAccess bool
+	allowAnnotations   bool
 }
 
 func New(s store.Store) *Daemon {
@@ -186,6 +188,9 @@ func (d *Daemon) Recover() error {
 				return err
 			}
 		}
+	}
+	if err := reattachAnnotations(d); err != nil {
+		return err
 	}
 	return nil
 }
@@ -486,7 +491,7 @@ func (d *Daemon) SetDBPath(s string) {
 
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
-	deltas := g.DrainDeltas()
+	deltas := drainFn(g)
 	if err := d.store.AppendDeltas(o, deltas); err != nil {
 		d.storeWriteErrors++
 		return err
@@ -496,6 +501,9 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 		return err
 	}
 	for _, delta := range deltas {
+		if delta.Kind == cdc.DeltaNodeMerge && delta.OldID != "" && delta.NewID != "" {
+			d.carryOverMergeLocked(delta.ExecutionID, delta.OldID, delta.NewID)
+		}
 		d.publishDelta(delta)
 	}
 	return nil
