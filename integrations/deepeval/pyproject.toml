@@ -21,5 +21,5 @@ catacomb-deepeval = "catacomb_deepeval.cli:main"
 packages = ["src/catacomb_deepeval"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
