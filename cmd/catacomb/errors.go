@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	ErrDiffInput         = errors.New("diff: invalid input")
 	ErrNoDaemon          = errors.New("no catacomb daemon running. Start one: catacomb up")
 	ErrDaemonUnreachable = errors.New("catacomb daemon is unreachable. Restart it: catacomb up")
 	ErrHooksNotInstalled = errors.New("catacomb hooks are not installed. Install them: catacomb install-hooks")
@@ -14,6 +15,9 @@ var (
 )
 
 func renderErr(err error) string {
+	if errors.Is(err, ErrDiffInput) {
+		return err.Error()
+	}
 	if errors.Is(err, ErrNoDaemon) {
 		return ErrNoDaemon.Error()
 	}

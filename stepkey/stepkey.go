@@ -18,8 +18,10 @@ const Method = "heuristic"
 const scheme = "stepkey/v1"
 
 type Key struct {
-	Key    string
-	Method string
+	Key     string
+	Method  string
+	Content string
+	PathKey string
 }
 
 func eligible(t model.NodeType) bool {
@@ -67,13 +69,14 @@ func Compute(nodes []*model.Node, edges []*model.Edge) map[string]Key {
 		if !eligible(n.Type) || !live(n) {
 			continue
 		}
-		out[n.ID] = Key{Key: b.compute(n), Method: Method}
+		full, pk := b.compute(n)
+		out[n.ID] = Key{Key: full, Method: Method, Content: b.terms[n.ID], PathKey: pk}
 	}
 	return out
 }
 
-func (b *builder) compute(n *model.Node) string {
-	var levels []string
+func (b *builder) levels(n *model.Node) string {
+	var lvls []string
 	cur := n.ID
 	seen := map[string]bool{cur: true}
 	for {
@@ -88,19 +91,22 @@ func (b *builder) compute(n *model.Node) string {
 		cn := b.byID[cur]
 		if cn != nil && live(cn) {
 			idx := b.liveIndex(p, cur)
-			levels = append(levels, string(cn.Type)+"#"+strconv.Itoa(idx))
+			lvls = append(lvls, string(cn.Type)+"#"+strconv.Itoa(idx))
 		}
 		cur = p
 	}
-	slices.Reverse(levels)
-	var sb strings.Builder
-	sb.WriteString(scheme)
-	sb.WriteByte('|')
-	sb.WriteString(strings.Join(levels, "/"))
-	sb.WriteByte('|')
-	sb.WriteString(b.terms[n.ID])
-	sum := sha256.Sum256([]byte(sb.String()))
+	slices.Reverse(lvls)
+	return strings.Join(lvls, "/")
+}
+
+func hash16(s string) string {
+	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:16])
+}
+
+func (b *builder) compute(n *model.Node) (string, string) {
+	p := b.levels(n)
+	return hash16(scheme + "|" + p + "|" + b.terms[n.ID]), hash16(scheme + "|path|" + p)
 }
 
 func (b *builder) liveIndex(parent, target string) int {
