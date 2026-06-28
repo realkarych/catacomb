@@ -23,6 +23,7 @@ type envelope struct {
 	Message         json.RawMessage `json:"message"`
 	Usage           *usage          `json:"usage"`
 	TotalCostUSD    *float64        `json:"total_cost_usd"`
+	Cwd             string          `json:"cwd"`
 }
 
 type message struct {
@@ -94,7 +95,11 @@ func build(e envelope) ([]partial, error) {
 		if e.Subtype != "init" {
 			return nil, nil
 		}
-		return []partial{{kind: "session_start", correlation: base, attrs: map[string]any{"model": e.Model}}}, nil
+		attrs := map[string]any{"model": e.Model}
+		if e.Cwd != "" {
+			attrs["cwd"] = e.Cwd
+		}
+		return []partial{{kind: "session_start", correlation: base, attrs: attrs}}, nil
 	case "assistant":
 		var msg message
 		if len(e.Message) > 0 {

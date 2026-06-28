@@ -125,7 +125,8 @@ func exportJSONL(_ context.Context, out io.Writer, s store.Store, deps exportDep
 		return err
 	}
 	nodes, edges := collectSnapshot(graphs, a.runID)
-	return xjsonl.Snapshot(w, nodes, edges)
+	runs := collectRunsFor(graphs, a.runID)
+	return xjsonl.Snapshot(w, nodes, edges, runs)
 }
 
 func exportObservations(w io.Writer, s store.Store, runID string) error {

@@ -250,6 +250,16 @@ func TestParseResultTurnNoPayload(t *testing.T) {
 	assert.Nil(t, obs[0].Payload)
 }
 
+func TestParseSystemInitWithCwd(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"system","subtype":"init","session_id":"sess_1","model":"claude-opus-4-8","cwd":"/project/root"}`)
+
+	obs, err := Parse(line, "exec1", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "/project/root", obs[0].Attrs["cwd"])
+}
+
 func TestParseAssistantMultiTextBlocksConcatenated(t *testing.T) {
 	var seq uint64
 	next := func() uint64 { s := seq; seq++; return s }

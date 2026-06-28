@@ -98,6 +98,8 @@ func (g *Graph) Apply(o model.Observation) {
 		}
 	case "run_ended":
 		g.applyRunEnded(o)
+	case "repro_meta":
+		applyReproMeta(g.Runs[o.RunID], o.Attrs)
 	}
 }
 
@@ -557,6 +559,22 @@ func (g *Graph) ensureRun(o model.Observation) {
 			r.ModelID = m
 		}
 	}
+	if v, ok := o.Attrs["claude_code_version"].(string); ok && v != "" {
+		if r.Repro == nil {
+			r.Repro = &model.ReproMeta{}
+		}
+		if r.Repro.ClaudeCodeVersion == "" {
+			r.Repro.ClaudeCodeVersion = v
+		}
+	}
+	if v, ok := o.Attrs["cwd"].(string); ok && v != "" {
+		if r.Repro == nil {
+			r.Repro = &model.ReproMeta{}
+		}
+		if r.Repro.Cwd == "" {
+			r.Repro.Cwd = v
+		}
+	}
 }
 
 func (g *Graph) applyRunEnded(o model.Observation) {
@@ -659,4 +677,29 @@ func resolveStatus(cur, next model.Status) model.Status {
 		return next
 	}
 	return cur
+}
+
+func setIfEmpty(dst *string, src any) {
+	if *dst != "" {
+		return
+	}
+	if v, ok := src.(string); ok && v != "" {
+		*dst = v
+	}
+}
+
+func applyReproMeta(r *model.Run, attrs map[string]any) {
+	if r == nil {
+		return
+	}
+	if r.Repro == nil {
+		r.Repro = &model.ReproMeta{}
+	}
+	setIfEmpty(&r.Repro.PromptsHash, attrs["prompts_hash"])
+	setIfEmpty(&r.Repro.SkillsHash, attrs["skills_hash"])
+	setIfEmpty(&r.Repro.SubagentsHash, attrs["subagents_hash"])
+	setIfEmpty(&r.Repro.CatacombConfigHash, attrs["catacomb_config_hash"])
+	setIfEmpty(&r.Repro.CatacombVersion, attrs["catacomb_version"])
+	setIfEmpty(&r.Repro.ClaudeCodeVersion, attrs["claude_code_version"])
+	setIfEmpty(&r.Repro.Cwd, attrs["cwd"])
 }

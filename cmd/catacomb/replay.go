@@ -108,5 +108,6 @@ func export(path string, g *reduce.Graph) error {
 	defer func() { _ = out.Close() }()
 
 	nodes, edges := g.Snapshot()
-	return xjsonl.Snapshot(out, nodes, edges)
+	runs := g.RunsSnapshot()
+	return xjsonl.Snapshot(out, nodes, edges, runs)
 }

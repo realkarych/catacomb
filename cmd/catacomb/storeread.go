@@ -62,6 +62,20 @@ func collectRuns(graphs []*reduce.Graph) []model.Run {
 	return out
 }
 
+func collectRunsFor(graphs []*reduce.Graph, runID string) []model.Run {
+	all := collectRuns(graphs)
+	if runID == "" {
+		return all
+	}
+	var out []model.Run
+	for _, r := range all {
+		if r.ID == runID {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func collectSnapshot(graphs []*reduce.Graph, runID string) ([]*model.Node, []*model.Edge) {
 	var nodes []*model.Node
 	var edges []*model.Edge

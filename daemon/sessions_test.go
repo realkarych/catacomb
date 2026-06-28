@@ -410,6 +410,21 @@ func TestSessionSummaryRunInGraphNotInSession(t *testing.T) {
 	assert.NotContains(t, s1Sum.RunIDs, "other-run")
 }
 
+func TestSessionSummaryExposesRepro(t *testing.T) {
+	dir := t.TempDir()
+	d := New(tempStore(t))
+	fixedExecID(d)
+	p, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})
+	require.NoError(t, d.Ingest("SessionStart", p))
+
+	d.mu.Lock()
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	require.NotNil(t, sum.Repro)
+	assert.Equal(t, dir, sum.Repro.Cwd)
+}
+
 func TestSessionSummaryWithStartedAndEndedAt(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)

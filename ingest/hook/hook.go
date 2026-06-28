@@ -26,6 +26,7 @@ type envelope struct {
 	Message            string          `json:"message"`
 	AgentID            string          `json:"agent_id"`
 	AgentType          string          `json:"agent_type"`
+	Cwd                string          `json:"cwd"`
 }
 
 var nowFn = time.Now
@@ -70,7 +71,11 @@ func build(hookType string, e envelope) *partial {
 	base := model.Correlation{SessionID: e.SessionID}
 	switch hookType {
 	case "SessionStart":
-		return &partial{kind: "session_start", correlation: base, attrs: map[string]any{"source": e.Source}}
+		attrs := map[string]any{"source": e.Source}
+		if e.Cwd != "" {
+			attrs["cwd"] = e.Cwd
+		}
+		return &partial{kind: "session_start", correlation: base, attrs: attrs}
 	case "SessionEnd":
 		return &partial{kind: "session_end", correlation: base, attrs: map[string]any{"reason": e.Reason}}
 	case "Stop":

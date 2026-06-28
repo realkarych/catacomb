@@ -2665,6 +2665,118 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 	assert.Equal(t, pcEdge(model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
 }
 
+func TestSetIfEmpty(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		src     any
+		want    string
+	}{
+		{"fills empty from string", "", "hello", "hello"},
+		{"skips non-empty dst", "existing", "new", "existing"},
+		{"skips empty string src", "", "", ""},
+		{"skips nil src", "", nil, ""},
+		{"skips int src", "", 42, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.initial
+			setIfEmpty(&got, tc.src)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestApplyReproMetaNilRun(t *testing.T) {
+	applyReproMeta(nil, map[string]any{"prompts_hash": "abc"})
+}
+
+func TestApplyReproMetaSetsAllFields(t *testing.T) {
+	r := &model.Run{}
+	applyReproMeta(r, map[string]any{
+		"prompts_hash":         "ph",
+		"skills_hash":          "sh",
+		"subagents_hash":       "suh",
+		"catacomb_config_hash": "cch",
+		"catacomb_version":     "cv",
+		"claude_code_version":  "ccv",
+		"cwd":                  "/home",
+	})
+	require.NotNil(t, r.Repro)
+	assert.Equal(t, "ph", r.Repro.PromptsHash)
+	assert.Equal(t, "sh", r.Repro.SkillsHash)
+	assert.Equal(t, "suh", r.Repro.SubagentsHash)
+	assert.Equal(t, "cch", r.Repro.CatacombConfigHash)
+	assert.Equal(t, "cv", r.Repro.CatacombVersion)
+	assert.Equal(t, "ccv", r.Repro.ClaudeCodeVersion)
+	assert.Equal(t, "/home", r.Repro.Cwd)
+}
+
+func TestApplyReproMetaNoOverwrite(t *testing.T) {
+	r := &model.Run{Repro: &model.ReproMeta{PromptsHash: "original"}}
+	applyReproMeta(r, map[string]any{"prompts_hash": "new"})
+	assert.Equal(t, "original", r.Repro.PromptsHash)
+}
+
+func TestApplyReproMetaKindInGraph(t *testing.T) {
+	g := NewGraph()
+	g.Apply(model.Observation{
+		RunID:       "s1",
+		ExecutionID: "exec1",
+		Source:      model.SourceHook,
+		Kind:        "session_start",
+		Correlation: model.Correlation{SessionID: "s1"},
+		Attrs:       map[string]any{},
+	})
+	g.Apply(model.Observation{
+		RunID:       "s1",
+		ExecutionID: "exec1",
+		Source:      model.SourceHook,
+		Kind:        "repro_meta",
+		Correlation: model.Correlation{SessionID: "s1"},
+		Attrs: map[string]any{
+			"prompts_hash":     "ph",
+			"catacomb_version": "cv",
+		},
+	})
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	require.NotNil(t, r.Repro)
+	assert.Equal(t, "ph", r.Repro.PromptsHash)
+	assert.Equal(t, "cv", r.Repro.CatacombVersion)
+}
+
+func TestBareRunHasNoReproField(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Nil(t, r.Repro)
+	b, err := json.Marshal(r)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), `"repro"`)
+}
+
+func TestEnsureRunHarvestsClaudeCodeVersionAndCwd(t *testing.T) {
+	g := NewGraph()
+	g.Apply(model.Observation{
+		RunID:       "s1",
+		ExecutionID: "exec1",
+		Source:      model.SourceHook,
+		Kind:        "session_start",
+		Correlation: model.Correlation{SessionID: "s1"},
+		Attrs: map[string]any{
+			"claude_code_version": "1.2.3",
+			"cwd":                 "/project",
+		},
+	})
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	require.NotNil(t, r.Repro)
+	assert.Equal(t, "1.2.3", r.Repro.ClaudeCodeVersion)
+	assert.Equal(t, "/project", r.Repro.Cwd)
+}
+
 func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
 	obs := []model.Observation{
 		promptObs("uM", 1),

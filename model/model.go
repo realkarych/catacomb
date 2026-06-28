@@ -136,6 +136,17 @@ type Run struct {
 	StartedAt  *time.Time     `json:"started_at,omitempty"`
 	EndedAt    *time.Time     `json:"ended_at,omitempty"`
 	Meta       map[string]any `json:"meta,omitempty"`
+	Repro      *ReproMeta     `json:"repro,omitempty"`
+}
+
+type ReproMeta struct {
+	ClaudeCodeVersion  string `json:"claude_code_version,omitempty"`
+	CatacombVersion    string `json:"catacomb_version,omitempty"`
+	Cwd                string `json:"cwd,omitempty"`
+	PromptsHash        string `json:"prompts_hash,omitempty"`
+	SkillsHash         string `json:"skills_hash,omitempty"`
+	SubagentsHash      string `json:"subagents_hash,omitempty"`
+	CatacombConfigHash string `json:"catacomb_config_hash,omitempty"`
 }
 
 type QuarantineRecord struct {
