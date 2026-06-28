@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,20 +30,47 @@ type upDeps struct {
 	waitSeconds   int
 	noOpen        bool
 	noDemo        bool
+	history       bool
+	projectsDir   string
 }
 
 func newUpCmd() *cobra.Command {
-	var noOpen, noDemo bool
+	var noOpen, noDemo, global, history bool
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Start the daemon (if needed), install hooks, and open the UI",
+		Long: `Start the daemon if it is not already running, install the Claude Code
+hooks, print the bearer URL, and open the web UI.
+
+By default up observes only sessions started in the current directory, and
+only live activity. Use --global to install hooks for every project, and
+--history to load sessions you have already run.
+
+If a daemon is already running, --history does not restart it; up prints the
+exact command to restart it with history enabled.`,
+		Example: `  # observe the current project, live only
+  catacomb up
+
+  # observe every project (all live sessions)
+  catacomb up --global
+
+  # also load past sessions from ~/.claude/projects
+  catacomb up --global --history`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			discPath := daemon.DiscoveryPath()
+			var transcriptDir string
+			if history {
+				projects, err := claudeProjectsDir()
+				if err != nil {
+					return err
+				}
+				transcriptDir = projects
+			}
 			deps := upDeps{
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
-				startDaemon:   buildStartDaemon(discPath),
-				installHooks:  buildInstallHooks(discPath),
+				startDaemon:   buildStartDaemon(discPath, transcriptDir),
+				installHooks:  buildInstallHooks(discPath, global),
 				pollHealthz:   prodPollHealthz,
 				sessionCount:  prodSessionCount,
 				openBrowser:   openBrowser,
@@ -51,16 +79,28 @@ func newUpCmd() *cobra.Command {
 				waitSeconds:   5,
 				noOpen:        noOpen,
 				noDemo:        noDemo,
+				history:       history,
+				projectsDir:   transcriptDir,
 			}
 			return runUp(cmd.Context(), cmd.OutOrStdout(), deps)
 		},
 	}
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "print the URL without opening a browser")
 	cmd.Flags().BoolVar(&noDemo, "no-demo", false, "skip the demo fallback if no session appears")
+	cmd.Flags().BoolVar(&global, "global", false, "install hooks for all projects (~/.claude/settings.json) instead of the current directory")
+	cmd.Flags().BoolVar(&history, "history", false, "tail ~/.claude/projects so past sessions appear in the UI")
 	return cmd
 }
 
-func buildStartDaemon(discPath string) func() error {
+func claudeProjectsDir() (string, error) {
+	home, err := osUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("up: resolve home: %w", err)
+	}
+	return filepath.Join(home, ".claude", "projects"), nil
+}
+
+func buildStartDaemon(discPath, transcriptDir string) func() error {
 	return func() error {
 		exe, err := osExecutable()
 		if err != nil {
@@ -74,7 +114,11 @@ func buildStartDaemon(discPath string) func() error {
 		if err != nil {
 			return fmt.Errorf("up: open daemon log: %w", err)
 		}
-		c := execCommand(exe, "daemon")
+		args := []string{"daemon"}
+		if transcriptDir != "" {
+			args = append(args, "--transcript-dir", transcriptDir)
+		}
+		c := execCommand(exe, args...)
 		c.Stdout = f
 		c.Stderr = f
 		if err := startCmd(c); err != nil {
@@ -86,13 +130,17 @@ func buildStartDaemon(discPath string) func() error {
 	}
 }
 
-func buildInstallHooks(discPath string) func() error {
+func buildInstallHooks(discPath string, global bool) func() error {
 	return func() error {
 		exe, err := osExecutable()
 		if err != nil {
 			return fmt.Errorf("up: resolve executable for hooks: %w", err)
 		}
-		return installHooks(".claude/settings.json", discPath, exe, false)
+		path, err := settingsPath(false, global)
+		if err != nil {
+			return fmt.Errorf("up: resolve settings path: %w", err)
+		}
+		return installHooks(path, discPath, exe, false)
 	}
 }
 
@@ -158,6 +206,11 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 		if pollErr := deps.pollHealthz(ctx, disc.Addr); pollErr != nil {
 			return pollErr
 		}
+		if deps.history {
+			if err := reportHistoryScope(out, disc, deps.projectsDir); err != nil {
+				return err
+			}
+		}
 	}
 
 	if err := deps.installHooks(); err != nil {
@@ -201,4 +254,28 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 		return err
 	}
 	return deps.replayDemo(ctx, disc)
+}
+
+func reportHistoryScope(out io.Writer, disc daemon.Discovery, projectsDir string) error {
+	if projectsDir != "" && disc.TranscriptDir == projectsDir {
+		_, err := fmt.Fprintf(out, "daemon already observing all history (%s)\n", projectsDir)
+		return err
+	}
+	_, err := fmt.Fprintf(out, "daemon already running (pid %d); --history applies only when starting a fresh daemon.\nto tail all history, restart it:\n\n  %s\n\n", disc.Pid, restartCommand(disc, projectsDir))
+	return err
+}
+
+func restartCommand(disc daemon.Discovery, projectsDir string) string {
+	var b strings.Builder
+	if disc.Pid != 0 {
+		_, _ = fmt.Fprintf(&b, "kill %d && ", disc.Pid)
+	}
+	_, _ = fmt.Fprintf(&b, "catacomb daemon --transcript-dir %q", projectsDir)
+	if disc.DBPath != "" {
+		_, _ = fmt.Fprintf(&b, " --db %q", disc.DBPath)
+	}
+	if disc.AllowPayloadAccess {
+		b.WriteString(" --allow-payload-access")
+	}
+	return b.String()
 }

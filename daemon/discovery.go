@@ -11,11 +11,14 @@ import (
 )
 
 type Discovery struct {
-	Addr      string `json:"addr"`
-	Token     string `json:"token"`
-	GRPCAddr  string `json:"grpc_addr,omitempty"`
-	Pid       int    `json:"pid,omitempty"`
-	StartedAt string `json:"started_at,omitempty"`
+	Addr               string `json:"addr"`
+	Token              string `json:"token"`
+	GRPCAddr           string `json:"grpc_addr,omitempty"`
+	Pid                int    `json:"pid,omitempty"`
+	StartedAt          string `json:"started_at,omitempty"`
+	TranscriptDir      string `json:"transcript_dir,omitempty"`
+	DBPath             string `json:"db_path,omitempty"`
+	AllowPayloadAccess bool   `json:"allow_payload_access,omitempty"`
 }
 
 var (

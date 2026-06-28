@@ -44,7 +44,10 @@ func newObserveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "observe [hash]",
 		Short: "Interactive terminal observer for a Claude session",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Interactive terminal observer over the live daemon feed: sessions, the node
+tree, and per-node detail. Pass a session hash to open straight into it.`,
+		Example: `  catacomb observe`,
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hash := ""
 			if len(args) == 1 {

@@ -125,3 +125,20 @@ func TestReadDiscoveryParseError(t *testing.T) {
 	_, err := ReadDiscovery(path)
 	require.Error(t, err)
 }
+
+func TestWriteReadDiscoveryScopeFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	in := Discovery{
+		Addr:               "127.0.0.1:5001",
+		Token:              "tok",
+		TranscriptDir:      "/home/u/.claude/projects",
+		DBPath:             "/home/u/.catacomb/catacomb.db",
+		AllowPayloadAccess: true,
+	}
+	require.NoError(t, WriteDiscovery(path, in))
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/home/u/.claude/projects", got.TranscriptDir)
+	assert.Equal(t, "/home/u/.catacomb/catacomb.db", got.DBPath)
+	assert.True(t, got.AllowPayloadAccess)
+}

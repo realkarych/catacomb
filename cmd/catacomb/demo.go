@@ -30,6 +30,9 @@ func newDemoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "demo",
 		Short: "Ingest a bundled synthetic transcript into the running daemon",
+		Long: `Ingest a bundled synthetic transcript into the running daemon so you can see
+a populated graph without a live session.`,
+		Example: `  catacomb demo`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps := demoDeps{
 				readDiscovery: daemon.ReadDiscovery,

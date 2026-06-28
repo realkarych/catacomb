@@ -27,6 +27,15 @@ func newInstallHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install-hooks",
 		Short: "Wire the catacomb hook forwarder into Claude Code settings.json",
+		Long: `Wire the catacomb hook forwarder into Claude Code settings.json.
+
+--project (default) writes ./.claude/settings.json and observes only this
+directory. --global writes ~/.claude/settings.json and observes every project.`,
+		Example: `  # current project only
+  catacomb install-hooks
+
+  # every project
+  catacomb install-hooks --global`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path, err := settingsPath(project, global)
 			if err != nil {

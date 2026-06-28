@@ -72,6 +72,7 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 	_, _ = fmt.Fprintf(w, "pid\t%d\n", disc.Pid)
 	_, _ = fmt.Fprintf(w, "uptime\t%s\n", uptime)
 	_, _ = fmt.Fprintf(w, "token age\t%s\n", tokenAge)
+	_, _ = fmt.Fprintf(w, "observing\t%s\n", observingLabel(disc.TranscriptDir))
 	if fetchErr != nil {
 		if errors.Is(fetchErr, ErrDaemonRestarted) {
 			_ = w.Flush()
@@ -85,6 +86,13 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 	_, _ = fmt.Fprintf(w, "sessions\t%d\n", sessions)
 	_, _ = fmt.Fprintf(w, "nodes\t%d\n", nodes)
 	return w.Flush()
+}
+
+func observingLabel(dir string) string {
+	if dir == "" {
+		return "history off (enable: catacomb up --history)"
+	}
+	return dir
 }
 
 func fetchSessionCounts(ctx context.Context, disc daemon.Discovery, client *http.Client) (sessions, nodes int, err error) {
