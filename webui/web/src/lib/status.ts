@@ -25,7 +25,7 @@ export function statusColor(status: string): string {
 
 const STATUS_LABELS: Record<string, string> = {
 	error: 'error',
-	ok: 'ok',
+	ok: 'finished',
 	blocked: 'blocked',
 	running: 'running',
 	pending: 'pending',

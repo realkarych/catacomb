@@ -68,7 +68,7 @@ test('sessions list gates status pills by liveness', async ({ page }) => {
   await expect(staleRow.locator('.cell-status .status-pill')).toHaveCount(0);
 
   await expect(okRow.locator('.cell-status .status-pill')).toHaveCount(1);
-  await expect(okRow.locator('.cell-status .status-pill')).toContainText('ok');
+  await expect(okRow.locator('.cell-status .status-pill')).toContainText('finished');
 
   await expect(liveRow.locator('.cell-status .status-pill')).toHaveCount(1);
   await expect(liveRow.locator('.cell-status .status-pill')).toContainText('live');

@@ -74,7 +74,7 @@ describe('statusColor', () => {
 
 describe('displayLabel', () => {
   it('returns "error" for error', () => expect(displayLabel('error')).toBe('error'));
-  it('returns "ok" for ok', () => expect(displayLabel('ok')).toBe('ok'));
+  it('returns "finished" for ok', () => expect(displayLabel('ok')).toBe('finished'));
   it('returns "blocked" for blocked', () => expect(displayLabel('blocked')).toBe('blocked'));
   it('returns "running" for running', () => expect(displayLabel('running')).toBe('running'));
   it('returns "pending" for pending', () => expect(displayLabel('pending')).toBe('pending'));
