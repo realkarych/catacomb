@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,4 +61,25 @@ func TestRunsCmdWiredAndGrouped(t *testing.T) {
 		groups[sub.Name()] = sub.GroupID
 	}
 	assert.Equal(t, "advanced", groups["runs"])
+}
+
+func TestRunsCmdExecuteViaRoot(t *testing.T) {
+	dbPath := seedDB(t)
+	root := newRootCmd()
+	root.SetArgs([]string{"runs", "--db", dbPath})
+	var buf strings.Builder
+	root.SetOut(&buf)
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), "RUN")
+}
+
+func TestRunsStoreReadError(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "g.db")
+	require.NoError(t, err)
+	_ = f.Close()
+	err = runRuns(io.Discard, func(string) (store.Store, error) {
+		return &obsErrStore{}, nil
+	}, newPricer, f.Name(), false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store read")
 }
