@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/cdc"
@@ -328,6 +329,32 @@ func TestRunDaemonWithAllowPayloadAccessTrue(t *testing.T) {
 		)
 	}()
 	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonDiscoveryHasScope(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(t.TempDir(), "g.db")
+	transcripts := t.TempDir()
+	discovery := filepath.Join(dir, "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, db, discovery, 30*time.Minute, 4096, "", "", "", "", "", transcripts, nil, true)
+	}()
+	var d daemon.Discovery
+	require.Eventually(t, func() bool {
+		disc, err := daemon.ReadDiscovery(discovery)
+		if err != nil || disc.TranscriptDir == "" {
+			return false
+		}
+		d = disc
+		return true
+	}, 3*time.Second, 10*time.Millisecond)
+	assert.Equal(t, transcripts, d.TranscriptDir)
+	assert.Equal(t, db, d.DBPath)
+	assert.True(t, d.AllowPayloadAccess)
 	cancel()
 	require.NoError(t, <-errc)
 }

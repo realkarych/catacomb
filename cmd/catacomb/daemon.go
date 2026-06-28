@@ -104,9 +104,12 @@ func runDaemonWith(
 	defer func() { _ = grpcLn.Close() }()
 
 	disc := daemon.Discovery{
-		Addr:     ln.Addr().String(),
-		Token:    token,
-		GRPCAddr: grpcLn.Addr().String(),
+		Addr:               ln.Addr().String(),
+		Token:              token,
+		GRPCAddr:           grpcLn.Addr().String(),
+		TranscriptDir:      transcriptDir,
+		DBPath:             dbPath,
+		AllowPayloadAccess: allowPayloadAccess,
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
