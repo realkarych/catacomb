@@ -15,8 +15,8 @@
 
   let sessions: SessionSummary[] = $state([]);
   let sessionsError: string | null = $state(null);
-  let selA: string = $state(a ?? '');
-  let selB: string = $state(b ?? '');
+  let selA: string = $state('');
+  let selB: string = $state('');
   let diffResult: DiffResult | null = $state(null);
   let diffLoading = $state(false);
   let diffError: string | null = $state(null);
