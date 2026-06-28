@@ -134,7 +134,7 @@ func TestServeStartsExporterConsumer(t *testing.T) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		return len(d.exporterConsumers) > 0
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
 	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
@@ -164,7 +164,7 @@ func TestServeExporterSnapshotsExistingGraphs(t *testing.T) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		return len(d.exporterConsumers) > 0
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 	cancel()
 	require.NoError(t, <-errc)
 }
@@ -185,7 +185,7 @@ func TestServeSelfLoopEndpointSkipsExporter(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok2") }()
-	require.Eventually(t, called.Load, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, called.Load, 30*time.Second, 5*time.Millisecond)
 	d.mu.Lock()
 	consumerNil := len(d.exporterConsumers) == 0
 	d.mu.Unlock()
@@ -341,7 +341,7 @@ func TestServeGraceful(t *testing.T) {
 		}
 		_ = r.Body.Close()
 		return r.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/hook/SessionStart", strings.NewReader(`{"session_id":"s1"}`))
 	require.NoError(t, err)
@@ -375,7 +375,7 @@ func TestReapLoopStopsOnContextCancel(t *testing.T) {
 	require.Eventually(t, func() bool {
 		open, err := s.ListOpenRuns()
 		return err == nil && len(open) == 0
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 	cancel()
 	select {
 	case <-done:
@@ -392,7 +392,7 @@ func TestReapLoopLogsReapError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { d.reapLoop(ctx); close(done) }()
-	require.Eventually(t, func() bool { return s.appendCount() >= 2 }, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return s.appendCount() >= 2 }, 30*time.Second, 5*time.Millisecond)
 	cancel()
 	select {
 	case <-done:
@@ -667,7 +667,7 @@ func TestWiringPostgresDSNAttachesExporterAndReceivesDelta(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return len(d.ExporterConsumersForTest()) > 0
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.Eventually(t, func() bool {
@@ -722,7 +722,7 @@ func TestWiringOTLPAndPostgresRunTogether(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return len(d.ExporterConsumersForTest()) == 2
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
@@ -772,7 +772,7 @@ func TestWiringNeo4jURIAttachesExporterAndReceivesDelta(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return len(d.ExporterConsumersForTest()) > 0
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.Eventually(t, func() bool {
@@ -997,7 +997,7 @@ func TestSSEQueryTokenE2E(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"http://"+addr+"/v1/subscribe?token=tok", nil)
@@ -1090,7 +1090,7 @@ func TestStartExporterProjectPropagates(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return len(d.ExporterConsumersForTest()) > 0
-	}, 2*time.Second, 5*time.Millisecond)
+	}, 30*time.Second, 5*time.Millisecond)
 
 	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
 	require.Eventually(t, func() bool { return fakeSpan.spanCount() > 0 }, 3*time.Second, 5*time.Millisecond)

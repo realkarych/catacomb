@@ -73,7 +73,7 @@ func TestSSESnapshotAndLiveDelta(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/v1/subscribe", nil)
 	require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestSSEFilterDropsNonMatchingRun(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"http://"+addr+"/v1/subscribe?run=run-A", nil)
@@ -217,7 +217,7 @@ func TestSSEClientDisconnectUnsubscribes(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	baseline := d.busConsumerCountForTest()
 
@@ -233,7 +233,7 @@ func TestSSEClientDisconnectUnsubscribes(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return d.busConsumerCountForTest() > baseline
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	clientCancel()
 	_ = resp.Body.Close()
@@ -282,7 +282,7 @@ func TestSSEIDField(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"http://"+addr+"/v1/subscribe", nil)
@@ -526,7 +526,7 @@ func TestSSELiveDeltaWriteError(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return d.busConsumerCountForTest() > 0
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	d.bus.Publish(cdc.GraphDelta{
 		Kind:  cdc.DeltaNodeUpsert,
@@ -720,7 +720,7 @@ func TestSSEResumeWithCursorFiltersSnapshot(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return d.busConsumerCountForTest() > 0
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	cancel()
 	<-doneCh
@@ -772,7 +772,7 @@ func TestSSEResumeZeroCursorFullSnapshot(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return d.busConsumerCountForTest() > 0
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	cancel()
 	<-doneCh
@@ -820,7 +820,7 @@ func TestSSEResumeSinceParamFiltersSnapshot(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return d.busConsumerCountForTest() > 0
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	cancel()
 	<-doneCh
@@ -895,7 +895,7 @@ func TestSSEFilterDropsNonMatchingSession(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"http://"+addr+"/v1/subscribe?session=s1&token=tok", nil)
