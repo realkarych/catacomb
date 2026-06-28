@@ -36,16 +36,9 @@ def parse_session(lines: List[dict], run_id: str) -> SessionData:
         elif kind == "edge" and line.get("run_id") == run_id:
             edges.append(line)
 
-    parent_of: Dict[str, str] = {}
-    for e in edges:
-        if e.get("type") == "parent_child":
-            parent_of[e["dst"]] = e["src"]
-
-    nodes_by_id: Dict[str, dict] = {n["id"]: n for n in nodes}
-
     prompt_input = _extract_prompt_input(nodes)
     actual_output = _extract_actual_output(nodes)
-    tools = _extract_tools(nodes, nodes_by_id, parent_of)
+    tools = _extract_tools(nodes)
 
     return SessionData(
         run_id=run_id,
@@ -104,11 +97,7 @@ def _extract_actual_output(nodes: List[dict]) -> str:
     return _text_of(_payload_output(turns[-1]))
 
 
-def _extract_tools(
-    nodes: List[dict],
-    nodes_by_id: Dict[str, dict],
-    parent_of: Dict[str, str],
-) -> List[ToolCallData]:
+def _extract_tools(nodes: List[dict]) -> List[ToolCallData]:
     tool_nodes = [
         n for n in nodes if n.get("type") in ("tool_call", "mcp_call")
     ]
