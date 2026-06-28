@@ -45,6 +45,7 @@ export interface Edge {
 
 export interface SessionSummary {
   session: string;
+  label?: string;
   status: string;
   started_at?: string;
   ended_at?: string;

@@ -4,6 +4,7 @@ import type { SessionSummary } from '../web/src/lib/types';
 const fakeSessions: SessionSummary[] = [
   {
     session: 'deadbeef0001deadbeef0001deadbeef',
+    label: 'Refactor auth module',
     status: 'ok',
     started_at: '2024-06-01T10:00:00Z',
     duration_ms: 12500,
@@ -129,6 +130,20 @@ test('running session shows elapsed duration instead of an em dash', async ({ pa
   const runningRow = page.locator('.session-row', { hasText: 'abcd1234' });
   await expect(runningRow).toBeVisible();
   await expect(runningRow.locator('.cell').nth(3)).not.toHaveText('—');
+});
+
+test('session with a label shows the label and keeps the hash visible', async ({ page }) => {
+  await page.goto('/');
+  const labeledRow = page.locator('.session-row', { hasText: 'deadbeef' });
+  await expect(labeledRow.locator('.session-label')).toHaveText('Refactor auth module');
+  await expect(labeledRow.locator('.session-hash-sub')).toContainText('deadbeef');
+});
+
+test('session without a label shows the hash', async ({ page }) => {
+  await page.goto('/');
+  const plainRow = page.locator('.session-row', { hasText: 'cafebabe' });
+  await expect(plainRow.locator('.cell-hash')).toContainText('cafebabe');
+  await expect(plainRow.locator('.session-label')).toHaveCount(0);
 });
 
 test('clicking a sortable column header sorts the list', async ({ page }) => {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -633,6 +634,226 @@ func TestSessionSummaryLastActivityFallsBackToTStart(t *testing.T) {
 	d.mu.Unlock()
 
 	assert.Equal(t, started.UTC().Format(time.RFC3339), sum.LastActivity)
+}
+
+func jsonStr(t *testing.T, s string) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(s)
+	require.NoError(t, err)
+	return b
+}
+
+func promptNode(id string, ts *time.Time, input json.RawMessage, kind string) *model.Node {
+	n := &model.Node{ID: id, RunID: "s1", Type: model.NodeUserPrompt, TStart: ts}
+	if input != nil {
+		n.Payload = &model.Payload{Input: input}
+	}
+	if kind != "" {
+		n.Attrs = map[string]any{"prompt_kind": kind}
+	}
+	return n
+}
+
+func TestSessionSummaryLabelFromFirstPrompt(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, jsonStr(t, "Fix the\nlogin   bug"), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, "Fix the login bug", sum.Label)
+}
+
+func TestSessionSummaryLabelOnlySystemPrompts(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, jsonStr(t, "/clear caveat"), "system")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
+}
+
+func TestSessionSummaryLabelNoPrompts(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
+}
+
+func TestSessionSummaryLabelGateOff(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, jsonStr(t, "Fix the login bug"), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
+
+	b, err := json.Marshal(sum)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+	_, ok := m["label"]
+	assert.False(t, ok, "label must be omitted when empty")
+}
+
+func TestSessionSummaryLabelEarliestWins(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	early := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	g.Nodes["p-late"] = promptNode("p-late", &late, jsonStr(t, "later prompt"), "")
+	g.Nodes["p-early"] = promptNode("p-early", &early, jsonStr(t, "earliest prompt"), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, "earliest prompt", sum.Label)
+}
+
+func TestSessionSummaryLabelNilTStartSortsLast(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p-nil"] = promptNode("p-nil", nil, jsonStr(t, "untimed prompt"), "")
+	g.Nodes["p-timed"] = promptNode("p-timed", &ts, jsonStr(t, "timed prompt"), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Equal(t, "timed prompt", sum.Label)
+}
+
+func TestSessionSummaryLabelRedactsSecret(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	secret := "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, jsonStr(t, "deploy with "+secret), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.NotContains(t, sum.Label, secret)
+	assert.Contains(t, sum.Label, "redacted")
+}
+
+func TestSessionSummaryLabelTruncates(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, jsonStr(t, strings.Repeat("ab ", 40)), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	r := []rune(sum.Label)
+	require.Equal(t, sessionLabelMaxRunes+1, len(r))
+	assert.Equal(t, '…', r[len(r)-1])
+}
+
+func TestSessionSummaryLabelEmptyTextWhitespace(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, jsonStr(t, "  \n\t  "), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
+}
+
+func TestSessionSummaryLabelNonStringPayload(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, json.RawMessage(`{"k":"v"}`), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
+}
+
+func TestSessionSummaryLabelInvalidJSONPayload(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, json.RawMessage("not json"), "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
+}
+
+func TestSessionSummaryLabelPromptWithoutPayload(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetAllowPayloadAccess(true)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	ts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	g.Nodes["p1"] = promptNode("p1", &ts, nil, "")
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Empty(t, sum.Label)
 }
 
 func TestSessionSummaryLastActivityAbsentWhenNoTimestamps(t *testing.T) {

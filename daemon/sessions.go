@@ -1,19 +1,23 @@
 package daemon
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 var ErrSessionNotFound = errors.New("daemon: session not found")
 
 type SessionSummary struct {
 	Session        string         `json:"session"`
+	Label          string         `json:"label,omitempty"`
 	Status         string         `json:"status"`
 	StartedAt      string         `json:"started_at,omitempty"`
 	EndedAt        string         `json:"ended_at,omitempty"`
@@ -136,6 +140,7 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 		srcRank   int
 		tokensIn  int64
 		tokensOut int64
+		labelNode *model.Node
 	)
 	runSeen := map[string]bool{}
 	for _, execID := range d.executionsForSession(hash) {
@@ -171,6 +176,9 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 				continue
 			}
 			sum.NodeCount++
+			if d.allowPayloadAccess && isPromptLabelCandidate(n) && promptNodeBefore(n, labelNode) {
+				labelNode = n
+			}
 			if act := nodeActivity(n); act != nil && (lastAct == nil || act.After(*lastAct)) {
 				lastAct = act
 			}
@@ -227,6 +235,67 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	}
 	sum.TokensIn = tokensIn
 	sum.TokensOut = tokensOut
+	if labelNode != nil {
+		sum.Label = sessionLabelFromPayload(labelNode.Payload.Input)
+	}
 	sort.Strings(sum.RunIDs)
 	return sum
+}
+
+const sessionLabelMaxRunes = 60
+
+func isPromptLabelCandidate(n *model.Node) bool {
+	if n.Type != model.NodeUserPrompt {
+		return false
+	}
+	if pk, _ := n.Attrs["prompt_kind"].(string); pk == "system" {
+		return false
+	}
+	return n.Payload != nil && len(n.Payload.Input) > 0
+}
+
+func promptSortKey(n *model.Node) string {
+	if n.TStart == nil {
+		return "\uffff" + n.ID
+	}
+	return n.TStart.UTC().Format(time.RFC3339Nano) + "\x00" + n.ID
+}
+
+func promptNodeBefore(n, cur *model.Node) bool {
+	if cur == nil {
+		return true
+	}
+	return promptSortKey(n) < promptSortKey(cur)
+}
+
+func sessionLabelFromPayload(raw json.RawMessage) string {
+	text := collapseWhitespace(promptLabelText(redact.Redact(raw).Data))
+	if text == "" {
+		return ""
+	}
+	return truncateLabel(text)
+}
+
+func promptLabelText(raw json.RawMessage) string {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func truncateLabel(s string) string {
+	r := []rune(s)
+	if len(r) <= sessionLabelMaxRunes {
+		return s
+	}
+	return string(r[:sessionLabelMaxRunes]) + "…"
 }
