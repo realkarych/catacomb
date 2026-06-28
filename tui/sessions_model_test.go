@@ -3,11 +3,14 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var testNow = time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
 
 func sess(hash string) SessionSummary {
 	return SessionSummary{Session: hash, Status: "ok", NodeCount: 3, TokensIn: 100, TokensOut: 50}
@@ -34,22 +37,22 @@ func TestSessionsFilterNarrows(t *testing.T) {
 	for _, r := range "bet" {
 		st, _ = st.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
-	v := st.view(NewStyles(true), 80)
+	v := st.view(NewStyles(true), 80, testNow)
 	assert.Contains(t, v, "beta")
 	assert.NotContains(t, v, "alpha")
 }
 
 func TestSessionsViewRendersColumnsAndDash(t *testing.T) {
 	st := newSessionsState().withSessions([]SessionSummary{sess("s1")})
-	v := st.view(NewStyles(true), 80)
+	v := st.view(NewStyles(true), 80, testNow)
 	assert.Contains(t, v, "s1")
 	assert.Contains(t, v, "—")
-	v2 := st.view(NewStyles(true), 120)
+	v2 := st.view(NewStyles(true), 120, testNow)
 	assert.Contains(t, v2, "s1")
 }
 
 func TestSessionsEmpty(t *testing.T) {
-	v := newSessionsState().view(NewStyles(true), 80)
+	v := newSessionsState().view(NewStyles(true), 80, testNow)
 	assert.NotEmpty(t, v)
 	_, chosen := newSessionsState().update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, "", chosen)
@@ -97,7 +100,7 @@ func TestSessionsFilterEnterExits(t *testing.T) {
 	st, _ = st.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	st, _ = st.update(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.False(t, st.filtering)
-	v := st.view(NewStyles(true), 80)
+	v := st.view(NewStyles(true), 80, testNow)
 	assert.Contains(t, v, "alpha")
 }
 
@@ -114,7 +117,7 @@ func TestSessionsFilterNoMatchClampsCursor(t *testing.T) {
 func TestSessionsRowRendersDash(t *testing.T) {
 	noVal := SessionSummary{Session: "s1", Status: "ok"}
 	st := newSessionsState().withSessions([]SessionSummary{noVal})
-	v := st.view(NewStyles(true), 80)
+	v := st.view(NewStyles(true), 80, testNow)
 	assert.Contains(t, v, "—")
 }
 
@@ -166,7 +169,7 @@ func TestSessionsViewQueryNoMatch(t *testing.T) {
 		st, _ = st.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	st, _ = st.update(tea.KeyMsg{Type: tea.KeyEsc})
-	v := st.view(NewStyles(true), 80)
+	v := st.view(NewStyles(true), 80, testNow)
 	assert.Contains(t, v, "zzz")
 }
 
@@ -191,8 +194,35 @@ func TestSessionsFilteringRunesClampsCursor(t *testing.T) {
 
 func TestSessionsViewTruncatesLongLines(t *testing.T) {
 	st := newSessionsState().withSessions([]SessionSummary{sess("s1")})
-	v := st.view(NewStyles(true), 5)
+	v := st.view(NewStyles(true), 5, testNow)
 	lines := strings.Split(strings.TrimRight(v, "\n"), "\n")
 	require.Len(t, lines, 1)
 	assert.LessOrEqual(t, len([]rune(lines[0])), 5)
+}
+
+func TestSessionsViewLiveRow(t *testing.T) {
+	fresh := testNow.Add(-time.Minute).Format(time.RFC3339)
+	row := SessionSummary{Session: "live1", Status: "running", LastActivity: fresh, NodeCount: 2}
+	st := newSessionsState().withSessions([]SessionSummary{row})
+	v := st.view(NewStyles(true), 80, testNow)
+	assert.Contains(t, v, "live")
+	assert.Contains(t, v, "◐")
+}
+
+func TestSessionsViewStaleRunningBlank(t *testing.T) {
+	stale := testNow.Add(-10 * time.Minute).Format(time.RFC3339)
+	row := SessionSummary{Session: "stale1", Status: "running", LastActivity: stale, NodeCount: 2}
+	st := newSessionsState().withSessions([]SessionSummary{row})
+	v := st.view(NewStyles(true), 80, testNow)
+	assert.NotContains(t, v, "live")
+	assert.NotContains(t, v, "running")
+	assert.NotContains(t, v, "◐")
+	assert.Contains(t, v, "·")
+}
+
+func TestSessionsViewFinishedRow(t *testing.T) {
+	st := newSessionsState().withSessions([]SessionSummary{sess("done1")})
+	v := st.view(NewStyles(true), 80, testNow)
+	assert.Contains(t, v, "finished")
+	assert.Contains(t, v, "●")
 }

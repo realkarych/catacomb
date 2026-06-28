@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -102,7 +103,7 @@ func (ss sessionsState) update(msg tea.Msg) (sessionsState, string) {
 	return ss, ""
 }
 
-func (ss sessionsState) view(s Styles, width int) string {
+func (ss sessionsState) view(s Styles, width int, now time.Time) string {
 	if len(ss.filtered) == 0 {
 		msg := "no sessions"
 		if ss.query != "" {
@@ -113,14 +114,19 @@ func (ss sessionsState) view(s Styles, width int) string {
 
 	var b strings.Builder
 	for i, row := range ss.filtered {
-		glyph := StatusGlyph(row.Status)
+		ds := SessionDisplayStatus(row, now)
+		glyph := StatusGlyph(ds)
+		word := ""
+		if ds != "" {
+			word = StatusLabel(ds)
+		}
 		hash := ShortHash(row.Session, 8)
 		nodeCount := fmt.Sprintf("%d", row.NodeCount)
 		tIn := Tokens(&row.TokensIn)
 		tOut := Tokens(&row.TokensOut)
 		cost := Cost(row.CostUSD)
 		dur := Duration(row.DurationMS)
-		line := fmt.Sprintf("%s %s  nodes:%-4s  tok %s→%s  %s  %s", glyph, hash, nodeCount, tIn, tOut, cost, dur)
+		line := fmt.Sprintf("%s %s  %-8s  nodes:%-4s  tok %s→%s  %s  %s", glyph, hash, word, nodeCount, tIn, tOut, cost, dur)
 		if width > 0 && len([]rune(line)) > width {
 			line = string([]rune(line)[:width])
 		}

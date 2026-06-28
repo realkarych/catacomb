@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -190,14 +191,15 @@ func (m Model) View() string {
 	if m.loading {
 		return "loading…"
 	}
+	now := time.Now()
 	if m.focus == focusList {
-		return m.sessions.view(m.styles, m.width)
+		return m.sessions.view(m.styles, m.width, now)
 	}
 	sessionW := m.width / 4
 	if sessionW < 20 {
 		sessionW = 20
 	}
-	sessView := m.sessions.view(m.styles, sessionW)
+	sessView := m.sessions.view(m.styles, sessionW, now)
 	treeView := m.tree.view(m.styles, m.height)
 	detailView := m.detail.view(m.styles, m.debug)
 	return lipgloss.JoinHorizontal(lipgloss.Top, sessView, treeView, detailView)

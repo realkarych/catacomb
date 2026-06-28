@@ -34,17 +34,21 @@ func Provenance(n Node) string {
 }
 
 func StatusLabel(s string) string {
-	if s == "" {
+	switch s {
+	case "":
 		return "—"
+	case "ok":
+		return "finished"
+	default:
+		return s
 	}
-	return s
 }
 
 func StatusGlyph(s string) string {
 	switch s {
 	case "ok":
 		return "●"
-	case "running":
+	case "live", "running":
 		return "◐"
 	case "error":
 		return "✗"
