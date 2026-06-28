@@ -20,13 +20,16 @@
   let sortKey: SortKey = $state('started_at');
   let sortDir: SortDir = $state('desc');
 
-  const sortableColumns: { key: SortKey; label: string }[] = [
-    { key: 'started_at', label: 'Started' },
-    { key: 'duration_ms', label: 'Duration' },
-    { key: 'tokens_in', label: 'Tokens in' },
-    { key: 'tokens_out', label: 'Tokens out' },
-    { key: 'cost_usd', label: 'Cost' },
-    { key: 'error_count', label: 'Errors' },
+  const columns: { label: string; key?: SortKey; num?: boolean }[] = [
+    { label: 'Session' },
+    { label: 'Status' },
+    { label: 'Started', key: 'started_at', num: true },
+    { label: 'Duration', key: 'duration_ms', num: true },
+    { label: 'Tokens in/out', key: 'tokens_in', num: true },
+    { label: 'Cost', key: 'cost_usd', num: true },
+    { label: 'Tools', key: 'tool_count', num: true },
+    { label: 'Errors', key: 'error_count', num: true },
+    { label: 'Model' },
   ];
 
   onMount(async () => {
@@ -63,9 +66,9 @@
     }
   }
 
-  function getSortLabel(key: SortKey): string {
-    if (sortKey !== key) return 'Sort';
-    return sortDir === 'asc' ? 'Sorted ascending' : 'Sorted descending';
+  function ariaSort(key: SortKey): 'ascending' | 'descending' | undefined {
+    if (sortKey !== key) return undefined;
+    return sortDir === 'asc' ? 'ascending' : 'descending';
   }
 </script>
 
@@ -79,22 +82,6 @@
       onkeydown={onSearchKeyDown}
       aria-label="Search sessions"
     />
-    <div class="sort-controls" role="group" aria-label="Sort sessions">
-      {#each sortableColumns as col}
-        <button
-          class="sort-btn"
-          class:active={sortKey === col.key}
-          onclick={() => toggleSort(col.key)}
-          aria-pressed={sortKey === col.key}
-          aria-label="{col.label}: {getSortLabel(col.key)}"
-        >
-          {col.label}
-          {#if sortKey === col.key}
-            <span class="sort-indicator" aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
   </div>
 
   {#if loading}
@@ -125,15 +112,29 @@
       <table class="sessions-table">
         <thead>
           <tr>
-            <th class="th" scope="col">Session</th>
-            <th class="th" scope="col">Status</th>
-            <th class="th th-num" scope="col">Started</th>
-            <th class="th th-num" scope="col">Duration</th>
-            <th class="th th-num" scope="col">Tokens in/out</th>
-            <th class="th th-num" scope="col">Cost</th>
-            <th class="th th-num" scope="col">Tools</th>
-            <th class="th th-num" scope="col">Errors</th>
-            <th class="th" scope="col">Model</th>
+            {#each columns as col}
+              <th
+                class="th"
+                class:th-num={col.num}
+                scope="col"
+                aria-sort={col.key ? ariaSort(col.key) : undefined}
+              >
+                {#if col.key}
+                  <button
+                    class="th-sort"
+                    class:active={sortKey === col.key}
+                    onclick={() => { if (col.key) toggleSort(col.key); }}
+                  >
+                    {col.label}
+                    {#if sortKey === col.key}
+                      <span class="sort-indicator" aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>
+                    {/if}
+                  </button>
+                {:else}
+                  {col.label}
+                {/if}
+              </th>
+            {/each}
           </tr>
         </thead>
         <tbody>
@@ -184,40 +185,35 @@
     box-shadow: 0 0 0 2px var(--ring);
   }
 
-  .sort-controls {
-    display: flex;
-    gap: var(--s1);
-    flex-wrap: wrap;
-  }
-
-  .sort-btn {
+  .th-sort {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    padding: 3px var(--s2);
-    font-size: var(--text-xs);
-    font-family: var(--font-ui);
-    color: var(--text-faint);
+    width: 100%;
+    padding: 0;
+    font: inherit;
+    color: inherit;
     background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border: none;
     cursor: pointer;
-    transition: color 0.12s, border-color 0.12s;
+    transition: color 0.12s;
   }
 
-  .sort-btn:hover {
+  .th-num .th-sort {
+    justify-content: flex-end;
+  }
+
+  .th-sort:hover {
     color: var(--text-dim);
-    border-color: var(--border-strong);
   }
 
-  .sort-btn:focus-visible {
+  .th-sort:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
-  .sort-btn.active {
+  .th-sort.active {
     color: var(--accent);
-    border-color: var(--accent);
   }
 
   .sort-indicator {

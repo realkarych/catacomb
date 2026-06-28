@@ -1,6 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive, sessionDisplayStatus, LIVE_WINDOW_MS } from './status';
+import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive, sessionDisplayStatus, sessionElapsedMs, LIVE_WINDOW_MS } from './status';
 import type { SessionSummary } from './types';
+
+function makeSession(overrides: Partial<SessionSummary>): SessionSummary {
+  return {
+    session: 'abc',
+    status: 'running',
+    tokens_in: 0,
+    tokens_out: 0,
+    node_count: 0,
+    tool_count: 0,
+    error_count: 0,
+    run_ids: [],
+    ...overrides,
+  };
+}
 
 describe('isOutcomeStatus', () => {
   it('returns true for error', () => expect(isOutcomeStatus('error')).toBe(true));
@@ -68,21 +82,23 @@ describe('displayLabel', () => {
   it('returns the raw value for an unrecognized status', () => expect(displayLabel('superseded')).toBe('superseded'));
 });
 
+describe('sessionElapsedMs', () => {
+  it('returns duration_ms for a finished session', () => {
+    expect(sessionElapsedMs(makeSession({ duration_ms: 5000, started_at: '2024-01-01T00:00:00Z' }), 123456)).toBe(5000);
+  });
+
+  it('returns elapsed since started_at for a running session', () => {
+    expect(sessionElapsedMs(makeSession({ duration_ms: undefined, started_at: '1970-01-01T00:00:10.000Z' }), 1000000)).toBe(990000);
+  });
+
+  it('returns undefined when neither duration_ms nor started_at is present', () => {
+    expect(sessionElapsedMs(makeSession({ duration_ms: undefined, started_at: undefined }), Date.now())).toBeUndefined();
+  });
+});
+
 describe('isSessionLive', () => {
 
-  function session(overrides: Partial<SessionSummary>): SessionSummary {
-    return {
-      session: 'abc',
-      status: 'running',
-      tokens_in: 0,
-      tokens_out: 0,
-      node_count: 0,
-      tool_count: 0,
-      error_count: 0,
-      run_ids: [],
-      ...overrides,
-    };
-  }
+  const session = makeSession;
 
   it('returns true for running session with recent last_activity', () => {
     const nowMs = Date.now();

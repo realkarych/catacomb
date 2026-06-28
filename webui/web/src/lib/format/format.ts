@@ -7,14 +7,20 @@ export function formatDuration(ms?: number): string {
     const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
     return `${m}m ${s}s`;
   }
-  const h = Math.floor(ms / 3600000);
-  const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
-  return `${h}h ${m}m`;
+  if (ms < 86400000) {
+    const h = Math.floor(ms / 3600000);
+    const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
+    return `${h}h ${m}m`;
+  }
+  const d = Math.floor(ms / 86400000);
+  const h = String(Math.floor((ms % 86400000) / 3600000)).padStart(2, '0');
+  return `${d}d ${h}h`;
 }
 
 export function formatTokens(n?: number): string {
   if (n === undefined) return '—';
   if (n === 0) return '0';
+  if (n >= 1000000) return `${(n / 1000000).toFixed(2)}M`;
   if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
   return n.toLocaleString('en-US');
 }
@@ -28,7 +34,8 @@ export function formatCost(usd?: number): string {
 
 export function shortHash(h?: string, n = 8): string {
   if (!h) return '—';
-  return h.slice(0, n);
+  if (h.length > n) return `${h.slice(0, n)}…`;
+  return h;
 }
 
 export function formatDate(iso?: string): string {

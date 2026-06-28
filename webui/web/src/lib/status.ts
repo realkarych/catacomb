@@ -47,3 +47,9 @@ export function sessionDisplayStatus(session: SessionSummary | undefined, nowMs:
 	if (!shouldShowStatus(session.status, live)) return null;
 	return session.status === 'running' ? 'live' : session.status;
 }
+
+export function sessionElapsedMs(session: SessionSummary, nowMs: number): number | undefined {
+	if (session.duration_ms !== undefined) return session.duration_ms;
+	if (session.started_at) return nowMs - Date.parse(session.started_at);
+	return undefined;
+}
