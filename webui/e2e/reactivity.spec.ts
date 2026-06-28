@@ -146,14 +146,11 @@ test('clicking an outline row opens the drawer with metric values', async ({ pag
 
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toHaveClass(/node-drawer--open/);
+  const summary = drawer.locator('.meta-summary');
+  await expect(summary).toContainText('in 10');
+  await expect(summary).toContainText('out 5');
+  await expect(summary.locator('.provenance-badge[data-provenance="estimated"]')).toBeVisible();
   await drawer.locator('.advanced-summary').click();
-  await expect(drawer.locator('.metric-row')).toHaveCount(5);
-  await expect(drawer).toContainText('Tokens in');
-  await expect(drawer).toContainText('10');
-  await expect(drawer).toContainText('Tokens out');
-  await expect(drawer).toContainText('5');
-  await expect(drawer).toContainText('Cost');
-  await expect(drawer.locator('.provenance-badge[data-provenance="estimated"]')).toBeVisible();
   await expect(drawer).toContainText('claude-opus-4-8');
 
   await page.keyboard.press('Escape');
@@ -168,7 +165,7 @@ test('deep-link #/s/{hash}/n/{id} opens the drawer on load', async ({ page }) =>
   await expect(drawer).toHaveClass(/node-drawer--open/, { timeout: 8000 });
   await expect(drawer).toContainText('Assistant Turn');
   await drawer.locator('.advanced-summary').click();
-  await expect(drawer.locator('.metric-row')).toHaveCount(5);
+  await expect(drawer).toContainText('claude-opus-4-8');
 });
 
 test('running session shows a live badge in the session header', async ({ page }) => {

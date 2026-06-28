@@ -368,11 +368,19 @@
         aria-pressed={showSystem}
         onclick={() => (showSystem = !showSystem)}
       >Show system</button>
-    </div>
-    <div class="outline-legend" aria-label="Stat legend">
-      <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> in · out · cost · duration</span>
-      <span class="outline-legend-item"><span class="outline-legend-key">tool</span> arg → output · duration</span>
-      <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> N nodes · in · out · cost · duration</span>
+      <div class="outline-help">
+        <button
+          class="outline-toolbar-btn outline-help-btn"
+          type="button"
+          aria-label="Stat legend"
+          aria-describedby="outline-legend"
+        >?</button>
+        <div class="outline-legend" id="outline-legend" role="tooltip">
+          <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> tokens in · out · cost · duration</span>
+          <span class="outline-legend-item"><span class="outline-legend-key">tool</span> arg → output · duration</span>
+          <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> node count · in · out · cost · duration</span>
+        </div>
+      </div>
     </div>
     <div
       bind:this={scrollEl}
@@ -487,21 +495,55 @@
     border-color: var(--accent);
   }
 
+  .outline-toolbar-btn[aria-pressed='true'] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+
   .outline-toolbar-btn:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
+  .outline-help {
+    position: relative;
+    display: inline-flex;
+    margin-left: auto;
+  }
+
+  .outline-help-btn {
+    width: 22px;
+    padding: 0;
+    line-height: 1;
+  }
+
   .outline-legend {
+    position: absolute;
+    top: calc(100% + var(--s1));
+    right: 0;
+    z-index: 5;
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--s1) var(--s4);
-    padding: var(--s1) var(--s4);
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    gap: var(--s1);
+    padding: var(--s2) var(--s3);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-2);
     font-size: var(--text-xs);
     font-family: var(--font-mono);
     color: var(--text-faint);
-    flex-shrink: 0;
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  .outline-help:hover .outline-legend,
+  .outline-help:focus-within .outline-legend {
+    visibility: visible;
+    opacity: 1;
   }
 
   .outline-legend-item {
@@ -624,6 +666,7 @@
   .outline-label {
     flex: 1;
     min-width: 0;
+    max-width: 48rem;
     display: flex;
     align-items: baseline;
     gap: var(--s2);
