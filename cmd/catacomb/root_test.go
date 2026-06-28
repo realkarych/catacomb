@@ -58,6 +58,7 @@ func TestCommandGroupAssignments(t *testing.T) {
 	assert.Equal(t, "advanced", groups["replay"])
 	assert.Equal(t, "advanced", groups["demo"])
 	assert.Equal(t, "advanced", groups["runs"])
+	assert.Equal(t, "advanced", groups["snapshot"])
 	assert.Equal(t, "advanced", groups["inspect"])
 	assert.Equal(t, "advanced", groups["version"])
 }
