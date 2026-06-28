@@ -8,6 +8,7 @@ func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
 
 	matchExact(a, b, usedA, usedB, &matched, func(it item) string { return it.step })
 	matchUnique(a, b, usedA, usedB, &matched, func(it item) string { return it.content })
+	matchLCS(a, b, usedA, usedB, &matched)
 
 	for i := range a {
 		if !usedA[i] {
@@ -20,6 +21,31 @@ func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
 		}
 	}
 	return matched, ra, rb
+}
+
+func matchLCS(a, b []item, usedA, usedB []bool, matched *[][2]int) {
+	var unusedA, unusedB []int
+	var contentA, contentB []string
+	for i, it := range a {
+		if !usedA[i] {
+			unusedA = append(unusedA, i)
+			contentA = append(contentA, it.content)
+		}
+	}
+	for j, it := range b {
+		if !usedB[j] {
+			unusedB = append(unusedB, j)
+			contentB = append(contentB, it.content)
+		}
+	}
+	pairs := lcsPairs(contentA, contentB)
+	for _, p := range pairs {
+		ai := unusedA[p[0]]
+		bi := unusedB[p[1]]
+		usedA[ai] = true
+		usedB[bi] = true
+		*matched = append(*matched, [2]int{ai, bi})
+	}
 }
 
 func matchUnique(a, b []item, usedA, usedB []bool, matched *[][2]int, key func(item) string) {

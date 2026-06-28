@@ -160,8 +160,73 @@ func TestMatchUniqueSkipsNonUniqueContent(t *testing.T) {
 	b := []item{
 		makeItem("b1", "sk3", "same", "pk3"),
 	}
-	matched, ra, rb := alignItems(a, b)
+	usedA := make([]bool, len(a))
+	usedB := make([]bool, len(b))
+	var matched [][2]int
+	matchUnique(a, b, usedA, usedB, &matched, func(it item) string { return it.content })
 	assert.Empty(t, matched)
-	assert.Equal(t, []int{0, 1}, ra)
-	assert.Equal(t, []int{0}, rb)
+	assert.Equal(t, []bool{false, false}, usedA)
+	assert.Equal(t, []bool{false}, usedB)
+}
+
+func TestMatchLCSPairsResiduals(t *testing.T) {
+	a := []item{
+		makeItem("a1", "sk1", "same", "pk1"),
+		makeItem("a2", "sk2", "same", "pk2"),
+	}
+	b := []item{
+		makeItem("b1", "sk3", "same", "pk3"),
+	}
+	usedA := []bool{false, false}
+	usedB := []bool{false}
+	var matched [][2]int
+	matchLCS(a, b, usedA, usedB, &matched)
+	require.Len(t, matched, 1)
+	assert.Equal(t, [2]int{0, 0}, matched[0])
+	assert.True(t, usedA[0])
+	assert.False(t, usedA[1])
+	assert.True(t, usedB[0])
+}
+
+func TestDriftWithRepeatedContentAlignsViaLCS(t *testing.T) {
+	makeCmd := func(id, cmd string, sec int64) *model.Node {
+		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
+		n.Payload = &model.Payload{Input: []byte(`{"command":"` + cmd + `"}`)}
+		return n
+	}
+
+	turnA := &model.Node{ID: "tA", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	turnB := &model.Node{ID: "tB", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+
+	nodesA := []*model.Node{
+		turnA,
+		makeCmd("a_ls1", "ls", 1),
+		makeCmd("a_ls2", "ls", 2),
+		makeCmd("a_cat", "cat x", 3),
+	}
+	nodesB := []*model.Node{
+		turnB,
+		makeCmd("b_echo", "echo hi", 1),
+		makeCmd("b_ls1", "ls", 2),
+		makeCmd("b_ls2", "ls", 3),
+		makeCmd("b_cat", "cat x", 4),
+	}
+	edgesA := []*model.Edge{
+		{Type: model.EdgeParentChild, Src: "tA", Dst: "a_ls1"},
+		{Type: model.EdgeParentChild, Src: "tA", Dst: "a_ls2"},
+		{Type: model.EdgeParentChild, Src: "tA", Dst: "a_cat"},
+	}
+	edgesB := []*model.Edge{
+		{Type: model.EdgeParentChild, Src: "tB", Dst: "b_echo"},
+		{Type: model.EdgeParentChild, Src: "tB", Dst: "b_ls1"},
+		{Type: model.EdgeParentChild, Src: "tB", Dst: "b_ls2"},
+		{Type: model.EdgeParentChild, Src: "tB", Dst: "b_cat"},
+	}
+
+	result := DiffGraphs(nodesA, edgesA, nodesB, edgesB)
+
+	require.Len(t, result.Added, 1, "echo should be Added")
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+	require.Len(t, result.Unchanged, 3, "ls, ls, cat should be Unchanged via LCS")
 }
