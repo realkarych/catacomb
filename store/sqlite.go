@@ -45,6 +45,24 @@ func OpenSQLite(path string) (Store, error) {
 	return openSQLite(sql.Open, path)
 }
 
+func OpenSQLiteReadOnly(path string) (Store, error) {
+	return openSQLiteReadOnly(sql.Open, path)
+}
+
+func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
+	db, err := open("sqlite", readOnlyDSN(path))
+	if err != nil {
+		return nil, fmt.Errorf("store.OpenSQLiteReadOnly: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store.OpenSQLiteReadOnly ping: %w", err)
+	}
+	return &sqliteStore{db: db, marshal: json.Marshal}, nil
+}
+
+func readOnlyDSN(path string) string { return "file:" + path + "?mode=ro" }
+
 func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
 	db, err := open("sqlite", path)
 	if err != nil {

@@ -508,3 +508,38 @@ func TestScanTailCursorsIterError(t *testing.T) {
 	_, err := scanTailCursors(&fakeRows{errErr: errors.New("iter")})
 	assert.Error(t, err)
 }
+
+func TestOpenSQLiteReadOnlyReadsExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := OpenSQLite(path)
+	require.NoError(t, err)
+	r1 := model.Run{ID: "r1", Status: model.StatusRunning}
+	require.NoError(t, s.UpsertRun(r1))
+	require.NoError(t, s.Close())
+
+	ro, err := OpenSQLiteReadOnly(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ro.Close() })
+
+	runs, err := ro.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "r1", runs[0].ID)
+}
+
+func TestOpenSQLiteReadOnlyOpenError(t *testing.T) {
+	open := func(string, string) (*sql.DB, error) { return nil, assert.AnError }
+	_, err := openSQLiteReadOnly(open, "/any/path.db")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store.OpenSQLiteReadOnly")
+}
+
+func TestOpenSQLiteReadOnlyPingError(t *testing.T) {
+	_, err := openSQLiteReadOnly(sql.Open, "/nonexistent/dir/g.db")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ping")
+}
+
+func TestReadOnlyDSN(t *testing.T) {
+	assert.Equal(t, "file:/tmp/g.db?mode=ro", readOnlyDSN("/tmp/g.db"))
+}
