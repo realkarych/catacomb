@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1382,9 +1381,11 @@ func (s *failOnNthAppendStore) AppendDeltas(o model.Observation, deltas []cdc.Gr
 
 func TestSetReproCapture(t *testing.T) {
 	d := New(tempStore(t))
-	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.SetReproCapture(func(_ string, _ repro.Config) repro.Hashes {
+		return repro.Hashes{}
+	})
 	d.mu.Lock()
-	assert.NotNil(t, d.reproFS)
+	assert.NotNil(t, d.reproCapture)
 	d.mu.Unlock()
 }
 
@@ -1399,9 +1400,11 @@ func TestSetCatacombVersion(t *testing.T) {
 func TestCaptureReproIfReadyHappyPath(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.SetReproCapture(func(_ string, cfg repro.Config) repro.Hashes {
+		return repro.Hashes{CatacombConfigHash: repro.ConfigHash(cfg)}
+	})
 	d.SetCatacombVersion("v1.0")
-	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1","cwd":"/repo"}`)))
 	d.mu.Lock()
 	captured := d.reproCaptured["s1"]
 	r := d.graphs["exec1"].Runs["s1"]
@@ -1414,7 +1417,6 @@ func TestCaptureReproIfReadyHappyPath(t *testing.T) {
 
 func TestCaptureReproNilGraph(t *testing.T) {
 	d := New(tempStore(t))
-	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
 	d.mu.Lock()
 	d.execBySession["orphan"] = ""
 	d.mu.Unlock()
@@ -1422,12 +1424,11 @@ func TestCaptureReproNilGraph(t *testing.T) {
 	d.mu.Lock()
 	captured := d.reproCaptured["orphan"]
 	d.mu.Unlock()
-	assert.True(t, captured)
+	assert.False(t, captured)
 }
 
 func TestCaptureReproAlreadyCaptured(t *testing.T) {
 	d := New(tempStore(t))
-	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
 	d.SetReproCaptureCounterForTest("s1", true)
 	initial := d.ReproCapturedCountForTest()
 	d.captureReproForTest("s1")
@@ -1438,9 +1439,11 @@ func TestCaptureReproStoreError(t *testing.T) {
 	s := &failOnNthAppendStore{Store: tempStore(t), failN: 2}
 	d := New(s)
 	fixedExecID(d)
-	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.SetReproCapture(func(_ string, _ repro.Config) repro.Hashes {
+		return repro.Hashes{}
+	})
 	d.SetCatacombVersion("v1.0")
-	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1","cwd":"/repo"}`)))
 }
 
 func TestRecoverMarksRunsAsCaptured(t *testing.T) {
@@ -1461,4 +1464,67 @@ func TestRecoverMarksRunsAsCaptured(t *testing.T) {
 	captured := d2.reproCaptured["s1"]
 	d2.mu.Unlock()
 	assert.True(t, captured)
+}
+
+func TestCaptureReproNoCwdDeferred(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	d.mu.Lock()
+	captured := d.reproCaptured["s1"]
+	d.mu.Unlock()
+	assert.False(t, captured)
+}
+
+func TestReproDefaultCapturePathNoSetter(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Claude\n"), 0o644))
+	d := New(tempStore(t))
+	fixedExecID(d)
+	payload, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})
+	require.NoError(t, d.Ingest("SessionStart", payload))
+	d.mu.Lock()
+	r := d.graphs["exec1"].Runs["s1"]
+	d.mu.Unlock()
+	require.NotNil(t, r)
+	require.NotNil(t, r.Repro)
+	assert.Len(t, r.Repro.PromptsHash, 64)
+	assert.NotEqual(t, repro.Absent, r.Repro.PromptsHash)
+	assert.Len(t, r.Repro.CatacombConfigHash, 64)
+}
+
+func TestSummarizeRunExposesRepro(t *testing.T) {
+	g := reduce.NewGraph()
+	g.Runs["r1"] = &model.Run{
+		ID:     "r1",
+		Status: model.StatusOK,
+		Repro: &model.ReproMeta{
+			ClaudeCodeVersion: "1.2.3",
+			Cwd:               "/work",
+			PromptsHash:       "abc123",
+		},
+	}
+	sum := SummarizeRun("r1", []*reduce.Graph{g})
+	require.NotNil(t, sum.Repro)
+	assert.Equal(t, "1.2.3", sum.Repro.ClaudeCodeVersion)
+	assert.Equal(t, "/work", sum.Repro.Cwd)
+	assert.Equal(t, "abc123", sum.Repro.PromptsHash)
+}
+
+func TestReproTwoRunsSameConfigEqualHashes(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Claude\n"), 0o644))
+	d := New(tempStore(t))
+	p1, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})
+	p2, _ := json.Marshal(map[string]string{"session_id": "s2", "cwd": dir})
+	require.NoError(t, d.Ingest("SessionStart", p1))
+	require.NoError(t, d.Ingest("SessionStart", p2))
+	d.mu.Lock()
+	r1 := d.graphs[d.execBySession["s1"]].Runs["s1"]
+	r2 := d.graphs[d.execBySession["s2"]].Runs["s2"]
+	d.mu.Unlock()
+	require.NotNil(t, r1.Repro)
+	require.NotNil(t, r2.Repro)
+	assert.Equal(t, r1.Repro.PromptsHash, r2.Repro.PromptsHash)
+	assert.Equal(t, r1.Repro.CatacombConfigHash, r2.Repro.CatacombConfigHash)
 }
