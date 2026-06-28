@@ -5,6 +5,7 @@ func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
 	usedB := make([]bool, len(b))
 
 	matchExact(a, b, usedA, usedB, &matched, func(it item) string { return it.step })
+	matchUnique(a, b, usedA, usedB, &matched, func(it item) string { return it.content })
 
 	for i := range a {
 		if !usedA[i] {
@@ -17,6 +18,48 @@ func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
 		}
 	}
 	return matched, ra, rb
+}
+
+func matchUnique(a, b []item, usedA, usedB []bool, matched *[][2]int, key func(item) string) {
+	countA := countKey(a, usedA, key)
+	countB := countKey(b, usedB, key)
+
+	firstA := firstIndex(a, usedA, key)
+	firstB := firstIndex(b, usedB, key)
+
+	for k, idxA := range firstA {
+		if countA[k] != 1 || countB[k] != 1 {
+			continue
+		}
+		idxB := firstB[k]
+		usedA[idxA] = true
+		usedB[idxB] = true
+		*matched = append(*matched, [2]int{idxA, idxB})
+	}
+}
+
+func countKey(items []item, used []bool, key func(item) string) map[string]int {
+	m := map[string]int{}
+	for i, it := range items {
+		if !used[i] {
+			m[key(it)]++
+		}
+	}
+	return m
+}
+
+func firstIndex(items []item, used []bool, key func(item) string) map[string]int {
+	m := map[string]int{}
+	for i, it := range items {
+		if used[i] {
+			continue
+		}
+		k := key(it)
+		if _, exists := m[k]; !exists {
+			m[k] = i
+		}
+	}
+	return m
 }
 
 func matchExact(a, b []item, usedA, usedB []bool, matched *[][2]int, key func(item) string) {

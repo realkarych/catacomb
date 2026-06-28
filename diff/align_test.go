@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
 )
@@ -103,4 +104,64 @@ func TestLessItemEqualTStartTieBreaks(t *testing.T) {
 	f := sameTime("b-id", "sk1", "c1")
 	assert.True(t, lessItem(e, f))
 	assert.False(t, lessItem(f, e))
+}
+
+func TestDriftAlignsCommonStepsByContent(t *testing.T) {
+	turnA := &model.Node{ID: "turnA", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	turnB := &model.Node{ID: "turnB", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+
+	ls := func(id string, sec int64) *model.Node {
+		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
+		n.Payload = &model.Payload{Input: []byte(`{"command":"ls"}`)}
+		return n
+	}
+	cat := func(id string, sec int64) *model.Node {
+		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
+		n.Payload = &model.Payload{Input: []byte(`{"command":"cat x"}`)}
+		return n
+	}
+	whoami := func(id string, sec int64) *model.Node {
+		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
+		n.Payload = &model.Payload{Input: []byte(`{"command":"whoami"}`)}
+		return n
+	}
+
+	nodesA := []*model.Node{turnA, ls("a_ls", 3), cat("a_cat", 4)}
+	nodesB := []*model.Node{turnB, whoami("b_whoami", 2), ls("b_ls", 3), cat("b_cat", 4)}
+	edgesA := []*model.Edge{
+		{Type: model.EdgeParentChild, Src: "turnA", Dst: "a_ls"},
+		{Type: model.EdgeParentChild, Src: "turnA", Dst: "a_cat"},
+	}
+	edgesB := []*model.Edge{
+		{Type: model.EdgeParentChild, Src: "turnB", Dst: "b_whoami"},
+		{Type: model.EdgeParentChild, Src: "turnB", Dst: "b_ls"},
+		{Type: model.EdgeParentChild, Src: "turnB", Dst: "b_cat"},
+	}
+
+	result := DiffGraphs(nodesA, edgesA, nodesB, edgesB)
+
+	require.Len(t, result.Added, 1, "whoami should be Added")
+	assert.Equal(t, "Bash", result.Added[0].Tool, "wrong tool")
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+	require.Len(t, result.Unchanged, 2, "ls and cat should be Unchanged")
+
+	for _, u := range result.Unchanged {
+		assert.Equal(t, "content", u.Tier, "should be aligned by content key")
+		assert.NotEqual(t, u.AStepKey, u.BStepKey, "step_keys must differ (drift visible)")
+	}
+}
+
+func TestMatchUniqueSkipsNonUniqueContent(t *testing.T) {
+	a := []item{
+		makeItem("a1", "sk1", "same", "pk1"),
+		makeItem("a2", "sk2", "same", "pk2"),
+	}
+	b := []item{
+		makeItem("b1", "sk3", "same", "pk3"),
+	}
+	matched, ra, rb := alignItems(a, b)
+	assert.Empty(t, matched)
+	assert.Equal(t, []int{0, 1}, ra)
+	assert.Equal(t, []int{0}, rb)
 }
