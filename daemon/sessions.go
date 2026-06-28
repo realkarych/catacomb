@@ -11,6 +11,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/redact"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 var ErrSessionNotFound = errors.New("daemon: session not found")
@@ -122,6 +123,132 @@ func nodeActivity(n *model.Node) *time.Time {
 		return n.TEnd
 	}
 	return n.TStart
+}
+
+func graphSlice(m map[string]*reduce.Graph) []*reduce.Graph {
+	out := make([]*reduce.Graph, 0, len(m))
+	for _, g := range m {
+		out = append(out, g)
+	}
+	return out
+}
+
+func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) bool) SessionSummary {
+	sum := SessionSummary{
+		Session:        key,
+		RunIDs:         []string{},
+		CountsByType:   map[string]int{},
+		CountsByStatus: map[string]int{},
+	}
+	var (
+		tStart    *time.Time
+		tEnd      *time.Time
+		lastAct   *time.Time
+		hasCost   bool
+		totalCost float64
+		srcRank   int
+		tokensIn  int64
+		tokensOut int64
+	)
+	runSeen := map[string]bool{}
+	for _, g := range graphs {
+		for runID, r := range g.Runs {
+			if !match(r) {
+				continue
+			}
+			if !runSeen[runID] {
+				runSeen[runID] = true
+				sum.RunIDs = append(sum.RunIDs, runID)
+			}
+			if sum.ModelID == "" && r.ModelID != "" {
+				sum.ModelID = r.ModelID
+			}
+			sum.Status = foldStatus(sum.Status, r.Status)
+			if r.StartedAt != nil {
+				if tStart == nil || r.StartedAt.Before(*tStart) {
+					t := *r.StartedAt
+					tStart = &t
+				}
+			}
+			if r.EndedAt != nil {
+				if tEnd == nil || r.EndedAt.After(*tEnd) {
+					t := *r.EndedAt
+					tEnd = &t
+				}
+			}
+		}
+		for _, n := range g.Nodes {
+			r, ok := g.Runs[n.RunID]
+			if !ok || !match(r) {
+				continue
+			}
+			sum.NodeCount++
+			if act := nodeActivity(n); act != nil && (lastAct == nil || act.After(*lastAct)) {
+				lastAct = act
+			}
+			sum.CountsByType[string(n.Type)]++
+			sum.CountsByStatus[string(n.Status)]++
+			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall {
+				sum.ToolCount++
+			}
+			if n.Status == model.StatusError {
+				sum.ErrorCount++
+			}
+			if n.TokensIn != nil {
+				tokensIn += *n.TokensIn
+			}
+			if n.TokensOut != nil {
+				tokensOut += *n.TokensOut
+			}
+			if n.CostUSD != nil {
+				hasCost = true
+				totalCost += *n.CostUSD
+				src, _ := n.Attrs["cost_source"].(string)
+				var rank int
+				switch src {
+				case "reported":
+					rank = 2
+				case "estimated":
+					rank = 1
+				}
+				if rank > srcRank {
+					srcRank = rank
+					sum.CostSource = src
+				}
+			}
+		}
+	}
+	if sum.NodeCount > 0 {
+		sum.ErrorRate = float64(sum.ErrorCount) / float64(sum.NodeCount)
+	}
+	if tStart != nil {
+		sum.StartedAt = tStart.UTC().Format(time.RFC3339)
+	}
+	if tEnd != nil {
+		sum.EndedAt = tEnd.UTC().Format(time.RFC3339)
+	}
+	if lastAct != nil {
+		sum.LastActivity = lastAct.UTC().Format(time.RFC3339)
+	}
+	if tStart != nil && tEnd != nil {
+		ms := tEnd.Sub(*tStart).Milliseconds()
+		sum.DurationMS = &ms
+	}
+	if hasCost {
+		sum.CostUSD = &totalCost
+	}
+	sum.TokensIn = tokensIn
+	sum.TokensOut = tokensOut
+	sort.Strings(sum.RunIDs)
+	return sum
+}
+
+func SummarizeRun(runID string, graphs []*reduce.Graph) SessionSummary {
+	return summarizeGraphs(runID, graphs, func(r *model.Run) bool { return r.ID == runID })
+}
+
+func SummarizeSession(hash string, graphs []*reduce.Graph) SessionSummary {
+	return summarizeGraphs(hash, graphs, func(r *model.Run) bool { return slices.Contains(r.SessionIDs, hash) })
 }
 
 func (d *Daemon) summarizeSession(hash string) SessionSummary {
