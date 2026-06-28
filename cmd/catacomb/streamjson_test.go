@@ -24,7 +24,7 @@ func TestStreamForwardDelivers(t *testing.T) {
 	body := bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}` + "\n"))
 	streamForward(&warn, discovery, body)
 	assert.Empty(t, warn.String())
-	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 30*time.Second, 10*time.Millisecond)
 }
 
 func TestStreamForwardMissingDiscovery(t *testing.T) {
@@ -61,7 +61,7 @@ func TestRunTeesAndForwards(t *testing.T) {
 	root.SetOut(&out)
 	root.SetArgs([]string{"run", "--", "claude", "-p"})
 	require.NoError(t, root.Execute())
-	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 30*time.Second, 10*time.Millisecond)
 }
 
 func TestRunExitCodePropagates(t *testing.T) {

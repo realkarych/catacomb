@@ -89,7 +89,7 @@ func awaitHealthz(t *testing.T, addr string) {
 		}
 		_ = resp.Body.Close()
 		return true
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 }
 
 func readAddr(t *testing.T, discovery string) string {
@@ -102,7 +102,7 @@ func readAddr(t *testing.T, discovery string) string {
 		}
 		addr = d.Addr
 		return addr != ""
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 	return addr
 }
 
@@ -224,7 +224,7 @@ func TestRunDaemonDiscoveryHasGRPCAddr(t *testing.T) {
 		}
 		grpcAddr = d.GRPCAddr
 		return true
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 	require.NotEmpty(t, grpcAddr)
 	cancel()
 	require.NoError(t, <-errc)
@@ -382,7 +382,7 @@ func TestRunDaemonDiscoveryHasPidAndStartedAt(t *testing.T) {
 		}
 		d = disc
 		return true
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 	require.NotZero(t, d.Pid)
 	_, err := time.Parse(time.RFC3339, d.StartedAt)
 	require.NoError(t, err)

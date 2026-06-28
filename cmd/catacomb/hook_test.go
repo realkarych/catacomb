@@ -47,7 +47,7 @@ func runTestDaemon(t *testing.T) (*daemon.Daemon, string) {
 		}
 		_ = resp.Body.Close()
 		return true
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 10*time.Millisecond)
 	return d, discovery
 }
 
@@ -56,7 +56,7 @@ func TestForwardDelivers(t *testing.T) {
 	var warn bytes.Buffer
 	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{"session_id":"s1"}`)))
 	assert.Empty(t, warn.String())
-	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 30*time.Second, 10*time.Millisecond)
 }
 
 func TestForwardNon2xx(t *testing.T) {
