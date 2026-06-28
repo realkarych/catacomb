@@ -31,11 +31,17 @@ def main() -> None:
         action="store_true",
         help="Reserved (not yet implemented); exits with error if ANTHROPIC_API_KEY is unset",
     )
+    parser.add_argument(
+        "--trace-metrics",
+        action="store_true",
+        help="Run StepEfficiencyMetric and TaskCompletionMetric via @observe replay; requires ANTHROPIC_API_KEY",
+    )
     args = parser.parse_args()
 
-    if args.argument_correctness and not os.environ.get("ANTHROPIC_API_KEY"):
+    if (args.argument_correctness or args.trace_metrics) and not os.environ.get("ANTHROPIC_API_KEY"):
+        flag = "--trace-metrics" if args.trace_metrics else "--argument-correctness"
         print(
-            "error: --argument-correctness requires ANTHROPIC_API_KEY environment variable (LLM judge makes network calls)",
+            f"error: {flag} requires ANTHROPIC_API_KEY environment variable (LLM judge makes network calls)",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -59,6 +65,37 @@ def main() -> None:
         run_id = run_ids[0] if run_ids else ""
 
     session = parse_session(lines, run_id)
+
+    if args.trace_metrics:
+        try:
+            from catacomb_deepeval.trace_replay import (
+                make_anthropic_judge,
+                run_step_efficiency,
+                run_task_completion,
+            )
+        except ImportError:
+            print(
+                "error: deepeval is not installed; run: pip install 'catacomb-deepeval[deepeval]'",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+        judge = make_anthropic_judge()
+        all_passed = True
+
+        tc_score, tc_reason = run_task_completion(session, model=judge, threshold=0.5)
+        print(f"task_completion score: {tc_score:.3f}")
+        print(f"task_completion reason: {tc_reason}")
+        if tc_score < 0.5:
+            all_passed = False
+
+        se_score, se_reason = run_step_efficiency(session, model=judge, threshold=0.5)
+        print(f"step_efficiency score: {se_score:.3f}")
+        print(f"step_efficiency reason: {se_reason}")
+        if se_score < 0.5:
+            all_passed = False
+
+        sys.exit(0 if all_passed else 1)
 
     if args.expected is None:
         result = session_to_dicts(session)

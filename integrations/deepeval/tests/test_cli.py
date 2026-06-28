@@ -95,3 +95,41 @@ def test_cli_with_wrong_expected_deepeval_gated():
     )
     assert result.returncode == 1
     assert "FAIL" in result.stdout
+
+
+def test_cli_trace_metrics_no_api_key_exits_2():
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+    }
+    env["DEEPEVAL_TELEMETRY_OPT_OUT"] = "YES"
+    result = subprocess.run(
+        [PYTHON, "-m", "catacomb_deepeval",
+         str(_testdata_path("session.jsonl")), "--run", "run-001",
+         "--trace-metrics"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 2
+    stderr_lower = result.stderr.lower()
+    assert "anthropic_api_key" in stderr_lower or "api" in stderr_lower
+
+
+def test_cli_default_path_unchanged_no_key():
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+    }
+    env["DEEPEVAL_TELEMETRY_OPT_OUT"] = "YES"
+    result = subprocess.run(
+        [PYTHON, "-m", "catacomb_deepeval",
+         str(_testdata_path("session.jsonl")), "--run", "run-001"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert "input" in data
+    assert "tools_called" in data
