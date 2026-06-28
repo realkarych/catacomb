@@ -86,11 +86,16 @@ func (g *Graph) Apply(o model.Observation) {
 	case "subagent_stop":
 		g.applySubagent(o)
 	case "marker":
-		n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
-		g.stamp(n, o)
-		n.Attrs = o.Attrs
-		g.emitNode(n, o)
-		g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
+		if mn, mb, ms, mocc, mok := extractMarkerFromAttrs(o); mok {
+			s := g.execState(o.ExecutionID)
+			mergeMarkerBound(s, o.ObsID, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
+		} else {
+			n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
+			g.stamp(n, o)
+			n.Attrs = o.Attrs
+			g.emitNode(n, o)
+			g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
+		}
 	case "run_ended":
 		g.applyRunEnded(o)
 	}
@@ -106,9 +111,26 @@ func (g *Graph) structEdgeAllowed(o model.Observation) bool {
 }
 
 func (g *Graph) applyTool(o model.Observation) {
+	name, _ := o.Attrs["name"].(string)
+	s := g.execState(o.ExecutionID)
+	if isMarkerTool(name) {
+		key := o.Correlation.ToolUseID
+		if key == "" {
+			key = o.ObsID
+		}
+		if mn, mb, ms, mocc, mok := extractMarkerFromPayload(o); mok {
+			mergeMarkerBound(s, key, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
+		}
+		s.markerTools[o.Correlation.ToolUseID] = true
+		return
+	}
+	if s.markerTools[o.Correlation.ToolUseID] {
+		return
+	}
+
 	id := model.ToolCallID(o.ExecutionID, o.Correlation.ToolUseID)
 	nodeType := model.NodeToolCall
-	if name, _ := o.Attrs["name"].(string); isMCP(name) {
+	if isMCP(name) {
 		nodeType = model.NodeMCPCall
 	}
 	n := g.node(id, o.RunID, nodeType)

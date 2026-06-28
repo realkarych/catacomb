@@ -14,3 +14,8 @@ func TestCanonicalIDs(t *testing.T) {
 	assert.Equal(t, "exec1:agent:a1", SubagentID("exec1", "a1"))
 	assert.Equal(t, "exec1:parent_child:a>b", EdgeID("exec1", EdgeParentChild, "a", "b"))
 }
+
+func TestPhaseMarkerID(t *testing.T) {
+	assert.Equal(t, "exec1:marker:foo:0", PhaseMarkerID("exec1", "foo", 0))
+	assert.Equal(t, "exec1:marker:bar:3", PhaseMarkerID("exec1", "bar", 3))
+}
