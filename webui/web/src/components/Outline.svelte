@@ -1,6 +1,16 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { sessionGraph, selectedNodeId, navigateToNode, filterState, sessionsById, handleEvent } from '../lib/stores/stores.svelte';
+  import {
+    sessionGraph,
+    selectedNodeId,
+    navigateToNode,
+    filterState,
+    sessionsById,
+    handleEvent,
+    outlineShowSystem,
+    registerOutlineActions,
+    clearOutlineActions,
+  } from '../lib/stores/stores.svelte';
   import { buildHierarchy } from '../lib/graph/hierarchy';
   import { flattenOutline, defaultOutlineCollapsed, outlineLabel, isSystemPrompt } from '../lib/graph/outline';
   import { shouldShowStatus, isSessionLive } from '../lib/status';
@@ -28,7 +38,6 @@
   let { hash, token }: Props = $props();
 
   const isLive = $derived(isSessionLive(sessionsById[hash], Date.now()));
-  let showSystem = $state(false);
 
   const ROW_H = 30;
   const OVERSCAN = 8;
@@ -59,7 +68,7 @@
         snippets = {};
         attempted = new Set();
         scrollTop = 0;
-        showSystem = false;
+        outlineShowSystem.value = false;
         if (scrollEl) scrollEl.scrollTop = 0;
       }
     });
@@ -83,7 +92,9 @@
   });
 
   const systemIds = $derived(
-    showSystem ? new Set<string>() : new Set(graph.nodes.filter(isSystemPrompt).map((n) => n.id)),
+    outlineShowSystem.value
+      ? new Set<string>()
+      : new Set(graph.nodes.filter(isSystemPrompt).map((n) => n.id)),
   );
 
   const rows = $derived(
@@ -252,6 +263,15 @@
     collapsed = defaultOutlineCollapsed(graph.nodes, hierarchy);
   }
 
+  $effect(() => {
+    registerOutlineActions({
+      collapseAll: handleCollapseAll,
+      expandAll: handleExpandAll,
+      reset: handleReset,
+    });
+    return () => clearOutlineActions();
+  });
+
   function prefersReducedMotion(): boolean {
     return (
       typeof window !== 'undefined' &&
@@ -358,30 +378,6 @@
   </div>
 {:else}
   <div class="outline-root">
-    <div class="outline-toolbar" role="toolbar" aria-label="Outline controls">
-      <button class="outline-toolbar-btn" type="button" onclick={handleCollapseAll}>Collapse all</button>
-      <button class="outline-toolbar-btn" type="button" onclick={handleExpandAll}>Expand all</button>
-      <button class="outline-toolbar-btn" type="button" onclick={handleReset}>Reset</button>
-      <button
-        class="outline-toolbar-btn"
-        type="button"
-        aria-pressed={showSystem}
-        onclick={() => (showSystem = !showSystem)}
-      >Show system</button>
-      <div class="outline-help">
-        <button
-          class="outline-toolbar-btn outline-help-btn"
-          type="button"
-          aria-label="Stat legend"
-          aria-describedby="outline-legend"
-        >?</button>
-        <div class="outline-legend" id="outline-legend" role="tooltip">
-          <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> tokens in · out · cost · duration</span>
-          <span class="outline-legend-item"><span class="outline-legend-key">tool</span> arg → output · duration</span>
-          <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> node count · in · out · cost · duration</span>
-        </div>
-      </div>
-    </div>
     <div
       bind:this={scrollEl}
       class="outline-scroll"
@@ -469,89 +465,6 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
-  }
-
-  .outline-toolbar {
-    display: flex;
-    gap: var(--s2);
-    padding: var(--s2) var(--s4);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .outline-toolbar-btn {
-    font-size: var(--text-xs);
-    font-family: var(--font-ui);
-    color: var(--text-dim);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: var(--s1) var(--s2);
-    cursor: pointer;
-  }
-
-  .outline-toolbar-btn:hover {
-    color: var(--text);
-    border-color: var(--accent);
-  }
-
-  .outline-toolbar-btn[aria-pressed='true'] {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: var(--surface-2);
-  }
-
-  .outline-toolbar-btn:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
-
-  .outline-help {
-    position: relative;
-    display: inline-flex;
-    margin-left: auto;
-  }
-
-  .outline-help-btn {
-    width: 22px;
-    padding: 0;
-    line-height: 1;
-  }
-
-  .outline-legend {
-    position: absolute;
-    top: calc(100% + var(--s1));
-    right: 0;
-    z-index: 5;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s1);
-    padding: var(--s2) var(--s3);
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-2);
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    color: var(--text-faint);
-    white-space: nowrap;
-    visibility: hidden;
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-
-  .outline-help:hover .outline-legend,
-  .outline-help:focus-within .outline-legend {
-    visibility: visible;
-    opacity: 1;
-  }
-
-  .outline-legend-item {
-    white-space: nowrap;
-  }
-
-  .outline-legend-key {
-    color: var(--text-dim);
   }
 
   .outline-scroll {

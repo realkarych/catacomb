@@ -77,7 +77,12 @@
     </div>
   </div>
   <SessionHeader {hash} />
-  <FilterBar {hash} totalCount={graph.nodes.length} filteredCount={filteredNodes.length} />
+  <FilterBar
+    {hash}
+    totalCount={graph.nodes.length}
+    filteredCount={filteredNodes.length}
+    outlineActive={viewMode === 'outline'}
+  />
   {#if loadStatus === 'not-found'}
     <div class="not-found-state">
       <div class="not-found-icon" aria-hidden="true">🔍</div>
