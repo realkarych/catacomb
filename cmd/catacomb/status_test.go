@@ -292,3 +292,39 @@ func TestRunStatusFetchSessionsDecodeError(t *testing.T) {
 	require.NoError(t, runStatus(context.Background(), &out, deps))
 	assert.Contains(t, out.String(), "unavailable")
 }
+
+func TestRunStatusShowsObserving(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	disc := t.TempDir() + "/d.json"
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:          strings.TrimPrefix(srv.URL, "http://"),
+		Token:         "tok",
+		TranscriptDir: "/home/u/.claude/projects",
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.Contains(t, out.String(), "observing")
+	assert.Contains(t, out.String(), "/home/u/.claude/projects")
+}
+
+func TestRunStatusObservingHistoryOff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	disc := t.TempDir() + "/d.json"
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "tok",
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.Contains(t, out.String(), "history off")
+}
