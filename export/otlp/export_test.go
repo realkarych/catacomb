@@ -469,8 +469,10 @@ func TestNodeToSpanModelAbsentWhenNoAttr(t *testing.T) {
 
 func TestNodeToSpanToolNameAndArguments(t *testing.T) {
 	e := newWithExporter(&recordExporter{})
-	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK,
-		Payload: &model.Payload{Input: json.RawMessage(`{"command":"ls"}`), Output: json.RawMessage(`"ok"`)}}
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK,
+		Payload: &model.Payload{Input: json.RawMessage(`{"command":"ls"}`), Output: json.RawMessage(`"ok"`)},
+	}
 	m := attrMap(e.nodeToSpan(n, ""))
 	assert.Equal(t, "Bash", m["tool.name"])
 	assert.Equal(t, "Bash", m["tool_call.function.name"])
@@ -483,8 +485,10 @@ func TestNodeToSpanToolNameAndArguments(t *testing.T) {
 
 func TestNodeToSpanRedactsInputValue(t *testing.T) {
 	e := newWithExporter(&recordExporter{})
-	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK,
-		Payload: &model.Payload{Input: json.RawMessage(`{"command":"git clone ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij foo"}`)}}
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK,
+		Payload: &model.Payload{Input: json.RawMessage(`{"command":"git clone ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij foo"}`)},
+	}
 	m := attrMap(e.nodeToSpan(n, ""))
 	assert.NotContains(t, m["input.value"], "ghp_")
 	assert.Contains(t, m["input.value"], "redacted")
@@ -493,10 +497,20 @@ func TestNodeToSpanRedactsInputValue(t *testing.T) {
 func TestNodeToSpanCapsLargeValue(t *testing.T) {
 	e := newWithExporter(&recordExporter{})
 	large := json.RawMessage("[" + strings.Repeat("1,", maxIOValueBytes) + "0]")
-	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK,
-		Payload: &model.Payload{Output: large}}
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK,
+		Payload: &model.Payload{Output: large},
+	}
 	m := attrMap(e.nodeToSpan(n, ""))
 	assert.Equal(t, maxIOValueBytes, len(m["output.value"]))
+}
+
+func TestNodeToSpanModelAbsentWhenAttrWrongType(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n2", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, Attrs: map[string]any{"model": 42}}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, ok := m["llm.model_name"]
+	assert.False(t, ok)
 }
 
 func TestNodeToSpanToolNameNotSetForNonToolKind(t *testing.T) {
@@ -519,8 +533,10 @@ func TestNodeToSpanNoPayloadOmitsIO(t *testing.T) {
 
 func TestNodeToSpanEmptyOutputOmitsOutputValue(t *testing.T) {
 	e := newWithExporter(&recordExporter{})
-	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK,
-		Payload: &model.Payload{Input: json.RawMessage(`{"cmd":"ls"}`)}}
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK,
+		Payload: &model.Payload{Input: json.RawMessage(`{"cmd":"ls"}`)},
+	}
 	m := attrMap(e.nodeToSpan(n, ""))
 	_, ok := m["output.value"]
 	assert.False(t, ok)
