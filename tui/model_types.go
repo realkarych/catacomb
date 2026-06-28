@@ -53,6 +53,7 @@ type SessionSummary struct {
 	Status         string         `json:"status"`
 	StartedAt      string         `json:"started_at,omitempty"`
 	EndedAt        string         `json:"ended_at,omitempty"`
+	LastActivity   string         `json:"last_activity,omitempty"`
 	DurationMS     *int64         `json:"duration_ms,omitempty"`
 	TokensIn       int64          `json:"tokens_in"`
 	TokensOut      int64          `json:"tokens_out"`

@@ -34,18 +34,23 @@ func TestProvenance(t *testing.T) {
 }
 
 func TestStatusLabel(t *testing.T) {
-	assert.Equal(t, "ok", StatusLabel("ok"))
+	assert.Equal(t, "finished", StatusLabel("ok"))
+	assert.Equal(t, "live", StatusLabel("live"))
 	assert.Equal(t, "running", StatusLabel("running"))
 	assert.Equal(t, "error", StatusLabel("error"))
+	assert.Equal(t, "blocked", StatusLabel("blocked"))
 	assert.Equal(t, "—", StatusLabel(""))
 }
 
 func TestStatusGlyph(t *testing.T) {
 	assert.NotEmpty(t, StatusGlyph("ok"))
+	assert.NotEmpty(t, StatusGlyph("live"))
 	assert.NotEmpty(t, StatusGlyph("running"))
 	assert.NotEmpty(t, StatusGlyph("error"))
 	assert.NotEmpty(t, StatusGlyph("pending"))
 	assert.NotEmpty(t, StatusGlyph("blocked"))
 	assert.NotEmpty(t, StatusGlyph("cancelled"))
 	assert.NotEmpty(t, StatusGlyph("unknown-status"))
+	assert.Equal(t, "◐", StatusGlyph("live"))
+	assert.Equal(t, "·", StatusGlyph(""))
 }

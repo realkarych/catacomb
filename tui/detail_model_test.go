@@ -15,7 +15,7 @@ func TestDetailViewRendersMetricsWithDash(t *testing.T) {
 	out := d.view(s, false)
 	assert.Contains(t, out, "tool call")
 	assert.Contains(t, out, "Bash")
-	assert.Contains(t, out, "ok")
+	assert.Contains(t, out, "finished")
 	assert.Contains(t, out, "—")
 }
 
