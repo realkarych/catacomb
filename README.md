@@ -29,26 +29,59 @@ It is domain- and evaluation-agnostic: it builds a faithful, queryable graph and
 catacomb up
 ```
 
-`catacomb up` does everything in one step: starts the daemon if it is not already
-running, idempotently installs the Claude Code hooks, prints the bearer URL, and
-opens the web UI in your browser. If no live session appears within a few seconds
-it replays a bundled demo transcript so you see the graph immediately.
+`catacomb up` starts the daemon if it is not already running, installs the
+Claude Code hooks for the **current directory**, prints the bearer URL, and
+opens the web UI. It observes **live** sessions started under that directory.
+
+### Observe every session
+
+To observe sessions in **every** project (not just the current directory),
+install the hooks globally:
+
+```sh
+catacomb up --global
+```
+
+This writes `~/.claude/settings.json`, so any Claude Code session — from any
+directory — is observed.
+
+### Load past sessions
+
+`up` and the hooks only see sessions that run *after* they are installed. To
+backfill the sessions you have **already** run, start the daemon tailing the
+Claude Code transcript directory:
+
+```sh
+catacomb up --history          # tails ~/.claude/projects when starting the daemon
+```
+
+On startup the daemon reads every existing transcript (sessions and their
+subagents) and then follows live ones. Tail cursors are persisted, so
+re-running the daemon does not duplicate history. If a daemon is already
+running, `up --history` prints the exact command to restart it with history
+enabled rather than restarting it for you.
+
+Combine both for full coverage:
+
+```sh
+catacomb up --global --history
+```
 
 Other commands:
 
 ```sh
-catacomb observe [hash]   # interactive terminal observer (sessions → tree → node detail)
-catacomb status           # daemon addr, pid, uptime, and session/node counts
+catacomb status           # daemon addr, pid, uptime, what it's observing, counts
+catacomb observe [hash]   # interactive terminal observer
 catacomb ui               # print the bearer URL and (re-)open the browser
 catacomb demo             # ingest the bundled demo transcript into a running daemon
 catacomb version          # print the version
 ```
 
-To read conversation content in the UI, start the daemon with `--allow-payload-access`
-(off by default — see [Privacy](#privacy)).
+To read conversation content in the UI, start the daemon with
+`--allow-payload-access` (off by default — see [Privacy](#privacy)).
 
-Install from source (`go install github.com/realkarych/catacomb/cmd/catacomb@latest`)
-or build locally with `make build`.
+By default the daemon's database is `catacomb.db` in the directory you launch
+it from, and its discovery file lives under `~/.catacomb/run/`.
 
 ## Privacy
 
