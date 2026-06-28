@@ -80,6 +80,7 @@ type Daemon struct {
 	lossyRuns          int64
 	pricer             reduce.Pricer
 	allowPayloadAccess bool
+	allowAnnotations   bool
 }
 
 func New(s store.Store) *Daemon {
@@ -186,6 +187,9 @@ func (d *Daemon) Recover() error {
 				return err
 			}
 		}
+	}
+	if err := reattachAnnotations(d); err != nil {
+		return err
 	}
 	return nil
 }
@@ -496,6 +500,9 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 		return err
 	}
 	for _, delta := range deltas {
+		if delta.Kind == cdc.DeltaNodeMerge && delta.OldID != "" && delta.NewID != "" {
+			d.carryOverMergeLocked(delta.ExecutionID, delta.OldID, delta.NewID)
+		}
 		d.publishDelta(delta)
 	}
 	return nil

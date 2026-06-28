@@ -397,6 +397,9 @@ func (e *errStore) ObservationsForExecution(string) ([]model.Observation, error)
 func (e *errStore) LoadTailCursors() ([]model.TailCursor, error)                 { return nil, nil }
 func (e *errStore) UpsertTailCursor(model.TailCursor) error                      { return nil }
 func (e *errStore) Close() error                                                 { return nil }
+func (e *errStore) UpsertAnnotation(model.Annotation) error                      { return nil }
+func (e *errStore) AnnotationsForExecution(string) ([]model.Annotation, error)  { return nil, nil }
+func (e *errStore) MoveAnnotations(string, string, string) error                 { return nil }
 
 func TestEvictTerminalAfterCooldown(t *testing.T) {
 	s := tempStore(t)

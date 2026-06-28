@@ -13,6 +13,22 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
+func TestSnapshotIncludesAnnotations(t *testing.T) {
+	raw := json.RawMessage(`"high"`)
+	nodes := []*model.Node{
+		{
+			ID:          "session:e1",
+			RunID:       "s1",
+			Type:        model.NodeSession,
+			Annotations: map[string]any{"eval.score": raw},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, Snapshot(&buf, nodes, nil))
+	assert.Contains(t, buf.String(), `"annotations"`)
+	assert.Contains(t, buf.String(), `"eval.score"`)
+}
+
 type failWriter struct{}
 
 func (failWriter) Write([]byte) (int, error) { return 0, errors.New("boom") }

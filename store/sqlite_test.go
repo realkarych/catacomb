@@ -610,3 +610,42 @@ func TestOpenSQLiteReadOnlyPathWithSpace(t *testing.T) {
 	require.Len(t, runs, 1)
 	assert.Equal(t, "r1", runs[0].ID)
 }
+
+func TestAnnotationsRoundTripAndLWW(t *testing.T) {
+	s := fileStore(t)
+	v5 := json.RawMessage(`5`)
+	v7 := json.RawMessage(`9`)
+	v4 := json.RawMessage(`1`)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: v5, WriteSeq: 5}))
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: v7, WriteSeq: 7}))
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "eval", Key: "score", Value: v4, WriteSeq: 4}))
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "k1", Owner: "other", Key: "score", Value: json.RawMessage(`2`), WriteSeq: 2}))
+	anns, err := s.AnnotationsForExecution("e1")
+	require.NoError(t, err)
+	require.Len(t, anns, 2)
+	evalAnn := anns[0]
+	if evalAnn.Owner != "eval" {
+		evalAnn = anns[1]
+	}
+	assert.Equal(t, "eval", evalAnn.Owner)
+	assert.Equal(t, "score", evalAnn.Key)
+	assert.Equal(t, string(v7), string(evalAnn.Value))
+}
+
+func TestMoveAnnotations(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.UpsertAnnotation(model.Annotation{ExecutionID: "e1", SourceKey: "from", Owner: "eval", Key: "score", Value: json.RawMessage(`9`), WriteSeq: 1}))
+	require.NoError(t, s.MoveAnnotations("e1", "from", "to"))
+	anns, err := s.AnnotationsForExecution("e1")
+	require.NoError(t, err)
+	require.Len(t, anns, 1)
+	assert.Equal(t, "to", anns[0].SourceKey)
+	assert.Equal(t, "eval", anns[0].Owner)
+}
+
+func TestMoveAnnotationsClosedDB(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.Close())
+	err := s.MoveAnnotations("e1", "from", "to")
+	require.Error(t, err)
+}
