@@ -1,5 +1,7 @@
 package diff
 
+import "sort"
+
 func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
 	usedA := make([]bool, len(a))
 	usedB := make([]bool, len(b))
@@ -27,7 +29,13 @@ func matchUnique(a, b []item, usedA, usedB []bool, matched *[][2]int, key func(i
 	firstA := firstIndex(a, usedA, key)
 	firstB := firstIndex(b, usedB, key)
 
-	for k, idxA := range firstA {
+	keys := make([]string, 0, len(firstA))
+	for k := range firstA {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		idxA := firstA[k]
 		if countA[k] != 1 || countB[k] != 1 {
 			continue
 		}
