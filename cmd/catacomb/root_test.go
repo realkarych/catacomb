@@ -61,6 +61,7 @@ func TestCommandGroupAssignments(t *testing.T) {
 	assert.Equal(t, "advanced", groups["snapshot"])
 	assert.Equal(t, "advanced", groups["inspect"])
 	assert.Equal(t, "advanced", groups["version"])
+	assert.Equal(t, "advanced", groups["export"])
 }
 
 func TestRootHelpContainsGroupTitles(t *testing.T) {
