@@ -104,6 +104,9 @@ the trace — no real agent re-execution happens.
 - `pip install 'catacomb-deepeval[deepeval]'` (deepeval 4.x)
 - `ANTHROPIC_API_KEY` set in the environment
 
+**Privacy**: because scoring is LLM-judged, the session's input, output, and
+tool content are sent to the Anthropic API — session content leaves the machine.
+
 The flag exits immediately with an error (exit 2) when `ANTHROPIC_API_KEY` is
 absent — no silent network attempts are made.
 

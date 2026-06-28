@@ -9,6 +9,8 @@ from catacomb_deepeval.adapter import session_to_dicts, session_to_test_case
 from catacomb_deepeval.expected import ExpectedLoadError, load_expected_names
 from catacomb_deepeval.reader import list_run_ids, load_jsonl, parse_session
 
+DEFAULT_THRESHOLD = 0.5
+
 
 def main() -> None:
     import argparse
@@ -80,20 +82,24 @@ def main() -> None:
             )
             sys.exit(2)
 
-        judge = make_anthropic_judge()
-        all_passed = True
+        try:
+            judge = make_anthropic_judge()
+            all_passed = True
 
-        tc_score, tc_reason = run_task_completion(session, model=judge, threshold=0.5)
-        print(f"task_completion score: {tc_score:.3f}")
-        print(f"task_completion reason: {tc_reason}")
-        if tc_score < 0.5:
-            all_passed = False
+            tc_score, tc_reason = run_task_completion(session, model=judge, threshold=DEFAULT_THRESHOLD)
+            print(f"task_completion score: {tc_score:.3f}")
+            print(f"task_completion reason: {tc_reason}")
+            if tc_score < DEFAULT_THRESHOLD:
+                all_passed = False
 
-        se_score, se_reason = run_step_efficiency(session, model=judge, threshold=0.5)
-        print(f"step_efficiency score: {se_score:.3f}")
-        print(f"step_efficiency reason: {se_reason}")
-        if se_score < 0.5:
-            all_passed = False
+            se_score, se_reason = run_step_efficiency(session, model=judge, threshold=DEFAULT_THRESHOLD)
+            print(f"step_efficiency score: {se_score:.3f}")
+            print(f"step_efficiency reason: {se_reason}")
+            if se_score < DEFAULT_THRESHOLD:
+                all_passed = False
+        except Exception as exc:
+            print(f"error: judge failed: {exc}", file=sys.stderr)
+            sys.exit(2)
 
         sys.exit(0 if all_passed else 1)
 

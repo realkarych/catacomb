@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import pathlib
 
 import pytest
@@ -15,12 +14,6 @@ from catacomb_deepeval.reader import load_jsonl, parse_session
 from catacomb_deepeval.trace_replay import run_step_efficiency, run_task_completion
 
 TESTDATA = pathlib.Path(__file__).parent / "testdata"
-
-_SCRUBBED_ENV = {
-    k: v
-    for k, v in os.environ.items()
-    if k not in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
-}
 
 
 class _StubJudge(DeepEvalBaseLLM):

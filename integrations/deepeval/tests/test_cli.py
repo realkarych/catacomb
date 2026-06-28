@@ -116,6 +116,33 @@ def test_cli_trace_metrics_no_api_key_exits_2():
     assert "anthropic_api_key" in stderr_lower or "api" in stderr_lower
 
 
+def test_cli_trace_metrics_judge_failure_clean_error(monkeypatch, capsys):
+    pytest.importorskip("deepeval")
+    import catacomb_deepeval.trace_replay as tr_mod
+    from catacomb_deepeval.cli import main
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("network error from judge")
+
+    monkeypatch.setattr(tr_mod, "make_anthropic_judge", lambda: object())
+    monkeypatch.setattr(tr_mod, "run_task_completion", _raise)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+    monkeypatch.setattr(sys, "argv", [
+        "catacomb-deepeval",
+        str(_testdata_path("session.jsonl")),
+        "--run", "run-001",
+        "--trace-metrics",
+    ])
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_cli_default_path_unchanged_no_key():
     env = {
         k: v for k, v in os.environ.items()

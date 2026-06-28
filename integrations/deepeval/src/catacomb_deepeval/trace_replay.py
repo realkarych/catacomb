@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 from catacomb_deepeval.model import SessionData, StepData
@@ -11,7 +12,6 @@ def _steps_from_tools(session: SessionData) -> List[StepData]:
     for t in session.tools_called:
         inp: Optional[str] = None
         if t.input_parameters is not None:
-            import json
             try:
                 inp = json.dumps(t.input_parameters)
             except (TypeError, ValueError):
@@ -36,49 +36,52 @@ def build_trace_dict(session: SessionData) -> Dict[str, Any]:
         update_current_span,
     )
 
+    prior_tracing = trace_manager.tracing_enabled
     trace_manager.configure(tracing_enabled=False)
+    try:
+        steps = session.steps if session.steps else _steps_from_tools(session)
 
-    steps = session.steps if session.steps else _steps_from_tools(session)
+        captured: Dict[str, Any] = {}
 
-    captured: Dict[str, Any] = {}
+        @observe(type="agent")
+        def _replay() -> None:
+            update_current_span(
+                name="catacomb-session",
+                input=session.input or "",
+                output=session.actual_output or "",
+            )
 
-    @observe(type="agent")
-    def _replay() -> None:
-        update_current_span(
-            name="catacomb-session",
-            input=session.input or "",
-            output=session.actual_output or "",
-        )
+            for step in steps:
+                if step.kind == "llm":
+                    _emit_llm(step)
+                else:
+                    _emit_tool(step)
 
-        for step in steps:
-            if step.kind == "llm":
-                _emit_llm(step)
-            else:
-                _emit_tool(step)
+            root = current_trace_context.get().root_spans[0]
+            captured["root"] = root
 
-        root = current_trace_context.get().root_spans[0]
-        captured["root"] = root
+        @observe(type="llm")
+        def _emit_llm(step: StepData) -> None:
+            update_current_span(
+                name=step.name or "assistant_turn",
+                input=step.input or "",
+                output=step.output or "",
+            )
 
-    @observe(type="llm")
-    def _emit_llm(step: StepData) -> None:
-        update_current_span(
-            name=step.name or "assistant_turn",
-            input=step.input or "",
-            output=step.output or "",
-        )
+        @observe(type="tool")
+        def _emit_tool(step: StepData) -> None:
+            update_current_span(
+                name=step.name or "tool",
+                input=step.input or "",
+                output=step.output or "",
+            )
 
-    @observe(type="tool")
-    def _emit_tool(step: StepData) -> None:
-        update_current_span(
-            name=step.name or "tool",
-            input=step.input or "",
-            output=step.output or "",
-        )
+        _replay()
 
-    _replay()
-
-    root = captured["root"]
-    return trace_manager.create_nested_spans_dict(root)
+        root = captured["root"]
+        return trace_manager.create_nested_spans_dict(root)
+    finally:
+        trace_manager.configure(tracing_enabled=prior_tracing)
 
 
 def make_anthropic_judge() -> Any:
