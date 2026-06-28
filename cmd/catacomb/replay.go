@@ -53,22 +53,30 @@ func runReplay(args replayArgs) (*reduce.Graph, error) {
 	return runReplayWith(store.OpenSQLite, newExecutionID, args)
 }
 
-func runReplayWith(open storeOpener, newExecID func() string, args replayArgs) (*reduce.Graph, error) {
-	executionID := newExecID()
-
-	f, err := os.Open(args.input)
+func loadGraph(path, executionID string) (*reduce.Graph, []model.Observation, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("replay open: %w", err)
+		return nil, nil, fmt.Errorf("replay open: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
 	obs, err := ijsonl.ParseReader(f, executionID)
 	if err != nil {
-		return nil, fmt.Errorf("replay parse: %w", err)
+		return nil, nil, fmt.Errorf("replay parse: %w", err)
 	}
 
 	g := reduce.NewGraph()
 	g.ApplyAll(obs)
+	return g, obs, nil
+}
+
+func runReplayWith(open storeOpener, newExecID func() string, args replayArgs) (*reduce.Graph, error) {
+	executionID := newExecID()
+
+	g, obs, err := loadGraph(args.input, executionID)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := persist(open, args.dbPath, obs, g); err != nil {
 		return nil, err
