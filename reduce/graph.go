@@ -3,6 +3,7 @@ package reduce
 import (
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/stepkey"
 )
 
 type promptRef struct {
@@ -140,6 +141,11 @@ func (g *Graph) Snapshot() ([]*model.Node, []*model.Edge) {
 	edges := make([]*model.Edge, 0, len(g.Edges))
 	for _, e := range g.Edges {
 		edges = append(edges, e)
+	}
+	for id, k := range stepkey.Compute(nodes, edges) {
+		n := g.Nodes[id]
+		n.StepKey = k.Key
+		n.StepKeyMethod = k.Method
 	}
 	return nodes, edges
 }

@@ -109,6 +109,8 @@ type Node struct {
 	PayloadHash   string         `json:"payload_hash,omitempty"`
 	Sources       []SourceRef    `json:"sources,omitempty"`
 	Tier          string         `json:"tier,omitempty"`
+	StepKey       string         `json:"step_key,omitempty"`
+	StepKeyMethod string         `json:"step_key_method,omitempty"`
 	Annotations   map[string]any `json:"annotations,omitempty"`
 	Rev           uint64         `json:"rev,omitempty"`
 }
