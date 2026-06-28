@@ -18,4 +18,5 @@ export interface Aggregate {
   costUsd: number;
   status: 'ok' | 'running' | 'error';
   hasError: boolean;
+  durationMs: number;
 }

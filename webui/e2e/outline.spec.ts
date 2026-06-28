@@ -109,10 +109,11 @@ test('chevron toggles children and does not select the row', async ({ page }) =>
   // Non-root collapsible nodes start collapsed, so the prompt's subtree is hidden.
   const promptRow = page.locator('.outline-row').filter({ hasText: 'prompt' }).first();
   await expect(promptRow).toBeVisible();
-  await expect(promptRow.locator('.outline-chevron')).toHaveText('▸');
+  await expect(promptRow.locator('.outline-chevron')).toHaveAttribute('aria-label', 'Expand');
   await expect(page.locator('.outline-row').filter({ hasText: 'assistant' })).toHaveCount(0);
 
   await promptRow.locator('.outline-chevron').click();
+  await expect(promptRow.locator('.outline-chevron')).toHaveAttribute('aria-label', 'Collapse');
   await expect(page).not.toHaveURL(/\/n\//);
   const turnRow = page.locator('.outline-row').filter({ hasText: 'assistant' }).first();
   await expect(turnRow).toBeVisible();
@@ -121,6 +122,7 @@ test('chevron toggles children and does not select the row', async ({ page }) =>
   await expect(page.locator('.outline-row').filter({ hasText: 'BashTool' })).toBeVisible();
 
   await promptRow.locator('.outline-chevron').click();
+  await expect(promptRow.locator('.outline-chevron')).toHaveAttribute('aria-label', 'Expand');
   await expect(page.locator('.outline-row').filter({ hasText: 'assistant' })).toHaveCount(0);
 });
 

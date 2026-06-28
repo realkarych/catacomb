@@ -24,6 +24,7 @@ describe('aggregateOf', () => {
       costUsd: 0,
       status: 'ok',
       hasError: false,
+      durationMs: 0,
     });
   });
 
@@ -42,7 +43,49 @@ describe('aggregateOf', () => {
       costUsd: 0.30000000000000004,
       status: 'ok',
       hasError: false,
+      durationMs: 0,
     });
+  });
+
+  it('spans wall-clock across descendants using t_start/t_end', () => {
+    const nodes = [
+      n('p'),
+      n('a', { t_start: '2026-01-01T00:00:00.000Z', t_end: '2026-01-01T00:00:05.000Z' }),
+      n('b', { t_start: '2026-01-01T00:00:01.000Z', t_end: '2026-01-01T00:00:02.000Z' }),
+    ];
+    const edges = [e('e1', 'p', 'a'), e('e2', 'p', 'b')];
+    const h = buildHierarchy(nodes, edges);
+    expect(aggregateOf('p', h, index(nodes)).durationMs).toBe(5000);
+  });
+
+  it('uses duration_ms for the span end when t_end is absent', () => {
+    const nodes = [n('p'), n('a', { t_start: '2026-01-01T00:00:00.000Z', duration_ms: 1500 })];
+    const edges = [e('e1', 'p', 'a')];
+    const h = buildHierarchy(nodes, edges);
+    expect(aggregateOf('p', h, index(nodes)).durationMs).toBe(1500);
+  });
+
+  it('anchors the span start at the root node own t_start', () => {
+    const nodes = [
+      n('p', { t_start: '2026-01-01T00:00:00.000Z' }),
+      n('a', { t_start: '2026-01-01T00:00:10.000Z', t_end: '2026-01-01T00:00:12.000Z' }),
+    ];
+    const edges = [e('e1', 'p', 'a')];
+    const h = buildHierarchy(nodes, edges);
+    expect(aggregateOf('p', h, index(nodes)).durationMs).toBe(12000);
+  });
+
+  it('reports a zero duration when no node has a parseable t_start', () => {
+    const nodes = [n('p'), n('a', { tokens_in: 1 })];
+    const edges = [e('e1', 'p', 'a')];
+    const h = buildHierarchy(nodes, edges);
+    expect(aggregateOf('p', h, index(nodes)).durationMs).toBe(0);
+  });
+
+  it('reports a zero duration when the root node is absent from byId', () => {
+    const nodes = [n('a', { t_start: '2026-01-01T00:00:00.000Z' })];
+    const h = buildHierarchy(nodes, []);
+    expect(aggregateOf('ghost', h, index(nodes)).durationMs).toBe(0);
   });
 
   it('treats missing numeric fields as 0', () => {
@@ -154,6 +197,7 @@ describe('rowAggregate', () => {
       costUsd: 0.5,
       status: 'ok',
       hasError: false,
+      durationMs: 0,
     });
   });
 
@@ -167,6 +211,7 @@ describe('rowAggregate', () => {
       costUsd: 0,
       status: 'ok',
       hasError: false,
+      durationMs: 0,
     });
   });
 
