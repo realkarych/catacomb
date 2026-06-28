@@ -649,3 +649,177 @@ func TestNodeArgsTimestamps(t *testing.T) {
 	args := nodeArgs(n)
 	assert.Len(t, args, 18)
 }
+
+func TestApplyDeltaRunStartedNilRunIsNoop(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 1, RunID: "r1",
+	}))
+	assert.Empty(t, r.calls)
+}
+
+func TestApplyDeltaRunEndedNilRunIsNoop(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunEnded, Rev: 1, RunID: "r1",
+	}))
+	assert.Empty(t, r.calls)
+}
+
+func TestApplyDeltaRunStartedEmitsSQL(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	run := &model.Run{ID: "r1", Status: model.StatusRunning, LastSeq: 5}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 5, RunID: "r1", Run: run,
+	}))
+	require.Len(t, r.calls, 2, "1 CREATE runs TABLE + 1 upsert")
+	assert.Contains(t, strings.ToLower(r.calls[0].sql), "create table")
+	assert.Contains(t, r.calls[1].sql, "ON CONFLICT")
+	assert.Contains(t, r.calls[1].sql, "runs")
+}
+
+func TestApplyDeltaRunEndedEmitsSQL(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	e.runsSchemaReady = true
+	run := &model.Run{ID: "r1", Status: model.StatusAbandoned, LastSeq: 10}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunEnded, Rev: 10, RunID: "r1", Run: run,
+	}))
+	require.Len(t, r.calls, 1)
+	assert.Contains(t, r.calls[0].sql, "ON CONFLICT")
+	assert.Contains(t, r.calls[0].sql, "WHERE excluded.last_seq >= runs.last_seq")
+}
+
+func TestApplyDeltaRunStartedEnsuresRunsSchemaOnce(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	run := &model.Run{ID: "r1", Status: model.StatusRunning, LastSeq: 1}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 1, RunID: "r1", Run: run,
+	}))
+	require.Len(t, r.calls, 2, "1 CREATE TABLE + 1 upsert")
+
+	run2 := &model.Run{ID: "r2", Status: model.StatusRunning, LastSeq: 2}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 2, RunID: "r2", Run: run2,
+	}))
+	require.Len(t, r.calls, 3, "only 1 more upsert, no second CREATE TABLE")
+}
+
+func TestApplyDeltaRunStartedCreateTableError(t *testing.T) {
+	errDB := errors.New("create runs table error")
+	e := ExporterWithExecer(&errorExecer{execErr: errDB, failOnCall: 1})
+	run := &model.Run{ID: "r1", LastSeq: 1}
+	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 1, RunID: "r1", Run: run,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create runs table")
+}
+
+func TestApplyDeltaRunStartedUpsertError(t *testing.T) {
+	errDB := errors.New("upsert run error")
+	e := ExporterWithExecer(&errorExecer{execErr: errDB, failOnCall: 2})
+	run := &model.Run{ID: "r1", LastSeq: 1}
+	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 1, RunID: "r1", Run: run,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "upsert run")
+}
+
+func TestSnapshotRunsEmptyIsNoop(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	require.NoError(t, e.SnapshotRuns(context.Background(), nil))
+	assert.Empty(t, r.calls)
+}
+
+func TestSnapshotRunsEmitsSQL(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	runs := []model.Run{
+		{ID: "r1", Status: model.StatusRunning, LastSeq: 1},
+		{ID: "r2", Status: model.StatusOK, LastSeq: 3},
+	}
+	require.NoError(t, e.SnapshotRuns(context.Background(), runs))
+	require.Len(t, r.calls, 3, "1 CREATE TABLE + 2 upserts")
+	assert.Contains(t, strings.ToLower(r.calls[0].sql), "create table")
+	assert.Contains(t, r.calls[1].sql, "ON CONFLICT")
+	assert.Contains(t, r.calls[2].sql, "ON CONFLICT")
+}
+
+func TestSnapshotRunsEnsuresSchemaOnce(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	runs := []model.Run{{ID: "r1", LastSeq: 1}}
+	require.NoError(t, e.SnapshotRuns(context.Background(), runs))
+	require.Len(t, r.calls, 2, "1 CREATE TABLE + 1 upsert on first call")
+
+	runs2 := []model.Run{{ID: "r2", LastSeq: 2}}
+	require.NoError(t, e.SnapshotRuns(context.Background(), runs2))
+	require.Len(t, r.calls, 3, "only 1 more upsert, schema not re-created")
+}
+
+func TestSnapshotRunsCreateTableError(t *testing.T) {
+	errDB := errors.New("create runs table error")
+	e := ExporterWithExecer(&errorExecer{execErr: errDB, failOnCall: 1})
+	runs := []model.Run{{ID: "r1", LastSeq: 1}}
+	err := e.SnapshotRuns(context.Background(), runs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create runs table")
+}
+
+func TestSnapshotRunsUpsertError(t *testing.T) {
+	errDB := errors.New("upsert run error")
+	e := ExporterWithExecer(&errorExecer{execErr: errDB})
+	e.runsSchemaReady = true
+	runs := []model.Run{{ID: "r1", LastSeq: 1}}
+	err := e.SnapshotRuns(context.Background(), runs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "upsert run")
+}
+
+func TestSnapshotRunsReproJSONEncoded(t *testing.T) {
+	r := &recordExecer{}
+	e := ExporterWithExecer(r)
+	e.runsSchemaReady = true
+	repro := &model.ReproMeta{Cwd: "/test/cwd", PromptsHash: "abc123"}
+	runs := []model.Run{{ID: "r1", Repro: repro, LastSeq: 1}}
+	require.NoError(t, e.SnapshotRuns(context.Background(), runs))
+	require.Len(t, r.calls, 1)
+	var foundRepro bool
+	for _, arg := range r.calls[0].args {
+		if s, ok := arg.(string); ok {
+			var m map[string]any
+			if json.Unmarshal([]byte(s), &m) == nil {
+				if m["cwd"] == "/test/cwd" {
+					foundRepro = true
+				}
+			}
+		}
+	}
+	assert.True(t, foundRepro, "repro must be JSON-encoded in args")
+}
+
+func TestRunArgsCount(t *testing.T) {
+	now := time.Now()
+	r := &model.Run{
+		ID:         "r1",
+		SessionIDs: []string{"s1"},
+		ModelID:    "model-1",
+		Status:     model.StatusOK,
+		EndReason:  "done",
+		StartedAt:  &now,
+		EndedAt:    &now,
+		Meta:       map[string]any{"k": "v"},
+		Repro:      &model.ReproMeta{Cwd: "/cwd"},
+		LastSeq:    42,
+	}
+	args := runArgs(r)
+	assert.Len(t, args, 10)
+}

@@ -30,6 +30,7 @@ type GraphDelta struct {
 	NewID       string
 	RunID       string
 	ExecutionID string
+	Run         *model.Run
 }
 
 type Consumer struct {

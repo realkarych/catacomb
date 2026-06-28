@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	neo4japi "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
@@ -13,8 +14,9 @@ import (
 )
 
 var (
-	_ exportiface.Exporter = (*Exporter)(nil)
-	_ neo4jDriver          = (*driverAdapter)(nil)
+	_ exportiface.Exporter    = (*Exporter)(nil)
+	_ exportiface.RunExporter = (*Exporter)(nil)
+	_ neo4jDriver             = (*driverAdapter)(nil)
 )
 
 type neo4jSession interface {
@@ -132,6 +134,13 @@ func jsonMarshal(v any) string {
 	return string(b)
 }
 
+func safeRFC3339(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
 func nodeProps(n *model.Node) map[string]any {
 	return map[string]any{
 		"run_id":       n.RunID,
@@ -156,6 +165,20 @@ func edgeProps(edge *model.Edge) map[string]any {
 		"dst":    edge.Dst,
 		"attrs":  jsonMarshal(edge.Attrs),
 		"rev":    int64(edge.Rev),
+	}
+}
+
+func runProps(r *model.Run) map[string]any {
+	return map[string]any{
+		"session_ids": jsonMarshal(r.SessionIDs),
+		"model_id":    r.ModelID,
+		"status":      string(r.Status),
+		"end_reason":  r.EndReason,
+		"started_at":  safeRFC3339(r.StartedAt),
+		"ended_at":    safeRFC3339(r.EndedAt),
+		"meta":        jsonMarshal(r.Meta),
+		"repro":       jsonMarshal(r.Repro),
+		"last_seq":    int64(r.LastSeq),
 	}
 }
 
@@ -195,6 +218,15 @@ func (e *Exporter) upsertEdge(ctx context.Context, edge *model.Edge) error {
 	})
 }
 
+func (e *Exporter) upsertRun(ctx context.Context, r *model.Run) error {
+	const cypher = `MERGE (n:Run {id:$id}) WITH n WHERE coalesce(n.last_seq,-1) <= $last_seq SET n += $props`
+	return e.r.Run(ctx, cypher, map[string]any{
+		"id":       r.ID,
+		"last_seq": int64(r.LastSeq),
+		"props":    runProps(r),
+	})
+}
+
 func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
 	switch d.Kind {
 	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus:
@@ -223,6 +255,11 @@ func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
 			return fmt.Errorf("neo4j exporter edge_delete: %w", err)
 		}
 		return nil
+	case cdc.DeltaRunStarted, cdc.DeltaRunEnded:
+		if d.Run == nil {
+			return nil
+		}
+		return e.upsertRun(ctx, d.Run)
 	default:
 		return nil
 	}
@@ -260,6 +297,18 @@ func (e *Exporter) SnapshotState(ctx context.Context, nodes []*model.Node, edges
 			"props": edgeProps(edge),
 		}); err != nil {
 			return fmt.Errorf("neo4j exporter snapshot upsert edge: %w", err)
+		}
+	}
+	return nil
+}
+
+func (e *Exporter) SnapshotRuns(ctx context.Context, runs []model.Run) error {
+	if len(runs) == 0 {
+		return nil
+	}
+	for i := range runs {
+		if err := e.upsertRun(ctx, &runs[i]); err != nil {
+			return fmt.Errorf("neo4j exporter snapshot upsert run: %w", err)
 		}
 	}
 	return nil

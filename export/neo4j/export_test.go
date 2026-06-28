@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	neo4japi "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -455,4 +456,116 @@ func TestJsonMarshalChannel(t *testing.T) {
 	ch := make(chan struct{})
 	result := jsonMarshal(ch)
 	assert.Equal(t, "null", result)
+}
+
+func TestApplyDeltaRunStartedNilRunIsNoop(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 1, RunID: "r1",
+	}))
+	assert.Empty(t, r.calls)
+}
+
+func TestApplyDeltaRunEndedNilRunIsNoop(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunEnded, Rev: 1, RunID: "r1",
+	}))
+	assert.Empty(t, r.calls)
+}
+
+func TestApplyDeltaRunStartedEmitsCypher(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	run := &model.Run{ID: "r1", Status: model.StatusRunning, LastSeq: 5}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 5, RunID: "r1", Run: run,
+	}))
+	require.Len(t, r.calls, 1)
+	assert.Contains(t, r.calls[0].cypher, "MERGE")
+	assert.Contains(t, r.calls[0].cypher, ":Run")
+	assert.Contains(t, r.calls[0].cypher, "coalesce(n.last_seq,-1) <= $last_seq")
+	assert.Equal(t, "r1", r.calls[0].params["id"])
+}
+
+func TestApplyDeltaRunEndedEmitsCypher(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	run := &model.Run{ID: "r1", Status: model.StatusAbandoned, LastSeq: 10}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunEnded, Rev: 10, RunID: "r1", Run: run,
+	}))
+	require.Len(t, r.calls, 1)
+	assert.Contains(t, r.calls[0].cypher, "MERGE")
+	assert.Contains(t, r.calls[0].cypher, ":Run")
+}
+
+func TestApplyDeltaRunStartedRunError(t *testing.T) {
+	runErr := errors.New("run error")
+	e := ExporterWithRunner(&errorRunner{runErr: runErr})
+	run := &model.Run{ID: "r1", LastSeq: 1}
+	err := e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaRunStarted, Rev: 1, RunID: "r1", Run: run,
+	})
+	require.Error(t, err)
+}
+
+func TestSnapshotRunsEmptyIsNoop(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	require.NoError(t, e.SnapshotRuns(context.Background(), nil))
+	assert.Empty(t, r.calls)
+}
+
+func TestSnapshotRunsEmitsCypher(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	runs := []model.Run{
+		{ID: "r1", Status: model.StatusRunning, LastSeq: 1},
+		{ID: "r2", Status: model.StatusOK, LastSeq: 3},
+	}
+	require.NoError(t, e.SnapshotRuns(context.Background(), runs))
+	assert.Len(t, r.calls, 2, "one cypher per run")
+	for _, call := range r.calls {
+		assert.Contains(t, call.cypher, "MERGE")
+		assert.Contains(t, call.cypher, ":Run")
+	}
+}
+
+func TestSnapshotRunsRunError(t *testing.T) {
+	runErr := errors.New("run error")
+	e := ExporterWithRunner(&errorRunner{runErr: runErr})
+	runs := []model.Run{{ID: "r1", LastSeq: 1}}
+	err := e.SnapshotRuns(context.Background(), runs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "snapshot upsert run")
+}
+
+func TestSnapshotRunsReproJSONEncoded(t *testing.T) {
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	repro := &model.ReproMeta{Cwd: "/test/cwd", PromptsHash: "abc123"}
+	runs := []model.Run{{ID: "r1", Repro: repro, LastSeq: 1}}
+	require.NoError(t, e.SnapshotRuns(context.Background(), runs))
+	require.Len(t, r.calls, 1)
+	props, ok := r.calls[0].params["props"].(map[string]any)
+	require.True(t, ok)
+	reproStr, ok := props["repro"].(string)
+	require.True(t, ok)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(reproStr), &m))
+	assert.Equal(t, "/test/cwd", m["cwd"])
+}
+
+func TestSafeRFC3339Nil(t *testing.T) {
+	assert.Equal(t, "", safeRFC3339(nil))
+}
+
+func TestSafeRFC3339NonNil(t *testing.T) {
+	now := time.Now()
+	result := safeRFC3339(&now)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, "T")
 }

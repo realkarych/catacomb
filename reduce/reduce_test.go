@@ -2777,6 +2777,31 @@ func TestEnsureRunHarvestsClaudeCodeVersionAndCwd(t *testing.T) {
 	assert.Equal(t, "/project", r.Repro.Cwd)
 }
 
+func TestEmitRunStartedDeltaCarriesRun(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	ds := g.DrainDeltas()
+	starts := deltaByKind(ds, cdc.DeltaRunStarted)
+	require.Len(t, starts, 1)
+	require.NotNil(t, starts[0].Run)
+	assert.Equal(t, "s1", starts[0].Run.ID)
+	assert.Equal(t, model.StatusRunning, starts[0].Run.Status)
+}
+
+func TestEmitRunEndedDeltaCarriesRun(t *testing.T) {
+	g := NewGraph()
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
+	_ = g.DrainDeltas()
+	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
+	ds := g.DrainDeltas()
+	ended := deltaByKind(ds, cdc.DeltaRunEnded)
+	require.Len(t, ended, 1)
+	require.NotNil(t, ended[0].Run)
+	assert.Equal(t, "s1", ended[0].Run.ID)
+	assert.Equal(t, model.StatusAbandoned, ended[0].Run.Status)
+	assert.NotNil(t, ended[0].Run.EndedAt)
+}
+
 func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
 	obs := []model.Observation{
 		promptObs("uM", 1),

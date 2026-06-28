@@ -587,6 +587,9 @@ func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
 	if delta.Edge != nil {
 		delta.Edge = copyEdge(delta.Edge)
 	}
+	if delta.Run != nil {
+		delta.Run = copyRun(delta.Run)
+	}
 	d.bus.Publish(delta)
 }
 

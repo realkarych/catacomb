@@ -244,6 +244,9 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 				cp[i] = copyNode(n)
 			}
 			_ = exp.SnapshotState(ctx, cp, edges)
+			if re, ok := exp.(exportiface.RunExporter); ok {
+				_ = re.SnapshotRuns(ctx, g.RunsSnapshot())
+			}
 		}
 		for _, g := range d.graphs {
 			for _, r := range g.RunsSnapshot() {
