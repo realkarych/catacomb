@@ -35,11 +35,11 @@
     }).catch(() => {});
   });
 
-  const _initSSEHash = initialRoute.kind !== 'list' ? initialRoute.hash : '';
+  const _initSSEHash = (initialRoute.kind === 'session' || initialRoute.kind === 'session-node') ? initialRoute.hash : '';
   let connectedHash = $state(_initSSEHash);
 
   $effect(() => {
-    connectedHash = route.kind !== 'list' ? route.hash : '';
+    connectedHash = (route.kind === 'session' || route.kind === 'session-node') ? route.hash : '';
   });
 
   $effect(() => {
