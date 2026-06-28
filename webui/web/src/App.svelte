@@ -7,6 +7,7 @@
   import type { Route } from './lib/router';
   import SessionsList from './components/SessionsList.svelte';
   import SessionView from './components/SessionView.svelte';
+  import DiffView from './components/DiffView.svelte';
 
   const token = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('token') ?? '';
 
@@ -123,6 +124,8 @@
         loadStatus={sessionLoadStatus}
         {token}
       />
+    {:else if route.kind === 'diff'}
+      <DiffView {token} a={route.a} b={route.b} />
     {/if}
   </main>
 </div>

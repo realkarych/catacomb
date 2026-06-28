@@ -82,6 +82,7 @@
       onkeydown={onSearchKeyDown}
       aria-label="Search sessions"
     />
+    <a class="compare-link" href="#/diff" aria-label="Compare sessions">Compare</a>
   </div>
 
   {#if loading}
@@ -183,6 +184,25 @@
   .search-input:focus-visible {
     border-color: var(--ring);
     box-shadow: 0 0 0 2px var(--ring);
+  }
+
+  .compare-link {
+    font-size: var(--text-sm);
+    color: var(--text-faint);
+    text-decoration: none;
+    padding: var(--s1) var(--s2);
+    border-radius: var(--radius-sm);
+    transition: color 0.12s;
+    white-space: nowrap;
+  }
+
+  .compare-link:hover {
+    color: var(--accent);
+  }
+
+  .compare-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 
   .th-sort {
