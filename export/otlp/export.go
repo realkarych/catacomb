@@ -21,9 +21,12 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 var _ exportiface.Exporter = (*Exporter)(nil)
+
+const maxIOValueBytes = 32 * 1024
 
 type spanExporter interface {
 	ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error
@@ -83,6 +86,30 @@ func openInferenceResource(project string) *resource.Resource {
 
 func (e *Exporter) SetProject(name string) {
 	e.resource = openInferenceResource(name)
+}
+
+func attrString(n *model.Node, key string) string {
+	if n.Attrs == nil {
+		return ""
+	}
+	if v, ok := n.Attrs[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func capBytes(s string) string {
+	if len(s) > maxIOValueBytes {
+		return s[:maxIOValueBytes]
+	}
+	return s
+}
+
+func redactedValue(raw []byte) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	return capBytes(string(redact.Redact(raw).Data)), true
 }
 
 func ExporterWithSpanExporter(exp interface {
@@ -259,9 +286,20 @@ func (e *Exporter) SnapshotState(_ context.Context, nodes []*model.Node, edges [
 }
 
 func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadOnlySpan {
+	kind := openInferenceKind(n.Type)
 	attrs := []attribute.KeyValue{
-		attribute.String("openinference.span.kind", openInferenceKind(n.Type)),
+		attribute.String("openinference.span.kind", kind),
 		attribute.String("gen_ai.provider.name", "anthropic"),
+		attribute.String("graph.node.id", n.ID),
+	}
+	if n.RunID != "" {
+		attrs = append(attrs, attribute.String("session.id", n.RunID))
+	}
+	if n.Name != "" {
+		attrs = append(attrs, attribute.String("graph.node.name", n.Name))
+	}
+	if parentNodeID != "" {
+		attrs = append(attrs, attribute.String("graph.node.parent_id", parentNodeID))
 	}
 	if n.TokensIn != nil {
 		attrs = append(attrs,
@@ -277,6 +315,25 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 	}
 	if n.CostUSD != nil {
 		attrs = append(attrs, attribute.String("llm.cost.total", strconv.FormatFloat(*n.CostUSD, 'g', -1, 64)))
+	}
+	if kind == "LLM" {
+		if m := attrString(n, "model"); m != "" {
+			attrs = append(attrs, attribute.String("llm.model_name", m), attribute.String("gen_ai.request.model", m))
+		}
+	}
+	if kind == "TOOL" && n.Name != "" {
+		attrs = append(attrs, attribute.String("tool.name", n.Name), attribute.String("tool_call.function.name", n.Name))
+	}
+	if n.Payload != nil {
+		if v, ok := redactedValue(n.Payload.Input); ok {
+			attrs = append(attrs, attribute.String("input.value", v), attribute.String("input.mime_type", "application/json"))
+			if kind == "TOOL" {
+				attrs = append(attrs, attribute.String("tool_call.function.arguments", v))
+			}
+		}
+		if v, ok := redactedValue(n.Payload.Output); ok {
+			attrs = append(attrs, attribute.String("output.value", v), attribute.String("output.mime_type", "application/json"))
+		}
 	}
 	var parent trace.SpanContext
 	if parentNodeID != "" {
