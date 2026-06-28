@@ -47,6 +47,19 @@ describe('parseHash', () => {
   it('node path with extra segments falls back to list', () => {
     expect(parseHash('#/s/abc123/n/node456/extra')).toEqual({ kind: 'list' });
   });
+
+  it('#/diff → diff with no a/b', () => {
+    expect(parseHash('#/diff')).toEqual({ kind: 'diff' });
+  });
+  it('#/diff/abc → diff with a only', () => {
+    expect(parseHash('#/diff/abc')).toEqual({ kind: 'diff', a: 'abc' });
+  });
+  it('#/diff/abc/xyz → diff with a and b', () => {
+    expect(parseHash('#/diff/abc/xyz')).toEqual({ kind: 'diff', a: 'abc', b: 'xyz' });
+  });
+  it('#/diff/abc%2F123/xyz%3A456 → decoded a and b', () => {
+    expect(parseHash('#/diff/abc%2F123/xyz%3A456')).toEqual({ kind: 'diff', a: 'abc/123', b: 'xyz:456' });
+  });
 });
 
 describe('toHash', () => {
@@ -73,6 +86,19 @@ describe('toHash', () => {
       toHash({ kind: 'session-node', hash: 'abc/123', nodeId: 'node:456' })
     ).toBe('#/s/abc%2F123/n/node%3A456');
   });
+
+  it('diff no a/b → #/diff', () => {
+    expect(toHash({ kind: 'diff' })).toBe('#/diff');
+  });
+  it('diff with a → #/diff/a', () => {
+    expect(toHash({ kind: 'diff', a: 'abc' })).toBe('#/diff/abc');
+  });
+  it('diff with a and b → #/diff/a/b', () => {
+    expect(toHash({ kind: 'diff', a: 'abc', b: 'xyz' })).toBe('#/diff/abc/xyz');
+  });
+  it('diff encodes special chars', () => {
+    expect(toHash({ kind: 'diff', a: 'a/1', b: 'b:2' })).toBe('#/diff/a%2F1/b%3A2');
+  });
 });
 
 describe('round-trip', () => {
@@ -88,6 +114,17 @@ describe('round-trip', () => {
 
   it('session-node round-trips', () => {
     const r: Route = { kind: 'session-node', hash: 'deadbeef', nodeId: 'node:42 space' };
+    expect(parseHash(toHash(r))).toEqual(r);
+  });
+});
+
+describe('round-trip diff', () => {
+  it('diff round-trips no params', () => {
+    const r: Route = { kind: 'diff' };
+    expect(parseHash(toHash(r))).toEqual(r);
+  });
+  it('diff round-trips with a and b', () => {
+    const r: Route = { kind: 'diff', a: 'deadbeef', b: 'cafebabe' };
     expect(parseHash(toHash(r))).toEqual(r);
   });
 });
