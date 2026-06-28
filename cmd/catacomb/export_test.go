@@ -580,3 +580,105 @@ func TestRealNewPostgresBadDSN(t *testing.T) {
 	_, err := realNewPostgres(context.Background(), "not-a-valid-dsn")
 	require.Error(t, err)
 }
+
+func TestExportAgentevals(t *testing.T) {
+	dbPath := seedDB(t)
+	var buf strings.Builder
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+	}
+	err := runExport(context.Background(), &buf, deps, exportArgs{
+		dbPath: dbPath,
+		to:     "agentevals",
+	})
+	require.NoError(t, err)
+	out := buf.String()
+	assert.True(t, strings.Contains(out, "user") || strings.Contains(out, "assistant") || strings.Contains(out, "tool") || out == "[]\n")
+}
+
+func TestExportEvalview(t *testing.T) {
+	dbPath := seedDB(t)
+	var buf strings.Builder
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+	}
+	err := runExport(context.Background(), &buf, deps, exportArgs{
+		dbPath: dbPath,
+		to:     "evalview",
+	})
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "trace_start")
+	assert.Contains(t, out, "trace_spec_version")
+	assert.Contains(t, out, "1.0")
+	assert.Contains(t, out, "trace_end")
+}
+
+func TestExportSerializerEventsModeRejected(t *testing.T) {
+	dbPath := seedDB(t)
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+	}
+	for _, to := range []string{"agentevals", "evalview"} {
+		err := runExport(context.Background(), io.Discard, deps, exportArgs{
+			dbPath: dbPath,
+			to:     to,
+			mode:   "events",
+		})
+		assert.True(t, errors.Is(err, ErrModeUnsupported), "to=%s", to)
+	}
+}
+
+func TestExportSerializerToFile(t *testing.T) {
+	dbPath := seedDB(t)
+	outPath := filepath.Join(t.TempDir(), "out.json")
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+	}
+	err := runExport(context.Background(), io.Discard, deps, exportArgs{
+		dbPath: dbPath,
+		to:     "agentevals",
+		out:    outPath,
+	})
+	require.NoError(t, err)
+	info, err := os.Stat(outPath)
+	require.NoError(t, err)
+	assert.Positive(t, info.Size())
+}
+
+func TestExportSerializerBadOutPath(t *testing.T) {
+	dbPath := seedDB(t)
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+	}
+	err := runExport(context.Background(), io.Discard, deps, exportArgs{
+		dbPath: dbPath,
+		to:     "evalview",
+		out:    "/no/such/dir/x.json",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "export create")
+}
+
+func TestExportSerializerStoreGraphsError(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "g.db")
+	require.NoError(t, err)
+	_ = f.Close()
+	deps := exportDeps{
+		open: func(string) (store.Store, error) {
+			return &obsErrStore{}, nil
+		},
+		newPricer: newPricer,
+	}
+	err = runExport(context.Background(), io.Discard, deps, exportArgs{
+		dbPath: f.Name(),
+		to:     "agentevals",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store read")
+}

@@ -1,0 +1,7 @@
+{"type":"trace_start","trace_id":"run-1","trace_spec_version":"1.0"}
+{"type":"span","trace_id":"run-1","span_id":"session-1","span_type":"agent","start_time":"2024-01-01T00:00:01Z","status":"running"}
+{"type":"span","trace_id":"run-1","span_id":"prompt-1","parent_span_id":"session-1","span_type":"agent","start_time":"2024-01-01T00:00:02Z","status":"ok"}
+{"type":"span","trace_id":"run-1","span_id":"turn-1","parent_span_id":"session-1","span_type":"llm","start_time":"2024-01-01T00:00:03Z","latency_ms":100,"status":"ok","llm":{"provider":"anthropic","model":"claude-3-haiku","input_tokens":100,"output_tokens":50}}
+{"type":"span","trace_id":"run-1","span_id":"tool-bash-1","parent_span_id":"turn-1","span_type":"tool","name":"Bash","start_time":"2024-01-01T00:00:04Z","end_time":"2024-01-01T00:00:05Z","latency_ms":1000,"status":"ok","tool":{"tool_name":"Bash","tool_args_bytes":16,"tool_result_bytes":14,"tool_success":true}}
+{"type":"span","trace_id":"run-1","span_id":"tool-mcp-1","parent_span_id":"turn-1","span_type":"mcp","name":"read_file","start_time":"2024-01-01T00:00:06Z","status":"error","tool":{"tool_name":"read_file","tool_args_bytes":12,"tool_result_bytes":6,"tool_success":false}}
+{"type":"trace_end","trace_id":"run-1"}
