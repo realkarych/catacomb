@@ -906,6 +906,19 @@ func TestRunUpHistoryRestartHintWriteError(t *testing.T) {
 	require.Error(t, runUp(context.Background(), failWriter{}, deps))
 }
 
+func TestRootHelpHasRecipes(t *testing.T) {
+	assert.Contains(t, newRootCmd().Long, "Common recipes")
+	assert.Contains(t, newRootCmd().Long, "--global")
+	assert.Contains(t, newRootCmd().Long, "--history")
+}
+
+func TestUpHelpDocumentsScope(t *testing.T) {
+	cmd := newUpCmd()
+	assert.Contains(t, cmd.Long, "--global")
+	assert.Contains(t, cmd.Long, "--history")
+	assert.NotEmpty(t, cmd.Example)
+}
+
 func TestUpCmdRunE(t *testing.T) {
 	t.Chdir(t.TempDir())
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}

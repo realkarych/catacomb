@@ -25,6 +25,17 @@ func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the catacomb daemon (receives hook events, builds the live graph)",
+		Long: `Run the catacomb daemon: it receives hook events, builds the live graph,
+persists it to SQLite, and serves the web UI and gRPC feed.
+
+Pass --transcript-dir ~/.claude/projects to also tail recorded transcripts,
+which backfills past sessions and follows live ones. Pass --allow-payload-access
+to enable the token-gated content endpoint (off by default).`,
+		Example: `  # live only
+  catacomb daemon
+
+  # backfill and tail every past + live session
+  catacomb daemon --transcript-dir ~/.claude/projects --allow-payload-access`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if discoveryPath == "" {
 				discoveryPath = daemon.DiscoveryPath()

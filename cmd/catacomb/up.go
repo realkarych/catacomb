@@ -39,6 +39,23 @@ func newUpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Start the daemon (if needed), install hooks, and open the UI",
+		Long: `Start the daemon if it is not already running, install the Claude Code
+hooks, print the bearer URL, and open the web UI.
+
+By default up observes only sessions started in the current directory, and
+only live activity. Use --global to install hooks for every project, and
+--history to load sessions you have already run.
+
+If a daemon is already running, --history does not restart it; up prints the
+exact command to restart it with history enabled.`,
+		Example: `  # observe the current project, live only
+  catacomb up
+
+  # observe every project (all live sessions)
+  catacomb up --global
+
+  # also load past sessions from ~/.claude/projects
+  catacomb up --global --history`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			discPath := daemon.DiscoveryPath()
 			var transcriptDir string
