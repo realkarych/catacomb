@@ -27,9 +27,11 @@ type agentGroup struct {
 }
 
 type execState struct {
-	executionID string
-	turnsByID   map[string]*turnRef
-	groups      map[string]*agentGroup
+	executionID  string
+	turnsByID    map[string]*turnRef
+	groups       map[string]*agentGroup
+	markerBounds []markerBound
+	markerTools  map[string]bool
 }
 
 func (s *execState) group(agentID string) *agentGroup {
@@ -49,14 +51,16 @@ func groupRoot(executionID, agentID string) string {
 }
 
 type Graph struct {
-	Nodes        map[string]*model.Node
-	Edges        map[string]*model.Edge
-	Runs         map[string]*model.Run
-	spanChildren map[string]bool
-	stamps       map[string]*fieldStamps
-	execs        map[string]*execState
-	deltas       []cdc.GraphDelta
-	pricer       Pricer
+	Nodes            map[string]*model.Node
+	Edges            map[string]*model.Edge
+	Runs             map[string]*model.Run
+	spanChildren     map[string]bool
+	stamps           map[string]*fieldStamps
+	execs            map[string]*execState
+	deltas           []cdc.GraphDelta
+	pricer           Pricer
+	synthMarkerNodes map[string]bool
+	synthMarkerEdges map[string]bool
 }
 
 func NewGraph() *Graph {
@@ -69,20 +73,27 @@ func NewGraphWithPricer(p Pricer) *Graph {
 
 func newGraph(p Pricer) *Graph {
 	return &Graph{
-		Nodes:        map[string]*model.Node{},
-		Edges:        map[string]*model.Edge{},
-		Runs:         map[string]*model.Run{},
-		spanChildren: map[string]bool{},
-		stamps:       map[string]*fieldStamps{},
-		execs:        map[string]*execState{},
-		pricer:       p,
+		Nodes:            map[string]*model.Node{},
+		Edges:            map[string]*model.Edge{},
+		Runs:             map[string]*model.Run{},
+		spanChildren:     map[string]bool{},
+		stamps:           map[string]*fieldStamps{},
+		execs:            map[string]*execState{},
+		pricer:           p,
+		synthMarkerNodes: map[string]bool{},
+		synthMarkerEdges: map[string]bool{},
 	}
 }
 
 func (g *Graph) execState(executionID string) *execState {
 	s, ok := g.execs[executionID]
 	if !ok {
-		s = &execState{executionID: executionID, turnsByID: map[string]*turnRef{}, groups: map[string]*agentGroup{}}
+		s = &execState{
+			executionID: executionID,
+			turnsByID:   map[string]*turnRef{},
+			groups:      map[string]*agentGroup{},
+			markerTools: map[string]bool{},
+		}
 		g.execs[executionID] = s
 	}
 	return s
@@ -133,7 +144,33 @@ func (g *Graph) upsertEdge(executionID, runID, src, dst string, seq uint64) {
 	}
 }
 
+func (g *Graph) clearSynthMarkers() {
+	for id := range g.synthMarkerNodes {
+		delete(g.Nodes, id)
+	}
+	for id := range g.synthMarkerEdges {
+		delete(g.Edges, id)
+	}
+	g.synthMarkerNodes = map[string]bool{}
+	g.synthMarkerEdges = map[string]bool{}
+}
+
 func (g *Graph) Snapshot() ([]*model.Node, []*model.Edge) {
+	g.clearSynthMarkers()
+	baseNodes := make([]*model.Node, 0, len(g.Nodes))
+	for _, n := range g.Nodes {
+		baseNodes = append(baseNodes, n)
+	}
+	baseEdges := make([]*model.Edge, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		baseEdges = append(baseEdges, e)
+	}
+	for id, k := range stepkey.Compute(baseNodes, baseEdges) {
+		n := g.Nodes[id]
+		n.StepKey = k.Key
+		n.StepKeyMethod = k.Method
+	}
+	g.synthesizeMarkers()
 	nodes := make([]*model.Node, 0, len(g.Nodes))
 	for _, n := range g.Nodes {
 		nodes = append(nodes, n)
@@ -141,11 +178,6 @@ func (g *Graph) Snapshot() ([]*model.Node, []*model.Edge) {
 	edges := make([]*model.Edge, 0, len(g.Edges))
 	for _, e := range g.Edges {
 		edges = append(edges, e)
-	}
-	for id, k := range stepkey.Compute(nodes, edges) {
-		n := g.Nodes[id]
-		n.StepKey = k.Key
-		n.StepKeyMethod = k.Method
 	}
 	return nodes, edges
 }

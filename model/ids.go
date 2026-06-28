@@ -1,6 +1,9 @@
 package model
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 func SessionNodeID(executionID string) string { return "session:" + executionID }
 
@@ -31,6 +34,10 @@ func ToolCallID(executionID, toolUseID string) string { return executionID + ":t
 func SubagentID(executionID, agentID string) string { return executionID + ":agent:" + agentID }
 
 func MarkerID(executionID, obsID string) string { return executionID + ":marker:" + obsID }
+
+func PhaseMarkerID(executionID, name string, occ int) string {
+	return MarkerID(executionID, name+":"+strconv.Itoa(occ))
+}
 
 func EdgeID(executionID string, t EdgeType, src, dst string) string {
 	return executionID + ":" + string(t) + ":" + src + ">" + dst

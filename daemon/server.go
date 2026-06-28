@@ -45,6 +45,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
 	mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
 	mux.HandleFunc("POST /v1/transcript", d.authed(token, d.handleTranscript))
+	mux.HandleFunc("POST /v1/mark", d.authed(token, d.handleMark))
 	mux.HandleFunc("GET /v1/subscribe", d.authedAllowQuery(token, d.handleSSE))
 	mux.HandleFunc("GET /v1/sessions", d.authedAllowQuery(token, d.handleSessions))
 	mux.HandleFunc("GET /v1/sessions/{hash}/graph", d.authedAllowQuery(token, d.handleSessionGraph))

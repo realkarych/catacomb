@@ -111,6 +111,7 @@ type Node struct {
 	Tier          string         `json:"tier,omitempty"`
 	StepKey       string         `json:"step_key,omitempty"`
 	StepKeyMethod string         `json:"step_key_method,omitempty"`
+	PhaseKey      string         `json:"phase_key,omitempty"`
 	Annotations   map[string]any `json:"annotations,omitempty"`
 	Rev           uint64         `json:"rev,omitempty"`
 }
