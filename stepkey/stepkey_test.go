@@ -225,11 +225,47 @@ func TestKeyIndependentOfTier(t *testing.T) {
 	assert.Equal(t, ka["A:bash"].Key, kb["B:bash"].Key)
 }
 
+func TestCycleGuardSelfLoop(t *testing.T) {
+	n := tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
+	selfLoop := &model.Edge{Type: model.EdgeParentChild, Src: "t", Dst: "t"}
+	got := Compute([]*model.Node{n}, []*model.Edge{selfLoop})
+	require.Contains(t, got, "t")
+	assert.Len(t, got["t"].Key, 32)
+	assert.NotEmpty(t, got["t"].Key)
+}
+
+func TestCycleGuardTwoCycle(t *testing.T) {
+	n := tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
+	p := tnode("p", model.NodeUserPrompt, "", 0, "")
+	e1 := &model.Edge{Type: model.EdgeParentChild, Src: "p", Dst: "t"}
+	e2 := &model.Edge{Type: model.EdgeParentChild, Src: "t", Dst: "p"}
+	got := Compute([]*model.Node{n, p}, []*model.Edge{e1, e2})
+	require.Contains(t, got, "t")
+	assert.Len(t, got["t"].Key, 32)
+	assert.NotEmpty(t, got["t"].Key)
+}
+
 func TestStepKeyGolden(t *testing.T) {
-	n := tnode("t", model.NodeToolCall, "Bash", 5, `{"command":"ls"}`)
-	got := Compute([]*model.Node{n}, nil)["t"].Key
-	assert.Len(t, got, 32)
-	require.NotEmpty(t, got)
+	sess := tnode("sess", model.NodeSession, "", 0, "")
+	prompt := tnode("p", model.NodeUserPrompt, "", 1, "")
+	bash := tnode("bash", model.NodeToolCall, "Bash", 2, `{"command":"ls"}`)
+	nodesA := []*model.Node{sess, prompt, bash}
+	edgesA := []*model.Edge{edge("sess", "p"), edge("p", "bash")}
+	gotA := Compute(nodesA, edgesA)["bash"].Key
+
+	sub := tnode("s", model.NodeSubagent, "", 5, "")
+	sub.SubagentType = "Explore"
+	gotB := Compute([]*model.Node{sub}, nil)["s"].Key
+
+	na, ea := pipeline("A:", 1000)
+	gotC := Compute(na, ea)["A:bash"].Key
+
+	assert.Equal(t, "f4486f779c383f76a7d29bea5db1d67c", gotA)
+	assert.Equal(t, "75fe18f669fb537dd5dabb172bea6f76", gotB)
+	assert.Equal(t, "208ef93d998f6095eb697f436432b036", gotC)
+	assert.Len(t, gotA, 32)
+	assert.Len(t, gotB, 32)
+	assert.Len(t, gotC, 32)
 }
 
 func TestProjectInvalidJSON(t *testing.T) {

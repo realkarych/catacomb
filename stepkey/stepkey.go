@@ -75,11 +75,16 @@ func Compute(nodes []*model.Node, edges []*model.Edge) map[string]Key {
 func (b *builder) compute(n *model.Node) string {
 	var levels []string
 	cur := n.ID
+	seen := map[string]bool{cur: true}
 	for {
 		p, ok := b.parentOf[cur]
 		if !ok {
 			break
 		}
+		if seen[p] {
+			break
+		}
+		seen[p] = true
 		cn := b.byID[cur]
 		if cn != nil && live(cn) {
 			idx := b.liveIndex(p, cur)
