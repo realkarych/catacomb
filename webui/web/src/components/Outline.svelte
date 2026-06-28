@@ -144,11 +144,11 @@
     return clip(combined);
   }
 
-  async function loadSnippet(id: string, isTool: boolean, currentHash: string, currentToken: string, isStale: () => boolean) {
+  async function loadSnippet(id: string, isTool: boolean, currentHash: string, currentToken: string) {
     attempted.add(id);
     try {
       const view = await fetchNodePayload(currentHash, id, currentToken);
-      if (isStale()) return;
+      if (hash !== currentHash) return;
       const snippet = isTool ? toolSnippet(view) : conversationSnippet(view);
       if (!snippet) return;
       untrack(() => {
@@ -163,17 +163,15 @@
     const vis = visibleRows;
     const currentHash = hash;
     const currentToken = token;
-    let stale = false;
     untrack(() => {
       for (const row of vis) {
         const tool = isToolNode(row.node.type);
         if (!isConversationNode(row.node.type) && !tool) continue;
         if (!row.node.payload_hash) continue;
         if (attempted.has(row.id)) continue;
-        void loadSnippet(row.id, tool, currentHash, currentToken, () => stale);
+        void loadSnippet(row.id, tool, currentHash, currentToken);
       }
     });
-    return () => { stale = true; };
   });
 
   function isExpandable(row: OutlineRow): boolean {
