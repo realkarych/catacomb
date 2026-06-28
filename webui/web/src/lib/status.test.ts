@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive, LIVE_WINDOW_MS } from './status';
+import { isOutcomeStatus, shouldShowStatus, statusColor, displayLabel, isSessionLive, sessionDisplayStatus, LIVE_WINDOW_MS } from './status';
 import type { SessionSummary } from './types';
 
 describe('isOutcomeStatus', () => {
@@ -112,5 +112,68 @@ describe('isSessionLive', () => {
 
   it('returns false for unparseable last_activity', () => {
     expect(isSessionLive(session({ last_activity: 'not-a-date' }), Date.now())).toBe(false);
+  });
+});
+
+describe('sessionDisplayStatus', () => {
+
+  function session(overrides: Partial<SessionSummary>): SessionSummary {
+    return {
+      session: 'abc',
+      status: 'running',
+      tokens_in: 0,
+      tokens_out: 0,
+      node_count: 0,
+      tool_count: 0,
+      error_count: 0,
+      run_ids: [],
+      ...overrides,
+    };
+  }
+
+  it('returns null for undefined session', () => {
+    expect(sessionDisplayStatus(undefined, Date.now())).toBe(null);
+  });
+
+  it('returns "live" for running session with recent last_activity', () => {
+    const nowMs = Date.now();
+    const recentActivity = new Date(nowMs - LIVE_WINDOW_MS + 1000).toISOString();
+    expect(sessionDisplayStatus(session({ last_activity: recentActivity }), nowMs)).toBe('live');
+  });
+
+  it('returns null for running session with old last_activity (> 5 min ago)', () => {
+    const nowMs = Date.now();
+    const oldActivity = new Date(nowMs - LIVE_WINDOW_MS - 1000).toISOString();
+    expect(sessionDisplayStatus(session({ last_activity: oldActivity }), nowMs)).toBe(null);
+  });
+
+  it('returns null for running session with no last_activity', () => {
+    expect(sessionDisplayStatus(session({ last_activity: undefined }), Date.now())).toBe(null);
+  });
+
+  it('returns "ok" for ok session regardless of last_activity', () => {
+    const nowMs = Date.now();
+    const oldActivity = new Date(nowMs - LIVE_WINDOW_MS - 1000).toISOString();
+    expect(sessionDisplayStatus(session({ status: 'ok', last_activity: oldActivity }), nowMs)).toBe('ok');
+  });
+
+  it('returns "error" for error session', () => {
+    expect(sessionDisplayStatus(session({ status: 'error' }), Date.now())).toBe('error');
+  });
+
+  it('returns "blocked" for blocked session', () => {
+    expect(sessionDisplayStatus(session({ status: 'blocked' }), Date.now())).toBe('blocked');
+  });
+
+  it('returns null for pending session', () => {
+    expect(sessionDisplayStatus(session({ status: 'pending' }), Date.now())).toBe(null);
+  });
+
+  it('returns null for unknown session', () => {
+    expect(sessionDisplayStatus(session({ status: 'unknown' }), Date.now())).toBe(null);
+  });
+
+  it('returns null for empty status session', () => {
+    expect(sessionDisplayStatus(session({ status: '' }), Date.now())).toBe(null);
   });
 });

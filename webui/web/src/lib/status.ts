@@ -40,3 +40,10 @@ export function isSessionLive(session: SessionSummary | undefined, nowMs: number
 	if (!session || session.status !== 'running' || !session.last_activity) return false;
 	return nowMs - Date.parse(session.last_activity) < LIVE_WINDOW_MS;
 }
+
+export function sessionDisplayStatus(session: SessionSummary | undefined, nowMs: number): string | null {
+	if (!session) return null;
+	const live = isSessionLive(session, nowMs);
+	if (!shouldShowStatus(session.status, live)) return null;
+	return session.status === 'running' ? 'live' : session.status;
+}
