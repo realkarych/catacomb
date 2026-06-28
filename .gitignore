@@ -62,3 +62,10 @@ webui/web/coverage/
 
 # Claude Code local runtime (hooks point at machine-specific absolute paths)
 /.claude/
+
+# Python (integrations/)
+integrations/**/.deepeval/
+integrations/**/__pycache__/
+integrations/**/.pytest_cache/
+integrations/**/*.egg-info/
+integrations/**/dist/

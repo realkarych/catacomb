@@ -1,0 +1,32 @@
+name: Python — DeepEval adapter
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-deepeval:
+    name: pytest (Python 3.12 + deepeval)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/deepeval
+    env:
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package with test-full extras
+        run: pip install -e '.[test-full]'
+      - name: Run tests
+        run: pytest -q

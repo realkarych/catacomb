@@ -1,0 +1,10 @@
+{"kind":"run","id":"run-001","status":"ok","started_at":"2024-01-01T10:00:00Z"}
+{"kind":"node","id":"session:s1","run_id":"run-001","type":"session","name":"main","status":"ok","t_start":"2024-01-01T10:00:00Z"}
+{"kind":"node","id":"node:up1","run_id":"run-001","type":"user_prompt","name":"user_prompt","status":"ok","t_start":"2024-01-01T10:00:01Z","payload":{"input":"\"List files in the current directory\""}}
+{"kind":"node","id":"node:at1","run_id":"run-001","type":"assistant_turn","name":"assistant_turn","status":"ok","t_start":"2024-01-01T10:00:02Z","payload":{"output":"\"I will list the files for you.\""}}
+{"kind":"node","id":"node:tc1","run_id":"run-001","type":"tool_call","name":"Bash","status":"ok","t_start":"2024-01-01T10:00:03Z","payload":{"input":"{\"command\":\"ls -la\"}","output":"\"total 8\\ndrwxr-xr-x file.txt\""}}
+{"kind":"node","id":"node:at2","run_id":"run-001","type":"assistant_turn","name":"assistant_turn","status":"ok","t_start":"2024-01-01T10:00:04Z","payload":{"output":"\"Here are the files. Now let me read one.\""}}
+{"kind":"node","id":"node:mc1","run_id":"run-001","type":"mcp_call","name":"mcp__fs__read","status":"ok","t_start":"2024-01-01T10:00:05Z","payload":{"input":"{\"path\":\"file.txt\"}","output":"\"file contents here\""}}
+{"kind":"edge","id":"edge:1","run_id":"run-001","type":"parent_child","src":"session:s1","dst":"node:up1"}
+{"kind":"edge","id":"edge:2","run_id":"run-001","type":"parent_child","src":"node:at1","dst":"node:tc1"}
+{"kind":"edge","id":"edge:3","run_id":"run-001","type":"parent_child","src":"node:at2","dst":"node:mc1"}
