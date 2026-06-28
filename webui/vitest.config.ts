@@ -30,6 +30,7 @@ export default defineConfig({
         'web/src/lib/graph/**',
         'web/src/lib/annotations.ts',
         'web/src/lib/repro.ts',
+        'web/src/lib/diff.ts',
       ],
       exclude: [
         '**/*.test.ts',

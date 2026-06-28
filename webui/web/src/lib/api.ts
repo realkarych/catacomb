@@ -1,4 +1,4 @@
-import type { SessionSummary, SseEvent, PayloadView } from './types';
+import type { SessionSummary, SseEvent, PayloadView, DiffResult } from './types';
 
 export class NotFoundError extends Error {
   constructor(msg: string) {
@@ -56,4 +56,12 @@ export async function fetchNodePayload(
   if (res.status === 404) throw new NotFoundError(`node ${nodeId} payload not found`);
   if (!res.ok) throw new Error(`fetchNodePayload failed: ${res.status}`);
   return res.json() as Promise<PayloadView>;
+}
+
+export async function fetchDiff(a: string, b: string, token: string, f = fetch): Promise<DiffResult> {
+  const url = `/v1/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&token=${encodeURIComponent(token)}`;
+  const res = await f(url);
+  if (res.status === 404) throw new NotFoundError('session not found');
+  if (!res.ok) throw new Error(`fetchDiff failed: ${res.status}`);
+  return res.json() as Promise<DiffResult>;
 }

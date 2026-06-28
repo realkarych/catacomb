@@ -7,6 +7,7 @@
   import type { Route } from './lib/router';
   import SessionsList from './components/SessionsList.svelte';
   import SessionView from './components/SessionView.svelte';
+  import DiffView from './components/DiffView.svelte';
 
   const token = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('token') ?? '';
 
@@ -35,11 +36,11 @@
     }).catch(() => {});
   });
 
-  const _initSSEHash = initialRoute.kind !== 'list' ? initialRoute.hash : '';
+  const _initSSEHash = (initialRoute.kind === 'session' || initialRoute.kind === 'session-node') ? initialRoute.hash : '';
   let connectedHash = $state(_initSSEHash);
 
   $effect(() => {
-    connectedHash = route.kind !== 'list' ? route.hash : '';
+    connectedHash = (route.kind === 'session' || route.kind === 'session-node') ? route.hash : '';
   });
 
   $effect(() => {
@@ -123,6 +124,8 @@
         loadStatus={sessionLoadStatus}
         {token}
       />
+    {:else if route.kind === 'diff'}
+      <DiffView {token} a={route.a} b={route.b} />
     {/if}
   </main>
 </div>
