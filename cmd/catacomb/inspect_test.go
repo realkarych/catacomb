@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestInspectUnknownRun(t *testing.T) {
 }
 
 func TestInspectStoreMissing(t *testing.T) {
-	dbPath := strings.Join([]string{t.TempDir(), "nope.db"}, "/")
+	dbPath := filepath.Join(t.TempDir(), "nope.db")
 	err := runInspect(io.Discard, store.OpenSQLiteReadOnly, newPricer, dbPath, "any", false)
 	assert.True(t, errors.Is(err, ErrStoreNotFound))
 }
