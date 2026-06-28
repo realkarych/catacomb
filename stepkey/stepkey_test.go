@@ -416,3 +416,26 @@ func TestMCPCallEligible(t *testing.T) {
 	assert.Contains(t, got, "m")
 	assert.Len(t, got["m"].Key, 32)
 }
+
+func TestComputeEmitsContentAndPathKeys(t *testing.T) {
+	na, ea := pipeline("A:", 1000)
+	nb, eb := pipeline("B:", 9000)
+	ka := Compute(na, ea)
+	kb := Compute(nb, eb)
+	assert.Equal(t, ka["A:bash"].Content, kb["B:bash"].Content)
+	assert.NotEqual(t, ka["A:bash"].Content, ka["A:read"].Content)
+	assert.Equal(t, ka["A:bash"].PathKey, kb["B:bash"].PathKey)
+	assert.NotEqual(t, ka["A:bash"].PathKey, ka["A:read"].PathKey)
+	assert.Len(t, ka["A:bash"].PathKey, 32)
+	assert.NotEqual(t, ka["A:bash"].PathKey, ka["A:bash"].Key)
+}
+
+func TestContentKeyIgnoresPosition(t *testing.T) {
+	a := tnode("a", model.NodeToolCall, "Bash", 3, `{"command":"ls"}`)
+	b := tnode("b", model.NodeToolCall, "Bash", 7, `{"command":"ls"}`)
+	pa := tnode("pa", model.NodeUserPrompt, "", 0, "")
+	pb := tnode("pb", model.NodeUserPrompt, "", 0, "")
+	ka := Compute([]*model.Node{pa, a}, []*model.Edge{edge("pa", "a")})
+	kb := Compute([]*model.Node{pb, b}, []*model.Edge{edge("pb", "b")})
+	assert.Equal(t, ka["a"].Content, kb["b"].Content)
+}
