@@ -124,19 +124,18 @@ func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []stri
 		streamForward(stderr, discoveryPath, pr)
 		_, _ = io.Copy(io.Discard, pr)
 	}()
-	if err := child.Start(); err != nil {
+	teardown := func() {
 		close(lossy.ch)
-		_ = pw.Close()
 		<-pumpDone
+		_ = pw.Close()
 		<-fwdDone
 		_ = pr.Close()
+	}
+	if err := child.Start(); err != nil {
+		teardown()
 		return err
 	}
 	waitErr := child.Wait()
-	close(lossy.ch)
-	_ = pw.Close()
-	<-pumpDone
-	<-fwdDone
-	_ = pr.Close()
+	teardown()
 	return waitErr
 }
