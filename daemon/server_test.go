@@ -1130,7 +1130,8 @@ func TestStartExporterSnapshotIsolatesPayload(t *testing.T) {
 
 	d.SetOTLPEndpoint("grpc://collector.example:4317")
 	httpLn, grpcLn := loopback(t), loopback(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
 	require.NotNil(t, capturedExp)
 

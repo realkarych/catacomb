@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -100,7 +101,11 @@ func attrString(n *model.Node, key string) string {
 
 func capBytes(s string) string {
 	if len(s) > maxIOValueBytes {
-		return s[:maxIOValueBytes]
+		c := s[:maxIOValueBytes]
+		for len(c) > 0 && !utf8.ValidString(c) {
+			c = c[:len(c)-1]
+		}
+		return c
 	}
 	return s
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -503,6 +504,15 @@ func TestNodeToSpanCapsLargeValue(t *testing.T) {
 	}
 	m := attrMap(e.nodeToSpan(n, ""))
 	assert.Equal(t, maxIOValueBytes, len(m["output.value"]))
+}
+
+func TestCapBytesRuneSafe(t *testing.T) {
+	prefix := strings.Repeat("a", maxIOValueBytes-1)
+	s := prefix + "世"
+	result := capBytes(s)
+	assert.LessOrEqual(t, len(result), maxIOValueBytes)
+	assert.True(t, utf8.ValidString(result))
+	assert.Equal(t, prefix, result)
 }
 
 func TestNodeToSpanModelAbsentWhenAttrWrongType(t *testing.T) {
