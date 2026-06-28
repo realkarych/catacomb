@@ -23,6 +23,7 @@ import (
 	"github.com/realkarych/catacomb/export/otlp"
 	pgexport "github.com/realkarych/catacomb/export/postgres"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/webui"
 )
 
@@ -233,7 +234,11 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	for _, exp := range entries {
 		for _, g := range d.graphs {
 			nodes, edges := g.Snapshot()
-			_ = exp.SnapshotState(ctx, nodes, edges)
+			cp := make([]*model.Node, len(nodes))
+			for i, n := range nodes {
+				cp[i] = copyNode(n)
+			}
+			_ = exp.SnapshotState(ctx, cp, edges)
 		}
 		for _, g := range d.graphs {
 			for _, r := range g.RunsSnapshot() {
