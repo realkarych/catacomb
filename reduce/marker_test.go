@@ -132,6 +132,7 @@ func TestSnapshotPhaseMarkerSynthesized(t *testing.T) {
 	}
 	require.NotNil(t, found, "phase marker node not in snapshot")
 	assert.Equal(t, model.NodeMarker, found.Type)
+	assert.Equal(t, "phase1", found.Name)
 	assert.Equal(t, t1, *found.TStart)
 	assert.Equal(t, t2, *found.TEnd)
 	assert.NotEmpty(t, found.PhaseKey)
@@ -284,6 +285,7 @@ func TestPhaseKeyOnMarker(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found)
+	assert.Equal(t, "myphase", found.Name)
 	expected := phasekey.Compute("", "myphase", 0)
 	assert.Equal(t, expected, found.PhaseKey)
 	assert.Len(t, found.PhaseKey, 32)
@@ -588,6 +590,7 @@ func TestSecondaryChannelMarkerObs(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "secondary channel phase marker should be synthesized")
+	assert.Equal(t, "sec_phase", found.Name)
 	assert.Equal(t, t1, *found.TStart)
 	assert.Equal(t, t2, *found.TEnd)
 }
@@ -618,6 +621,8 @@ func TestMultipleOccurrencesSameName(t *testing.T) {
 
 	require.NotNil(t, nodeMap[id0])
 	require.NotNil(t, nodeMap[id1])
+	assert.Equal(t, "phase1", nodeMap[id0].Name)
+	assert.Equal(t, "phase1", nodeMap[id1].Name)
 	assert.Equal(t, t1, *nodeMap[id0].TStart)
 	assert.Equal(t, t2, *nodeMap[id0].TEnd)
 	assert.Equal(t, t3, *nodeMap[id1].TStart)
