@@ -853,7 +853,7 @@ func TestUpCmdRunEHistoryHomeError(t *testing.T) {
 
 func TestRestartCommandMinimal(t *testing.T) {
 	got := restartCommand(daemon.Discovery{}, "/p")
-	assert.Equal(t, "catacomb daemon --transcript-dir /p", got)
+	assert.Equal(t, "catacomb daemon --transcript-dir \"/p\"", got)
 }
 
 func TestRunUpHistoryAlreadyAllScope(t *testing.T) {
@@ -883,8 +883,8 @@ func TestRunUpHistoryRestartHint(t *testing.T) {
 	require.NoError(t, runUp(context.Background(), &out, deps))
 	s := out.String()
 	assert.Contains(t, s, "kill 4242")
-	assert.Contains(t, s, "--transcript-dir /home/u/.claude/projects")
-	assert.Contains(t, s, "--db /home/u/.catacomb/catacomb.db")
+	assert.Contains(t, s, "--transcript-dir \"/home/u/.claude/projects\"")
+	assert.Contains(t, s, "--db \"/home/u/.catacomb/catacomb.db\"")
 	assert.Contains(t, s, "--allow-payload-access")
 }
 

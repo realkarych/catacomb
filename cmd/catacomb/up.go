@@ -270,9 +270,9 @@ func restartCommand(disc daemon.Discovery, projectsDir string) string {
 	if disc.Pid != 0 {
 		_, _ = fmt.Fprintf(&b, "kill %d && ", disc.Pid)
 	}
-	_, _ = fmt.Fprintf(&b, "catacomb daemon --transcript-dir %s", projectsDir)
+	_, _ = fmt.Fprintf(&b, "catacomb daemon --transcript-dir %q", projectsDir)
 	if disc.DBPath != "" {
-		_, _ = fmt.Fprintf(&b, " --db %s", disc.DBPath)
+		_, _ = fmt.Fprintf(&b, " --db %q", disc.DBPath)
 	}
 	if disc.AllowPayloadAccess {
 		b.WriteString(" --allow-payload-access")
