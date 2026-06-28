@@ -74,6 +74,6 @@ func TestRenderErrWrappedUnreachable(t *testing.T) {
 }
 
 func TestRenderErrDiffInput(t *testing.T) {
-	wrapped := fmt.Errorf("diff: /path/x.jsonl: open: %v (%w)", os.ErrNotExist, ErrDiffInput)
+	wrapped := fmt.Errorf("diff: /path/x.jsonl: open: %w (%w)", os.ErrNotExist, ErrDiffInput)
 	assert.Equal(t, wrapped.Error(), renderErr(wrapped))
 }

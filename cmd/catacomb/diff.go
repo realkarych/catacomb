@@ -42,11 +42,11 @@ func newDiffCmd() *cobra.Command {
 func runDiff(args diffArgs) (catdiff.DiffResult, error) {
 	ag, _, err := loadGraph(args.a, newExecutionID())
 	if err != nil {
-		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %v (%w)", args.a, err, ErrDiffInput)
+		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %w (%w)", args.a, err, ErrDiffInput)
 	}
 	bg, _, err := loadGraph(args.b, newExecutionID())
 	if err != nil {
-		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %v (%w)", args.b, err, ErrDiffInput)
+		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %w (%w)", args.b, err, ErrDiffInput)
 	}
 	an, ae := ag.Snapshot()
 	bn, be := bg.Snapshot()

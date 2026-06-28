@@ -2,7 +2,7 @@ package diff
 
 import "sort"
 
-func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
+func alignItems(a, b []item) (matched [][2]int, ra, rb []int) {
 	usedA := make([]bool, len(a))
 	usedB := make([]bool, len(b))
 
