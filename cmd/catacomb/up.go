@@ -32,16 +32,24 @@ type upDeps struct {
 }
 
 func newUpCmd() *cobra.Command {
-	var noOpen, noDemo, global bool
+	var noOpen, noDemo, global, history bool
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Start the daemon (if needed), install hooks, and open the UI",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			discPath := daemon.DiscoveryPath()
+			var transcriptDir string
+			if history {
+				projects, err := claudeProjectsDir()
+				if err != nil {
+					return err
+				}
+				transcriptDir = projects
+			}
 			deps := upDeps{
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
-				startDaemon:   buildStartDaemon(discPath),
+				startDaemon:   buildStartDaemon(discPath, transcriptDir),
 				installHooks:  buildInstallHooks(discPath, global),
 				pollHealthz:   prodPollHealthz,
 				sessionCount:  prodSessionCount,
@@ -58,10 +66,19 @@ func newUpCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "print the URL without opening a browser")
 	cmd.Flags().BoolVar(&noDemo, "no-demo", false, "skip the demo fallback if no session appears")
 	cmd.Flags().BoolVar(&global, "global", false, "install hooks for all projects (~/.claude/settings.json) instead of the current directory")
+	cmd.Flags().BoolVar(&history, "history", false, "tail ~/.claude/projects so past sessions appear in the UI")
 	return cmd
 }
 
-func buildStartDaemon(discPath string) func() error {
+func claudeProjectsDir() (string, error) {
+	home, err := osUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("up: resolve home: %w", err)
+	}
+	return filepath.Join(home, ".claude", "projects"), nil
+}
+
+func buildStartDaemon(discPath, transcriptDir string) func() error {
 	return func() error {
 		exe, err := osExecutable()
 		if err != nil {
@@ -75,7 +92,11 @@ func buildStartDaemon(discPath string) func() error {
 		if err != nil {
 			return fmt.Errorf("up: open daemon log: %w", err)
 		}
-		c := execCommand(exe, "daemon")
+		args := []string{"daemon"}
+		if transcriptDir != "" {
+			args = append(args, "--transcript-dir", transcriptDir)
+		}
+		c := execCommand(exe, args...)
 		c.Stdout = f
 		c.Stderr = f
 		if err := startCmd(c); err != nil {

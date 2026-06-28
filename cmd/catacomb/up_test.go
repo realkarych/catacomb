@@ -526,7 +526,7 @@ func TestBuildStartDaemonOsExecutableError(t *testing.T) {
 	osExecutable = func() (string, error) { return "", errors.New("no exe") }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
 
-	fn := buildStartDaemon(t.TempDir() + "/d.json")
+	fn := buildStartDaemon(t.TempDir()+"/d.json", "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolve executable")
@@ -536,7 +536,7 @@ func TestBuildStartDaemonCreateRunDirError(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 
-	fn := buildStartDaemon(filepath.Join(blocker, "run", "d.json"))
+	fn := buildStartDaemon(filepath.Join(blocker, "run", "d.json"), "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create run dir")
@@ -551,7 +551,7 @@ func TestBuildStartDaemonLogOpenError(t *testing.T) {
 	discPath := dir + "/d.json"
 	require.NoError(t, os.MkdirAll(discPath+".log", 0o700))
 
-	fn := buildStartDaemon(discPath)
+	fn := buildStartDaemon(discPath, "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open daemon log")
@@ -571,7 +571,7 @@ func TestBuildStartDaemonCreatesRunDir(t *testing.T) {
 	runDir := base + "/run"
 
 	require.NoDirExists(t, runDir)
-	fn := buildStartDaemon(discPath)
+	fn := buildStartDaemon(discPath, "")
 	require.NoError(t, fn())
 	assert.DirExists(t, runDir)
 }
@@ -585,7 +585,7 @@ func TestBuildStartDaemonStartError(t *testing.T) {
 	startCmd = func(_ *exec.Cmd) error { return errors.New("start failed") }
 	t.Cleanup(func() { startCmd = origStartCmd })
 
-	fn := buildStartDaemon(t.TempDir() + "/d.json")
+	fn := buildStartDaemon(t.TempDir()+"/d.json", "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "start daemon")
@@ -600,7 +600,7 @@ func TestBuildStartDaemonSuccess(t *testing.T) {
 	startCmd = func(_ *exec.Cmd) error { return nil }
 	t.Cleanup(func() { startCmd = origStartCmd })
 
-	fn := buildStartDaemon(t.TempDir() + "/d.json")
+	fn := buildStartDaemon(t.TempDir()+"/d.json", "")
 	err := fn()
 	require.NoError(t, err)
 }
@@ -743,6 +743,112 @@ func TestUpCmdRegisteredInRoot(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "up subcommand must be registered")
+}
+
+func TestClaudeProjectsDir(t *testing.T) {
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "/home/u", nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	dir, err := claudeProjectsDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/home/u", ".claude", "projects"), dir)
+}
+
+func TestClaudeProjectsDirHomeError(t *testing.T) {
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	_, err := claudeProjectsDir()
+	require.Error(t, err)
+}
+
+func TestBuildStartDaemonHistoryAppendsTranscriptDir(t *testing.T) {
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+	origStart := startCmd
+	startCmd = func(_ *exec.Cmd) error { return nil }
+	t.Cleanup(func() { startCmd = origStart })
+	origExec := execCommand
+	var gotArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return origExec(name, args...)
+	}
+	t.Cleanup(func() { execCommand = origExec })
+
+	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "/home/u/.claude/projects")())
+	assert.Contains(t, gotArgs, "--transcript-dir")
+	assert.Contains(t, gotArgs, "/home/u/.claude/projects")
+}
+
+func TestBuildStartDaemonNoHistoryOmitsTranscriptDir(t *testing.T) {
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+	origStart := startCmd
+	startCmd = func(_ *exec.Cmd) error { return nil }
+	t.Cleanup(func() { startCmd = origStart })
+	origExec := execCommand
+	var gotArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return origExec(name, args...)
+	}
+	t.Cleanup(func() { execCommand = origExec })
+
+	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "")())
+	assert.NotContains(t, gotArgs, "--transcript-dir")
+}
+
+func TestUpCmdHasHistoryFlag(t *testing.T) {
+	assert.NotNil(t, newUpCmd().Flags().Lookup("history"))
+}
+
+func TestUpCmdRunEWithHistory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	discPath := t.TempDir() + "/d.json"
+	require.NoError(t, daemon.WriteDiscovery(discPath, disc))
+	t.Setenv("CATACOMB_DISCOVERY", discPath)
+
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return t.TempDir(), nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	origOpenBrowser := openBrowser
+	openBrowser = func(_ string) error { return nil }
+	t.Cleanup(func() { openBrowser = origOpenBrowser })
+
+	origOsExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origOsExecutable })
+
+	origPollHealthz := upPollHealthz
+	upPollHealthz = func(_ context.Context, _ string) error { return nil }
+	t.Cleanup(func() { upPollHealthz = origPollHealthz })
+
+	cmd := newUpCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(t, cmd.ParseFlags([]string{"--no-open", "--no-demo", "--history"}))
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, buf.String(), "127.0.0.1:12345")
+}
+
+func TestUpCmdRunEHistoryHomeError(t *testing.T) {
+	t.Chdir(t.TempDir())
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	cmd := newUpCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(t, cmd.ParseFlags([]string{"--history"}))
+	err := cmd.Execute()
+	require.Error(t, err)
 }
 
 func TestUpCmdRunE(t *testing.T) {
