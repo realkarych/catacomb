@@ -56,13 +56,13 @@ func runReplay(args replayArgs) (*reduce.Graph, error) {
 func loadGraph(path, executionID string) (*reduce.Graph, []model.Observation, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("replay open: %w", err)
+		return nil, nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	obs, err := ijsonl.ParseReader(f, executionID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("replay parse: %w", err)
+		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
 	g := reduce.NewGraph()

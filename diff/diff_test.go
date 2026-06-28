@@ -257,3 +257,35 @@ func TestDiffStatusTokensArgsAndOrderStable(t *testing.T) {
 	assert.Equal(t, result1.Changed, result2.Changed)
 	assert.Equal(t, result1.Unchanged, result2.Unchanged)
 }
+
+func TestDiffOrderStableUnderFullReversal(t *testing.T) {
+	an, ae := pipelineGraph("a", 1000, []string{"ls", "pwd"})
+	bn, be := pipelineGraph("b", 2000, []string{"ls", "pwd"})
+
+	result1 := DiffGraphs(an, ae, bn, be)
+
+	anRev := make([]*model.Node, len(an))
+	copy(anRev, an)
+	for i, j := 0, len(anRev)-1; i < j; i, j = i+1, j-1 {
+		anRev[i], anRev[j] = anRev[j], anRev[i]
+	}
+	aeRev := make([]*model.Edge, len(ae))
+	copy(aeRev, ae)
+	for i, j := 0, len(aeRev)-1; i < j; i, j = i+1, j-1 {
+		aeRev[i], aeRev[j] = aeRev[j], aeRev[i]
+	}
+	bnRev := make([]*model.Node, len(bn))
+	copy(bnRev, bn)
+	for i, j := 0, len(bnRev)-1; i < j; i, j = i+1, j-1 {
+		bnRev[i], bnRev[j] = bnRev[j], bnRev[i]
+	}
+	beRev := make([]*model.Edge, len(be))
+	copy(beRev, be)
+	for i, j := 0, len(beRev)-1; i < j; i, j = i+1, j-1 {
+		beRev[i], beRev[j] = beRev[j], beRev[i]
+	}
+
+	result2 := DiffGraphs(anRev, aeRev, bnRev, beRev)
+
+	require.Equal(t, result1, result2)
+}

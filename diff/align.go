@@ -117,7 +117,6 @@ func matchExact(a, b []item, usedA, usedB []bool, matched *[][2]int, key func(it
 		k := key(it)
 		candidates := available[k]
 		start := nextB[k]
-		nextB[k] = start
 		if start >= len(candidates) {
 			continue
 		}
