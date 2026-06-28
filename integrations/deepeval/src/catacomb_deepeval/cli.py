@@ -29,7 +29,7 @@ def main() -> None:
     parser.add_argument(
         "--argument-correctness",
         action="store_true",
-        help="Also run ArgumentCorrectnessMetric (requires ANTHROPIC_API_KEY)",
+        help="Reserved (not yet implemented); exits with error if ANTHROPIC_API_KEY is unset",
     )
     args = parser.parse_args()
 

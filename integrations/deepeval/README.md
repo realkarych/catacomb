@@ -104,12 +104,6 @@ client = observe_anthropic(anthropic.Anthropic())
 # replay catacomb session here, then run TaskCompletionMetric
 ```
 
-Use `--argument-correctness` to enable `ArgumentCorrectnessMetric` (also LLM
-judge):
-
-```bash
-ANTHROPIC_API_KEY=sk-... catacomb-deepeval session.jsonl \
-  --run <id> \
-  --expected expected.json \
-  --argument-correctness
-```
+The `--argument-correctness` flag is reserved for a future `ArgumentCorrectnessMetric`
+integration (not yet implemented). It currently validates that `ANTHROPIC_API_KEY` is
+set and exits with an error if it is not.

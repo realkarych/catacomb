@@ -19,3 +19,6 @@ catacomb-deepeval = "catacomb_deepeval.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/catacomb_deepeval"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
