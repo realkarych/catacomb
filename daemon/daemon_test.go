@@ -925,6 +925,15 @@ func TestSetOTLPEndpoint(t *testing.T) {
 	assert.Equal(t, "grpc://collector:4317", got)
 }
 
+func TestSetOTLPProject(t *testing.T) {
+	d := New(nil)
+	d.SetOTLPProject("phoenix-demo")
+	d.mu.Lock()
+	got := d.otlpProject
+	d.mu.Unlock()
+	assert.Equal(t, "phoenix-demo", got)
+}
+
 func TestIngestStreamJSONSessionInit(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)

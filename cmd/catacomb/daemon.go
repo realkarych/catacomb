@@ -15,7 +15,7 @@ import (
 )
 
 func newDaemonCmd() *cobra.Command {
-	var dbPath, discoveryPath, otlpEndpoint, postgresDSN string
+	var dbPath, discoveryPath, otlpEndpoint, otlpProject, postgresDSN string
 	var neo4jURI, neo4jUser, neo4jPassword string
 	var reaperWindow time.Duration
 	var maxShards int
@@ -42,7 +42,7 @@ to enable the token-gated content endpoint (off by default).`,
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude, allowPayloadAccess)
+			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, otlpProject, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude, allowPayloadAccess)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
@@ -50,6 +50,7 @@ to enable the token-gated content endpoint (off by default).`,
 	cmd.Flags().DurationVar(&reaperWindow, "reaper-window", 30*time.Minute, "idle window before a run is marked abandoned")
 	cmd.Flags().IntVar(&maxShards, "max-shards", 4096, "soft cap on in-memory execution shards")
 	cmd.Flags().StringVar(&otlpEndpoint, "otlp-export-endpoint", "", "downstream OTLP endpoint to export the reconstructed trace tree (empty = disabled)")
+	cmd.Flags().StringVar(&otlpProject, "otlp-export-project", "catacomb", "OpenInference project name (resource attribute openinference.project.name)")
 	cmd.Flags().StringVar(&postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN to export the materialized graph (empty = disabled)")
 	cmd.Flags().StringVar(&neo4jURI, "neo4j-export-uri", "", "Neo4j Bolt URI to export the materialized graph (empty = disabled)")
 	cmd.Flags().StringVar(&neo4jUser, "neo4j-export-user", "", "Neo4j username for materialized graph export")
@@ -70,6 +71,7 @@ func runDaemonWith(
 	reaperWindow time.Duration,
 	maxShards int,
 	otlpEndpoint string,
+	otlpProject string,
 	postgresDSN string,
 	neo4jURI string,
 	neo4jUser string,
@@ -88,6 +90,7 @@ func runDaemonWith(
 	d.SetReaperWindow(reaperWindow)
 	d.SetMaxShards(maxShards)
 	d.SetOTLPEndpoint(otlpEndpoint)
+	d.SetOTLPProject(otlpProject)
 	d.SetPostgresDSN(postgresDSN)
 	d.SetNeo4j(neo4jURI, neo4jUser, neo4jPassword)
 	d.SetDBPath(dbPath)

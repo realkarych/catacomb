@@ -191,6 +191,7 @@ var consumerLoopExitHook func()
 func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	d.mu.Lock()
 	otlpEndpoint := d.otlpEndpoint
+	otlpProject := d.otlpProject
 	postgresDSN := d.postgresDSN
 	neo4jURI := d.neo4jURI
 	neo4jUser := d.neo4jUser
@@ -204,6 +205,7 @@ func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 		if err != nil {
 			log.Printf("catacomb: otlp exporter disabled: %v", err)
 		} else {
+			exp.SetProject(otlpProject)
 			entries = append(entries, exp)
 		}
 	}

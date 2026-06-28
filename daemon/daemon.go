@@ -68,6 +68,7 @@ type Daemon struct {
 	startedAt          time.Time
 	storeWriteErrors   int64
 	otlpEndpoint       string
+	otlpProject        string
 	exporterConsumers  []*cdc.Consumer
 	postgresDSN        string
 	neo4jURI           string
@@ -130,6 +131,12 @@ func (d *Daemon) SetOTLPEndpoint(s string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.otlpEndpoint = s
+}
+
+func (d *Daemon) SetOTLPProject(s string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.otlpProject = s
 }
 
 func (d *Daemon) SetPostgresDSN(s string) {
