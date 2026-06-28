@@ -4,10 +4,11 @@ import {
   fetchSessionGraph,
   fetchSubagentSubtree,
   fetchNodePayload,
+  fetchDiff,
   NotFoundError,
   ForbiddenError,
 } from './api';
-import type { SessionSummary, SseEvent, PayloadView } from './types';
+import type { SessionSummary, SseEvent, PayloadView, DiffResult } from './types';
 
 function mockFetch(status: number, body: unknown): typeof fetch {
   return vi.fn().mockResolvedValue({
@@ -168,5 +169,39 @@ describe('fetchNodePayload', () => {
   it('throws Error on 500', async () => {
     const f = mockFetch(500, null);
     await expect(fetchNodePayload('hash', 'n1', 'tok', f)).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('fetchDiff', () => {
+  const sampleResult: DiffResult = {
+    added: [],
+    removed: [],
+    changed: [],
+    unchanged: [],
+  };
+
+  it('returns DiffResult on 200', async () => {
+    const f = mockFetch(200, sampleResult);
+    const result = await fetchDiff('hash-a', 'hash-b', 'mytoken', f);
+    expect(result).toEqual(sampleResult);
+    expect(f).toHaveBeenCalledWith(
+      '/v1/diff?a=hash-a&b=hash-b&token=mytoken',
+    );
+  });
+
+  it('encodes a, b, and token in URL', async () => {
+    const f = mockFetch(200, sampleResult);
+    await fetchDiff('a/1', 'b/2', 'tok/x', f);
+    expect(f).toHaveBeenCalledWith('/v1/diff?a=a%2F1&b=b%2F2&token=tok%2Fx');
+  });
+
+  it('throws NotFoundError on 404', async () => {
+    const f = mockFetch(404, null);
+    await expect(fetchDiff('a', 'b', 'tok', f)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('throws Error on 500', async () => {
+    const f = mockFetch(500, null);
+    await expect(fetchDiff('a', 'b', 'tok', f)).rejects.toBeInstanceOf(Error);
   });
 });
