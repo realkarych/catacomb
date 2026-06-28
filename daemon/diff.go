@@ -9,6 +9,16 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
+func nodesWithoutPayload(nodes []*model.Node) []*model.Node {
+	out := make([]*model.Node, len(nodes))
+	for i, n := range nodes {
+		cp := copyNode(n)
+		cp.Payload = nil
+		out[i] = cp
+	}
+	return out
+}
+
 func (d *Daemon) sessionGraphNodes(hash string) ([]*model.Node, []*model.Edge, error) {
 	execs := d.executionsForSession(hash)
 	if len(execs) == 0 {
@@ -43,6 +53,10 @@ func (d *Daemon) handleDiff(w http.ResponseWriter, r *http.Request) {
 		d.mu.Unlock()
 		w.WriteHeader(http.StatusNotFound)
 		return
+	}
+	if !d.allowPayloadAccess {
+		aN = nodesWithoutPayload(aN)
+		bN = nodesWithoutPayload(bN)
 	}
 	result := diff.DiffGraphs(aN, aE, bN, bE)
 	d.mu.Unlock()
