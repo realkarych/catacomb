@@ -2,12 +2,15 @@
   import type { SessionSummary } from '../lib/types';
   import { formatDuration, formatTokens, formatCost, shortHash, formatDate } from '../lib/format/format';
   import { toHash } from '../lib/router';
+  import { sessionDisplayStatus } from '../lib/status';
   import StatusPill from './StatusPill.svelte';
 
   interface Props {
     session: SessionSummary;
   }
   let { session }: Props = $props();
+
+  const displayStatus = $derived(sessionDisplayStatus(session, Date.now()));
 
   function navigate() {
     window.location.hash = toHash({ kind: 'session', hash: session.session });
@@ -29,7 +32,7 @@
   aria-label="Session {shortHash(session.session, 12)}"
 >
   <td class="cell cell-hash mono">{shortHash(session.session, 12)}</td>
-  <td class="cell cell-status"><StatusPill status={session.status} /></td>
+  <td class="cell cell-status">{#if displayStatus}<StatusPill status={displayStatus} />{/if}</td>
   <td class="cell cell-num">{formatDate(session.started_at)}</td>
   <td class="cell cell-num">{formatDuration(session.duration_ms)}</td>
   <td class="cell cell-num">{formatTokens(session.tokens_in)} / {formatTokens(session.tokens_out)}</td>

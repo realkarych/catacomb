@@ -5,7 +5,7 @@
   import StatusPill from './StatusPill.svelte';
   import MetricRow from './MetricRow.svelte';
   import PayloadPanel from './PayloadPanel.svelte';
-  import { shouldShowStatus } from '../lib/status';
+  import { shouldShowStatus, isSessionLive } from '../lib/status';
   import { sessionsById } from '../lib/stores/stores.svelte';
 
   interface Props {
@@ -15,7 +15,7 @@
   }
   let { hash, token, focusOnOpen = false }: Props = $props();
 
-  const isLive = $derived(sessionsById[hash]?.status === 'running');
+  const isLive = $derived(isSessionLive(sessionsById[hash], Date.now()));
 
   const node = $derived(
     selectedNodeId.value ? (nodesById[selectedNodeId.value] ?? null) : null

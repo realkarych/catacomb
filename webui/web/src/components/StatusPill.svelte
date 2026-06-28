@@ -34,6 +34,7 @@
 
   .status-pill[data-status='ok'] { color: var(--ok); }
   .status-pill[data-status='running'] { color: var(--running); }
+  .status-pill[data-status='live'] { color: var(--running); }
   .status-pill[data-status='error'] { color: var(--error); }
   .status-pill[data-status='blocked'] { color: var(--blocked); }
   .status-pill[data-status='pending'] { color: var(--pending); }
