@@ -8,11 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -20,9 +22,12 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 var _ exportiface.Exporter = (*Exporter)(nil)
+
+const maxIOValueBytes = 32 * 1024
 
 type spanExporter interface {
 	ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error
@@ -39,11 +44,12 @@ type RunFilter struct {
 }
 
 type Exporter struct {
-	client  spanExporter
-	runs    map[string]map[string]*nodeState
-	parents map[string]string
-	edgeRev map[string]uint64
-	filter  RunFilter
+	client   spanExporter
+	runs     map[string]map[string]*nodeState
+	parents  map[string]string
+	edgeRev  map[string]uint64
+	filter   RunFilter
+	resource *resource.Resource
 }
 
 func New(ctx context.Context, endpoint, daemonGRPCAddr, daemonHTTPAddr string) (*Exporter, error) {
@@ -64,11 +70,51 @@ func newFull(ctx context.Context, endpoint, daemonGRPCAddr, daemonHTTPAddr strin
 
 func newWithExporter(exp spanExporter) *Exporter {
 	return &Exporter{
-		client:  exp,
-		runs:    map[string]map[string]*nodeState{},
-		parents: map[string]string{},
-		edgeRev: map[string]uint64{},
+		client:   exp,
+		runs:     map[string]map[string]*nodeState{},
+		parents:  map[string]string{},
+		edgeRev:  map[string]uint64{},
+		resource: openInferenceResource(""),
 	}
+}
+
+func openInferenceResource(project string) *resource.Resource {
+	if project == "" {
+		project = "catacomb"
+	}
+	return resource.NewSchemaless(attribute.String("openinference.project.name", project))
+}
+
+func (e *Exporter) SetProject(name string) {
+	e.resource = openInferenceResource(name)
+}
+
+func attrString(n *model.Node, key string) string {
+	if n.Attrs == nil {
+		return ""
+	}
+	if v, ok := n.Attrs[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func capBytes(s string) string {
+	if len(s) > maxIOValueBytes {
+		c := s[:maxIOValueBytes]
+		for len(c) > 0 && !utf8.ValidString(c) {
+			c = c[:len(c)-1]
+		}
+		return c
+	}
+	return s
+}
+
+func redactedValue(raw []byte) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	return capBytes(string(redact.Redact(raw).Data)), true
 }
 
 func ExporterWithSpanExporter(exp interface {
@@ -245,9 +291,20 @@ func (e *Exporter) SnapshotState(_ context.Context, nodes []*model.Node, edges [
 }
 
 func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadOnlySpan {
+	kind := openInferenceKind(n.Type)
 	attrs := []attribute.KeyValue{
-		attribute.String("openinference.span.kind", openInferenceKind(n.Type)),
+		attribute.String("openinference.span.kind", kind),
 		attribute.String("gen_ai.provider.name", "anthropic"),
+		attribute.String("graph.node.id", n.ID),
+	}
+	if n.RunID != "" {
+		attrs = append(attrs, attribute.String("session.id", n.RunID))
+	}
+	if n.Name != "" {
+		attrs = append(attrs, attribute.String("graph.node.name", n.Name))
+	}
+	if parentNodeID != "" {
+		attrs = append(attrs, attribute.String("graph.node.parent_id", parentNodeID))
 	}
 	if n.TokensIn != nil {
 		attrs = append(attrs,
@@ -263,6 +320,25 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 	}
 	if n.CostUSD != nil {
 		attrs = append(attrs, attribute.String("llm.cost.total", strconv.FormatFloat(*n.CostUSD, 'g', -1, 64)))
+	}
+	if kind == "LLM" {
+		if m := attrString(n, "model"); m != "" {
+			attrs = append(attrs, attribute.String("llm.model_name", m), attribute.String("gen_ai.request.model", m))
+		}
+	}
+	if kind == "TOOL" && n.Name != "" {
+		attrs = append(attrs, attribute.String("tool.name", n.Name), attribute.String("tool_call.function.name", n.Name))
+	}
+	if n.Payload != nil {
+		if v, ok := redactedValue(n.Payload.Input); ok {
+			attrs = append(attrs, attribute.String("input.value", v), attribute.String("input.mime_type", "application/json"))
+			if kind == "TOOL" {
+				attrs = append(attrs, attribute.String("tool_call.function.arguments", v))
+			}
+		}
+		if v, ok := redactedValue(n.Payload.Output); ok {
+			attrs = append(attrs, attribute.String("output.value", v), attribute.String("output.mime_type", "application/json"))
+		}
 	}
 	var parent trace.SpanContext
 	if parentNodeID != "" {
@@ -292,6 +368,7 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 		EndTime:    end,
 		Attributes: attrs,
 		Status:     spanStatus(n.Status),
+		Resource:   e.resource,
 	}
 	return stub.Snapshot()
 }

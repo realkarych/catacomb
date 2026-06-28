@@ -101,6 +101,30 @@ func TestCopyRaceAttrsAndSources(t *testing.T) {
 	wg.Wait()
 }
 
+func TestCopyNodeIsolatesPayload(t *testing.T) {
+	src := &model.Node{ID: "n", Payload: &model.Payload{Input: json.RawMessage(`{"a":1}`), Output: json.RawMessage(`{"b":2}`), Hash: "h"}}
+	cp := copyNode(src)
+	cp.Payload.Input[2] = 'X'
+	cp.Payload.Output = json.RawMessage(`changed`)
+	cp.Payload.Hash = "changed"
+	assert.Equal(t, json.RawMessage(`{"a":1}`), src.Payload.Input)
+	assert.Equal(t, json.RawMessage(`{"b":2}`), src.Payload.Output)
+	assert.Equal(t, "h", src.Payload.Hash)
+}
+
+func TestCopyNodeNilPayload(t *testing.T) {
+	cp := copyNode(&model.Node{ID: "n"})
+	assert.Nil(t, cp.Payload)
+}
+
+func TestCopyNodeEmptyPayload(t *testing.T) {
+	src := &model.Node{ID: "n", Payload: &model.Payload{Hash: "h"}}
+	cp := copyNode(src)
+	assert.Nil(t, cp.Payload.Input)
+	assert.Nil(t, cp.Payload.Output)
+	assert.Equal(t, "h", cp.Payload.Hash)
+}
+
 func TestPublishDeltaUsesDeepCopy(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)

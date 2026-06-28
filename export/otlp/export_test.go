@@ -2,9 +2,12 @@ package otlp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -429,6 +432,155 @@ func TestFlushRunEmptyRunIsNoop(t *testing.T) {
 	e.runs["empty"] = map[string]*nodeState{}
 	require.NoError(t, e.FlushRun(context.Background(), "empty"))
 	assert.Empty(t, rec.batches)
+}
+
+func TestNodeToSpanGraphAndSessionAttrs(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "child", RunID: "run-hash", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK}
+	m := attrMap(e.nodeToSpan(n, "parent"))
+	assert.Equal(t, "child", m["graph.node.id"])
+	assert.Equal(t, "parent", m["graph.node.parent_id"])
+	assert.Equal(t, "Bash", m["graph.node.name"])
+	assert.Equal(t, "run-hash", m["session.id"])
+}
+
+func TestNodeToSpanRootHasNoParentAttr(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "root", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, ok := m["graph.node.parent_id"]
+	assert.False(t, ok)
+}
+
+func TestNodeToSpanLLMModelName(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, Attrs: map[string]any{"model": "claude-opus-4-8"}}
+	m := attrMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "claude-opus-4-8", m["llm.model_name"])
+	assert.Equal(t, "claude-opus-4-8", m["gen_ai.request.model"])
+}
+
+func TestNodeToSpanModelAbsentWhenNoAttr(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n2", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, ok := m["llm.model_name"]
+	assert.False(t, ok)
+}
+
+func TestNodeToSpanToolNameAndArguments(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK,
+		Payload: &model.Payload{Input: json.RawMessage(`{"command":"ls"}`), Output: json.RawMessage(`"ok"`)},
+	}
+	m := attrMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "Bash", m["tool.name"])
+	assert.Equal(t, "Bash", m["tool_call.function.name"])
+	assert.Equal(t, `{"command":"ls"}`, m["tool_call.function.arguments"])
+	assert.Equal(t, `{"command":"ls"}`, m["input.value"])
+	assert.Equal(t, "application/json", m["input.mime_type"])
+	assert.Equal(t, `"ok"`, m["output.value"])
+	assert.Equal(t, "application/json", m["output.mime_type"])
+}
+
+func TestNodeToSpanRedactsInputValue(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK,
+		Payload: &model.Payload{Input: json.RawMessage(`{"command":"git clone ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij foo"}`)},
+	}
+	m := attrMap(e.nodeToSpan(n, ""))
+	assert.NotContains(t, m["input.value"], "ghp_")
+	assert.Contains(t, m["input.value"], "redacted")
+}
+
+func TestNodeToSpanCapsLargeValue(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	large := json.RawMessage("[" + strings.Repeat("1,", maxIOValueBytes) + "0]")
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK,
+		Payload: &model.Payload{Output: large},
+	}
+	m := attrMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, maxIOValueBytes, len(m["output.value"]))
+}
+
+func TestCapBytesRuneSafe(t *testing.T) {
+	prefix := strings.Repeat("a", maxIOValueBytes-1)
+	s := prefix + "世"
+	result := capBytes(s)
+	assert.LessOrEqual(t, len(result), maxIOValueBytes)
+	assert.True(t, utf8.ValidString(result))
+	assert.Equal(t, prefix, result)
+}
+
+func TestNodeToSpanModelAbsentWhenAttrWrongType(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n2", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, Attrs: map[string]any{"model": 42}}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, ok := m["llm.model_name"]
+	assert.False(t, ok)
+}
+
+func TestNodeToSpanToolNameNotSetForNonToolKind(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeSubagent, Name: "researcher", Status: model.StatusOK}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, ok := m["tool.name"]
+	assert.False(t, ok)
+}
+
+func TestNodeToSpanNoPayloadOmitsIO(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, hasIn := m["input.value"]
+	_, hasOut := m["output.value"]
+	assert.False(t, hasIn)
+	assert.False(t, hasOut)
+}
+
+func TestNodeToSpanEmptyOutputOmitsOutputValue(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK,
+		Payload: &model.Payload{Input: json.RawMessage(`{"cmd":"ls"}`)},
+	}
+	m := attrMap(e.nodeToSpan(n, ""))
+	_, ok := m["output.value"]
+	assert.False(t, ok)
+}
+
+func resourceMap(ro sdktrace.ReadOnlySpan) map[string]string {
+	m := map[string]string{}
+	for _, kv := range ro.Resource().Attributes() {
+		m[string(kv.Key)] = kv.Value.AsString()
+	}
+	return m
+}
+
+func TestNodeToSpanDefaultProjectResource(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	rm := resourceMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "catacomb", rm["openinference.project.name"])
+}
+
+func TestSetProjectOverridesResource(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	e.SetProject("my-project")
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}
+	rm := resourceMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "my-project", rm["openinference.project.name"])
+}
+
+func TestSetProjectEmptyKeepsDefault(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	e.SetProject("")
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeMarker, Status: model.StatusOK}
+	rm := resourceMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "catacomb", rm["openinference.project.name"])
 }
 
 func edgesNil() []*model.Edge { return nil }

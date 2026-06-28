@@ -1069,6 +1069,96 @@ func TestStaticHandlerSmokeHashedAssetResolves(t *testing.T) {
 	assert.NotEqual(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
+func TestStartExporterProjectPropagates(t *testing.T) {
+	fakeSpan := &fakeSpanExporter{}
+	orig := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		return otlp.ExporterWithSpanExporter(fakeSpan), nil
+	}
+	t.Cleanup(func() { newExporterFn = orig })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetOTLPProject("proj-x")
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+
+	require.Eventually(t, func() bool {
+		return len(d.ExporterConsumersForTest()) > 0
+	}, 2*time.Second, 5*time.Millisecond)
+
+	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
+	require.Eventually(t, func() bool { return fakeSpan.spanCount() > 0 }, 3*time.Second, 5*time.Millisecond)
+
+	fakeSpan.mu.Lock()
+	spans := append([]sdktrace.ReadOnlySpan{}, fakeSpan.spans...)
+	fakeSpan.mu.Unlock()
+
+	var projectName string
+	for _, sp := range spans {
+		for _, kv := range sp.Resource().Attributes() {
+			if string(kv.Key) == "openinference.project.name" {
+				projectName = kv.Value.AsString()
+			}
+		}
+	}
+	assert.Equal(t, "proj-x", projectName)
+
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestStartExporterSnapshotIsolatesPayload(t *testing.T) {
+	fakeSpan := &fakeSpanExporter{}
+	var capturedExp *otlp.Exporter
+	orig := newExporterFn
+	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+		capturedExp = otlp.ExporterWithSpanExporter(fakeSpan)
+		return capturedExp, nil
+	}
+	t.Cleanup(func() { newExporterFn = orig })
+
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}`)))
+
+	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
+	require.NotNil(t, capturedExp)
+
+	for _, n := range d.GraphsForTest()["exec1"].Nodes {
+		if n.Payload != nil {
+			n.Payload.Input = json.RawMessage(`{"mutated":true}`)
+		}
+	}
+
+	require.NoError(t, capturedExp.FlushRun(ctx, "s1"))
+
+	fakeSpan.mu.Lock()
+	spans := append([]sdktrace.ReadOnlySpan{}, fakeSpan.spans...)
+	fakeSpan.mu.Unlock()
+
+	var foundInputValue string
+	for _, sp := range spans {
+		for _, kv := range sp.Attributes() {
+			if string(kv.Key) == "input.value" {
+				foundInputValue = kv.Value.AsString()
+			}
+		}
+	}
+	assert.Contains(t, foundInputValue, "ls")
+	assert.NotContains(t, foundInputValue, "mutated")
+}
+
 func TestStaticHandlerUnknownAsset404(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))

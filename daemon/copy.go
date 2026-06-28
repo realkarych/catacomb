@@ -1,6 +1,10 @@
 package daemon
 
-import "github.com/realkarych/catacomb/model"
+import (
+	"encoding/json"
+
+	"github.com/realkarych/catacomb/model"
+)
 
 func copyNode(n *model.Node) *model.Node {
 	nc := *n
@@ -19,6 +23,16 @@ func copyNode(n *model.Node) *model.Node {
 	if n.Sources != nil {
 		nc.Sources = make([]model.SourceRef, len(n.Sources))
 		copy(nc.Sources, n.Sources)
+	}
+	if n.Payload != nil {
+		pc := *n.Payload
+		if n.Payload.Input != nil {
+			pc.Input = append(json.RawMessage(nil), n.Payload.Input...)
+		}
+		if n.Payload.Output != nil {
+			pc.Output = append(json.RawMessage(nil), n.Payload.Output...)
+		}
+		nc.Payload = &pc
 	}
 	return &nc
 }
