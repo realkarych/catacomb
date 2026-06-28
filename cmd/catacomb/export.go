@@ -10,10 +10,13 @@ import (
 	"github.com/spf13/cobra"
 
 	exportiface "github.com/realkarych/catacomb/export"
+	exportagentevals "github.com/realkarych/catacomb/export/agentevals"
+	exportevalview "github.com/realkarych/catacomb/export/evalview"
 	xjsonl "github.com/realkarych/catacomb/export/jsonl"
 	exportneo4j "github.com/realkarych/catacomb/export/neo4j"
 	exportotlp "github.com/realkarych/catacomb/export/otlp"
 	exportpostgres "github.com/realkarych/catacomb/export/postgres"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
@@ -62,17 +65,17 @@ func newExportCmd() *cobra.Command {
 	}
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export graph data to an external sink (jsonl, otlp, neo4j, postgres)",
+		Short: "Export graph data to an external sink (jsonl, otlp, neo4j, postgres, agentevals, evalview)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runExport(cmd.Context(), cmd.OutOrStdout(), deps, a)
 		},
 	}
 	cmd.Flags().StringVar(&a.dbPath, "db", "catacomb.db", "SQLite database path")
-	cmd.Flags().StringVar(&a.to, "to", "", "export sink: jsonl|otlp|neo4j|postgres")
+	cmd.Flags().StringVar(&a.to, "to", "", "export sink: jsonl|otlp|neo4j|postgres|agentevals|evalview")
 	cmd.Flags().StringVar(&a.runID, "run", "", "filter to a specific run ID")
 	cmd.Flags().StringVar(&a.mode, "mode", "", "export mode: materialized (default) or events")
-	cmd.Flags().StringVar(&a.out, "out", "", "write to file instead of stdout (jsonl only)")
+	cmd.Flags().StringVar(&a.out, "out", "", "write to file instead of stdout (jsonl, agentevals, evalview)")
 	cmd.Flags().StringVar(&a.otlpEndpoint, "otlp-export-endpoint", "", "OTLP endpoint (grpc://host:port or http(s)://...)")
 	cmd.Flags().StringVar(&a.postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN")
 	cmd.Flags().StringVar(&a.neo4jURI, "neo4j-export-uri", "", "Neo4j bolt URI")
@@ -90,6 +93,10 @@ func runExport(ctx context.Context, out io.Writer, deps exportDeps, a exportArgs
 	switch a.to {
 	case "jsonl":
 		return exportJSONL(ctx, out, s, deps, a)
+	case "agentevals":
+		return exportSerialized(out, s, deps, a, exportagentevals.WriteAll)
+	case "evalview":
+		return exportSerialized(out, s, deps, a, exportevalview.WriteAll)
 	case "otlp", "neo4j", "postgres":
 		if a.mode == "events" {
 			return ErrModeUnsupported
@@ -156,6 +163,27 @@ func buildExporter(ctx context.Context, deps exportDeps, a exportArgs) (exportif
 		}
 		return deps.newPostgres(ctx, a.postgresDSN)
 	}
+}
+
+func exportSerialized(out io.Writer, s store.Store, deps exportDeps, a exportArgs, write func(io.Writer, []*model.Node, []*model.Edge) error) error {
+	if a.mode == "events" {
+		return ErrModeUnsupported
+	}
+	w := out
+	if a.out != "" {
+		f, err := os.Create(a.out)
+		if err != nil {
+			return fmt.Errorf("export create: %w", err)
+		}
+		defer func() { _ = f.Close() }()
+		w = f
+	}
+	graphs, err := storeGraphs(s, deps.newPricer())
+	if err != nil {
+		return err
+	}
+	nodes, edges := collectSnapshot(graphs, a.runID)
+	return write(w, nodes, edges)
 }
 
 func exportSink(ctx context.Context, out io.Writer, s store.Store, deps exportDeps, a exportArgs) error {
