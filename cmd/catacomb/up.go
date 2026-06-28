@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,6 +30,8 @@ type upDeps struct {
 	waitSeconds   int
 	noOpen        bool
 	noDemo        bool
+	history       bool
+	projectsDir   string
 }
 
 func newUpCmd() *cobra.Command {
@@ -59,6 +62,8 @@ func newUpCmd() *cobra.Command {
 				waitSeconds:   5,
 				noOpen:        noOpen,
 				noDemo:        noDemo,
+				history:       history,
+				projectsDir:   transcriptDir,
 			}
 			return runUp(cmd.Context(), cmd.OutOrStdout(), deps)
 		},
@@ -184,6 +189,11 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 		if pollErr := deps.pollHealthz(ctx, disc.Addr); pollErr != nil {
 			return pollErr
 		}
+		if deps.history {
+			if err := reportHistoryScope(out, disc, deps.projectsDir); err != nil {
+				return err
+			}
+		}
 	}
 
 	if err := deps.installHooks(); err != nil {
@@ -227,4 +237,28 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 		return err
 	}
 	return deps.replayDemo(ctx, disc)
+}
+
+func reportHistoryScope(out io.Writer, disc daemon.Discovery, projectsDir string) error {
+	if projectsDir != "" && disc.TranscriptDir == projectsDir {
+		_, err := fmt.Fprintf(out, "daemon already observing all history (%s)\n", projectsDir)
+		return err
+	}
+	_, err := fmt.Fprintf(out, "daemon already running (pid %d); --history applies only when starting a fresh daemon.\nto tail all history, restart it:\n\n  %s\n\n", disc.Pid, restartCommand(disc, projectsDir))
+	return err
+}
+
+func restartCommand(disc daemon.Discovery, projectsDir string) string {
+	var b strings.Builder
+	if disc.Pid != 0 {
+		_, _ = fmt.Fprintf(&b, "kill %d && ", disc.Pid)
+	}
+	_, _ = fmt.Fprintf(&b, "catacomb daemon --transcript-dir %s", projectsDir)
+	if disc.DBPath != "" {
+		_, _ = fmt.Fprintf(&b, " --db %s", disc.DBPath)
+	}
+	if disc.AllowPayloadAccess {
+		b.WriteString(" --allow-payload-access")
+	}
+	return b.String()
 }

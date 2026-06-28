@@ -851,6 +851,61 @@ func TestUpCmdRunEHistoryHomeError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRestartCommandMinimal(t *testing.T) {
+	got := restartCommand(daemon.Discovery{}, "/p")
+	assert.Equal(t, "catacomb daemon --transcript-dir /p", got)
+}
+
+func TestRunUpHistoryAlreadyAllScope(t *testing.T) {
+	projects := "/home/u/.claude/projects"
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok", TranscriptDir: projects}
+	deps := fakeDepsWithDisc(t, disc)
+	deps.noOpen = true
+	deps.history = true
+	deps.projectsDir = projects
+	var out strings.Builder
+	require.NoError(t, runUp(context.Background(), &out, deps))
+	assert.Contains(t, out.String(), "already observing all history")
+}
+
+func TestRunUpHistoryRestartHint(t *testing.T) {
+	disc := daemon.Discovery{
+		Addr: "127.0.0.1:12345", Token: "tok", Pid: 4242,
+		TranscriptDir:      "/home/u/.catacomb/tail-scope",
+		DBPath:             "/home/u/.catacomb/catacomb.db",
+		AllowPayloadAccess: true,
+	}
+	deps := fakeDepsWithDisc(t, disc)
+	deps.noOpen = true
+	deps.history = true
+	deps.projectsDir = "/home/u/.claude/projects"
+	var out strings.Builder
+	require.NoError(t, runUp(context.Background(), &out, deps))
+	s := out.String()
+	assert.Contains(t, s, "kill 4242")
+	assert.Contains(t, s, "--transcript-dir /home/u/.claude/projects")
+	assert.Contains(t, s, "--db /home/u/.catacomb/catacomb.db")
+	assert.Contains(t, s, "--allow-payload-access")
+}
+
+func TestRunUpHistoryAlreadyAllScopeWriteError(t *testing.T) {
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok", TranscriptDir: "/p"}
+	deps := fakeDepsWithDisc(t, disc)
+	deps.noOpen = true
+	deps.history = true
+	deps.projectsDir = "/p"
+	require.Error(t, runUp(context.Background(), failWriter{}, deps))
+}
+
+func TestRunUpHistoryRestartHintWriteError(t *testing.T) {
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok", TranscriptDir: "/other"}
+	deps := fakeDepsWithDisc(t, disc)
+	deps.noOpen = true
+	deps.history = true
+	deps.projectsDir = "/p"
+	require.Error(t, runUp(context.Background(), failWriter{}, deps))
+}
+
 func TestUpCmdRunE(t *testing.T) {
 	t.Chdir(t.TempDir())
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
