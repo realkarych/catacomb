@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 
@@ -61,7 +63,13 @@ func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path str
 	return &sqliteStore{db: db, marshal: json.Marshal}, nil
 }
 
-func readOnlyDSN(path string) string { return "file:" + path + "?mode=ro" }
+func readOnlyDSN(path string) string {
+	p := filepath.ToSlash(path)
+	if len(p) == 0 || p[0] != '/' {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro"}).String()
+}
 
 func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
 	db, err := open("sqlite", path)

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -582,11 +583,30 @@ func TestReadOnlyDSN(t *testing.T) {
 		path string
 		want string
 	}{
-		{name: "simple path", path: "/tmp/g.db", want: "file:/tmp/g.db?mode=ro"},
+		{name: "posix absolute path", path: "/tmp/g.db", want: "file:///tmp/g.db?mode=ro"},
+		{name: "windows style path", path: "C:/Users/x.db", want: "file:///C:/Users/x.db?mode=ro"},
+		{name: "path with space", path: "/tmp/a b/g.db", want: "file:///tmp/a%20b/g.db?mode=ro"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, readOnlyDSN(tt.path))
 		})
 	}
+}
+
+func TestOpenSQLiteReadOnlyPathWithSpace(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a b")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, "my db.db")
+	s, err := OpenSQLite(path)
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	require.NoError(t, s.Close())
+	ro, err := OpenSQLiteReadOnly(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ro.Close() })
+	runs, err := ro.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "r1", runs[0].ID)
 }
