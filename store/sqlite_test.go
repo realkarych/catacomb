@@ -32,6 +32,13 @@ func count(t *testing.T, s *sqliteStore, table string) int {
 	return n
 }
 
+func countWhere(t *testing.T, s *sqliteStore, table, id string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, s.db.QueryRow("SELECT count(*) FROM "+table+" WHERE id = ?", id).Scan(&n))
+	return n
+}
+
 func nodeStatus(t *testing.T, s *sqliteStore, id string) string {
 	t.Helper()
 	var body string
@@ -186,6 +193,7 @@ func TestAppendDeltasIgnoresNilAndRunKinds(t *testing.T) {
 	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
 	deltas := []cdc.GraphDelta{
 		{Kind: cdc.DeltaNodeUpsert},
+		{Kind: cdc.DeltaNodeMerge},
 		{Kind: cdc.DeltaEdgeUpsert},
 		{Kind: cdc.DeltaEdgeDelete},
 		{Kind: cdc.DeltaRunStarted, RunID: "s1"},
@@ -241,6 +249,47 @@ func TestAppendDeltasEdgeDeleteExecErrorRollsBack(t *testing.T) {
 	_, err := s.db.Exec("DROP TABLE edges")
 	require.NoError(t, err)
 	err = s.AppendDeltas(model.Observation{ObsID: "o"}, []cdc.GraphDelta{{Kind: cdc.DeltaEdgeDelete, Edge: &model.Edge{ID: "e"}}})
+	require.Error(t, err)
+	assert.Equal(t, 0, count(t, s, "observations"))
+}
+
+func TestAppendDeltasNodeMergeDeletesOldRow(t *testing.T) {
+	s := fileStore(t)
+	old := &model.Node{ID: "old", RunID: "s1", Type: model.NodeToolCall}
+	require.NoError(t, s.AppendDeltas(
+		model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1},
+		[]cdc.GraphDelta{{Kind: cdc.DeltaNodeUpsert, Node: old}},
+	))
+	assert.Equal(t, 1, count(t, s, "nodes"))
+
+	merged := &model.Node{ID: "new", RunID: "s1", Type: model.NodeToolCall}
+	require.NoError(t, s.AppendDeltas(
+		model.Observation{ObsID: "o2", RunID: "s1", ExecutionID: "exec1", Seq: 2},
+		[]cdc.GraphDelta{{Kind: cdc.DeltaNodeMerge, OldID: "old", NewID: "new", Node: merged}},
+	))
+	assert.Equal(t, 1, count(t, s, "nodes"))
+	assert.Equal(t, 0, countWhere(t, s, "nodes", "old"))
+	assert.Equal(t, 1, countWhere(t, s, "nodes", "new"))
+}
+
+func TestAppendDeltasNodeMergeNoOldIDJustUpserts(t *testing.T) {
+	s := fileStore(t)
+	n := &model.Node{ID: "n", RunID: "s1", Type: model.NodeToolCall}
+	require.NoError(t, s.AppendDeltas(
+		model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1},
+		[]cdc.GraphDelta{{Kind: cdc.DeltaNodeMerge, Node: n}},
+	))
+	assert.Equal(t, 1, countWhere(t, s, "nodes", "n"))
+}
+
+func TestAppendDeltasNodeMergeDeleteExecErrorRollsBack(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE nodes")
+	require.NoError(t, err)
+	err = s.AppendDeltas(
+		model.Observation{ObsID: "o", RunID: "s1", ExecutionID: "exec1", Seq: 1},
+		[]cdc.GraphDelta{{Kind: cdc.DeltaNodeMerge, OldID: "old", Node: &model.Node{ID: "new"}}},
+	)
 	require.Error(t, err)
 	assert.Equal(t, 0, count(t, s, "observations"))
 }
