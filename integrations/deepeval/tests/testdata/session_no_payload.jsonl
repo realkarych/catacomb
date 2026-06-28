@@ -1,0 +1,7 @@
+{"kind":"run","id":"run-002","status":"ok","started_at":"2024-01-01T10:00:00Z"}
+{"kind":"node","id":"session:s2","run_id":"run-002","type":"session","name":"main","status":"ok","t_start":"2024-01-01T10:00:00Z"}
+{"kind":"node","id":"node:up2","run_id":"run-002","type":"user_prompt","name":"user_prompt","status":"ok","t_start":"2024-01-01T10:00:01Z"}
+{"kind":"node","id":"node:at3","run_id":"run-002","type":"assistant_turn","name":"assistant_turn","status":"ok","t_start":"2024-01-01T10:00:02Z"}
+{"kind":"node","id":"node:tc2","run_id":"run-002","type":"tool_call","name":"Bash","status":"ok","t_start":"2024-01-01T10:00:03Z"}
+{"kind":"edge","id":"edge:4","run_id":"run-002","type":"parent_child","src":"session:s2","dst":"node:up2"}
+{"kind":"edge","id":"edge:5","run_id":"run-002","type":"parent_child","src":"node:at3","dst":"node:tc2"}

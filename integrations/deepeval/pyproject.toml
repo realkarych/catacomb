@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "catacomb-deepeval"
+version = "0.1.0"
+description = "DeepEval adapter for catacomb JSONL exports"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+deepeval = ["deepeval>=2"]
+test = ["pytest>=7"]
+test-full = ["pytest>=7", "deepeval>=2"]
+
+[project.scripts]
+catacomb-deepeval = "catacomb_deepeval.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/catacomb_deepeval"]

@@ -1,0 +1,9 @@
+{"kind":"run","id":"run-003","status":"ok","started_at":"2024-01-01T10:00:00Z"}
+{"kind":"node","id":"session:s3","run_id":"run-003","type":"session","name":"main","status":"ok","t_start":"2024-01-01T10:00:00Z"}
+{"kind":"node","id":"node:up3","run_id":"run-003","type":"user_prompt","name":"user_prompt","status":"ok","t_start":"2024-01-01T10:00:01Z","payload":{"input":"\"Do a subagent task\""}}
+{"kind":"node","id":"node:at4","run_id":"run-003","type":"assistant_turn","name":"assistant_turn","status":"ok","t_start":"2024-01-01T10:00:02Z","payload":{"output":"\"Delegating to subagent.\""}}
+{"kind":"node","id":"node:sa1","run_id":"run-003","type":"subagent","name":"subagent","status":"ok","t_start":"2024-01-01T10:00:03Z"}
+{"kind":"node","id":"node:tc3","run_id":"run-003","type":"tool_call","name":"Read","status":"ok","t_start":"2024-01-01T10:00:04Z","payload":{"input":"{\"path\":\"README.md\"}","output":"\"readme content\""}}
+{"kind":"edge","id":"edge:6","run_id":"run-003","type":"parent_child","src":"session:s3","dst":"node:up3"}
+{"kind":"edge","id":"edge:7","run_id":"run-003","type":"parent_child","src":"node:at4","dst":"node:sa1"}
+{"kind":"edge","id":"edge:8","run_id":"run-003","type":"parent_child","src":"node:sa1","dst":"node:tc3"}
