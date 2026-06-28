@@ -31,6 +31,10 @@ export interface Node {
   sources?: { source: string; obs_id: string; observed_at: string }[];
   tier?: string;
   rev: number;
+  step_key?: string;
+  step_key_method?: string;
+  phase_key?: string;
+  annotations?: Record<string, unknown>;
 }
 
 export interface Edge {
@@ -41,6 +45,16 @@ export interface Edge {
   dst: string;
   attrs?: Record<string, unknown>;
   rev: number;
+}
+
+export interface ReproMeta {
+  claude_code_version?: string;
+  catacomb_version?: string;
+  cwd?: string;
+  prompts_hash?: string;
+  skills_hash?: string;
+  subagents_hash?: string;
+  catacomb_config_hash?: string;
 }
 
 export interface SessionSummary {
@@ -63,6 +77,7 @@ export interface SessionSummary {
   counts_by_type?: Record<string, number>;
   counts_by_status?: Record<string, number>;
   error_rate?: number;
+  repro?: ReproMeta;
 }
 
 export interface RedactionFinding {

@@ -28,6 +28,8 @@ export default defineConfig({
         'web/src/lib/filters.ts',
         'web/src/lib/graph-nav.ts',
         'web/src/lib/graph/**',
+        'web/src/lib/annotations.ts',
+        'web/src/lib/repro.ts',
       ],
       exclude: [
         '**/*.test.ts',

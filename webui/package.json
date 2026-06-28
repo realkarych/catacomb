@@ -11,7 +11,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "check:dist": "npm run build && git diff --exit-code ../dist || (echo 'ERROR: webui/dist is stale — commit the rebuilt output' && exit 1)"
+    "check:dist": "npm run build && git diff --exit-code dist || (echo 'ERROR: webui/dist is stale — commit the rebuilt output' && exit 1)"
   },
   "devDependencies": {
     "@fontsource-variable/inter": "^5.2.8",

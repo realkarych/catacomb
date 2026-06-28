@@ -80,6 +80,8 @@ export function outlineLabel(node: Node): { primary: string; secondary: string }
         primary: node.name || 'subagent',
         secondary: node.subagent_type || String(node.attrs?.subagent_type ?? ''),
       };
+    case 'marker':
+      return { primary: node.name || 'phase', secondary: '' };
     default:
       return { primary: node.name || node.type, secondary: '' };
   }

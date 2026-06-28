@@ -184,6 +184,7 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 	n := &model.Node{
 		ID:       id,
 		RunID:    runID,
+		Name:     name,
 		Type:     model.NodeMarker,
 		PhaseKey: pk,
 		TStart:   &tStart,
