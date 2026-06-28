@@ -75,7 +75,7 @@ func newExportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&a.to, "to", "", "export sink: jsonl|otlp|neo4j|postgres|agentevals|evalview")
 	cmd.Flags().StringVar(&a.runID, "run", "", "filter to a specific run ID")
 	cmd.Flags().StringVar(&a.mode, "mode", "", "export mode: materialized (default) or events")
-	cmd.Flags().StringVar(&a.out, "out", "", "write to file instead of stdout (jsonl only)")
+	cmd.Flags().StringVar(&a.out, "out", "", "write to file instead of stdout (jsonl, agentevals, evalview)")
 	cmd.Flags().StringVar(&a.otlpEndpoint, "otlp-export-endpoint", "", "OTLP endpoint (grpc://host:port or http(s)://...)")
 	cmd.Flags().StringVar(&a.postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN")
 	cmd.Flags().StringVar(&a.neo4jURI, "neo4j-export-uri", "", "Neo4j bolt URI")

@@ -136,6 +136,7 @@ func TestBuildEdgeCases(t *testing.T) {
 		assert.Equal(t, "assistant", msgs[0].Role)
 		assert.Equal(t, "", msgs[0].Content)
 		require.Len(t, msgs[0].ToolCalls, 1)
+		assert.Equal(t, "{}", msgs[0].ToolCalls[0].Function.Arguments)
 		assert.Equal(t, "tool", msgs[1].Role)
 		assert.Equal(t, "tool-x", msgs[1].ToolCallID)
 	})

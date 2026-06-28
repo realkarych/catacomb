@@ -41,9 +41,6 @@ func Build(nodes []*model.Node, edges []*model.Edge) []Message {
 			continue
 		}
 		parentOf[e.Dst] = e.Src
-		if p, ok := byID[e.Src]; ok {
-			_ = p
-		}
 		if child, ok := byID[e.Dst]; ok {
 			children[e.Src] = append(children[e.Src], child)
 		}
@@ -84,12 +81,16 @@ func assistantMessages(turn *model.Node, toolNodes []*model.Node) []Message {
 
 	calls := make([]ToolCall, 0, len(toolNodes))
 	for _, tn := range toolNodes {
+		args := string(redactRaw(payloadInput(tn)))
+		if args == "" {
+			args = "{}"
+		}
 		calls = append(calls, ToolCall{
 			ID:   tn.ID,
 			Type: "function",
 			Function: ToolFunction{
 				Name:      tn.Name,
-				Arguments: string(redactRaw(payloadInput(tn))),
+				Arguments: args,
 			},
 		})
 	}
