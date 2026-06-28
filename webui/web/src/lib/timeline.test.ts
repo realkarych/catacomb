@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTimeline } from './timeline';
+import { buildTimeline, timelineLabel } from './timeline';
 import type { Node } from './types';
 
 function makeNode(overrides: Partial<Node> & { id: string; type: string }): Node {
@@ -247,5 +247,96 @@ describe('buildTimeline', () => {
     const unnamedRow = getRow(result.rows, 'unnamed');
     expect(namedRow.label).toBe('BashTool');
     expect(unnamedRow.label).toBe('user_prompt');
+  });
+
+  it('anchors span start to earliest non-session activity, removing leading dead space', () => {
+    const nodes = [
+      makeNode({
+        id: 'sess',
+        type: 'session',
+        t_start: '2024-06-01T09:00:00.000Z',
+        t_end: '2024-06-01T10:00:20.000Z',
+      }),
+      makeNode({
+        id: 'tool',
+        type: 'tool_call',
+        t_start: '2024-06-01T10:00:10.000Z',
+        t_end: '2024-06-01T10:00:11.000Z',
+        duration_ms: 1000,
+      }),
+    ];
+    const result = buildTimeline(nodes);
+    expect(result.startMs).toBe(new Date('2024-06-01T10:00:10.000Z').getTime());
+    expect(getRow(result.rows, 'tool').offsetFrac).toBe(0);
+    expect(getRow(result.rows, 'sess').offsetFrac).toBe(0);
+  });
+
+  it('clamps offsetFrac into [0, 1]', () => {
+    const nodes = [
+      makeNode({
+        id: 'sess',
+        type: 'session',
+        t_start: '2024-06-01T09:00:00.000Z',
+        t_end: '2024-06-01T10:00:05.000Z',
+      }),
+      makeNode({
+        id: 'a',
+        type: 'tool_call',
+        t_start: '2024-06-01T10:00:00.000Z',
+        duration_ms: 5000,
+      }),
+    ];
+    const result = buildTimeline(nodes);
+    for (const row of result.rows) {
+      expect(row.offsetFrac).toBeGreaterThanOrEqual(0);
+      expect(row.offsetFrac).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('falls back to overall min t_start when only session nodes are timed', () => {
+    const nodes = [
+      makeNode({
+        id: 'sess',
+        type: 'session',
+        t_start: '2024-06-01T10:00:00.000Z',
+        duration_ms: 5000,
+      }),
+    ];
+    const result = buildTimeline(nodes);
+    expect(result.startMs).toBe(new Date('2024-06-01T10:00:00.000Z').getTime());
+    const row = getRow(result.rows, 'sess');
+    expect(row.offsetFrac).toBe(0);
+    expect(row.widthFrac).toBe(1);
+  });
+});
+
+describe('timelineLabel', () => {
+  it('returns short labels unchanged', () => {
+    expect(timelineLabel('BashTool')).toBe('BashTool');
+  });
+
+  it('returns a label exactly at the max length unchanged', () => {
+    const s = 'x'.repeat(24);
+    expect(timelineLabel(s)).toBe(s);
+  });
+
+  it('middle-truncates a long MCP label, keeping head and tail', () => {
+    const result = timelineLabel('mcp__playwright__browser_navigate');
+    expect(result).toContain('…');
+    expect(result.startsWith('mcp__')).toBe(true);
+    expect(result.endsWith('navigate')).toBe(true);
+    expect(result.length).toBe(24);
+  });
+
+  it('truncates a label one char over the boundary', () => {
+    const result = timelineLabel('a'.repeat(25));
+    expect(result.length).toBe(24);
+    expect(result).toContain('…');
+    expect(result.startsWith('a')).toBe(true);
+    expect(result.endsWith('a')).toBe(true);
+  });
+
+  it('honors a custom max length', () => {
+    expect(timelineLabel('abcdefghij', 5)).toBe('ab…ij');
   });
 });

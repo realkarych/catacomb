@@ -23,7 +23,9 @@ export function buildTimeline(nodes: Node[]): TimelineModel {
     return { rows: [], spanMs: 0, startMs: 0 };
   }
 
-  const startMs = Math.min(...timed.map((n) => new Date(n.t_start!).getTime()));
+  const nonSession = timed.filter((n) => n.type !== 'session');
+  const anchorPool = nonSession.length > 0 ? nonSession : timed;
+  const startMs = Math.min(...anchorPool.map((n) => new Date(n.t_start!).getTime()));
   const endMs = Math.max(
     ...timed.map((n) => {
       const tStartMs = new Date(n.t_start!).getTime();
@@ -36,7 +38,7 @@ export function buildTimeline(nodes: Node[]): TimelineModel {
 
   const rows: TimelineRow[] = timed.map((n) => {
     const tStartMs = new Date(n.t_start!).getTime();
-    const offsetFrac = (tStartMs - startMs) / spanMs;
+    const offsetFrac = Math.min(Math.max((tStartMs - startMs) / spanMs, 0), 1);
 
     let widthFrac: number;
     let unknownDuration: boolean;
@@ -68,4 +70,12 @@ export function buildTimeline(nodes: Node[]): TimelineModel {
   });
 
   return { rows, spanMs, startMs };
+}
+
+export function timelineLabel(label: string, maxLen = 24): string {
+  if (label.length <= maxLen) return label;
+  const keep = maxLen - 1;
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return label.slice(0, head) + '…' + label.slice(label.length - tail);
 }

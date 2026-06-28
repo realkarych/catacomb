@@ -1,6 +1,6 @@
 <script lang="ts">
   import { sessionGraph, selectNode, selectedNodeId, filteredNodeIds } from '../lib/stores/stores.svelte';
-  import { buildTimeline } from '../lib/timeline';
+  import { buildTimeline, timelineLabel } from '../lib/timeline';
   import { nodeTypeInfo } from '../lib/node-legend';
   import { formatDuration } from '../lib/format/format';
 
@@ -9,7 +9,11 @@
   }
   let { hash }: Props = $props();
 
+  const ROW_H = 26;
+  const OVERSCAN = 8;
+
   const model = $derived(buildTimeline(sessionGraph(hash).nodes));
+  const rows = $derived(model.rows);
 
   const ticks = $derived(() => {
     if (model.spanMs === 0) return [];
@@ -17,6 +21,41 @@
       frac,
       label: formatDuration(Math.round(model.spanMs * frac)),
     }));
+  });
+
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let scrollTop = $state(0);
+  let viewportH = $state(0);
+  let prevHash: string | null = null;
+
+  $effect(() => {
+    if (prevHash !== hash) {
+      prevHash = hash;
+      scrollTop = 0;
+      if (scrollEl) scrollEl.scrollTop = 0;
+    }
+  });
+
+  const startIndex = $derived(Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN));
+  const endIndex = $derived(
+    Math.min(rows.length, Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN),
+  );
+  const visibleRows = $derived(rows.slice(startIndex, endIndex));
+  const totalHeight = $derived(rows.length * ROW_H);
+
+  function onScroll() {
+    if (scrollEl) scrollTop = scrollEl.scrollTop;
+  }
+
+  $effect(() => {
+    const el = scrollEl;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      viewportH = el.clientHeight;
+    });
+    ro.observe(el);
+    viewportH = el.clientHeight;
+    return () => ro.disconnect();
   });
 </script>
 
@@ -29,37 +68,39 @@
         <span class="tick-label" style="left: {tick.frac * 100}%">{tick.label}</span>
       {/each}
     </div>
-    <div class="timeline-rows">
-      {#each model.rows as row (row.id)}
-        {@const info = nodeTypeInfo(row.type)}
-        {@const isSelected = selectedNodeId.value === row.id}
-        {@const isFilteredOut = filteredNodeIds.value !== null && !filteredNodeIds.value.has(row.id)}
-        <button
-          class="timeline-row"
-          data-selected={isSelected ? 'true' : undefined}
-          data-filtered-out={isFilteredOut ? 'true' : undefined}
-          style={isFilteredOut ? 'opacity: 0.4;' : undefined}
-          aria-label="{row.label} ({row.type}){row.unknownDuration ? ', timing unknown' : ', duration ' + formatDuration(row.durationMs)}"
-          onclick={() => selectNode(row.id)}
-        >
-          <span class="row-label">{row.label}</span>
-          <div class="bar-track">
-            {#if row.unknownDuration}
-              <span
-                class="bar-marker"
-                data-unknown="true"
-                style="left: {row.offsetFrac * 100}%; background: var({info.token});"
-                aria-label="unknown timing"
-              ></span>
-            {:else}
-              <span
-                class="bar"
-                style="left: {row.offsetFrac * 100}%; width: {row.widthFrac * 100}%; background: var({info.token});"
-              ></span>
-            {/if}
-          </div>
-        </button>
-      {/each}
+    <div bind:this={scrollEl} class="timeline-scroll" onscroll={onScroll}>
+      <div class="timeline-spacer" style="height: {totalHeight}px;">
+        {#each visibleRows as row, i (row.id)}
+          {@const info = nodeTypeInfo(row.type)}
+          {@const isSelected = selectedNodeId.value === row.id}
+          {@const isFilteredOut = filteredNodeIds.value !== null && !filteredNodeIds.value.has(row.id)}
+          <button
+            class="timeline-row"
+            data-selected={isSelected ? 'true' : undefined}
+            data-filtered-out={isFilteredOut ? 'true' : undefined}
+            style="position: absolute; top: {(startIndex + i) * ROW_H}px; height: {ROW_H}px;{isFilteredOut ? ' opacity: 0.4;' : ''}"
+            aria-label="{row.label} ({row.type}){row.unknownDuration ? ', timing unknown' : ', duration ' + formatDuration(row.durationMs)}"
+            onclick={() => selectNode(row.id)}
+          >
+            <span class="row-label">{timelineLabel(row.label)}</span>
+            <div class="bar-track">
+              {#if row.unknownDuration}
+                <span
+                  class="bar-marker"
+                  data-unknown="true"
+                  style="left: {row.offsetFrac * 100}%; background: var({info.token});"
+                  aria-label="unknown timing"
+                ></span>
+              {:else}
+                <span
+                  class="bar"
+                  style="left: {row.offsetFrac * 100}%; width: {row.widthFrac * 100}%; background: var({info.token});"
+                ></span>
+              {/if}
+            </div>
+          </button>
+        {/each}
+      </div>
     </div>
   </div>
 {/if}
@@ -96,12 +137,16 @@
     white-space: nowrap;
   }
 
-  .timeline-rows {
+  .timeline-scroll {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    position: relative;
+  }
+
+  .timeline-spacer {
+    position: relative;
+    width: 100%;
   }
 
   .timeline-row {
@@ -115,6 +160,7 @@
     cursor: pointer;
     text-align: left;
     width: 100%;
+    box-sizing: border-box;
     transition: background 0.1s, border-color 0.1s;
   }
 
@@ -136,18 +182,14 @@
     font-size: var(--text-xs);
     color: var(--text-dim);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     flex-shrink: 0;
-    min-width: 100px;
-    max-width: 160px;
+    width: 170px;
   }
 
   .bar-track {
     position: relative;
     flex: 1;
     height: 12px;
-    overflow-x: auto;
   }
 
   .bar {
