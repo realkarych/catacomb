@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from catacomb_deepeval.model import SessionData, ToolCallData
+from catacomb_deepeval.model import SessionData, StepData, ToolCallData
 
 
 def load_jsonl(path: str) -> List[dict]:
@@ -35,12 +35,14 @@ def parse_session(lines: List[dict], run_id: str) -> SessionData:
     prompt_input = _extract_prompt_input(nodes)
     actual_output = _extract_actual_output(nodes)
     tools = _extract_tools(nodes)
+    steps = _extract_steps(nodes)
 
     return SessionData(
         run_id=run_id,
         input=prompt_input,
         actual_output=actual_output,
         tools_called=tools,
+        steps=steps,
     )
 
 
@@ -125,5 +127,44 @@ def _extract_tools(nodes: List[dict]) -> List[ToolCallData]:
             input_parameters=input_params,
             output=output,
         ))
+
+    return result
+
+
+def _extract_steps(nodes: List[dict]) -> List[StepData]:
+    step_nodes = [
+        n for n in nodes
+        if n.get("type") in ("assistant_turn", "tool_call", "mcp_call")
+    ]
+    step_nodes.sort(key=_sort_key)
+
+    result: List[StepData] = []
+    for sn in step_nodes:
+        ntype = sn.get("type")
+        raw_in = _payload_input(sn)
+        raw_out = _payload_output(sn)
+
+        inp: Optional[str] = None
+        if raw_in is not None:
+            inp = _text_of(raw_in)
+
+        out: Optional[str] = None
+        if raw_out is not None:
+            out = _text_of(raw_out)
+
+        if ntype == "assistant_turn":
+            result.append(StepData(
+                kind="llm",
+                name=sn.get("name", "assistant_turn"),
+                input=inp,
+                output=out,
+            ))
+        else:
+            result.append(StepData(
+                kind="tool",
+                name=sn.get("name", ""),
+                input=inp,
+                output=out,
+            ))
 
     return result
