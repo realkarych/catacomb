@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -398,7 +399,7 @@ func (e *errStore) LoadTailCursors() ([]model.TailCursor, error)                
 func (e *errStore) UpsertTailCursor(model.TailCursor) error                      { return nil }
 func (e *errStore) Close() error                                                 { return nil }
 func (e *errStore) UpsertAnnotation(model.Annotation) error                      { return nil }
-func (e *errStore) AnnotationsForExecution(string) ([]model.Annotation, error)  { return nil, nil }
+func (e *errStore) AnnotationsForExecution(string) ([]model.Annotation, error)   { return nil, nil }
 func (e *errStore) MoveAnnotations(string, string, string) error                 { return nil }
 
 func TestEvictTerminalAfterCooldown(t *testing.T) {
@@ -1299,4 +1300,62 @@ func TestCwdTranscriptExcludeErrorReturnsEmpty(t *testing.T) {
 	getwdFn = func() (string, error) { return "", errors.New("no cwd") }
 	t.Cleanup(func() { getwdFn = orig })
 	assert.Empty(t, cwdTranscriptExclude())
+}
+
+type failAnnotationsStore struct{ store.Store }
+
+func (s *failAnnotationsStore) AnnotationsForExecution(string) ([]model.Annotation, error) {
+	return nil, errors.New("fail")
+}
+
+func TestRecoverReattachAnnotationsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s1, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d1 := New(s1)
+	fixedExecID(d1)
+	require.NoError(t, d1.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s1.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(&failAnnotationsStore{Store: s2})
+	require.Error(t, d2.Recover())
+}
+
+func TestApplyAndPersistCarryOverDeltaNodeMerge(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetAllowAnnotations(true)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+
+	execID := d.execForTest("s1")
+	t1ID := model.ToolCallID(execID, "t1")
+	t2ID := model.ToolCallID(execID, "t2")
+	sourceKey := model.NodeSourceKey(t1ID)
+	require.NoError(t, d.Annotate(execID, sourceKey, "eval", "score", json.RawMessage(`5`)))
+
+	orig := applyFn
+	applyFn = func(g *reduce.Graph, o model.Observation) {
+		g.EmitDelta(cdc.GraphDelta{
+			Kind:        cdc.DeltaNodeMerge,
+			OldID:       t1ID,
+			NewID:       t2ID,
+			ExecutionID: execID,
+			RunID:       o.RunID,
+		})
+		g.Nodes[t2ID] = &model.Node{ID: t2ID, RunID: o.RunID, Type: model.NodeToolCall}
+	}
+	t.Cleanup(func() { applyFn = orig })
+
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
+
+	d.mu.Lock()
+	newNode := d.graphs[execID].Nodes[t2ID]
+	d.mu.Unlock()
+
+	require.NotNil(t, newNode)
+	assert.Equal(t, json.RawMessage(`5`), newNode.Annotations["eval.score"])
 }

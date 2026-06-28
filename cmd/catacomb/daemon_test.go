@@ -41,10 +41,10 @@ func (f *failSinceStore) QuarantineCount() (int64, error)         { return 0, ni
 func (f *failSinceStore) ObservationsForExecution(string) ([]model.Observation, error) {
 	return nil, nil
 }
-func (f *failSinceStore) UpsertTailCursor(model.TailCursor) error      { return nil }
-func (f *failSinceStore) LoadTailCursors() ([]model.TailCursor, error) { return nil, nil }
-func (f *failSinceStore) Close() error                                 { return nil }
-func (f *failSinceStore) UpsertAnnotation(model.Annotation) error                   { return nil }
+func (f *failSinceStore) UpsertTailCursor(model.TailCursor) error                    { return nil }
+func (f *failSinceStore) LoadTailCursors() ([]model.TailCursor, error)               { return nil, nil }
+func (f *failSinceStore) Close() error                                               { return nil }
+func (f *failSinceStore) UpsertAnnotation(model.Annotation) error                    { return nil }
 func (f *failSinceStore) AnnotationsForExecution(string) ([]model.Annotation, error) { return nil, nil }
 func (f *failSinceStore) MoveAnnotations(string, string, string) error               { return nil }
 

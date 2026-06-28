@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -204,6 +206,12 @@ func TestHandleNodeAnnotateGating(t *testing.T) {
 	h.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 
+	req = httptest.NewRequest("POST", url, strings.NewReader(`{"owner":"","key":"score","value":9}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
 	req = httptest.NewRequest("POST", url, strings.NewReader(`{badjson`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	w = httptest.NewRecorder()
@@ -219,4 +227,164 @@ func TestHandleNodeAnnotateGating(t *testing.T) {
 	n := d.graphs[execID].Nodes[sessionNodeID]
 	require.NotNil(t, n)
 	assert.NotNil(t, n.Annotations["eval.score"])
+}
+
+type upsertAnnErrStore struct{ store.Store }
+
+func (s *upsertAnnErrStore) UpsertAnnotation(model.Annotation) error {
+	return errors.New("upsert")
+}
+
+type moveErrAnnotationStore struct{ store.Store }
+
+func (s *moveErrAnnotationStore) MoveAnnotations(string, string, string) error {
+	return errors.New("move")
+}
+
+type failAnnotationsForExecStore struct{ store.Store }
+
+func (s *failAnnotationsForExecStore) AnnotationsForExecution(string) ([]model.Annotation, error) {
+	return nil, errors.New("fail")
+}
+
+func TestAnnotateNodeNotFoundBySourceKey(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetAllowAnnotations(true)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	execID := d.execForTest("s1")
+	err := d.Annotate(execID, "no-such-key", "eval", "score", json.RawMessage(`9`))
+	require.ErrorIs(t, err, ErrAnnotationTarget)
+}
+
+func TestAnnotateUpsertError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	d.SetAllowAnnotations(true)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	execID := d.execForTest("s1")
+	d.store = &upsertAnnErrStore{Store: base}
+	sourceKey := model.NodeSourceKey(model.SessionNodeID(execID))
+	err := d.Annotate(execID, sourceKey, "eval", "score", json.RawMessage(`9`))
+	require.Error(t, err)
+	require.False(t, errors.Is(err, ErrAnnotationTarget))
+	require.False(t, errors.Is(err, ErrAnnotationsDisabled))
+	require.False(t, errors.Is(err, ErrInvalidAnnotation))
+}
+
+func TestApplyAnnotationsNodeNotFound(t *testing.T) {
+	g := reduce.NewGraph()
+	anns := []model.Annotation{{SourceKey: "noexist", Owner: "eval", Key: "score", Value: json.RawMessage(`9`)}}
+	applyAnnotations(g, anns)
+}
+
+func TestCarryOverMergeLocked_SameKey(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	execID := d.execForTest("s1")
+	nodeID := model.SessionNodeID(execID)
+	d.mu.Lock()
+	d.carryOverMergeLocked(execID, nodeID, nodeID)
+	d.mu.Unlock()
+}
+
+func TestCarryOverMergeLocked_EmptyFromKey(t *testing.T) {
+	d := New(tempStore(t))
+	d.mu.Lock()
+	d.carryOverMergeLocked("exec1", "nocolon", "exec1:tool:t2")
+	d.mu.Unlock()
+}
+
+func TestCarryOverMergeLocked_EmptyToKey(t *testing.T) {
+	d := New(tempStore(t))
+	d.mu.Lock()
+	d.carryOverMergeLocked("exec1", "exec1:tool:t1", "nocolon")
+	d.mu.Unlock()
+}
+
+func TestCarryOverMergeLocked_MoveError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	execID := d.execForTest("s1")
+	d.store = &moveErrAnnotationStore{Store: base}
+	t1ID := model.ToolCallID(execID, "t1")
+	t2ID := model.ToolCallID(execID, "t2")
+	d.mu.Lock()
+	d.carryOverMergeLocked(execID, t1ID, t2ID)
+	d.mu.Unlock()
+}
+
+func TestCarryOverMergeLocked_GraphNil(t *testing.T) {
+	d := New(tempStore(t))
+	d.mu.Lock()
+	d.carryOverMergeLocked("unknownExec", "unknownExec:tool:t1", "unknownExec:tool:t2")
+	d.mu.Unlock()
+	d.mu.Lock()
+	n := d.graphs["unknownExec"]
+	d.mu.Unlock()
+	assert.Nil(t, n)
+}
+
+func TestCarryOverMergeLocked_AnnotationsError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	execID := d.execForTest("s1")
+	d.store = &failAnnotationsForExecStore{Store: base}
+	t1ID := model.ToolCallID(execID, "t1")
+	t2ID := model.ToolCallID(execID, "t2")
+	d.mu.Lock()
+	d.carryOverMergeLocked(execID, t1ID, t2ID)
+	d.mu.Unlock()
+}
+
+func TestCarryOverMergeLocked_NodeNil(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetAllowAnnotations(true)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	execID := d.execForTest("s1")
+	t1ID := model.ToolCallID(execID, "t1")
+	t2ID := model.ToolCallID(execID, "t2")
+	sourceKey := model.NodeSourceKey(t1ID)
+	require.NoError(t, d.Annotate(execID, sourceKey, "eval", "score", json.RawMessage(`5`)))
+	d.mu.Lock()
+	d.carryOverMergeLocked(execID, t1ID, t2ID)
+	d.mu.Unlock()
+	d.mu.Lock()
+	n := d.graphs[execID].Nodes[t2ID]
+	d.mu.Unlock()
+	assert.Nil(t, n)
+}
+
+func TestHandleNodeAnnotateStoreError(t *testing.T) {
+	base := tempStore(t)
+	d := New(base)
+	d.SetAllowAnnotations(true)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	token := "testtoken"
+	h := d.Handler(token)
+	execID := d.execForTest("s1")
+	sessionNodeID := model.SessionNodeID(execID)
+	d.mu.Lock()
+	var sessionHash string
+	for sid := range d.execBySession {
+		sessionHash = sid
+		break
+	}
+	d.mu.Unlock()
+	d.store = &upsertAnnErrStore{Store: base}
+	url := "/v1/sessions/" + sessionHash + "/nodes/" + sessionNodeID + "/annotations"
+	req := httptest.NewRequest("POST", url, strings.NewReader(`{"owner":"eval","key":"score","value":9}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

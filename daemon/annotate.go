@@ -154,34 +154,47 @@ type annotateRequest struct {
 	Value json.RawMessage `json:"value"`
 }
 
-func (d *Daemon) annotationsAllowed() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.allowAnnotations
-}
-
-func (d *Daemon) resolveHandle(hash, nodeID string) (execID, sourceKey string, ok bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (d *Daemon) resolveAndAnnotateLocked(hash, nodeID string, req annotateRequest) error {
+	if !d.allowAnnotations {
+		return fmt.Errorf("daemon.handleNodeAnnotate: %w", ErrAnnotationsDisabled)
+	}
 	for _, eid := range d.executionsForSession(hash) {
 		g := d.graphs[eid]
-		if g == nil {
-			continue
-		}
 		for _, n := range g.Nodes {
 			if n.ID == nodeID {
-				return eid, model.NodeSourceKey(nodeID), true
+				sourceKey := model.NodeSourceKey(nodeID)
+				seq := d.next()
+				ann := model.Annotation{
+					ExecutionID: eid,
+					SourceKey:   sourceKey,
+					StepKey:     n.StepKey,
+					Owner:       req.Owner,
+					Key:         req.Key,
+					Value:       req.Value,
+					WriteSeq:    seq,
+				}
+				if err := d.store.UpsertAnnotation(ann); err != nil {
+					return fmt.Errorf("daemon.handleNodeAnnotate: %w", err)
+				}
+				n.Annotations = model.SetAnnotation(n.Annotations, req.Owner, req.Key, req.Value)
+				if seq > n.Rev {
+					n.Rev = seq
+				}
+				d.publishDelta(cdc.GraphDelta{
+					Kind:        cdc.DeltaNodeUpsert,
+					Rev:         n.Rev,
+					Node:        n,
+					RunID:       n.RunID,
+					ExecutionID: eid,
+				})
+				return nil
 			}
 		}
 	}
-	return "", "", false
+	return fmt.Errorf("daemon.handleNodeAnnotate: %w", ErrAnnotationTarget)
 }
 
 func (d *Daemon) handleNodeAnnotate(w http.ResponseWriter, r *http.Request) {
-	if !d.annotationsAllowed() {
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
 	hash := r.PathValue("hash")
 	nodeID := r.PathValue("nodeId")
 	var req annotateRequest
@@ -189,16 +202,13 @@ func (d *Daemon) handleNodeAnnotate(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	execID, sourceKey, ok := d.resolveHandle(hash, nodeID)
-	if !ok {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	err := d.Annotate(execID, sourceKey, req.Owner, req.Key, req.Value)
-	if errors.Is(err, ErrInvalidAnnotation) {
+	if err := validateAnnotation(req.Owner, req.Key, req.Value); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	d.mu.Lock()
+	err := d.resolveAndAnnotateLocked(hash, nodeID, req)
+	d.mu.Unlock()
 	if errors.Is(err, ErrAnnotationsDisabled) {
 		w.WriteHeader(http.StatusForbidden)
 		return

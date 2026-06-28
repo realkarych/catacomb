@@ -44,7 +44,7 @@ func (f *fakeStore) UpsertTailCursor(model.TailCursor) error                    
 func (f *fakeStore) LoadTailCursors() ([]model.TailCursor, error)                 { return nil, nil }
 func (f *fakeStore) UpsertAnnotation(model.Annotation) error                      { return nil }
 func (f *fakeStore) AnnotationsForExecution(string) ([]model.Annotation, error)   { return nil, nil }
-func (f *fakeStore) MoveAnnotations(string, string, string) error                  { return nil }
+func (f *fakeStore) MoveAnnotations(string, string, string) error                 { return nil }
 
 func openFake(f *fakeStore) storeOpener {
 	return func(string) (store.Store, error) { return f, nil }
