@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -878,4 +879,96 @@ func TestSessionSummaryLastActivityAbsentWhenNoTimestamps(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &m))
 	_, ok := m["last_activity"]
 	assert.False(t, ok, "last_activity must be omitted when no node timestamps")
+}
+
+func TestSummarizeRunAggregatesByRunID(t *testing.T) {
+	g := reduce.NewGraph()
+	g.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusOK}
+	g.Runs["r2"] = &model.Run{ID: "r2", Status: model.StatusOK}
+	tokIn := int64(10)
+	tokOut := int64(5)
+	g.Nodes["n1"] = &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, TokensIn: &tokIn, TokensOut: &tokOut}
+	g.Nodes["n2"] = &model.Node{ID: "n2", RunID: "r1", Type: model.NodeAssistantTurn}
+	g.Nodes["n3"] = &model.Node{ID: "n3", RunID: "r2", Type: model.NodeToolCall}
+
+	sum := SummarizeRun("r1", []*reduce.Graph{g})
+
+	assert.Equal(t, 2, sum.NodeCount)
+	assert.Equal(t, 1, sum.ToolCount)
+	assert.Equal(t, int64(10), sum.TokensIn)
+	assert.Equal(t, int64(5), sum.TokensOut)
+	assert.Equal(t, "r1", sum.Session)
+	assert.Equal(t, []string{"r1"}, sum.RunIDs)
+}
+
+func TestSummarizeSessionFreeFnMatchesMethod(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"sess-x"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"sess-x","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"sess-x","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
+
+	d.mu.Lock()
+	dSum := d.summarizeSession("sess-x")
+	graphs := graphSlice(d.graphs)
+	d.mu.Unlock()
+
+	freeSum := SummarizeSession("sess-x", graphs)
+
+	assert.Equal(t, dSum.NodeCount, freeSum.NodeCount)
+	assert.Equal(t, dSum.ToolCount, freeSum.ToolCount)
+	assert.Equal(t, dSum.RunIDs, freeSum.RunIDs)
+}
+
+func TestSummarizeGraphsCoverage(t *testing.T) {
+	g := reduce.NewGraph()
+	now := time.Now().UTC()
+	earlier := now.Add(-time.Minute)
+
+	g.Runs["run1"] = &model.Run{
+		ID:         "run1",
+		Status:     model.StatusError,
+		ModelID:    "claude-opus-4",
+		StartedAt:  &earlier,
+		EndedAt:    &now,
+		SessionIDs: []string{"sess-1"},
+	}
+
+	cost1 := 0.001
+	cost2 := 0.0005
+	tok := int64(100)
+
+	g.Nodes["n1"] = &model.Node{
+		ID:        "n1",
+		RunID:     "run1",
+		Type:      model.NodeToolCall,
+		Status:    model.StatusError,
+		CostUSD:   &cost1,
+		Attrs:     map[string]any{"cost_source": "reported"},
+		TEnd:      &now,
+		TokensIn:  &tok,
+		TokensOut: &tok,
+	}
+	g.Nodes["n2"] = &model.Node{
+		ID:      "n2",
+		RunID:   "run1",
+		Type:    model.NodeAssistantTurn,
+		CostUSD: &cost2,
+		Attrs:   map[string]any{"cost_source": "estimated"},
+	}
+
+	sum := SummarizeSession("sess-1", []*reduce.Graph{g})
+
+	assert.Equal(t, "sess-1", sum.Session)
+	assert.Equal(t, "claude-opus-4", sum.ModelID)
+	assert.Equal(t, 1, sum.ErrorCount)
+	assert.NotNil(t, sum.CostUSD)
+	assert.Equal(t, "reported", sum.CostSource)
+	assert.NotEmpty(t, sum.StartedAt)
+	assert.NotEmpty(t, sum.EndedAt)
+	assert.NotNil(t, sum.DurationMS)
+	assert.NotEmpty(t, sum.LastActivity)
+	assert.Equal(t, 2, sum.NodeCount)
+	assert.Equal(t, []string{"run1"}, sum.RunIDs)
+	assert.InDelta(t, 0.5, sum.ErrorRate, 0.001)
 }
