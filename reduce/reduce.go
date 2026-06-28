@@ -559,11 +559,22 @@ func (g *Graph) ensureRun(o model.Observation) {
 			r.ModelID = m
 		}
 	}
-	if r.Repro == nil {
-		r.Repro = &model.ReproMeta{}
+	if v, ok := o.Attrs["claude_code_version"].(string); ok && v != "" {
+		if r.Repro == nil {
+			r.Repro = &model.ReproMeta{}
+		}
+		if r.Repro.ClaudeCodeVersion == "" {
+			r.Repro.ClaudeCodeVersion = v
+		}
 	}
-	setIfEmpty(&r.Repro.ClaudeCodeVersion, o.Attrs["claude_code_version"])
-	setIfEmpty(&r.Repro.Cwd, o.Attrs["cwd"])
+	if v, ok := o.Attrs["cwd"].(string); ok && v != "" {
+		if r.Repro == nil {
+			r.Repro = &model.ReproMeta{}
+		}
+		if r.Repro.Cwd == "" {
+			r.Repro.Cwd = v
+		}
+	}
 }
 
 func (g *Graph) applyRunEnded(o model.Observation) {

@@ -509,6 +509,12 @@ func (d *Daemon) SetReproCapture(fn func(cwd string, cfg repro.Config) repro.Has
 	d.reproCapture = fn
 }
 
+func (d *Daemon) SetReproConfig(cfg repro.Config) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.reproConfig = cfg
+}
+
 func (d *Daemon) SetCatacombVersion(v string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

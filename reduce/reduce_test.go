@@ -2746,6 +2746,17 @@ func TestApplyReproMetaKindInGraph(t *testing.T) {
 	assert.Equal(t, "cv", r.Repro.CatacombVersion)
 }
 
+func TestBareRunHasNoReproField(t *testing.T) {
+	g := NewGraph()
+	g.Apply(sessionStartObs("e1", "s1", 1))
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Nil(t, r.Repro)
+	b, err := json.Marshal(r)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), `"repro"`)
+}
+
 func TestEnsureRunHarvestsClaudeCodeVersionAndCwd(t *testing.T) {
 	g := NewGraph()
 	g.Apply(model.Observation{

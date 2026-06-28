@@ -1379,6 +1379,45 @@ func (s *failOnNthAppendStore) AppendDeltas(o model.Observation, deltas []cdc.Gr
 	return s.Store.AppendDeltas(o, deltas)
 }
 
+func TestSetReproConfig(t *testing.T) {
+	d := New(nil)
+	d.SetReproConfig(repro.Config{OTLPEndpoint: "grpc://x:4317"})
+	d.mu.Lock()
+	got := d.reproConfig
+	d.mu.Unlock()
+	assert.Equal(t, repro.Config{OTLPEndpoint: "grpc://x:4317"}, got)
+}
+
+func TestSetReproConfigDifferentConfigsDifferentHashes(t *testing.T) {
+	dir := t.TempDir()
+
+	makeHash := func(endpoint string) string {
+		d := New(tempStore(t))
+		d.SetReproConfig(repro.Config{OTLPEndpoint: endpoint})
+		d.SetReproCapture(func(_ string, cfg repro.Config) repro.Hashes {
+			return repro.Hashes{CatacombConfigHash: repro.ConfigHash(cfg)}
+		})
+		p, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})
+		require.NoError(t, d.Ingest("SessionStart", p))
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		r := d.graphs[d.execBySession["s1"]].Runs["s1"]
+		if r == nil || r.Repro == nil {
+			return ""
+		}
+		return r.Repro.CatacombConfigHash
+	}
+
+	h1 := makeHash("grpc://a:4317")
+	h2 := makeHash("grpc://b:4317")
+	h3 := makeHash("grpc://a:4317")
+
+	require.NotEmpty(t, h1)
+	require.NotEmpty(t, h2)
+	assert.NotEqual(t, h1, h2)
+	assert.Equal(t, h1, h3)
+}
+
 func TestSetReproCapture(t *testing.T) {
 	d := New(tempStore(t))
 	d.SetReproCapture(func(_ string, _ repro.Config) repro.Hashes {

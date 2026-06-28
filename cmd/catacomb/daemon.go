@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/daemon"
+	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -101,6 +102,11 @@ func runDaemonWith(
 	d.SetTranscriptExclude(transcriptExclude)
 	d.SetAllowPayloadAccess(allowPayloadAccess)
 	d.SetAllowAnnotations(allowAnnotations)
+	d.SetReproConfig(repro.Config{
+		OTLPEndpoint:  otlpEndpoint,
+		OTLPProject:   otlpProject,
+		TranscriptDir: transcriptDir,
+	})
 	err = d.Recover()
 	if err != nil {
 		return err

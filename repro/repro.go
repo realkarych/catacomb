@@ -2,13 +2,17 @@ package repro
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"sort"
 )
 
 const Absent = "absent"
+
+const maxFileBytes int64 = 1 << 20
 
 type Hashes struct {
 	PromptsHash        string `json:"prompts_hash"`
@@ -23,18 +27,30 @@ type Config struct {
 	TranscriptDir string `json:"transcript_dir,omitempty"`
 }
 
+func writeHashField(h io.Writer, b []byte) {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(len(b)))
+	_, _ = h.Write(buf[:])
+	_, _ = h.Write(b)
+}
+
 func HashFiles(fsys fs.FS, names []string) string {
 	sorted := make([]string, len(names))
 	copy(sorted, names)
 	sort.Strings(sorted)
 	h := sha256.New()
 	for _, name := range sorted {
-		data, err := fs.ReadFile(fsys, name)
+		f, err := fsys.Open(name)
 		if err != nil {
 			continue
 		}
-		h.Write([]byte(name))
-		h.Write(data)
+		data, rerr := io.ReadAll(io.LimitReader(f, maxFileBytes))
+		_ = f.Close()
+		if rerr != nil {
+			continue
+		}
+		writeHashField(h, []byte(name))
+		writeHashField(h, data)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -63,7 +79,7 @@ func ConfigHash(cfg Config) string {
 func Capture(fsys fs.FS, cfg Config) Hashes {
 	return Hashes{
 		PromptsHash:        HashFiles(fsys, []string{"CLAUDE.md"}),
-		SkillsHash:         HashTree(fsys, ".claude/commands"),
+		SkillsHash:         HashTree(fsys, ".claude/skills"),
 		SubagentsHash:      HashTree(fsys, ".claude/agents"),
 		CatacombConfigHash: ConfigHash(cfg),
 	}
