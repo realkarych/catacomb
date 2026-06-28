@@ -125,6 +125,44 @@ func TestCopyNodeEmptyPayload(t *testing.T) {
 	assert.Equal(t, "h", cp.Payload.Hash)
 }
 
+func TestCopyRunIsolatesMeta(t *testing.T) {
+	src := &model.Run{
+		ID:   "r1",
+		Meta: map[string]any{"k": "v"},
+	}
+	cp := copyRun(src)
+	cp.Meta["k"] = "changed"
+	assert.Equal(t, "v", src.Meta["k"])
+}
+
+func TestCopyRunIsolatesSessionIDs(t *testing.T) {
+	src := &model.Run{
+		ID:         "r1",
+		SessionIDs: []string{"s1", "s2"},
+	}
+	cp := copyRun(src)
+	cp.SessionIDs[0] = "mutated"
+	assert.Equal(t, "s1", src.SessionIDs[0])
+}
+
+func TestCopyRunIsolatesRepro(t *testing.T) {
+	repro := &model.ReproMeta{Cwd: "/some/cwd"}
+	src := &model.Run{ID: "r1", Repro: repro}
+	cp := copyRun(src)
+	cp.Repro.Cwd = "mutated"
+	assert.Equal(t, "/some/cwd", src.Repro.Cwd)
+}
+
+func TestCopyRunNilFields(t *testing.T) {
+	src := &model.Run{ID: "r2"}
+	cp := copyRun(src)
+	require.NotNil(t, cp)
+	assert.Equal(t, "r2", cp.ID)
+	assert.Nil(t, cp.Meta)
+	assert.Nil(t, cp.SessionIDs)
+	assert.Nil(t, cp.Repro)
+}
+
 func TestPublishDeltaUsesDeepCopy(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
@@ -159,4 +197,29 @@ got:
 		_, ok := n.Attrs["injected"]
 		assert.False(t, ok, "mutating bus copy must not affect live graph node")
 	}
+}
+
+func TestPublishDeltaCopiesRun(t *testing.T) {
+	d := New(tempStore(t))
+	consumer := d.bus.Subscribe(256)
+	t.Cleanup(func() { d.bus.Unsubscribe(consumer) })
+
+	repro := &model.ReproMeta{Cwd: "/some/cwd"}
+	run := &model.Run{
+		ID:    "r1",
+		Repro: repro,
+		Meta:  map[string]any{"k": "v"},
+	}
+	delta := cdc.GraphDelta{Kind: cdc.DeltaRunStarted, Run: run, RunID: "r1"}
+	d.publishDelta(delta)
+
+	received := <-consumer.C
+	require.NotNil(t, received.Run)
+	assert.Equal(t, "r1", received.Run.ID)
+
+	received.Run.Repro.Cwd = "mutated"
+	assert.Equal(t, "/some/cwd", run.Repro.Cwd)
+
+	received.Run.Meta["k"] = "mutated"
+	assert.Equal(t, "v", run.Meta["k"])
 }

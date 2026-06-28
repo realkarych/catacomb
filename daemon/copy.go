@@ -47,3 +47,22 @@ func copyEdge(e *model.Edge) *model.Edge {
 	}
 	return &ec
 }
+
+func copyRun(r *model.Run) *model.Run {
+	rc := *r
+	if r.SessionIDs != nil {
+		rc.SessionIDs = make([]string, len(r.SessionIDs))
+		copy(rc.SessionIDs, r.SessionIDs)
+	}
+	if r.Meta != nil {
+		rc.Meta = make(map[string]any, len(r.Meta))
+		for k, v := range r.Meta {
+			rc.Meta[k] = v
+		}
+	}
+	if r.Repro != nil {
+		repro := *r.Repro
+		rc.Repro = &repro
+	}
+	return &rc
+}

@@ -543,7 +543,7 @@ func (g *Graph) ensureRun(o model.Observation) {
 		started := o.EventTime
 		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
 		g.Runs[o.RunID] = r
-		g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunStarted, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
+		g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunStarted, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
 	}
 	if r.Status == model.StatusAbandoned {
 		r.Status = model.StatusRunning
@@ -591,7 +591,7 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 	}
 	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
 	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
-	g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
+	g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
 }
 
 func appendUnique(xs []string, x string) []string {

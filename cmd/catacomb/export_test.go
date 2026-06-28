@@ -74,6 +74,17 @@ func (f *fakeExporter) Shutdown(_ context.Context) error {
 	return f.shutdownErr
 }
 
+type fakeRunExporterSink struct {
+	fakeExporter
+	snapshotRunsCalled bool
+	snapshotRunsErr    error
+}
+
+func (f *fakeRunExporterSink) SnapshotRuns(_ context.Context, _ []model.Run) error {
+	f.snapshotRunsCalled = true
+	return f.snapshotRunsErr
+}
+
 func TestExportJSONLMaterialized(t *testing.T) {
 	dbPath := seedDB(t)
 	var buf strings.Builder
@@ -681,4 +692,95 @@ func TestExportSerializerStoreGraphsError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store read")
+}
+
+func TestExportSinkCallsSnapshotRunsForRunExporter(t *testing.T) {
+	dbPath := seedDB(t)
+	fe := &fakeRunExporterSink{}
+	var buf strings.Builder
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
+			return fe, nil
+		},
+	}
+	err := runExport(context.Background(), &buf, deps, exportArgs{
+		dbPath:      dbPath,
+		to:          "postgres",
+		postgresDSN: "x",
+	})
+	require.NoError(t, err)
+	assert.True(t, fe.snapshotRunsCalled, "SnapshotRuns must be called for RunExporter")
+}
+
+func TestExportSinkSnapshotRunsError(t *testing.T) {
+	dbPath := seedDB(t)
+	fe := &fakeRunExporterSink{snapshotRunsErr: errors.New("snap runs fail")}
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
+			return fe, nil
+		},
+	}
+	err := runExport(context.Background(), io.Discard, deps, exportArgs{
+		dbPath:      dbPath,
+		to:          "postgres",
+		postgresDSN: "x",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "export snapshot runs")
+	assert.True(t, fe.shutdownCalled)
+}
+
+func TestExportSinkSnapshotRunsRunIDFilter(t *testing.T) {
+	dbPath := seedDB(t)
+	fe := &fakeRunExporterSink{}
+	var buf strings.Builder
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
+			return fe, nil
+		},
+	}
+	err := runExport(context.Background(), &buf, deps, exportArgs{
+		dbPath:      dbPath,
+		to:          "postgres",
+		postgresDSN: "x",
+		runID:       "nonexistent-run-id",
+	})
+	require.NoError(t, err)
+	assert.True(t, fe.snapshotRunsCalled)
+}
+
+func TestExportSinkSnapshotRunsRunIDMatch(t *testing.T) {
+	dbPath := seedDB(t)
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	graphs, err := storeGraphs(s, newPricer())
+	require.NoError(t, err)
+	_ = s.Close()
+	runs := collectRuns(graphs)
+	require.NotEmpty(t, runs)
+	runID := runs[0].ID
+
+	fe := &fakeRunExporterSink{}
+	var buf strings.Builder
+	deps := exportDeps{
+		open:      store.OpenSQLiteReadOnly,
+		newPricer: newPricer,
+		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
+			return fe, nil
+		},
+	}
+	err = runExport(context.Background(), &buf, deps, exportArgs{
+		dbPath:      dbPath,
+		to:          "postgres",
+		postgresDSN: "x",
+		runID:       runID,
+	})
+	require.NoError(t, err)
+	assert.True(t, fe.snapshotRunsCalled)
 }

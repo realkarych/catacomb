@@ -14,7 +14,10 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
-var _ exportiface.Exporter = (*Exporter)(nil)
+var (
+	_ exportiface.Exporter    = (*Exporter)(nil)
+	_ exportiface.RunExporter = (*Exporter)(nil)
+)
 
 type txExecer interface {
 	Exec(ctx context.Context, sql string, args ...any) error
@@ -66,8 +69,9 @@ func (t *txAdapter) Commit(ctx context.Context) error   { return t.tx.Commit(ctx
 func (t *txAdapter) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
 
 type Exporter struct {
-	db          execer
-	schemaReady bool
+	db              execer
+	schemaReady     bool
+	runsSchemaReady bool
 }
 
 func New(ctx context.Context, dsn string) (*Exporter, error) {
@@ -135,6 +139,25 @@ func ensureSchema(ctx context.Context, db execer) error {
 	return nil
 }
 
+func ensureRunsSchema(ctx context.Context, db execer) error {
+	const runsTable = `CREATE TABLE IF NOT EXISTS runs (
+		id TEXT PRIMARY KEY,
+		session_ids JSONB,
+		model_id TEXT,
+		status TEXT,
+		end_reason TEXT,
+		started_at TIMESTAMPTZ,
+		ended_at TIMESTAMPTZ,
+		meta JSONB,
+		repro JSONB,
+		last_seq BIGINT
+	)`
+	if err := db.Exec(ctx, runsTable); err != nil {
+		return fmt.Errorf("postgres exporter: create runs table: %w", err)
+	}
+	return nil
+}
+
 func (e *Exporter) ensure(ctx context.Context) error {
 	if e.schemaReady {
 		return nil
@@ -143,6 +166,17 @@ func (e *Exporter) ensure(ctx context.Context) error {
 		return err
 	}
 	e.schemaReady = true
+	return nil
+}
+
+func (e *Exporter) ensureRuns(ctx context.Context) error {
+	if e.runsSchemaReady {
+		return nil
+	}
+	if err := ensureRunsSchema(ctx, e.db); err != nil {
+		return err
+	}
+	e.runsSchemaReady = true
 	return nil
 }
 
@@ -195,6 +229,14 @@ func (e *Exporter) ApplyDelta(ctx context.Context, d cdc.GraphDelta) error {
 			return fmt.Errorf("postgres exporter edge_delete: %w", err)
 		}
 		return nil
+	case cdc.DeltaRunStarted, cdc.DeltaRunEnded:
+		if d.Run == nil {
+			return nil
+		}
+		if err := e.ensureRuns(ctx); err != nil {
+			return err
+		}
+		return e.upsertRun(ctx, d.Run)
 	default:
 		return nil
 	}
@@ -225,6 +267,21 @@ func (e *Exporter) SnapshotState(ctx context.Context, nodes []*model.Node, edges
 	return tx.Commit(ctx)
 }
 
+func (e *Exporter) SnapshotRuns(ctx context.Context, runs []model.Run) error {
+	if len(runs) == 0 {
+		return nil
+	}
+	if err := e.ensureRuns(ctx); err != nil {
+		return err
+	}
+	for i := range runs {
+		if err := e.upsertRun(ctx, &runs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 const nodeUpsertSQL = `INSERT INTO nodes (id, run_id, type, name, status, tier, parent_id, agent_id,
 	t_start, t_end, duration_ms, tokens_in, tokens_out, cost_usd, payload_hash, attrs, annotations, rev)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
@@ -239,6 +296,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)
 ON CONFLICT (id) DO UPDATE SET
 	run_id=$2, type=$3, src=$4, dst=$5, attrs=$6, rev=$7
 WHERE excluded.rev > edges.rev`
+
+const runUpsertSQL = `INSERT INTO runs (id, session_ids, model_id, status, end_reason, started_at, ended_at, meta, repro, last_seq)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (id) DO UPDATE SET
+	session_ids=$2, model_id=$3, status=$4, end_reason=$5, started_at=$6, ended_at=$7, meta=$8, repro=$9, last_seq=$10
+WHERE excluded.last_seq >= runs.last_seq`
 
 func jsonMarshal(v any) string {
 	if v == nil {
@@ -271,6 +334,21 @@ func edgeArgs(edge *model.Edge) []any {
 	}
 }
 
+func runArgs(r *model.Run) []any {
+	return []any{
+		r.ID,
+		jsonMarshal(r.SessionIDs),
+		r.ModelID,
+		string(r.Status),
+		r.EndReason,
+		r.StartedAt,
+		r.EndedAt,
+		jsonMarshal(r.Meta),
+		jsonMarshal(r.Repro),
+		int64(r.LastSeq),
+	}
+}
+
 func (e *Exporter) upsertNode(ctx context.Context, n *model.Node) error {
 	if err := e.db.Exec(ctx, nodeUpsertSQL, nodeArgs(n)...); err != nil {
 		return fmt.Errorf("postgres exporter upsert node: %w", err)
@@ -281,6 +359,13 @@ func (e *Exporter) upsertNode(ctx context.Context, n *model.Node) error {
 func (e *Exporter) upsertEdge(ctx context.Context, edge *model.Edge) error {
 	if err := e.db.Exec(ctx, edgeUpsertSQL, edgeArgs(edge)...); err != nil {
 		return fmt.Errorf("postgres exporter upsert edge: %w", err)
+	}
+	return nil
+}
+
+func (e *Exporter) upsertRun(ctx context.Context, r *model.Run) error {
+	if err := e.db.Exec(ctx, runUpsertSQL, runArgs(r)...); err != nil {
+		return fmt.Errorf("postgres exporter upsert run: %w", err)
 	}
 	return nil
 }

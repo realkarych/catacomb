@@ -203,6 +203,22 @@ func exportSink(ctx context.Context, out io.Writer, s store.Store, deps exportDe
 		return fmt.Errorf("export snapshot: %w", err)
 	}
 	runs := collectRuns(graphs)
+	if re, ok := exp.(exportiface.RunExporter); ok {
+		runsToExport := runs
+		if a.runID != "" {
+			var filtered []model.Run
+			for _, r := range runs {
+				if r.ID == a.runID {
+					filtered = append(filtered, r)
+				}
+			}
+			runsToExport = filtered
+		}
+		if err := re.SnapshotRuns(ctx, runsToExport); err != nil {
+			_ = exp.Shutdown(ctx)
+			return fmt.Errorf("export snapshot runs: %w", err)
+		}
+	}
 	for _, r := range runs {
 		if a.runID != "" && r.ID != a.runID {
 			continue

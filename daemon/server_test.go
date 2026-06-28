@@ -107,6 +107,27 @@ func (f *fakeExporter) deltaCount() int {
 	return len(f.deltas)
 }
 
+type fakeRunExporter struct {
+	fakeExporter
+	snapshotRunsCalls [][]model.Run
+	snapshotRunsErr   error
+}
+
+func (f *fakeRunExporter) SnapshotRuns(_ context.Context, runs []model.Run) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make([]model.Run, len(runs))
+	copy(cp, runs)
+	f.snapshotRunsCalls = append(f.snapshotRunsCalls, cp)
+	return f.snapshotRunsErr
+}
+
+func (f *fakeRunExporter) snapshotRunsCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.snapshotRunsCalls)
+}
+
 func loopback(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1168,4 +1189,49 @@ func TestStaticHandlerUnknownAsset404(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestStartExporterCallsSnapshotRunsForRunExporter(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	fe := &fakeRunExporter{}
+	orig := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return fe, nil
+	}
+	t.Cleanup(func() { newPostgresFn = orig })
+
+	d.SetPostgresDSN("postgres://fake")
+	d.startExporter(context.Background(), "127.0.0.1:1", "127.0.0.1:2")
+
+	assert.Positive(t, fe.snapshotRunsCount(), "SnapshotRuns must be called with existing run")
+}
+
+func TestStartExporterRunDeltaCarriesRunToApplyDelta(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	fe := &fakeRunExporter{}
+	orig := newPostgresFn
+	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
+		return fe, nil
+	}
+	t.Cleanup(func() { newPostgresFn = orig })
+
+	d.SetPostgresDSN("postgres://fake")
+	d.startExporter(context.Background(), "127.0.0.1:1", "127.0.0.1:2")
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s2"}`)))
+
+	require.Eventually(t, func() bool {
+		fe.mu.Lock()
+		defer fe.mu.Unlock()
+		for _, delta := range fe.deltas {
+			if delta.Kind == cdc.DeltaRunStarted && delta.Run != nil {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "DeltaRunStarted should carry a non-nil Run")
 }

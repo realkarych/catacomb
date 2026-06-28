@@ -14,3 +14,7 @@ type Exporter interface {
 	FlushRun(ctx context.Context, runID string) error
 	Shutdown(ctx context.Context) error
 }
+
+type RunExporter interface {
+	SnapshotRuns(ctx context.Context, runs []model.Run) error
+}
