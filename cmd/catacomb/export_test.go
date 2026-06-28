@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -348,8 +349,7 @@ func TestExportSinkStoreGraphsError(t *testing.T) {
 
 func TestExportJSONLToFile(t *testing.T) {
 	dbPath := seedDB(t)
-	outPath := os.TempDir() + "/export_test_out.jsonl"
-	t.Cleanup(func() { _ = os.Remove(outPath) })
+	outPath := filepath.Join(t.TempDir(), "out.jsonl")
 	deps := exportDeps{
 		open:      store.OpenSQLiteReadOnly,
 		newPricer: newPricer,
