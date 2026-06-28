@@ -256,6 +256,27 @@ test('collapse all and expand all toolbar buttons work', async ({ page }) => {
   await expect(page.locator('.outline-row').filter({ hasText: 'session' }).first()).toBeVisible();
 });
 
+test('outline controls live in the filter bar and vanish in timeline view', async ({ page }) => {
+  await routeBase(page);
+  await routeNodePayloads(page);
+
+  await page.goto(`/?token=test#/s/${sessionHash}`);
+  await expect(page.locator('.outline-root')).toBeVisible();
+
+  const controls = page.locator('.filter-bar .outline-controls');
+  await expect(controls).toBeVisible();
+  await expect(controls.getByRole('button', { name: 'Expand all' })).toBeVisible();
+  await expect(controls.getByRole('button', { name: 'Show system' })).toBeVisible();
+  await expect(controls.getByRole('button', { name: 'Stat legend' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+
+  await expect(page.locator('.outline-controls')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Expand all' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show system' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stat legend' })).toHaveCount(0);
+});
+
 test('the stat-legend help control reveals the column explanation', async ({ page }) => {
   await routeBase(page);
   await routeNodePayloads(page);

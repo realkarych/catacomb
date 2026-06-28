@@ -64,3 +64,28 @@ export function resetFilter(): void {
 export function setFilteredNodeIds(ids: Set<string> | null): void {
   filteredNodeIds.value = ids;
 }
+
+type OutlineAction = () => void;
+
+export const outlineShowSystem: { value: boolean } = $state({ value: false });
+export const outlineActions: {
+  collapseAll: OutlineAction | null;
+  expandAll: OutlineAction | null;
+  reset: OutlineAction | null;
+} = $state({ collapseAll: null, expandAll: null, reset: null });
+
+export function registerOutlineActions(actions: {
+  collapseAll: OutlineAction;
+  expandAll: OutlineAction;
+  reset: OutlineAction;
+}): void {
+  outlineActions.collapseAll = actions.collapseAll;
+  outlineActions.expandAll = actions.expandAll;
+  outlineActions.reset = actions.reset;
+}
+
+export function clearOutlineActions(): void {
+  outlineActions.collapseAll = null;
+  outlineActions.expandAll = null;
+  outlineActions.reset = null;
+}

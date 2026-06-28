@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { sessionsById, filterState, resetFilter, sessionGraph } from '../lib/stores/stores.svelte';
+  import {
+    sessionsById,
+    filterState,
+    resetFilter,
+    sessionGraph,
+    outlineShowSystem,
+    outlineActions,
+  } from '../lib/stores/stores.svelte';
   import { isActive } from '../lib/filters';
   import { nodeTypeInfo } from '../lib/node-legend';
   import { displayLabel, isOutcomeStatus, isSessionLive } from '../lib/status';
@@ -9,8 +16,9 @@
     hash: string;
     totalCount: number;
     filteredCount: number;
+    outlineActive: boolean;
   }
-  let { hash, totalCount, filteredCount }: Props = $props();
+  let { hash, totalCount, filteredCount, outlineActive }: Props = $props();
 
   const session = $derived(sessionsById[hash]);
 
@@ -108,6 +116,38 @@
       {filteredCount} of {totalCount}
     </span>
     <button class="filter-reset" onclick={resetFilter} aria-label="Clear all filters">×</button>
+  {/if}
+
+  {#if outlineActive}
+    <div
+      class="outline-controls"
+      class:outline-controls--lead={!active}
+      role="toolbar"
+      aria-label="Outline controls"
+    >
+      <button class="outline-ctl-btn" type="button" onclick={() => outlineActions.collapseAll?.()}>Collapse all</button>
+      <button class="outline-ctl-btn" type="button" onclick={() => outlineActions.expandAll?.()}>Expand all</button>
+      <button class="outline-ctl-btn" type="button" onclick={() => outlineActions.reset?.()}>Reset</button>
+      <button
+        class="outline-ctl-btn"
+        type="button"
+        aria-pressed={outlineShowSystem.value}
+        onclick={() => (outlineShowSystem.value = !outlineShowSystem.value)}
+      >Show system</button>
+      <div class="outline-help">
+        <button
+          class="outline-ctl-btn outline-help-btn"
+          type="button"
+          aria-label="Stat legend"
+          aria-describedby="outline-legend"
+        >?</button>
+        <div class="outline-legend" id="outline-legend" role="tooltip">
+          <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> tokens in · out · cost · duration</span>
+          <span class="outline-legend-item"><span class="outline-legend-key">tool</span> arg → output · duration</span>
+          <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> node count · in · out · cost · duration</span>
+        </div>
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -214,10 +254,95 @@
     border-color: var(--text-faint);
   }
 
+  .outline-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .outline-controls--lead {
+    margin-left: auto;
+  }
+
+  .outline-ctl-btn {
+    font-size: var(--text-xs);
+    font-family: var(--font-ui);
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--s1) var(--s2);
+    cursor: pointer;
+  }
+
+  .outline-ctl-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  .outline-ctl-btn[aria-pressed='true'] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+
+  .outline-ctl-btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .outline-help {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .outline-help-btn {
+    width: 22px;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .outline-legend {
+    position: absolute;
+    top: calc(100% + var(--s1));
+    right: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    padding: var(--s2) var(--s3);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-2);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  .outline-help:hover .outline-legend,
+  .outline-help:focus-within .outline-legend {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .outline-legend-item {
+    white-space: nowrap;
+  }
+
+  .outline-legend-key {
+    color: var(--text-dim);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .filter-chip,
     .filter-search,
-    .filter-reset {
+    .filter-reset,
+    .outline-legend {
       transition: none;
     }
   }
