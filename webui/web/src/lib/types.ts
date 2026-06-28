@@ -93,3 +93,51 @@ export interface PayloadView {
   redactions: RedactionFinding[];
   redacted: boolean;
 }
+
+export interface DiffStringChange {
+  before: string;
+  after: string;
+}
+
+export interface DiffNumberChange {
+  before: number;
+  after: number;
+  delta: number;
+}
+
+export interface DiffDeltas {
+  args?: DiffStringChange;
+  status?: DiffStringChange;
+  cost_usd?: DiffNumberChange;
+  duration_ms?: DiffNumberChange;
+  tokens_in?: DiffNumberChange;
+  tokens_out?: DiffNumberChange;
+}
+
+export interface DiffStep {
+  type: string;
+  tool: string;
+  step_key: string;
+  content_key: string;
+}
+
+export interface DiffMatch {
+  type: string;
+  tool: string;
+  a_step_key: string;
+  b_step_key: string;
+  a_content_key: string;
+  b_content_key: string;
+  tier: string;
+}
+
+export interface DiffChangedStep extends DiffMatch {
+  deltas: DiffDeltas;
+}
+
+export interface DiffResult {
+  added: DiffStep[];
+  removed: DiffStep[];
+  changed: DiffChangedStep[];
+  unchanged: DiffMatch[];
+}
