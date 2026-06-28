@@ -11,7 +11,7 @@
     a?: string;
     b?: string;
   }
-  let { token, a = $bindable(), b = $bindable() }: Props = $props();
+  let { token, a, b }: Props = $props();
 
   let sessions: SessionSummary[] = $state([]);
   let sessionsError: string | null = $state(null);
@@ -35,6 +35,7 @@
   });
 
   $effect(() => {
+    if (typeof window === 'undefined') return;
     window.location.hash = toHash({ kind: 'diff', a: selA || undefined, b: selB || undefined });
   });
 
