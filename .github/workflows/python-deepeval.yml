@@ -19,6 +19,7 @@ jobs:
         working-directory: integrations/deepeval
     env:
       DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+      PYTHONPATH: src
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Set up Python 3.12

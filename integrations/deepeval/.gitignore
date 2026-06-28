@@ -1,0 +1,8 @@
+.deepeval/
+.deepeval_telemetry.txt
+.pytest_cache/
+__pycache__/
+*.egg-info/
+.venv/
+dist/
+build/
