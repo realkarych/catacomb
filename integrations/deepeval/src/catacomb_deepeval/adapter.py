@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from catacomb_deepeval.model import SessionData, ToolCallData
+from catacomb_deepeval.model import SessionData
 
 
 def session_to_dicts(session: SessionData) -> dict:
@@ -47,3 +47,23 @@ def session_to_test_case(
         tools_called=tools_called,
         expected_tools=expected_tools,
     )
+
+
+def make_offline_metric(**kwargs: Any) -> Any:
+    from deepeval.metrics import ToolCorrectnessMetric
+    from deepeval.models import DeepEvalBaseLLM
+
+    class _OfflineStub(DeepEvalBaseLLM):
+        def load_model(self) -> "_OfflineStub":
+            return self
+
+        def generate(self, prompt: str, schema: Any = None) -> str:
+            raise RuntimeError("LLM unavailable in offline mode")
+
+        async def a_generate(self, prompt: str, schema: Any = None) -> str:
+            raise RuntimeError("LLM unavailable in offline mode")
+
+        def get_model_name(self) -> str:
+            return "offline-stub"
+
+    return ToolCorrectnessMetric(model=_OfflineStub(), **kwargs)

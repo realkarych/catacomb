@@ -26,7 +26,6 @@ def main() -> None:
         default="name",
         help="ToolCorrectness matching mode (default: name)",
     )
-    parser.add_argument("--json", dest="output_json", action="store_true", help="Output raw JSON (no-expected mode only)")
     parser.add_argument(
         "--argument-correctness",
         action="store_true",
@@ -73,8 +72,9 @@ def main() -> None:
         sys.exit(2)
 
     try:
-        from deepeval.metrics import ToolCorrectnessMetric
         from deepeval.test_case import ToolCallParams
+
+        from catacomb_deepeval.adapter import make_offline_metric
     except ImportError:
         print(
             "error: deepeval is not installed; run: pip install 'catacomb-deepeval[deepeval]'",
@@ -92,7 +92,7 @@ def main() -> None:
     if evaluation_params is not None:
         metric_kwargs["evaluation_params"] = evaluation_params
 
-    metric = ToolCorrectnessMetric(**metric_kwargs)
+    metric = make_offline_metric(**metric_kwargs)
     tc = session_to_test_case(session, expected_names=expected_names)
     metric.measure(tc)
 

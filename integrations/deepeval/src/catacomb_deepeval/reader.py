@@ -27,14 +27,10 @@ def list_run_ids(lines: List[dict]) -> List[str]:
 
 def parse_session(lines: List[dict], run_id: str) -> SessionData:
     nodes: List[dict] = []
-    edges: List[dict] = []
 
     for line in lines:
-        kind = line.get("kind")
-        if kind == "node" and line.get("run_id") == run_id:
+        if line.get("kind") == "node" and line.get("run_id") == run_id:
             nodes.append(line)
-        elif kind == "edge" and line.get("run_id") == run_id:
-            edges.append(line)
 
     prompt_input = _extract_prompt_input(nodes)
     actual_output = _extract_actual_output(nodes)

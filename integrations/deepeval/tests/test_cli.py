@@ -48,7 +48,7 @@ def test_cli_multi_run_without_run_flag_errors():
     assert "multiple" in result.stderr.lower() or "run" in result.stderr.lower()
 
 
-def test_cli_argument_correctness_no_api_key_errors(monkeypatch):
+def test_cli_argument_correctness_no_api_key_errors():
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY",)}
     result = subprocess.run(
         [PYTHON, "-m", "catacomb_deepeval",
