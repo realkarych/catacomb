@@ -135,28 +135,17 @@ test('hero flow: list → session → node → drawer shows metrics', async ({ p
   const drawer = page.locator('.node-drawer');
   await expect(drawer).toBeVisible();
 
-  await expect(drawer.locator('.meta-summary')).toContainText('4.2s');
-  await expect(drawer.locator('.meta-summary')).toContainText('$0.0031');
+  const summary = drawer.locator('.meta-summary');
+  await expect(summary).toContainText('in 512');
+  await expect(summary).toContainText('out 128');
+  await expect(summary).toContainText('$0.0031');
+  await expect(summary).toContainText('4.2s');
 
-  await drawer.locator('.advanced-summary').click();
-
-  await expect(drawer.locator('.metric-row')).toHaveCount(5);
-
-  await expect(drawer).toContainText('Duration');
-  await expect(drawer).toContainText('4.2s');
-
-  await expect(drawer).toContainText('Tokens in');
-  await expect(drawer).toContainText('512');
-
-  await expect(drawer).toContainText('Tokens out');
-  await expect(drawer).toContainText('128');
-
-  await expect(drawer).toContainText('Cost');
-  await expect(drawer).toContainText('$0.0031');
-
-  const provBadge = drawer.locator('.provenance-badge[data-provenance="reported"]');
+  const provBadge = summary.locator('.provenance-badge[data-provenance="reported"]');
   await expect(provBadge).toBeVisible();
   await expect(provBadge).toContainText('reported');
+
+  await drawer.locator('.advanced-summary').click();
 
   await expect(drawer).toContainText('Model');
   await expect(drawer).toContainText('claude-opus-4-5');
@@ -179,10 +168,8 @@ test('hero flow: clicking node without metrics shows dashes for unknown fields',
 
   await drawer.locator('.advanced-summary').click();
 
-  await expect(drawer).toContainText('Duration');
-  await expect(drawer).toContainText('—');
-
   await expect(drawer).toContainText('Model');
+  await expect(drawer).toContainText('—');
 });
 
 test('hero flow: Escape closes drawer and clears selection', async ({ page }) => {

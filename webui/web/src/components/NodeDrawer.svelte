@@ -3,7 +3,6 @@
   import { formatDuration, formatTokens, formatCost, shortHash } from '../lib/format/format';
   import { costProvenance } from '../lib/pricing/provenance';
   import StatusPill from './StatusPill.svelte';
-  import MetricRow from './MetricRow.svelte';
   import PayloadPanel from './PayloadPanel.svelte';
   import { shouldShowStatus, isSessionLive } from '../lib/status';
   import { sessionsById } from '../lib/stores/stores.svelte';
@@ -26,7 +25,35 @@
 
   const provenance = $derived(node ? costProvenance(node) : 'unknown');
 
+  const summaryParts = $derived(
+    node
+      ? [
+          node.tokens_in !== undefined ? `in ${formatTokens(node.tokens_in)}` : null,
+          node.tokens_out !== undefined ? `out ${formatTokens(node.tokens_out)}` : null,
+          node.cost_usd !== undefined ? formatCost(node.cost_usd) : null,
+          node.duration_ms !== undefined ? formatDuration(node.duration_ms) : null,
+        ].filter((s): s is string => s !== null)
+      : [],
+  );
+
+  const model = $derived(
+    (node?.attrs?.['model_id'] as string | undefined) ??
+      (node?.attrs?.['model'] as string | undefined) ??
+      '—',
+  );
+
   let drawerEl: HTMLDivElement | undefined = $state();
+
+  let copied = $state.raw<Set<string>>(new Set());
+
+  function markCopied(key: string) {
+    copied = new Set(copied).add(key);
+    setTimeout(() => {
+      const next = new Set(copied);
+      next.delete(key);
+      copied = next;
+    }, 1000);
+  }
 
   function close() {
     const closingId = selectedNodeId.value;
@@ -77,9 +104,10 @@
     };
   });
 
-  async function copyToClipboard(text: string) {
+  async function copyToClipboard(text: string, key: string) {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(text);
+      markCopied(key);
     }
   }
 </script>
@@ -116,34 +144,21 @@
         <PayloadPanel {hash} nodeId={node.id} nodeType={node.type} {token} payloadHash={node.payload_hash} />
       {/if}
 
-      <div class="meta-summary">
-        {#if node.duration_ms !== undefined || node.cost_usd !== undefined}
-          <span class="meta-text">
-            {[
-              node.duration_ms !== undefined ? formatDuration(node.duration_ms) : null,
-              node.cost_usd !== undefined ? formatCost(node.cost_usd) : null,
-            ].filter(Boolean).join(' · ')}
-          </span>
-        {/if}
-      </div>
+      {#if summaryParts.length > 0}
+        <div class="meta-summary">
+          <span class="meta-text">{summaryParts.join(' · ')}</span>
+          {#if node.cost_usd !== undefined && provenance !== 'unknown'}
+            <span class="provenance-badge" data-provenance={provenance}>{provenance}</span>
+          {/if}
+        </div>
+      {/if}
 
       <details class="advanced-section">
         <summary class="advanced-summary">Advanced</summary>
         <div class="advanced-body">
-          <div class="metrics-grid">
-            <MetricRow label="Duration" value={formatDuration(node.duration_ms)} />
-            <MetricRow label="Tokens in" value={formatTokens(node.tokens_in)} />
-            <MetricRow label="Tokens out" value={formatTokens(node.tokens_out)} />
-            <div class="metric-row-cost">
-              <MetricRow label="Cost" value={formatCost(node.cost_usd)} />
-              {#if provenance !== 'unknown'}
-                <span class="provenance-badge" data-provenance={provenance}>{provenance}</span>
-              {/if}
-            </div>
-            <MetricRow
-              label="Model"
-              value={(node.attrs?.['model_id'] as string | undefined) ?? (node.attrs?.['model'] as string | undefined) ?? '—'}
-            />
+          <div class="advanced-row">
+            <span class="advanced-label">Model</span>
+            <span class="advanced-value mono">{model}</span>
           </div>
 
           <div class="advanced-row">
@@ -151,10 +166,11 @@
             <span class="advanced-value mono">{node.id}</span>
             <button
               class="copy-btn"
-              onclick={() => copyToClipboard(node.id)}
+              class:copied={copied.has('id')}
+              onclick={() => copyToClipboard(node.id, 'id')}
               aria-label="Copy node ID"
             >
-              Copy
+              {copied.has('id') ? 'Copied' : 'Copy'}
             </button>
           </div>
 
@@ -163,10 +179,11 @@
             <span class="advanced-value mono">{node.run_id}</span>
             <button
               class="copy-btn"
-              onclick={() => copyToClipboard(node.run_id)}
+              class:copied={copied.has('run')}
+              onclick={() => copyToClipboard(node.run_id, 'run')}
               aria-label="Copy run ID"
             >
-              Copy
+              {copied.has('run') ? 'Copied' : 'Copy'}
             </button>
           </div>
 
@@ -176,10 +193,11 @@
               <span class="advanced-value mono">{shortHash(node.payload_hash, 16)}</span>
               <button
                 class="copy-btn"
-                onclick={() => copyToClipboard(node.payload_hash ?? '')}
+                class:copied={copied.has('hash')}
+                onclick={() => copyToClipboard(node.payload_hash ?? '', 'hash')}
                 aria-label="Copy full payload hash"
               >
-                Copy
+                {copied.has('hash') ? 'Copied' : 'Copy'}
               </button>
             </div>
           {/if}
@@ -305,24 +323,18 @@
   }
 
   .meta-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
     padding: var(--s2) var(--s4);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
   .meta-text {
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-  }
-
-  .metric-row-cost {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-  }
-
-  .metric-row-cost > :global(.metric-row) {
-    flex: 1;
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    color: var(--text-dim);
   }
 
   .provenance-badge {
@@ -388,12 +400,6 @@
     gap: var(--s1);
   }
 
-  .metrics-grid {
-    padding-bottom: var(--s2);
-    margin-bottom: var(--s1);
-    border-bottom: 1px solid var(--border);
-  }
-
   .advanced-row {
     display: flex;
     align-items: center;
@@ -431,6 +437,11 @@
   .copy-btn:hover {
     color: var(--accent);
     border-color: var(--accent);
+  }
+
+  .copy-btn.copied {
+    color: var(--ok);
+    border-color: var(--ok);
   }
 
   .copy-btn:focus-visible {

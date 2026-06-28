@@ -63,9 +63,21 @@
     return () => { stale = true; };
   });
 
-  async function copyText(text: string) {
+  let copied = $state.raw<Set<string>>(new Set());
+
+  function markCopied(key: string) {
+    copied = new Set(copied).add(key);
+    setTimeout(() => {
+      const next = new Set(copied);
+      next.delete(key);
+      copied = next;
+    }, 1000);
+  }
+
+  async function copyText(text: string, key: string) {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(text);
+      markCopied(key);
     }
   }
 
@@ -112,10 +124,11 @@
           <span class="payload-section-label">{asText ? 'Prompt' : 'Input'}</span>
           <button
             class="copy-btn"
-            onclick={() => copyText(inputText)}
+            class:copied={copied.has('input')}
+            onclick={() => copyText(inputText, 'input')}
             aria-label="Copy input content"
           >
-            Copy
+            {copied.has('input') ? 'Copied' : 'Copy'}
           </button>
         </div>
         <pre class="payload-content" class:payload-text={asText} class:mono={!asText}>{expanded ? inputText : inputResult.shown}</pre>
@@ -140,10 +153,11 @@
           <span class="payload-section-label">{asText ? 'Response' : 'Output'}</span>
           <button
             class="copy-btn"
-            onclick={() => copyText(outputText)}
+            class:copied={copied.has('output')}
+            onclick={() => copyText(outputText, 'output')}
             aria-label="Copy output content"
           >
-            Copy
+            {copied.has('output') ? 'Copied' : 'Copy'}
           </button>
         </div>
         <pre class="payload-content" class:payload-text={asText} class:mono={!asText}>{expanded ? outputText : outputResult.shown}</pre>
@@ -279,6 +293,11 @@
   .copy-btn:hover {
     color: var(--accent);
     border-color: var(--accent);
+  }
+
+  .copy-btn.copied {
+    color: var(--ok);
+    border-color: var(--ok);
   }
 
   .copy-btn:focus-visible {

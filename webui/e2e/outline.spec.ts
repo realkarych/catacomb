@@ -256,7 +256,7 @@ test('collapse all and expand all toolbar buttons work', async ({ page }) => {
   await expect(page.locator('.outline-row').filter({ hasText: 'session' }).first()).toBeVisible();
 });
 
-test('the legend strip explains the stat columns', async ({ page }) => {
+test('the stat-legend help control reveals the column explanation', async ({ page }) => {
   await routeBase(page);
   await routeNodePayloads(page);
 
@@ -264,11 +264,16 @@ test('the legend strip explains the stat columns', async ({ page }) => {
   await expect(page.locator('.outline-root')).toBeVisible();
 
   const legend = page.locator('.outline-legend');
+  await expect(legend).toBeHidden();
+
+  await page.getByRole('button', { name: 'Stat legend' }).hover();
+
   await expect(legend).toBeVisible();
   await expect(legend).toContainText('assistant');
-  await expect(legend).toContainText('in · out · cost · duration');
+  await expect(legend).toContainText('tokens in · out · cost · duration');
   await expect(legend).toContainText('tool');
   await expect(legend).toContainText('collapsed');
+  await expect(legend).not.toContainText('N nodes');
 });
 
 test('an assistant row shows labeled token/cost/duration stats with no bare arrow', async ({ page }) => {
@@ -389,8 +394,12 @@ test('show system toggle reveals system prompt rows', async ({ page }) => {
 
   await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(1);
 
-  await page.getByRole('button', { name: 'Show system' }).click();
+  const showSystem = page.getByRole('button', { name: 'Show system' });
+  await expect(showSystem).toHaveAttribute('aria-pressed', 'false');
 
+  await showSystem.click();
+
+  await expect(showSystem).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.outline-row[aria-level="2"]')).toHaveCount(2);
 });
 
