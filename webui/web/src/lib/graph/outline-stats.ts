@@ -16,8 +16,12 @@ export interface RowStat {
 }
 
 function aggregateStat(agg: Aggregate): RowStat {
-  const text = `${agg.count} nodes · in ${formatTokens(agg.tokensIn)} · out ${formatTokens(agg.tokensOut)} · ${formatCost(agg.costUsd)}`;
-  const title = `${agg.count} nodes · tokens in ${agg.tokensIn.toLocaleString('en-US')}, out ${agg.tokensOut.toLocaleString('en-US')}, cost ${formatCost(agg.costUsd)}`;
+  let text = `${agg.count} nodes · in ${formatTokens(agg.tokensIn)} · out ${formatTokens(agg.tokensOut)} · ${formatCost(agg.costUsd)}`;
+  let title = `${agg.count} nodes · tokens in ${agg.tokensIn.toLocaleString('en-US')}, out ${agg.tokensOut.toLocaleString('en-US')}, cost ${formatCost(agg.costUsd)}`;
+  if (agg.durationMs > 0) {
+    text += ` · ${formatDuration(agg.durationMs)}`;
+    title += `, duration ${formatDuration(agg.durationMs)}`;
+  }
   return { text, title, color: statusColor(agg.status) };
 }
 

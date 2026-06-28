@@ -5,6 +5,17 @@ export function buildHierarchy(nodes: Node[], edges: Edge[]): Hierarchy {
   const parent = new Map<string, string>();
   const children = new Map<string, string[]>();
 
+  const startMs = new Map<string, number>();
+  for (const nd of nodes) {
+    const ms = nd.t_start === undefined ? Infinity : Date.parse(nd.t_start);
+    startMs.set(nd.id, Number.isNaN(ms) ? Infinity : ms);
+  }
+  const byStart = (a: string, b: string): number => {
+    const ma = startMs.get(a)!;
+    const mb = startMs.get(b)!;
+    return ma === mb ? (a < b ? -1 : 1) : ma - mb;
+  };
+
   for (const ed of edges) {
     if (ed.type !== 'parent_child') continue;
     if (!present.has(ed.src) || !present.has(ed.dst)) continue;
@@ -23,7 +34,7 @@ export function buildHierarchy(nodes: Node[], edges: Edge[]): Hierarchy {
     if (arr) arr.push(nd.id);
     else children.set(p, [nd.id]);
   }
-  for (const arr of children.values()) arr.sort();
+  for (const arr of children.values()) arr.sort(byStart);
 
   const roots: string[] = [];
   const orphans: string[] = [];
@@ -32,8 +43,8 @@ export function buildHierarchy(nodes: Node[], edges: Edge[]): Hierarchy {
     if ((children.get(nd.id)?.length ?? 0) > 0) roots.push(nd.id);
     else orphans.push(nd.id);
   }
-  roots.sort();
-  orphans.sort();
+  roots.sort(byStart);
+  orphans.sort(byStart);
 
   const childrenOf = (id: string): string[] => children.get(id) ?? [];
   const parentOf = (id: string): string | undefined => parent.get(id);

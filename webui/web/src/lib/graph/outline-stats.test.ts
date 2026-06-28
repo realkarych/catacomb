@@ -14,6 +14,7 @@ function agg(extra: Partial<Aggregate> = {}): Aggregate {
     costUsd: 0,
     status: 'ok',
     hasError: false,
+    durationMs: 0,
     ...extra,
   };
 }
@@ -27,6 +28,26 @@ describe('rowStatLine — collapsed aggregate', () => {
     });
     expect(res.text).toBe('3 nodes · in 1,500 · out 12.0k · $0.02');
     expect(res.text).not.toContain('→');
+  });
+
+  it('appends the wall-clock duration when durationMs is positive', () => {
+    const res = rowStatLine(node({ type: 'user_prompt' }), {
+      collapsed: true,
+      hasChildren: true,
+      aggregate: agg({ count: 3, tokensIn: 1500, tokensOut: 12000, costUsd: 0.0234, durationMs: 90000 }),
+    });
+    expect(res.text).toBe('3 nodes · in 1,500 · out 12.0k · $0.02 · 1m 30s');
+    expect(res.title).toContain('duration 1m 30s');
+  });
+
+  it('omits the duration when durationMs is zero', () => {
+    const res = rowStatLine(node({ type: 'user_prompt' }), {
+      collapsed: true,
+      hasChildren: true,
+      aggregate: agg({ count: 3, tokensIn: 1500, tokensOut: 12000, costUsd: 0.0234, durationMs: 0 }),
+    });
+    expect(res.text).toBe('3 nodes · in 1,500 · out 12.0k · $0.02');
+    expect(res.title).not.toContain('duration');
   });
 
   it('carries a tooltip explaining the rollup', () => {

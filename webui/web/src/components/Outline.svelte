@@ -372,7 +372,7 @@
     <div class="outline-legend" aria-label="Stat legend">
       <span class="outline-legend-item"><span class="outline-legend-key">assistant</span> in · out · cost · duration</span>
       <span class="outline-legend-item"><span class="outline-legend-key">tool</span> arg → output · duration</span>
-      <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> N nodes · in · out · cost</span>
+      <span class="outline-legend-item"><span class="outline-legend-key">collapsed</span> N nodes · in · out · cost · duration</span>
     </div>
     <div
       bind:this={scrollEl}
@@ -414,7 +414,25 @@
                 aria-label={row.collapsed ? 'Expand' : 'Collapse'}
                 aria-busy={loading ? 'true' : undefined}
                 onclick={(e) => handleToggle(row.id, e)}
-              >{loading ? '⋯' : row.collapsed ? '▸' : '▾'}</button>
+              >
+                {#if loading}
+                  <span class="outline-chevron-spinner" aria-hidden="true"></span>
+                {:else}
+                  <svg
+                    class="outline-chevron-icon"
+                    class:outline-chevron-icon--open={!row.collapsed}
+                    viewBox="0 0 24 24"
+                    width="13"
+                    height="13"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  ><path d="M9 6l6 6-6 6" /></svg>
+                {/if}
+              </button>
             {:else}
               <span class="outline-chevron outline-chevron--empty" aria-hidden="true"></span>
             {/if}
@@ -536,12 +554,11 @@
 
   .outline-chevron {
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: var(--text-xs);
     color: var(--text-faint);
     background: transparent;
     border: none;
@@ -561,6 +578,40 @@
 
   .outline-chevron--empty {
     cursor: default;
+  }
+
+  .outline-chevron-icon {
+    display: block;
+    transition: transform 120ms ease;
+  }
+
+  .outline-chevron-icon--open {
+    transform: rotate(90deg);
+  }
+
+  .outline-chevron-spinner {
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: outline-chevron-spin 0.6s linear infinite;
+  }
+
+  @keyframes outline-chevron-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .outline-chevron-icon {
+      transition: none;
+    }
+
+    .outline-chevron-spinner {
+      animation: none;
+    }
   }
 
   .outline-glyph {

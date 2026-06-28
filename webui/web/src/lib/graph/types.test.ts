@@ -10,6 +10,7 @@ describe('graph view-layer types', () => {
       costUsd: 0.5,
       status: 'ok',
       hasError: false,
+      durationMs: 0,
     };
     expect(agg.count).toBe(3);
     expect(agg.status).toBe('ok');

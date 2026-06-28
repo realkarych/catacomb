@@ -5,6 +5,16 @@ import type { Node, Edge } from '../types';
 function n(id: string, parent_id?: string): Node {
   return { id, run_id: 'r1', type: 'marker', rev: 1, ...(parent_id ? { parent_id } : {}) };
 }
+function nt(id: string, t_start?: string, parent_id?: string): Node {
+  return {
+    id,
+    run_id: 'r1',
+    type: 'marker',
+    rev: 1,
+    ...(t_start ? { t_start } : {}),
+    ...(parent_id ? { parent_id } : {}),
+  };
+}
 function e(id: string, src: string, dst: string, type = 'parent_child'): Edge {
   return { id, run_id: 'r1', type, src, dst, rev: 1 };
 }
@@ -34,6 +44,56 @@ describe('buildHierarchy', () => {
     const nodes = [n('s'), n('z'), n('a'), n('m')];
     const edges = [e('e1', 's', 'z'), e('e2', 's', 'a'), e('e3', 's', 'm')];
     expect(buildHierarchy(nodes, edges).childrenOf('s')).toEqual(['a', 'm', 'z']);
+  });
+
+  it('orders children chronologically by t_start regardless of id', () => {
+    const nodes = [
+      nt('s'),
+      nt('z', '2026-01-01T00:00:01.000Z'),
+      nt('a', '2026-01-01T00:00:05.000Z'),
+      nt('m', '2026-01-01T00:00:02.000Z'),
+    ];
+    const edges = [e('e1', 's', 'z'), e('e2', 's', 'a'), e('e3', 's', 'm')];
+    expect(buildHierarchy(nodes, edges).childrenOf('s')).toEqual(['z', 'm', 'a']);
+  });
+
+  it('falls back to id order when children share the same t_start', () => {
+    const nodes = [
+      nt('s'),
+      nt('z', '2026-01-01T00:00:00.000Z'),
+      nt('a', '2026-01-01T00:00:00.000Z'),
+      nt('m', '2026-01-01T00:00:00.000Z'),
+    ];
+    const edges = [e('e1', 's', 'z'), e('e2', 's', 'a'), e('e3', 's', 'm')];
+    expect(buildHierarchy(nodes, edges).childrenOf('s')).toEqual(['a', 'm', 'z']);
+  });
+
+  it('sorts a child missing t_start after timed siblings', () => {
+    const nodes = [nt('s'), nt('untimed'), nt('timed', '2026-01-01T00:00:05.000Z')];
+    const edges = [e('e1', 's', 'untimed'), e('e2', 's', 'timed')];
+    expect(buildHierarchy(nodes, edges).childrenOf('s')).toEqual(['timed', 'untimed']);
+  });
+
+  it('sorts a child with an unparseable t_start after timed siblings', () => {
+    const nodes = [nt('s'), nt('bad', 'not-a-date'), nt('good', '2026-01-01T00:00:05.000Z')];
+    const edges = [e('e1', 's', 'bad'), e('e2', 's', 'good')];
+    expect(buildHierarchy(nodes, edges).childrenOf('s')).toEqual(['good', 'bad']);
+  });
+
+  it('orders roots by t_start then id', () => {
+    const nodes = [
+      nt('ar', '2026-01-01T00:00:09.000Z'),
+      nt('ac'),
+      nt('zr', '2026-01-01T00:00:01.000Z'),
+      nt('zc'),
+    ];
+    const edges = [e('e1', 'ar', 'ac'), e('e2', 'zr', 'zc')];
+    expect(buildHierarchy(nodes, edges).roots).toEqual(['zr', 'ar']);
+  });
+
+  it('orders orphans by t_start then id', () => {
+    const nodes = [nt('a', '2026-01-01T00:00:09.000Z'), nt('z', '2026-01-01T00:00:01.000Z')];
+    expect(buildHierarchy(nodes, []).orphans).toEqual(['z', 'a']);
   });
 
   it('falls back to node.parent_id when no parent_child edge exists', () => {
