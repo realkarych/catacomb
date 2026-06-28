@@ -431,6 +431,37 @@ func TestFlushRunEmptyRunIsNoop(t *testing.T) {
 	assert.Empty(t, rec.batches)
 }
 
+func resourceMap(ro sdktrace.ReadOnlySpan) map[string]string {
+	m := map[string]string{}
+	for _, kv := range ro.Resource().Attributes() {
+		m[string(kv.Key)] = kv.Value.AsString()
+	}
+	return m
+}
+
+func TestNodeToSpanDefaultProjectResource(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	rm := resourceMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "catacomb", rm["openinference.project.name"])
+}
+
+func TestSetProjectOverridesResource(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	e.SetProject("my-project")
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK}
+	rm := resourceMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "my-project", rm["openinference.project.name"])
+}
+
+func TestSetProjectEmptyKeepsDefault(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	e.SetProject("")
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeMarker, Status: model.StatusOK}
+	rm := resourceMap(e.nodeToSpan(n, ""))
+	assert.Equal(t, "catacomb", rm["openinference.project.name"])
+}
+
 func edgesNil() []*model.Edge { return nil }
 
 type errExporter struct{}

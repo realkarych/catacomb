@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -39,11 +40,12 @@ type RunFilter struct {
 }
 
 type Exporter struct {
-	client  spanExporter
-	runs    map[string]map[string]*nodeState
-	parents map[string]string
-	edgeRev map[string]uint64
-	filter  RunFilter
+	client   spanExporter
+	runs     map[string]map[string]*nodeState
+	parents  map[string]string
+	edgeRev  map[string]uint64
+	filter   RunFilter
+	resource *resource.Resource
 }
 
 func New(ctx context.Context, endpoint, daemonGRPCAddr, daemonHTTPAddr string) (*Exporter, error) {
@@ -64,11 +66,23 @@ func newFull(ctx context.Context, endpoint, daemonGRPCAddr, daemonHTTPAddr strin
 
 func newWithExporter(exp spanExporter) *Exporter {
 	return &Exporter{
-		client:  exp,
-		runs:    map[string]map[string]*nodeState{},
-		parents: map[string]string{},
-		edgeRev: map[string]uint64{},
+		client:   exp,
+		runs:     map[string]map[string]*nodeState{},
+		parents:  map[string]string{},
+		edgeRev:  map[string]uint64{},
+		resource: openInferenceResource(""),
 	}
+}
+
+func openInferenceResource(project string) *resource.Resource {
+	if project == "" {
+		project = "catacomb"
+	}
+	return resource.NewSchemaless(attribute.String("openinference.project.name", project))
+}
+
+func (e *Exporter) SetProject(name string) {
+	e.resource = openInferenceResource(name)
 }
 
 func ExporterWithSpanExporter(exp interface {
@@ -292,6 +306,7 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 		EndTime:    end,
 		Attributes: attrs,
 		Status:     spanStatus(n.Status),
+		Resource:   e.resource,
 	}
 	return stub.Snapshot()
 }
