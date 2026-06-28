@@ -127,3 +127,23 @@ func TestMarkCommandDaemonDown(t *testing.T) {
 	})
 	assert.Error(t, err)
 }
+
+func TestMarkCommandEmptyNameReturnsError(t *testing.T) {
+	err := runMark(markArgs{
+		discoveryPath: filepath.Join(t.TempDir(), "d.json"),
+		sessionID:     "s1",
+		name:          "",
+		boundary:      "start",
+	})
+	assert.Error(t, err)
+}
+
+func TestMarkCommandInvalidBoundaryReturnsError(t *testing.T) {
+	err := runMark(markArgs{
+		discoveryPath: filepath.Join(t.TempDir(), "d.json"),
+		sessionID:     "s1",
+		name:          "phase1",
+		boundary:      "bogus",
+	})
+	assert.Error(t, err)
+}

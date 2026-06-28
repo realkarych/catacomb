@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,15 @@ import (
 	"github.com/realkarych/catacomb/reduce"
 )
 
+var errInvalidMarkInput = errors.New("daemon: mark name must not be empty and boundary must be start or end")
+
+func validateMarkInput(m MarkInput) error {
+	if m.Name == "" || (m.Boundary != "start" && m.Boundary != "end") {
+		return fmt.Errorf("daemon.IngestMark: %w", errInvalidMarkInput)
+	}
+	return nil
+}
+
 type MarkInput struct {
 	SessionID  string `json:"session_id"`
 	Name       string `json:"name"`
@@ -21,6 +31,9 @@ type MarkInput struct {
 }
 
 func (d *Daemon) IngestMark(m MarkInput) (err error) {
+	if verr := validateMarkInput(m); verr != nil {
+		return verr
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	defer func() {
@@ -87,6 +100,10 @@ func (d *Daemon) handleMark(w http.ResponseWriter, r *http.Request) {
 	}
 	var m MarkInput
 	if err := json.Unmarshal(body, &m); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if validateMarkInput(m) != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}

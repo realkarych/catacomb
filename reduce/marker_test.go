@@ -136,6 +136,7 @@ func TestSnapshotPhaseMarkerSynthesized(t *testing.T) {
 	assert.Equal(t, t2, *found.TEnd)
 	assert.NotEmpty(t, found.PhaseKey)
 	assert.Equal(t, phasekey.Compute("", "phase1", 0), found.PhaseKey)
+	assert.Equal(t, model.StatusOK, found.Status)
 
 	sessEdge := model.EdgeID(execID, model.EdgeParentChild, model.SessionNodeID(execID), markerID)
 	var foundEdge bool
@@ -433,6 +434,7 @@ func TestOpenPhaseNoEnd(t *testing.T) {
 	assert.Equal(t, true, found.Attrs["open"])
 	assert.Nil(t, found.TEnd)
 	assert.Nil(t, found.DurationMS)
+	assert.Equal(t, model.StatusRunning, found.Status)
 }
 
 func TestOpenPhaseClosesAtSessionTEnd(t *testing.T) {
@@ -717,8 +719,8 @@ func TestNoMarkerNodesWhenNoBounds(t *testing.T) {
 func TestSynthesizeMarkersNoSessionNode(t *testing.T) {
 	g := NewGraph()
 	s := g.execState("orphan_exec")
-	s.markerBounds = []markerBound{
-		{name: "p", boundary: "start", occ: -1, ts: time.Now(), seq: 1},
+	s.markerBounds = map[string]markerBound{
+		"key1": {name: "p", boundary: "start", occ: -1, ts: time.Now(), seq: 1},
 	}
 	g.synthesizeMarkers()
 	assert.Empty(t, g.synthMarkerNodes)
@@ -825,4 +827,236 @@ func TestSubagentEnclosingStepKey(t *testing.T) {
 	}
 	require.NotNil(t, found, "subagent-originated phase marker should be synthesized")
 	assert.NotEmpty(t, found.PhaseKey, "phase_key should be computed with subagent's step_key")
+
+	agentNodeID := model.SubagentID(execID, "agent1")
+	var agentNode *model.Node
+	for _, n := range nodes {
+		if n.ID == agentNodeID {
+			agentNode = n
+			break
+		}
+	}
+	require.NotNil(t, agentNode, "subagent node must exist in snapshot")
+	require.NotEmpty(t, agentNode.StepKey, "subagent node must have a step_key")
+
+	expectedPhaseKey := phasekey.Compute(agentNode.StepKey, "subphase", 0)
+	emptyPhaseKey := phasekey.Compute("", "subphase", 0)
+	assert.Equal(t, expectedPhaseKey, found.PhaseKey, "marker phase_key must use subagent's step_key")
+	assert.NotEqual(t, emptyPhaseKey, found.PhaseKey, "marker phase_key with subagent scope must differ from empty scope")
+}
+
+func makeMarkPayload(name, boundary string) *model.Payload {
+	b, _ := json.Marshal(map[string]any{"name": name, "boundary": boundary})
+	return &model.Payload{Input: b}
+}
+
+func TestMultiSourceDedupPhaseKey(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	t2 := t0.Add(2 * time.Second)
+
+	hookStart := model.Observation{
+		ObsID:       "tu1_hook",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceHook,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: "tu1"},
+		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
+		Payload:     makeMarkPayload("dedupphase", "start"),
+		EventTime:   t1,
+		ObservedAt:  t1,
+		Seq:         2,
+	}
+	jsonlStart := model.Observation{
+		ObsID:       "tu1_jsonl",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceJSONL,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: "tu1"},
+		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
+		Payload:     makeMarkPayload("dedupphase", "start"),
+		EventTime:   t1,
+		ObservedAt:  t1,
+		Seq:         3,
+	}
+	endObs := markerToolUse("tu2", "dedupphase", "end", "", nil, t2, 4)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(hookStart)
+	g.Apply(jsonlStart)
+	g.Apply(endObs)
+
+	nodes, _ := g.Snapshot()
+
+	markerID0 := model.PhaseMarkerID(execID, "dedupphase", 0)
+	markerID1 := model.PhaseMarkerID(execID, "dedupphase", 1)
+
+	count0 := countNodes(nodes, markerID0)
+	count1 := countNodes(nodes, markerID1)
+
+	assert.Equal(t, 1, count0, "same tool_use_id from two sources must produce exactly one phase-marker at occ=0")
+	assert.Equal(t, 0, count1, "no phantom occ=1 marker from multi-source ingest")
+
+	var found *model.Node
+	for _, n := range nodes {
+		if n.ID == markerID0 {
+			found = n
+			break
+		}
+	}
+	require.NotNil(t, found)
+	assert.Equal(t, phasekey.Compute("", "dedupphase", 0), found.PhaseKey)
+}
+
+func TestReApplyIdempotency(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+
+	startObs := markerToolUse("tu1", "idemphase", "start", "", nil, t1, 2)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(startObs)
+	g.Apply(startObs)
+
+	nodes, _ := g.Snapshot()
+
+	markerID0 := model.PhaseMarkerID(execID, "idemphase", 0)
+	markerID1 := model.PhaseMarkerID(execID, "idemphase", 1)
+
+	assert.Equal(t, 1, countNodes(nodes, markerID0), "re-applying same start obs must produce exactly one marker at occ=0")
+	assert.Equal(t, 0, countNodes(nodes, markerID1), "no phantom occ=1 from duplicate apply")
+}
+
+func TestNegativeDurationDropped(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(2 * time.Second)
+	t2 := t0.Add(time.Second)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+
+	s := g.execState(execID)
+	s.markerBounds = map[string]markerBound{
+		"k1": {name: "negphase", boundary: "start", occ: -1, ts: t1, seq: 2},
+		"k2": {name: "negphase", boundary: "end", occ: -1, ts: t2, seq: 3},
+	}
+
+	nodes, _ := g.Snapshot()
+
+	markerID := model.PhaseMarkerID(execID, "negphase", 0)
+	var found *model.Node
+	for _, n := range nodes {
+		if n.ID == markerID {
+			found = n
+			break
+		}
+	}
+	require.NotNil(t, found, "marker should be synthesized even with negative duration")
+	assert.Nil(t, found.DurationMS, "negative duration must be dropped per ADR-0018")
+}
+
+func TestMergeMarkerBoundFillsMissingFields(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(2 * time.Second)
+	t2 := t0.Add(time.Second)
+
+	s := &execState{
+		markerBounds: map[string]markerBound{},
+	}
+
+	mergeMarkerBound(s, "k", "", "", "", -1, "", t1, 10)
+	mergeMarkerBound(s, "k", "phase1", "start", "ref_x", 3, "", t2, 5)
+
+	b := s.markerBounds["k"]
+	assert.Equal(t, "phase1", b.name)
+	assert.Equal(t, "start", b.boundary)
+	assert.Equal(t, "ref_x", b.stateRef)
+	assert.Equal(t, 3, b.occ)
+	assert.Equal(t, t2, b.ts)
+	assert.Equal(t, uint64(5), b.seq)
+}
+
+func TestMergeMarkerBoundDoesNotOverwriteExistingFields(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	t2 := t1.Add(time.Second)
+
+	s := &execState{
+		markerBounds: map[string]markerBound{},
+	}
+
+	mergeMarkerBound(s, "k", "phase1", "start", "ref_x", 3, "ag1", t1, 5)
+	mergeMarkerBound(s, "k", "phase2", "end", "ref_y", 7, "ag1", t2, 10)
+
+	b := s.markerBounds["k"]
+	assert.Equal(t, "phase1", b.name, "name must not be overwritten when existing non-empty")
+	assert.Equal(t, "start", b.boundary, "boundary must not be overwritten")
+	assert.Equal(t, "ref_x", b.stateRef, "stateRef must not be overwritten")
+	assert.Equal(t, 3, b.occ, "occ must not be overwritten when existing >= 0")
+	assert.Equal(t, t1, b.ts, "ts must not be updated to later timestamp")
+}
+
+func TestSynthesizeExecMarkersEqualTimestampSortBySeq(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+
+	s := g.execState(execID)
+	s.markerBounds = map[string]markerBound{
+		"k1": {name: "alpha", boundary: "start", occ: -1, ts: t1, seq: 5},
+		"k2": {name: "beta", boundary: "start", occ: -1, ts: t1, seq: 3},
+	}
+
+	nodes, _ := g.Snapshot()
+
+	alphaID := model.PhaseMarkerID(execID, "alpha", 0)
+	betaID := model.PhaseMarkerID(execID, "beta", 0)
+
+	nodeIDs := map[string]bool{}
+	for _, n := range nodes {
+		nodeIDs[n.ID] = true
+	}
+	assert.True(t, nodeIDs[alphaID], "alpha phase marker must be synthesized")
+	assert.True(t, nodeIDs[betaID], "beta phase marker must be synthesized")
+}
+
+func TestApplyToolMarkerEmptyToolUseIDUsesObsID(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+
+	input, _ := json.Marshal(map[string]any{"name": "noidphase", "boundary": "start"})
+	obs := model.Observation{
+		ObsID:       "obs_no_tuid",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceHook,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID},
+		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
+		Payload:     &model.Payload{Input: input},
+		EventTime:   t1,
+		ObservedAt:  t1,
+		Seq:         2,
+	}
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(obs)
+
+	nodes, _ := g.Snapshot()
+	markerID := model.PhaseMarkerID(execID, "noidphase", 0)
+	var found *model.Node
+	for _, n := range nodes {
+		if n.ID == markerID {
+			found = n
+			break
+		}
+	}
+	require.NotNil(t, found, "marker must be synthesized when ToolUseID is empty and ObsID is used as key")
 }

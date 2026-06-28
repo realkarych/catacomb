@@ -30,7 +30,7 @@ type execState struct {
 	executionID  string
 	turnsByID    map[string]*turnRef
 	groups       map[string]*agentGroup
-	markerBounds []markerBound
+	markerBounds map[string]markerBound
 	markerTools  map[string]bool
 }
 
@@ -89,10 +89,11 @@ func (g *Graph) execState(executionID string) *execState {
 	s, ok := g.execs[executionID]
 	if !ok {
 		s = &execState{
-			executionID: executionID,
-			turnsByID:   map[string]*turnRef{},
-			groups:      map[string]*agentGroup{},
-			markerTools: map[string]bool{},
+			executionID:  executionID,
+			turnsByID:    map[string]*turnRef{},
+			groups:       map[string]*agentGroup{},
+			markerBounds: map[string]markerBound{},
+			markerTools:  map[string]bool{},
 		}
 		g.execs[executionID] = s
 	}

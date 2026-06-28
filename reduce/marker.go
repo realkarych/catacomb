@@ -61,16 +61,38 @@ func extractMarkerFromAttrs(o model.Observation) (name, boundary, stateRef strin
 	return name, boundary, stateRef, occ, ok
 }
 
-func appendMarkerBound(s *execState, name, boundary, stateRef string, occ int, agentID string, ts time.Time, seq uint64) {
-	s.markerBounds = append(s.markerBounds, markerBound{
-		name:     name,
-		boundary: boundary,
-		occ:      occ,
-		stateRef: stateRef,
-		agentID:  agentID,
-		ts:       ts,
-		seq:      seq,
-	})
+func mergeMarkerBound(s *execState, key, name, boundary, stateRef string, occ int, agentID string, ts time.Time, seq uint64) {
+	existing, ok := s.markerBounds[key]
+	if !ok {
+		s.markerBounds[key] = markerBound{
+			name:     name,
+			boundary: boundary,
+			occ:      occ,
+			stateRef: stateRef,
+			agentID:  agentID,
+			ts:       ts,
+			seq:      seq,
+		}
+		return
+	}
+	merged := existing
+	if merged.name == "" && name != "" {
+		merged.name = name
+	}
+	if merged.boundary == "" && boundary != "" {
+		merged.boundary = boundary
+	}
+	if merged.stateRef == "" && stateRef != "" {
+		merged.stateRef = stateRef
+	}
+	if merged.occ < 0 && occ >= 0 {
+		merged.occ = occ
+	}
+	if ts.Before(merged.ts) || (ts.Equal(merged.ts) && seq < merged.seq) {
+		merged.ts = ts
+		merged.seq = seq
+	}
+	s.markerBounds[key] = merged
 }
 
 func (g *Graph) synthesizeMarkers() {
@@ -87,8 +109,10 @@ func (g *Graph) synthesizeExecMarkers(execID string, s *execState) {
 		return
 	}
 
-	sorted := make([]markerBound, len(s.markerBounds))
-	copy(sorted, s.markerBounds)
+	sorted := make([]markerBound, 0, len(s.markerBounds))
+	for _, b := range s.markerBounds {
+		sorted = append(sorted, b)
+	}
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].ts.Equal(sorted[j].ts) {
 			return sorted[i].seq < sorted[j].seq
@@ -168,10 +192,18 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 	if len(attrs) == 0 {
 		n.Attrs = nil
 	}
+	_, isOpen := attrs["open"]
+	if isOpen {
+		n.Status = model.StatusRunning
+	} else {
+		n.Status = model.StatusOK
+	}
 	if tEnd != nil {
 		n.TEnd = tEnd
 		ms := n.TEnd.Sub(*n.TStart).Milliseconds()
-		n.DurationMS = &ms
+		if ms >= 0 {
+			n.DurationMS = &ms
+		}
 	}
 
 	g.Nodes[id] = n

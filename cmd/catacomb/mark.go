@@ -46,6 +46,12 @@ func newMarkCmd() *cobra.Command {
 }
 
 func runMark(a markArgs) error {
+	if a.name == "" {
+		return fmt.Errorf("catacomb mark: name must not be empty")
+	}
+	if a.boundary != "start" && a.boundary != "end" {
+		return fmt.Errorf("catacomb mark: boundary must be start or end, got %q", a.boundary)
+	}
 	disc, err := daemon.ReadDiscovery(a.discoveryPath)
 	if err != nil {
 		return fmt.Errorf("catacomb mark: discovery: %w", err)

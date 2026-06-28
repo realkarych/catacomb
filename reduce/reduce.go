@@ -88,7 +88,7 @@ func (g *Graph) Apply(o model.Observation) {
 	case "marker":
 		if mn, mb, ms, mocc, mok := extractMarkerFromAttrs(o); mok {
 			s := g.execState(o.ExecutionID)
-			appendMarkerBound(s, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
+			mergeMarkerBound(s, o.ObsID, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
 		} else {
 			n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
 			g.stamp(n, o)
@@ -114,8 +114,12 @@ func (g *Graph) applyTool(o model.Observation) {
 	name, _ := o.Attrs["name"].(string)
 	s := g.execState(o.ExecutionID)
 	if isMarkerTool(name) {
+		key := o.Correlation.ToolUseID
+		if key == "" {
+			key = o.ObsID
+		}
 		if mn, mb, ms, mocc, mok := extractMarkerFromPayload(o); mok {
-			appendMarkerBound(s, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
+			mergeMarkerBound(s, key, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
 		}
 		s.markerTools[o.Correlation.ToolUseID] = true
 		return

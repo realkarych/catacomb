@@ -243,3 +243,35 @@ func TestIngestMarkPanicRecovery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, d.QuarantinedForTest(), int64(0))
 }
+
+func TestIngestMarkEmptyNameReturnsError(t *testing.T) {
+	d := New(tempStore(t))
+	err := d.IngestMark(MarkInput{SessionID: "s1", Name: "", Boundary: "start"})
+	require.Error(t, err)
+}
+
+func TestIngestMarkInvalidBoundaryReturnsError(t *testing.T) {
+	d := New(tempStore(t))
+	err := d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "bogus"})
+	require.Error(t, err)
+}
+
+func TestHandleMarkEmptyNameReturns400(t *testing.T) {
+	d := New(tempStore(t))
+	body, _ := json.Marshal(MarkInput{SessionID: "s1", Name: "", Boundary: "start"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/mark", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	rr := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestHandleMarkInvalidBoundaryReturns400(t *testing.T) {
+	d := New(tempStore(t))
+	body, _ := json.Marshal(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "invalid"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/mark", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	rr := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
