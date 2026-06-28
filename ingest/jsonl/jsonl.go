@@ -22,6 +22,8 @@ type line struct {
 	IsSidechain     bool            `json:"isSidechain"`
 	AgentID         string          `json:"agentId"`
 	Message         json.RawMessage `json:"message"`
+	Version         string          `json:"version"`
+	Cwd             string          `json:"cwd"`
 }
 
 type message struct {
@@ -133,6 +135,19 @@ func decodeLine(raw []byte) (line, []partial, error) {
 			kind:        "subagent_stop",
 			correlation: model.Correlation{AgentID: ln.AgentID, ParentToolUseID: ln.ParentToolUseID, SessionID: ln.SessionID},
 		})
+	}
+	if ln.Version != "" || ln.Cwd != "" {
+		for i := range parts {
+			if parts[i].attrs == nil {
+				parts[i].attrs = map[string]any{}
+			}
+			if ln.Version != "" {
+				parts[i].attrs["claude_code_version"] = ln.Version
+			}
+			if ln.Cwd != "" {
+				parts[i].attrs["cwd"] = ln.Cwd
+			}
+		}
 	}
 	return ln, parts, nil
 }

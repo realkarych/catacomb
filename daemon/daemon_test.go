@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -23,6 +24,7 @@ import (
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
+	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -1362,4 +1364,101 @@ func TestApplyAndPersistCarryOverDeltaNodeMerge(t *testing.T) {
 
 	require.NotNil(t, newNode)
 	assert.Equal(t, json.RawMessage(`5`), newNode.Annotations["eval.score"])
+}
+
+type failOnNthAppendStore struct {
+	store.Store
+	count int
+	failN int
+}
+
+func (s *failOnNthAppendStore) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta) error {
+	s.count++
+	if s.count == s.failN {
+		return errors.New("nth append fail")
+	}
+	return s.Store.AppendDeltas(o, deltas)
+}
+
+func TestSetReproCapture(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.mu.Lock()
+	assert.NotNil(t, d.reproFS)
+	d.mu.Unlock()
+}
+
+func TestSetCatacombVersion(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetCatacombVersion("v1.2.3")
+	d.mu.Lock()
+	assert.Equal(t, "v1.2.3", d.catacombVersion)
+	d.mu.Unlock()
+}
+
+func TestCaptureReproIfReadyHappyPath(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.SetCatacombVersion("v1.0")
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	d.mu.Lock()
+	captured := d.reproCaptured["s1"]
+	r := d.graphs["exec1"].Runs["s1"]
+	d.mu.Unlock()
+	assert.True(t, captured)
+	require.NotNil(t, r)
+	require.NotNil(t, r.Repro)
+	assert.Equal(t, "v1.0", r.Repro.CatacombVersion)
+}
+
+func TestCaptureReproNilGraph(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.mu.Lock()
+	d.execBySession["orphan"] = ""
+	d.mu.Unlock()
+	d.captureReproForTest("orphan")
+	d.mu.Lock()
+	captured := d.reproCaptured["orphan"]
+	d.mu.Unlock()
+	assert.True(t, captured)
+}
+
+func TestCaptureReproAlreadyCaptured(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.SetReproCaptureCounterForTest("s1", true)
+	initial := d.ReproCapturedCountForTest()
+	d.captureReproForTest("s1")
+	assert.Equal(t, initial, d.ReproCapturedCountForTest())
+}
+
+func TestCaptureReproStoreError(t *testing.T) {
+	s := &failOnNthAppendStore{Store: tempStore(t), failN: 2}
+	d := New(s)
+	fixedExecID(d)
+	d.SetReproCapture(fstest.MapFS{}, repro.Config{})
+	d.SetCatacombVersion("v1.0")
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+}
+
+func TestRecoverMarksRunsAsCaptured(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, s.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	d2.mu.Lock()
+	captured := d2.reproCaptured["s1"]
+	d2.mu.Unlock()
+	assert.True(t, captured)
 }

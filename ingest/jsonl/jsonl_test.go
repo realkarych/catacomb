@@ -271,6 +271,27 @@ func TestParseReaderUserPromptHumanKind(t *testing.T) {
 	assert.Equal(t, "human", up[0].Attrs["prompt_kind"])
 }
 
+func TestDecodeLineVersionAndCwdInjected(t *testing.T) {
+	raw := `{"type":"assistant","sessionId":"s1","isSidechain":true,"version":"1.2.3","cwd":"/home","message":{"id":"m1","model":"claude-opus-4-8","role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
+	obs, err := ParseReader(strings.NewReader(raw), "exec1")
+	require.NoError(t, err)
+
+	byKindMap := map[string]*model.Observation{}
+	for i := range obs {
+		byKindMap[obs[i].Kind] = &obs[i]
+	}
+
+	turn, ok := byKindMap["assistant_turn"]
+	require.True(t, ok, "expected assistant_turn observation")
+	assert.Equal(t, "1.2.3", turn.Attrs["claude_code_version"])
+	assert.Equal(t, "/home", turn.Attrs["cwd"])
+
+	stop, ok := byKindMap["subagent_stop"]
+	require.True(t, ok, "expected subagent_stop observation")
+	assert.Equal(t, "1.2.3", stop.Attrs["claude_code_version"])
+	assert.Equal(t, "/home", stop.Attrs["cwd"])
+}
+
 func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)

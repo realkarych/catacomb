@@ -55,3 +55,21 @@ func (d *Daemon) ExporterConsumersForTest() []*cdc.Consumer {
 	copy(out, d.exporterConsumers)
 	return out
 }
+
+func (d *Daemon) SetReproCaptureCounterForTest(runID string, captured bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.reproCaptured[runID] = captured
+}
+
+func (d *Daemon) ReproCapturedCountForTest() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.reproCaptured)
+}
+
+func (d *Daemon) captureReproForTest(runID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.captureReproIfReady(runID)
+}

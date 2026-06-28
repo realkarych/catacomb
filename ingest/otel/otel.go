@@ -19,9 +19,10 @@ func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextS
 	var out []model.Observation
 	for _, rs := range req.GetResourceSpans() {
 		sessionID := sessionFromAttrs(rs.GetResource().GetAttributes())
+		resourceAttrs := rs.GetResource().GetAttributes()
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
-				obs, ok := spanToObservation(span, executionID, sessionID, nextSeq)
+				obs, ok := spanToObservation(span, executionID, sessionID, resourceAttrs, nextSeq)
 				if !ok {
 					continue
 				}
@@ -53,13 +54,13 @@ func SessionID(req *collectorv1.ExportTraceServiceRequest) string {
 	return sessionFromAttrs(rs[0].GetResource().GetAttributes())
 }
 
-func spanToObservation(span *tracev1.Span, executionID, sessionID string, nextSeq func() uint64) (model.Observation, bool) {
+func spanToObservation(span *tracev1.Span, executionID, sessionID string, resourceAttrs []*commonv1.KeyValue, nextSeq func() uint64) (model.Observation, bool) {
 	kind, ok := classifySpan(span)
 	if !ok {
 		return model.Observation{}, false
 	}
 
-	attrs := buildAttrs(kind, span)
+	attrs := buildAttrs(kind, span, resourceAttrs)
 	corr := buildCorrelation(kind, sessionID, span)
 
 	ts := nowFn().UTC()
@@ -130,7 +131,7 @@ func buildCorrelation(kind, sessionID string, span *tracev1.Span) model.Correlat
 	return c
 }
 
-func buildAttrs(kind string, span *tracev1.Span) map[string]any {
+func buildAttrs(kind string, span *tracev1.Span, resourceAttrs []*commonv1.KeyValue) map[string]any {
 	attrs := span.GetAttributes()
 	m := map[string]any{}
 	switch kind {
@@ -143,6 +144,9 @@ func buildAttrs(kind string, span *tracev1.Span) map[string]any {
 		}
 		if v, ok := lookupInt(attrs, "gen_ai.usage.output_tokens"); ok {
 			m["tokens_out"] = v
+		}
+		if v, ok := lookupString(resourceAttrs, "claude_code.version"); ok {
+			m["claude_code_version"] = v
 		}
 	case "assistant_tool_use":
 		if v, ok := lookupString(attrs, "gen_ai.tool.name", "tool_name"); ok {

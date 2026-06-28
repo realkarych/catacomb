@@ -501,6 +501,28 @@ func TestParseLLMSpanTokensWrongType(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestParseLLMSpanClaudeCodeVersionFromResource(t *testing.T) {
+	fixedNow(time.Now())
+	span := &tracev1.Span{
+		SpanId: spanID(22),
+		Name:   "claude_code.llm_request",
+		Attributes: []*commonv1.KeyValue{
+			strAttr("gen_ai.request.model", "claude-opus-4-5"),
+		},
+	}
+	resource := &resourcev1.Resource{
+		Attributes: []*commonv1.KeyValue{
+			strAttr("claude_code.version", "1.2.3"),
+		},
+	}
+	req := makeReq(resource, span)
+
+	obs, err := Parse(req, "exec22", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "1.2.3", obs[0].Attrs["claude_code_version"])
+}
+
 func TestParseLLMSpanResponseModelFallback(t *testing.T) {
 	fixedNow(time.Now())
 	span := &tracev1.Span{

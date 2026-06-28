@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestSnapshotIncludesAnnotations(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	require.NoError(t, Snapshot(&buf, nodes, nil))
+	require.NoError(t, Snapshot(&buf, nodes, nil, nil))
 	assert.Contains(t, buf.String(), `"annotations"`)
 	assert.Contains(t, buf.String(), `"eval.score"`)
 }
@@ -38,7 +39,7 @@ func TestSnapshotOrderAndKinds(t *testing.T) {
 	edges := []*model.Edge{{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "session:s1", Dst: "n2"}}
 
 	var buf bytes.Buffer
-	require.NoError(t, Snapshot(&buf, nodes, edges))
+	require.NoError(t, Snapshot(&buf, nodes, edges, nil))
 
 	var kinds []string
 	sc := bufio.NewScanner(&buf)
@@ -53,17 +54,52 @@ func TestSnapshotOrderAndKinds(t *testing.T) {
 }
 
 func TestSnapshotWriterErrorNode(t *testing.T) {
-	err := Snapshot(failWriter{}, []*model.Node{{ID: "n"}}, nil)
+	err := Snapshot(failWriter{}, []*model.Node{{ID: "n"}}, nil, nil)
 	require.Error(t, err)
 }
 
 func TestSnapshotWriterErrorEdge(t *testing.T) {
-	err := Snapshot(failWriter{}, nil, []*model.Edge{{ID: "e"}})
+	err := Snapshot(failWriter{}, nil, []*model.Edge{{ID: "e"}}, nil)
 	require.Error(t, err)
 }
 
 func TestSnapshotEmpty(t *testing.T) {
 	var buf bytes.Buffer
-	require.NoError(t, Snapshot(&buf, nil, nil))
+	require.NoError(t, Snapshot(&buf, nil, nil, nil))
 	assert.Empty(t, buf.String())
+}
+
+func TestSnapshotRunLine(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	runs := []model.Run{{ID: "s1", Status: model.StatusOK, StartedAt: &now}}
+	var buf bytes.Buffer
+	require.NoError(t, Snapshot(&buf, nil, nil, runs))
+	assert.Contains(t, buf.String(), `"run"`)
+	assert.Contains(t, buf.String(), `"s1"`)
+}
+
+func TestSnapshotRunWriterError(t *testing.T) {
+	runs := []model.Run{{ID: "r1"}}
+	err := Snapshot(failWriter{}, nil, nil, runs)
+	require.Error(t, err)
+}
+
+func TestSnapshotAllKindsOrdered(t *testing.T) {
+	nodes := []*model.Node{{ID: "n1", RunID: "s1", Type: model.NodeSession}}
+	edges := []*model.Edge{{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}}
+	runs := []model.Run{{ID: "s1", Status: model.StatusOK}}
+
+	var buf bytes.Buffer
+	require.NoError(t, Snapshot(&buf, nodes, edges, runs))
+
+	var kinds []string
+	sc := bufio.NewScanner(&buf)
+	for sc.Scan() {
+		var rec struct {
+			Kind string `json:"kind"`
+		}
+		require.NoError(t, json.Unmarshal(sc.Bytes(), &rec))
+		kinds = append(kinds, rec.Kind)
+	}
+	assert.Equal(t, []string{"node", "edge", "run"}, kinds)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"slices"
@@ -24,6 +25,7 @@ import (
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/pricing"
 	"github.com/realkarych/catacomb/reduce"
+	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -82,6 +84,10 @@ type Daemon struct {
 	pricer             reduce.Pricer
 	allowPayloadAccess bool
 	allowAnnotations   bool
+	catacombVersion    string
+	reproFS            fs.FS
+	reproConfig        repro.Config
+	reproCaptured      map[string]bool
 }
 
 func New(s store.Store) *Daemon {
@@ -96,6 +102,7 @@ func New(s store.Store) *Daemon {
 		reaperWindow:  defaultReaperWindow,
 		maxShards:     defaultMaxShards,
 		startedAt:     nowFn(),
+		reproCaptured: map[string]bool{},
 		pricer: reduce.PricerFunc(func(in reduce.PriceInputs) (reduce.PriceResult, bool) {
 			r, ok := eng.Cost(pricing.Inputs{
 				ModelID:     in.ModelID,
@@ -187,6 +194,11 @@ func (d *Daemon) Recover() error {
 			if err := d.store.UpsertRun(r); err != nil {
 				return err
 			}
+		}
+	}
+	for _, g := range d.graphs {
+		for runID := range g.Runs {
+			d.reproCaptured[runID] = true
 		}
 	}
 	if err := reattachAnnotations(d); err != nil {
@@ -489,6 +501,55 @@ func (d *Daemon) SetDBPath(s string) {
 	d.dbPath = s
 }
 
+func (d *Daemon) SetReproCapture(fsys fs.FS, cfg repro.Config) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.reproFS = fsys
+	d.reproConfig = cfg
+}
+
+func (d *Daemon) SetCatacombVersion(v string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.catacombVersion = v
+}
+
+func (d *Daemon) captureReproIfReady(runID string) {
+	if d.reproCaptured[runID] || d.reproFS == nil {
+		return
+	}
+	d.reproCaptured[runID] = true
+	execID := d.execBySession[runID]
+	g := d.graphs[execID]
+	if g == nil {
+		return
+	}
+	hashes := repro.Capture(d.reproFS, d.reproConfig)
+	cwd, _ := getwdFn()
+	now := nowFn().UTC()
+	o := model.Observation{
+		ObsID:       ulid.Make().String(),
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceHook,
+		Kind:        "repro_meta",
+		Attrs: map[string]any{
+			"prompts_hash":         hashes.PromptsHash,
+			"skills_hash":          hashes.SkillsHash,
+			"subagents_hash":       hashes.SubagentsHash,
+			"catacomb_config_hash": hashes.CatacombConfigHash,
+			"catacomb_version":     d.catacombVersion,
+			"cwd":                  cwd,
+		},
+		EventTime:  now,
+		ObservedAt: now,
+		Seq:        d.next(),
+	}
+	if err := d.applyAndPersist(g, o); err != nil {
+		log.Printf("catacomb: repro capture failed: %v", err)
+	}
+}
+
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
 	deltas := drainFn(g)
@@ -506,6 +567,7 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 		}
 		d.publishDelta(delta)
 	}
+	d.captureReproIfReady(o.RunID)
 	return nil
 }
 

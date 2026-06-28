@@ -39,6 +39,7 @@ func runSnapshot(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer,
 		return err
 	}
 	nodes, edges := collectSnapshot(graphs, runID)
+	runs := collectRunsFor(graphs, runID)
 	w := out
 	if outPath != "" {
 		f, err := os.Create(outPath)
@@ -48,5 +49,5 @@ func runSnapshot(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer,
 		defer func() { _ = f.Close() }()
 		w = f
 	}
-	return xjsonl.Snapshot(w, nodes, edges)
+	return xjsonl.Snapshot(w, nodes, edges, runs)
 }
