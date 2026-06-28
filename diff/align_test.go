@@ -188,6 +188,61 @@ func TestMatchLCSPairsResiduals(t *testing.T) {
 	assert.True(t, usedB[0])
 }
 
+func TestChangedBashCommandIsChangedNotAddRemove(t *testing.T) {
+	makeCmd := func(id, cmd string, sec int64, parent string) (*model.Node, *model.Edge) {
+		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
+		n.Payload = &model.Payload{Input: []byte(`{"command":"` + cmd + `"}`)}
+		e := &model.Edge{Type: model.EdgeParentChild, Src: parent, Dst: id}
+		return n, e
+	}
+
+	turnA := &model.Node{ID: "tA", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	turnB := &model.Node{ID: "tB", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+
+	lsA, eLA := makeCmd("a_ls", "ls -a", 1, "tA")
+	catA, eCA := makeCmd("a_cat", "cat x", 2, "tA")
+	lsB, eLB := makeCmd("b_ls", "ls -a", 1, "tB")
+	catB, eCB := makeCmd("b_cat", "cat y", 2, "tB")
+
+	nodesA := []*model.Node{turnA, lsA, catA}
+	nodesB := []*model.Node{turnB, lsB, catB}
+	edgesA := []*model.Edge{eLA, eCA}
+	edgesB := []*model.Edge{eLB, eCB}
+
+	result := DiffGraphs(nodesA, edgesA, nodesB, edgesB)
+
+	assert.Empty(t, result.Added, "no Added expected")
+	assert.Empty(t, result.Removed, "no Removed expected")
+	require.Len(t, result.Unchanged, 1, "ls -a should be Unchanged")
+	assert.Equal(t, "step_key", result.Unchanged[0].Tier)
+	require.Len(t, result.Changed, 1, "cat should be Changed")
+	assert.Equal(t, "position", result.Changed[0].Tier)
+	require.NotNil(t, result.Changed[0].Deltas.Args)
+}
+
+func TestPositionDoesNotPairDifferentTools(t *testing.T) {
+	turnA := &model.Node{ID: "tA", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	turnB := &model.Node{ID: "tB", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+
+	bashA := &model.Node{ID: "a_bash", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(1)}
+	bashA.Payload = &model.Payload{Input: []byte(`{"command":"ls"}`)}
+	readB := &model.Node{ID: "b_read", Type: model.NodeToolCall, Name: "Read", Status: model.StatusOK, TStart: ts(1)}
+	readB.Payload = &model.Payload{Input: []byte(`{"file_path":"x"}`)}
+
+	nodesA := []*model.Node{turnA, bashA}
+	nodesB := []*model.Node{turnB, readB}
+	edgesA := []*model.Edge{{Type: model.EdgeParentChild, Src: "tA", Dst: "a_bash"}}
+	edgesB := []*model.Edge{{Type: model.EdgeParentChild, Src: "tB", Dst: "b_read"}}
+
+	result := DiffGraphs(nodesA, edgesA, nodesB, edgesB)
+
+	require.Len(t, result.Removed, 1, "Bash should be Removed")
+	require.Len(t, result.Added, 1, "Read should be Added")
+	assert.Empty(t, result.Changed, "no Changed expected: different tools")
+	assert.Equal(t, "Bash", result.Removed[0].Tool)
+	assert.Equal(t, "Read", result.Added[0].Tool)
+}
+
 func TestDriftWithRepeatedContentAlignsViaLCS(t *testing.T) {
 	makeCmd := func(id, cmd string, sec int64) *model.Node {
 		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}

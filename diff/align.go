@@ -9,6 +9,7 @@ func alignItems(a, b []item) (matched [][2]int, ra []int, rb []int) {
 	matchExact(a, b, usedA, usedB, &matched, func(it item) string { return it.step })
 	matchUnique(a, b, usedA, usedB, &matched, func(it item) string { return it.content })
 	matchLCS(a, b, usedA, usedB, &matched)
+	matchExact(a, b, usedA, usedB, &matched, positionKey)
 
 	for i := range a {
 		if !usedA[i] {
@@ -94,6 +95,10 @@ func firstIndex(items []item, used []bool, key func(item) string) map[string]int
 		}
 	}
 	return m
+}
+
+func positionKey(it item) string {
+	return it.pathKey + "\x1f" + string(it.node.Type) + "\x1f" + it.node.Name + "\x1f" + it.node.SubagentType
 }
 
 func matchExact(a, b []item, usedA, usedB []bool, matched *[][2]int, key func(item) string) {
