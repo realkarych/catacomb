@@ -1337,18 +1337,22 @@ func TestApplyAndPersistCarryOverDeltaNodeMerge(t *testing.T) {
 	sourceKey := model.NodeSourceKey(t1ID)
 	require.NoError(t, d.Annotate(execID, sourceKey, "eval", "score", json.RawMessage(`5`)))
 
-	orig := applyFn
+	origApply := applyFn
 	applyFn = func(g *reduce.Graph, o model.Observation) {
-		g.EmitDelta(cdc.GraphDelta{
+		g.Nodes[t2ID] = &model.Node{ID: t2ID, RunID: o.RunID, Type: model.NodeToolCall}
+	}
+	t.Cleanup(func() { applyFn = origApply })
+
+	origDrain := drainFn
+	drainFn = func(g *reduce.Graph) []cdc.GraphDelta {
+		return []cdc.GraphDelta{{
 			Kind:        cdc.DeltaNodeMerge,
 			OldID:       t1ID,
 			NewID:       t2ID,
 			ExecutionID: execID,
-			RunID:       o.RunID,
-		})
-		g.Nodes[t2ID] = &model.Node{ID: t2ID, RunID: o.RunID, Type: model.NodeToolCall}
+		}}
 	}
-	t.Cleanup(func() { applyFn = orig })
+	t.Cleanup(func() { drainFn = origDrain })
 
 	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
 

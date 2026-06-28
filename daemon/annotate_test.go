@@ -167,6 +167,30 @@ func TestCarryOverMergeMovesAnnotations(t *testing.T) {
 	}
 }
 
+func TestCarryOverMergeClearsOldNodeAnnotations(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetAllowAnnotations(true)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	execID := d.execForTest("s1")
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+
+	oldID := model.ToolCallID(execID, "t1")
+	sourceKey := model.NodeSourceKey(oldID)
+	require.NoError(t, d.Annotate(execID, sourceKey, "eval", "score", json.RawMessage(`5`)))
+
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t2","tool_input":{}}`)))
+	newID := model.ToolCallID(execID, "t2")
+
+	d.mu.Lock()
+	d.carryOverMergeLocked(execID, oldID, newID)
+	oldNode := d.graphs[execID].Nodes[oldID]
+	d.mu.Unlock()
+
+	require.NotNil(t, oldNode)
+	assert.Nil(t, oldNode.Annotations)
+}
+
 func TestHandleNodeAnnotateGating(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)

@@ -41,10 +41,17 @@ func (d *Daemon) Annotate(execID, sourceKey, owner, key string, value json.RawMe
 	if n == nil {
 		return fmt.Errorf("daemon.Annotate: %w", ErrAnnotationTarget)
 	}
+	if err := d.annotateNodeLocked(execID, n, owner, key, value); err != nil {
+		return fmt.Errorf("daemon.Annotate: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) annotateNodeLocked(execID string, n *model.Node, owner, key string, value json.RawMessage) error {
 	seq := d.next()
 	ann := model.Annotation{
 		ExecutionID: execID,
-		SourceKey:   sourceKey,
+		SourceKey:   model.NodeSourceKey(n.ID),
 		StepKey:     n.StepKey,
 		Owner:       owner,
 		Key:         key,
@@ -52,7 +59,7 @@ func (d *Daemon) Annotate(execID, sourceKey, owner, key string, value json.RawMe
 		WriteSeq:    seq,
 	}
 	if err := d.store.UpsertAnnotation(ann); err != nil {
-		return fmt.Errorf("daemon.Annotate: %w", err)
+		return err
 	}
 	n.Annotations = model.SetAnnotation(n.Annotations, owner, key, value)
 	if seq > n.Rev {
@@ -135,6 +142,9 @@ func (d *Daemon) carryOverMergeLocked(execID, oldID, newID string) {
 		return
 	}
 	applyAnnotations(g, anns)
+	if oldNode := nodeBySourceKey(g, fromKey); oldNode != nil {
+		oldNode.Annotations = nil
+	}
 	n := nodeBySourceKey(g, toKey)
 	if n == nil {
 		return
@@ -162,31 +172,9 @@ func (d *Daemon) resolveAndAnnotateLocked(hash, nodeID string, req annotateReque
 		g := d.graphs[eid]
 		for _, n := range g.Nodes {
 			if n.ID == nodeID {
-				sourceKey := model.NodeSourceKey(nodeID)
-				seq := d.next()
-				ann := model.Annotation{
-					ExecutionID: eid,
-					SourceKey:   sourceKey,
-					StepKey:     n.StepKey,
-					Owner:       req.Owner,
-					Key:         req.Key,
-					Value:       req.Value,
-					WriteSeq:    seq,
-				}
-				if err := d.store.UpsertAnnotation(ann); err != nil {
+				if err := d.annotateNodeLocked(eid, n, req.Owner, req.Key, req.Value); err != nil {
 					return fmt.Errorf("daemon.handleNodeAnnotate: %w", err)
 				}
-				n.Annotations = model.SetAnnotation(n.Annotations, req.Owner, req.Key, req.Value)
-				if seq > n.Rev {
-					n.Rev = seq
-				}
-				d.publishDelta(cdc.GraphDelta{
-					Kind:        cdc.DeltaNodeUpsert,
-					Rev:         n.Rev,
-					Node:        n,
-					RunID:       n.RunID,
-					ExecutionID: eid,
-				})
 				return nil
 			}
 		}
