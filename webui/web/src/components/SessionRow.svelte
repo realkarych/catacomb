@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { SessionSummary } from '../lib/types';
   import { formatDuration, formatTokens, formatCost, shortHash, formatDate } from '../lib/format/format';
+  import { sessionDisplayStatus, sessionElapsedMs } from '../lib/status';
   import { toHash } from '../lib/router';
-  import { sessionDisplayStatus } from '../lib/status';
   import StatusPill from './StatusPill.svelte';
 
   interface Props {
@@ -11,6 +11,7 @@
   let { session }: Props = $props();
 
   const displayStatus = $derived(sessionDisplayStatus(session, Date.now()));
+  const elapsedMs = $derived(sessionElapsedMs(session, Date.now()));
 
   function navigate() {
     window.location.hash = toHash({ kind: 'session', hash: session.session });
@@ -34,16 +35,18 @@
   <td class="cell cell-hash mono">{shortHash(session.session, 12)}</td>
   <td class="cell cell-status">{#if displayStatus}<StatusPill status={displayStatus} />{/if}</td>
   <td class="cell cell-num">{formatDate(session.started_at)}</td>
-  <td class="cell cell-num">{formatDuration(session.duration_ms)}</td>
-  <td class="cell cell-num">{formatTokens(session.tokens_in)} / {formatTokens(session.tokens_out)}</td>
+  <td class="cell cell-num">{formatDuration(elapsedMs)}</td>
+  <td class="cell cell-num">{formatTokens(session.tokens_in)}→{formatTokens(session.tokens_out)}</td>
   <td class="cell cell-cost">
     <span>{formatCost(session.cost_usd)}</span>
-    {#if session.cost_source}
+    {#if session.cost_source === 'reported'}
       <span class="provenance-badge" data-source={session.cost_source}>{session.cost_source}</span>
     {/if}
   </td>
   <td class="cell cell-num">{session.tool_count}</td>
-  <td class="cell cell-num">{session.error_count}</td>
+  <td class="cell cell-num cell-errors">
+    {#if session.error_count > 0}<span class="err-count">{session.error_count}</span>{/if}
+  </td>
   <td class="cell cell-model">{session.model_id ?? '—'}</td>
 </tr>
 
@@ -93,6 +96,10 @@
     font-size: var(--text-xs);
   }
 
+  .err-count {
+    color: var(--error);
+  }
+
   .provenance-badge {
     font-size: var(--text-xs);
     padding: 1px 5px;
@@ -106,9 +113,5 @@
   .provenance-badge[data-source='reported'] {
     color: var(--ok);
     border-color: var(--ok);
-  }
-
-  .provenance-badge[data-source='estimated'] {
-    color: var(--text-faint);
   }
 </style>

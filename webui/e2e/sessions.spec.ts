@@ -109,3 +109,40 @@ test('deep-link to #/s/{hash} renders session view directly', async ({ page }) =
   await expect(page.locator('.session-view')).toBeVisible();
   await expect(page.locator('.session-view')).toContainText('cafebabe0002');
 });
+
+test('tokens use a single arrow separator', async ({ page }) => {
+  await page.goto('/');
+  const okRow = page.locator('.session-row', { hasText: 'deadbeef' });
+  await expect(okRow).toContainText('1,500→3,200');
+});
+
+test('non-zero error count is emphasized while zero is blank', async ({ page }) => {
+  await page.goto('/');
+  const errorRow = page.locator('.session-row', { hasText: 'cafebabe' });
+  await expect(errorRow.locator('.cell-errors .err-count')).toHaveText('3');
+  const okRow = page.locator('.session-row', { hasText: 'deadbeef' });
+  await expect(okRow.locator('.cell-errors .err-count')).toHaveCount(0);
+});
+
+test('running session shows elapsed duration instead of an em dash', async ({ page }) => {
+  await page.goto('/');
+  const runningRow = page.locator('.session-row', { hasText: 'abcd1234' });
+  await expect(runningRow).toBeVisible();
+  await expect(runningRow.locator('.cell').nth(3)).not.toHaveText('—');
+});
+
+test('clicking a sortable column header sorts the list', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.session-row')).toHaveCount(3);
+
+  const durationHeader = page.getByRole('button', { name: 'Duration' });
+  const durationTh = page.locator('th', { hasText: 'Duration' });
+
+  await durationHeader.click();
+  await expect(page.locator('.session-row').first()).toContainText('deadbeef');
+  await expect(durationTh).toHaveAttribute('aria-sort', 'descending');
+
+  await durationHeader.click();
+  await expect(page.locator('.session-row').first()).toContainText('cafebabe');
+  await expect(durationTh).toHaveAttribute('aria-sort', 'ascending');
+});

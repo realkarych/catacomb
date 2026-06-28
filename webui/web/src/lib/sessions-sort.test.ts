@@ -162,6 +162,16 @@ describe('sortSessions', () => {
     expect(result.map(s => s.session)).toEqual(['bbb222', 'ccc333', 'aaa111']);
   });
 
+  it('sorts tool_count ascending', () => {
+    const s = [
+      makeSession({ session: 's1', tool_count: 9 }),
+      makeSession({ session: 's2', tool_count: 1 }),
+      makeSession({ session: 's3', tool_count: 5 }),
+    ];
+    const result = sortSessions(s, 'tool_count', 'asc');
+    expect(result.map(x => x.session)).toEqual(['s2', 's3', 's1']);
+  });
+
   it('sorts error_count ascending', () => {
     const result = sortSessions(sessions, 'error_count', 'asc');
     expect(result[0]!.error_count).toBe(0);

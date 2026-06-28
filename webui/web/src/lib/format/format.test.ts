@@ -53,6 +53,18 @@ describe('formatDuration', () => {
   it('returns hours and padded minutes for large values', () => {
     expect(formatDuration(7260000)).toBe('2h 01m');
   });
+
+  it('returns hours and minutes just under one day', () => {
+    expect(formatDuration(86399999)).toBe('23h 59m');
+  });
+
+  it('returns days and padded hours for exactly one day', () => {
+    expect(formatDuration(86400000)).toBe('1d 00h');
+  });
+
+  it('returns days and hours for multi-day durations', () => {
+    expect(formatDuration(336360000)).toBe('3d 21h');
+  });
 });
 
 describe('formatTokens', () => {
@@ -86,6 +98,18 @@ describe('formatTokens', () => {
 
   it('returns compact form for 123456', () => {
     expect(formatTokens(123456)).toBe('123.5k');
+  });
+
+  it('returns compact k form just under one million', () => {
+    expect(formatTokens(999999)).toBe('1000.0k');
+  });
+
+  it('returns compact M form for exactly one million', () => {
+    expect(formatTokens(1000000)).toBe('1.00M');
+  });
+
+  it('returns compact M form for 4688100', () => {
+    expect(formatTokens(4688100)).toBe('4.69M');
   });
 });
 
@@ -128,16 +152,20 @@ describe('shortHash', () => {
     expect(shortHash('')).toBe('—');
   });
 
-  it('returns first 8 chars by default', () => {
-    expect(shortHash('sha-1234abcdef')).toBe('sha-1234');
+  it('returns first 8 chars with an ellipsis when truncated', () => {
+    expect(shortHash('sha-1234abcdef')).toBe('sha-1234…');
   });
 
   it('returns full string if shorter than default n', () => {
     expect(shortHash('abc')).toBe('abc');
   });
 
-  it('respects custom n', () => {
-    expect(shortHash('sha-1234abcdef', 4)).toBe('sha-');
+  it('returns full string without ellipsis when length equals n', () => {
+    expect(shortHash('abcd1234', 8)).toBe('abcd1234');
+  });
+
+  it('respects custom n and appends ellipsis when truncated', () => {
+    expect(shortHash('sha-1234abcdef', 4)).toBe('sha-…');
   });
 
   it('returns full string when custom n exceeds length', () => {

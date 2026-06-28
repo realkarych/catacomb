@@ -1,6 +1,6 @@
 import type { SessionSummary } from './types';
 
-export type SortKey = 'started_at' | 'duration_ms' | 'tokens_in' | 'tokens_out' | 'cost_usd' | 'error_count';
+export type SortKey = 'started_at' | 'duration_ms' | 'tokens_in' | 'tokens_out' | 'cost_usd' | 'tool_count' | 'error_count';
 export type SortDir = 'asc' | 'desc';
 
 export function filterSessions(sessions: SessionSummary[], query: string): SessionSummary[] {
