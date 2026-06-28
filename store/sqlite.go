@@ -49,6 +49,7 @@ const (
 	upsertNode                   = `INSERT INTO nodes(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	upsertEdge                   = `INSERT INTO edges(id, run_id, body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body`
 	deleteEdge                   = `DELETE FROM edges WHERE id = ?`
+	deleteNode                   = `DELETE FROM nodes WHERE id = ?`
 	upsertRun                    = `INSERT INTO runs(run_id, status, body) VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, body=excluded.body`
 	insertQuarantine             = `INSERT INTO quarantine(body) VALUES(?)`
 	upsertTailCursor             = `INSERT INTO tail_cursors(path, offset, fingerprint, size, mtime) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, fingerprint=excluded.fingerprint, size=excluded.size, mtime=excluded.mtime`
@@ -154,9 +155,19 @@ func (s *sqliteStore) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta)
 
 func (s *sqliteStore) applyDelta(tx *sql.Tx, d cdc.GraphDelta) error {
 	switch d.Kind {
-	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus, cdc.DeltaNodeMerge:
+	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus:
 		if d.Node == nil {
 			return nil
+		}
+		return s.write(tx, upsertNode, d.Node, d.Node.ID, d.Node.RunID)
+	case cdc.DeltaNodeMerge:
+		if d.Node == nil {
+			return nil
+		}
+		if d.OldID != "" {
+			if _, err := tx.Exec(deleteNode, d.OldID); err != nil {
+				return fmt.Errorf("store.AppendDeltas delete merged node: %w", err)
+			}
 		}
 		return s.write(tx, upsertNode, d.Node, d.Node.ID, d.Node.RunID)
 	case cdc.DeltaEdgeUpsert:
