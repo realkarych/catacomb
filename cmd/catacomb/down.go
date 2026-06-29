@@ -34,11 +34,6 @@ func realSleep(d time.Duration) {
 	<-timer.C
 }
 
-func signalProcess(pid int, sig syscall.Signal) error {
-	p, _ := os.FindProcess(pid)
-	return p.Signal(sig)
-}
-
 func waitGone(pid int) bool {
 	for i := 0; i < downStopAttempts; i++ {
 		if err := downSignal(pid, syscall.Signal(0)); err != nil {
