@@ -166,6 +166,7 @@ func TestRunDownStaleDiscoveryRemoved(t *testing.T) {
 	require.NoError(t, runDown(&out, downOpts{}, path))
 	_, statErr := os.Stat(path)
 	assert.True(t, os.IsNotExist(statErr))
+	assert.Contains(t, out.String(), "cleared stale discovery")
 }
 
 func TestRunDownReadDiscoveryError(t *testing.T) {
@@ -196,6 +197,7 @@ func TestRunDownJSON(t *testing.T) {
 	var rep downReport
 	require.NoError(t, json.Unmarshal([]byte(out.String()), &rep))
 	assert.True(t, rep.DiscoveryRemoved)
+	assert.False(t, rep.DaemonStopped)
 }
 
 func TestNewDownCmdRegistered(t *testing.T) {
@@ -237,7 +239,8 @@ func TestRunDownDryRun(t *testing.T) {
 	path, _ := writeDisc(t, 4242)
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{dryRun: true}, path))
-	assert.Contains(t, out.String(), "would")
+	assert.Contains(t, out.String(), "would stop daemon")
+	assert.Contains(t, out.String(), "would remove discovery file")
 }
 
 func TestWriteDownReportLoops(t *testing.T) {
@@ -414,8 +417,9 @@ func TestReadConfirmVariants(t *testing.T) {
 }
 
 func TestDefaultIsTerminalPipeIsNotTTY(t *testing.T) {
-	r, _, err := os.Pipe()
+	r, w, err := os.Pipe()
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
 	orig := os.Stdin
 	os.Stdin = r
 	t.Cleanup(func() { os.Stdin = orig })
@@ -429,6 +433,7 @@ func TestReadConfirmReaderError(t *testing.T) {
 	_ = r.Close()
 	_, err = readConfirm(r, io.Discard, "p? ")
 	assert.Error(t, err)
+	assert.NotErrorIs(t, err, io.EOF)
 }
 
 func TestDownConfirmReadsStdin(t *testing.T) {
@@ -563,18 +568,17 @@ func TestPurgeDBRemoveError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestPurgeRemoveAllNotExistContinues(t *testing.T) {
+func TestPurgeRemoveAllErrorPropagates(t *testing.T) {
 	home := t.TempDir()
 	origHome := osUserHomeDir
 	osUserHomeDir = func() (string, error) { return home, nil }
 	t.Cleanup(func() { osUserHomeDir = origHome })
 	origRA := downRemoveAll
-	downRemoveAll = func(string) error { return os.ErrNotExist }
+	downRemoveAll = func(string) error { return errors.New("boom") }
 	t.Cleanup(func() { downRemoveAll = origRA })
 	dir := t.TempDir()
-	_, state, _, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{}, false, filepath.Join(dir, "d.json"))
-	require.NoError(t, err)
-	assert.Empty(t, state)
+	_, _, _, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{}, false, filepath.Join(dir, "d.json"))
+	assert.Error(t, err)
 }
 
 func TestPurgeRemoveAllError(t *testing.T) {

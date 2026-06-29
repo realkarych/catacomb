@@ -126,14 +126,12 @@ func purgeLocal(opts downOpts, disc daemon.Discovery, haveDisc bool, discoveryPa
 		return nil, nil, nil, err
 	}
 	for _, path := range st {
-		err := downRemoveAll(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
+		_, statErr := downStat(path)
+		existed := statErr == nil
+		if err := downRemoveAll(path); err != nil {
 			return nil, nil, nil, fmt.Errorf("down: remove %s: %w", path, err)
 		}
-		if _, statErr := downStat(path); os.IsNotExist(statErr) {
+		if existed {
 			state = append(state, path)
 		}
 	}
@@ -254,11 +252,11 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 	if !haveDisc {
 		_, _ = fmt.Fprintln(out, "no daemon running")
 	} else {
-		_, serr := stopDaemon(disc.Pid, opts.force)
+		stopped, serr := stopDaemon(disc.Pid, opts.force)
 		if serr != nil {
 			return serr
 		}
-		rep.DaemonStopped = true
+		rep.DaemonStopped = stopped
 		if err := downRemove(discoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("down: remove discovery: %w", err)
 		}
@@ -302,11 +300,12 @@ func planDown(out io.Writer, opts downOpts, disc daemon.Discovery, haveDisc bool
 		}
 	}
 	if opts.purge {
-		rep.DatabasesRemoved = dbTargets(opts, disc, haveDisc)
+		dbs := dbTargets(opts, disc, haveDisc)
+		rep.DatabasesRemoved = dbs
 		if st, err := stateTargets(discoveryPath); err == nil {
 			rep.StateRemoved = st
 		}
-		if len(dbTargets(opts, disc, haveDisc)) == 0 {
+		if len(dbs) == 0 {
 			rep.Warnings = append(rep.Warnings, "no database path known; pass --db")
 		}
 	}
@@ -319,15 +318,21 @@ func writeDownReport(out io.Writer, rep downReport, asJSON bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
-	stopMsg, verb := "daemon stopped", "removed"
+	verb := "removed"
 	if rep.DryRun {
-		stopMsg, verb = "would stop daemon", "would remove"
+		verb = "would remove"
 	}
-	if rep.DaemonStopped {
-		_, _ = fmt.Fprintln(out, stopMsg)
-	}
-	if rep.DiscoveryRemoved && rep.DryRun {
-		_, _ = fmt.Fprintln(out, "would remove discovery file")
+	if rep.DryRun {
+		if rep.DaemonStopped {
+			_, _ = fmt.Fprintln(out, "would stop daemon")
+		}
+		if rep.DiscoveryRemoved {
+			_, _ = fmt.Fprintln(out, "would remove discovery file")
+		}
+	} else if rep.DaemonStopped {
+		_, _ = fmt.Fprintln(out, "daemon stopped")
+	} else if rep.DiscoveryRemoved {
+		_, _ = fmt.Fprintln(out, "cleared stale discovery (daemon was not running)")
 	}
 	for _, h := range rep.HooksRemoved {
 		_, _ = fmt.Fprintf(out, "%s hooks: %s\n", verb, h)
