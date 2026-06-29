@@ -452,17 +452,24 @@ func writeDownReport(out io.Writer, rep downReport, asJSON bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
+	stopMsg, verb := "daemon stopped", "removed"
+	if rep.DryRun {
+		stopMsg, verb = "would stop daemon", "would remove"
+	}
 	if rep.DaemonStopped {
-		_, _ = fmt.Fprintln(out, "daemon stopped")
+		_, _ = fmt.Fprintln(out, stopMsg)
+	}
+	if rep.DiscoveryRemoved && rep.DryRun {
+		_, _ = fmt.Fprintln(out, "would remove discovery file")
 	}
 	for _, h := range rep.HooksRemoved {
-		_, _ = fmt.Fprintf(out, "removed hooks: %s\n", h)
+		_, _ = fmt.Fprintf(out, "%s hooks: %s\n", verb, h)
 	}
 	for _, d := range rep.DatabasesRemoved {
-		_, _ = fmt.Fprintf(out, "removed database: %s\n", d)
+		_, _ = fmt.Fprintf(out, "%s database: %s\n", verb, d)
 	}
 	for _, s := range rep.StateRemoved {
-		_, _ = fmt.Fprintf(out, "removed state: %s\n", s)
+		_, _ = fmt.Fprintf(out, "%s state: %s\n", verb, s)
 	}
 	for _, w := range rep.Warnings {
 		_, _ = fmt.Fprintf(out, "warning: %s\n", w)
@@ -707,8 +714,13 @@ func TestReadConfirmVariants(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestDefaultIsTerminalCallable(t *testing.T) {
-	_ = defaultIsTerminal()
+func TestDefaultIsTerminalPipeIsNotTTY(t *testing.T) {
+	r, _, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+	assert.False(t, defaultIsTerminal())
 }
 
 func TestDownConfirmReadsStdin(t *testing.T) {
@@ -1121,34 +1133,7 @@ func planDown(out io.Writer, opts downOpts, disc daemon.Discovery, haveDisc bool
 			rep.Warnings = append(rep.Warnings, "no database path known; pass --db")
 		}
 	}
-	return writePlan(out, rep, opts.asJSON)
-}
-
-func writePlan(out io.Writer, rep downReport, asJSON bool) error {
-	if asJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rep)
-	}
-	if rep.DaemonStopped {
-		_, _ = fmt.Fprintln(out, "would stop daemon")
-	}
-	if rep.DiscoveryRemoved {
-		_, _ = fmt.Fprintln(out, "would remove discovery file")
-	}
-	for _, h := range rep.HooksRemoved {
-		_, _ = fmt.Fprintf(out, "would remove hooks: %s\n", h)
-	}
-	for _, d := range rep.DatabasesRemoved {
-		_, _ = fmt.Fprintf(out, "would remove database: %s\n", d)
-	}
-	for _, s := range rep.StateRemoved {
-		_, _ = fmt.Fprintf(out, "would remove state: %s\n", s)
-	}
-	for _, w := range rep.Warnings {
-		_, _ = fmt.Fprintf(out, "warning: %s\n", w)
-	}
-	return nil
+	return writeDownReport(out, rep, opts.asJSON)
 }
 ```
 
