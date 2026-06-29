@@ -15,6 +15,7 @@ func TestNodeTypeLabel(t *testing.T) {
 		"subagent":       "subagent",
 		"mcp_call":       "mcp call",
 		"hook_event":     "hook event",
+		"skill":          "skill",
 		"marker":         "marker",
 		"something_else": "marker",
 	}
