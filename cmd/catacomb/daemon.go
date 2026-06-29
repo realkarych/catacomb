@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -10,13 +11,61 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/daemon"
 	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
 
+type daemonDeps struct {
+	openStore  func(config.StoreConfig) (store.Store, error)
+	listen     func() (net.Listener, error)
+	listenGRPC func() (net.Listener, error)
+	newToken   func() (string, error)
+}
+
+type daemonParams struct {
+	store              config.StoreConfig
+	discoveryPath      string
+	reaperWindow       time.Duration
+	maxShards          int
+	otlpEndpoint       string
+	otlpProject        string
+	postgresDSN        string
+	neo4jURI           string
+	neo4jUser          string
+	neo4jPassword      string
+	transcriptDir      string
+	transcriptExclude  []string
+	allowPayloadAccess bool
+	allowAnnotations   bool
+}
+
+func defaultDaemonDeps() daemonDeps {
+	return daemonDeps{
+		openStore:  store.Open,
+		listen:     daemon.ListenLoopback,
+		listenGRPC: daemon.ListenLoopback,
+		newToken:   daemon.NewToken,
+	}
+}
+
+func storeDBPath(c config.StoreConfig) string {
+	if c.Backend == config.BackendSQLite {
+		return c.SQLite.Path
+	}
+	return ""
+}
+
+func resolveDiscovery(s string) string {
+	if s != "" {
+		return s
+	}
+	return daemon.DiscoveryPath()
+}
+
 func newDaemonCmd() *cobra.Command {
-	var dbPath, discoveryPath, otlpEndpoint, otlpProject, postgresDSN string
+	var configPath, dbPath, discoveryPath, otlpEndpoint, otlpProject, postgresDSN string
 	var neo4jURI, neo4jUser, neo4jPassword string
 	var reaperWindow time.Duration
 	var maxShards int
@@ -28,26 +77,58 @@ func newDaemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Run the catacomb daemon (receives hook events, builds the live graph)",
 		Long: `Run the catacomb daemon: it receives hook events, builds the live graph,
-persists it to SQLite, and serves the web UI and gRPC feed.
+persists it to the configured primary store, and serves the web UI and gRPC feed.
 
-Pass --transcript-dir ~/.claude/projects to also tail recorded transcripts,
-which backfills past sessions and follows live ones. Pass --allow-payload-access
-to enable the token-gated content endpoint (off by default).`,
+Configuration is loaded from ~/.catacomb/config.yaml (override with --config or
+$CATACOMB_CONFIG). Set store.backend: memory for a live-only daemon that persists
+nothing. The default SQLite database is ~/.catacomb/catacomb.db. Existing flags
+remain the highest-precedence override.`,
 		Example: `  # live only
   catacomb daemon
 
   # backfill and tail every past + live session
   catacomb daemon --transcript-dir ~/.claude/projects --allow-payload-access`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if discoveryPath == "" {
-				discoveryPath = daemon.DiscoveryPath()
+			home, err := osUserHomeDir()
+			if err != nil {
+				return fmt.Errorf("daemon: resolve home: %w", err)
+			}
+			flags := daemonFlags{
+				configPath: configPath, configPathSet: cmd.Flags().Changed("config"),
+				dbPath: dbPath, dbPathSet: cmd.Flags().Changed("db"),
+				discoveryPath: discoveryPath, discoveryPathSet: cmd.Flags().Changed("discovery"),
+				reaperWindow: reaperWindow, reaperWindowSet: cmd.Flags().Changed("reaper-window"),
+				maxShards: maxShards, maxShardsSet: cmd.Flags().Changed("max-shards"),
+				allowPayloadAccess: allowPayloadAccess, allowPayloadAccessSet: cmd.Flags().Changed("allow-payload-access"),
+				allowAnnotations: allowAnnotations, allowAnnotationsSet: cmd.Flags().Changed("allow-annotations"),
+			}
+			cfg, err := resolveConfig(flags, os.ReadFile, os.LookupEnv, home)
+			if err != nil {
+				return err
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discoveryPath, reaperWindow, maxShards, otlpEndpoint, otlpProject, postgresDSN, neo4jURI, neo4jUser, neo4jPassword, transcriptDir, transcriptExclude, allowPayloadAccess, allowAnnotations)
+			params := daemonParams{
+				store:              cfg.Store,
+				discoveryPath:      resolveDiscovery(cfg.Daemon.Discovery),
+				reaperWindow:       time.Duration(cfg.Daemon.ReaperWindow),
+				maxShards:          cfg.Daemon.MaxShards,
+				otlpEndpoint:       otlpEndpoint,
+				otlpProject:        otlpProject,
+				postgresDSN:        postgresDSN,
+				neo4jURI:           neo4jURI,
+				neo4jUser:          neo4jUser,
+				neo4jPassword:      neo4jPassword,
+				transcriptDir:      transcriptDir,
+				transcriptExclude:  transcriptExclude,
+				allowPayloadAccess: cfg.Daemon.AllowPayloadAccess,
+				allowAnnotations:   cfg.Daemon.AllowAnnotations,
+			}
+			return runDaemonWith(ctx, defaultDaemonDeps(), params)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "catacomb.db", "SQLite database path")
+	cmd.Flags().StringVar(&configPath, "config", "", "config file path (default: ~/.catacomb/config.yaml; or $CATACOMB_CONFIG)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default: ~/.catacomb/catacomb.db; maps to store.sqlite.path)")
 	cmd.Flags().StringVar(&discoveryPath, "discovery", "", "discovery file path (default: resolved CATACOMB_DISCOVERY)")
 	cmd.Flags().DurationVar(&reaperWindow, "reaper-window", 30*time.Minute, "idle window before a run is marked abandoned")
 	cmd.Flags().IntVar(&maxShards, "max-shards", 4096, "soft cap on in-memory execution shards")
@@ -64,64 +145,46 @@ to enable the token-gated content endpoint (off by default).`,
 	return cmd
 }
 
-func runDaemonWith(
-	ctx context.Context,
-	open func(string) (store.Store, error),
-	listen func() (net.Listener, error),
-	listenGRPC func() (net.Listener, error),
-	newToken func() (string, error),
-	dbPath, discoveryPath string,
-	reaperWindow time.Duration,
-	maxShards int,
-	otlpEndpoint string,
-	otlpProject string,
-	postgresDSN string,
-	neo4jURI string,
-	neo4jUser string,
-	neo4jPassword string,
-	transcriptDir string,
-	transcriptExclude []string,
-	allowPayloadAccess bool,
-	allowAnnotations bool,
-) error {
-	s, err := open(dbPath)
+func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
+	s, err := deps.openStore(p.store)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = s.Close() }()
 
+	dbPath := storeDBPath(p.store)
 	d := daemon.New(s)
-	d.SetReaperWindow(reaperWindow)
-	d.SetMaxShards(maxShards)
-	d.SetOTLPEndpoint(otlpEndpoint)
-	d.SetOTLPProject(otlpProject)
-	d.SetPostgresDSN(postgresDSN)
-	d.SetNeo4j(neo4jURI, neo4jUser, neo4jPassword)
+	d.SetReaperWindow(p.reaperWindow)
+	d.SetMaxShards(p.maxShards)
+	d.SetOTLPEndpoint(p.otlpEndpoint)
+	d.SetOTLPProject(p.otlpProject)
+	d.SetPostgresDSN(p.postgresDSN)
+	d.SetNeo4j(p.neo4jURI, p.neo4jUser, p.neo4jPassword)
 	d.SetDBPath(dbPath)
-	d.SetTranscriptDir(transcriptDir)
-	d.SetTranscriptExclude(transcriptExclude)
-	d.SetAllowPayloadAccess(allowPayloadAccess)
-	d.SetAllowAnnotations(allowAnnotations)
+	d.SetTranscriptDir(p.transcriptDir)
+	d.SetTranscriptExclude(p.transcriptExclude)
+	d.SetAllowPayloadAccess(p.allowPayloadAccess)
+	d.SetAllowAnnotations(p.allowAnnotations)
 	d.SetReproConfig(repro.Config{
-		OTLPEndpoint:  otlpEndpoint,
-		OTLPProject:   otlpProject,
-		TranscriptDir: transcriptDir,
+		OTLPEndpoint:  p.otlpEndpoint,
+		OTLPProject:   p.otlpProject,
+		TranscriptDir: p.transcriptDir,
 	})
 	err = d.Recover()
 	if err != nil {
 		return err
 	}
-	token, err := newToken()
+	token, err := deps.newToken()
 	if err != nil {
 		return err
 	}
-	ln, err := listen()
+	ln, err := deps.listen()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
 
-	grpcLn, err := listenGRPC()
+	grpcLn, err := deps.listenGRPC()
 	if err != nil {
 		return err
 	}
@@ -131,14 +194,14 @@ func runDaemonWith(
 		Addr:               ln.Addr().String(),
 		Token:              token,
 		GRPCAddr:           grpcLn.Addr().String(),
-		TranscriptDir:      transcriptDir,
+		TranscriptDir:      p.transcriptDir,
 		DBPath:             dbPath,
-		AllowPayloadAccess: allowPayloadAccess,
-		AllowAnnotations:   allowAnnotations,
+		AllowPayloadAccess: p.allowPayloadAccess,
+		AllowAnnotations:   p.allowAnnotations,
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := daemon.WriteDiscovery(discoveryPath, disc); err != nil {
+	if err := daemon.WriteDiscovery(p.discoveryPath, disc); err != nil {
 		return err
 	}
 	return d.Serve(ctx, ln, grpcLn, token)
