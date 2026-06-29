@@ -306,3 +306,17 @@ func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 		model.ToolCallID("e1", "toolu_parent"), model.ToolCallID("e1", "toolu_child")))
 	_ = edges
 }
+
+func TestSkillToolReducesToNodeSkill(t *testing.T) {
+	f, err := os.Open("testdata/skill.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	obs, err := ParseReader(f, "e1")
+	require.NoError(t, err)
+	g := reduce.NewGraph()
+	g.ApplyAll(obs)
+	n := g.Nodes[model.ToolCallID("e1", "toolu_sk")]
+	require.NotNil(t, n)
+	assert.Equal(t, model.NodeSkill, n.Type)
+	assert.Equal(t, "superpowers:verify", n.Name)
+}

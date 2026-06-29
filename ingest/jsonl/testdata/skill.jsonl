@@ -1,0 +1,1 @@
+{"type":"assistant","uuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"msg_1","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_sk","name":"Skill","input":{"skill":"superpowers:verify"}}]}}
