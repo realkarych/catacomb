@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -68,12 +69,11 @@ var (
 )
 
 func defaultHookTargets() ([]string, error) {
-	project, _ := settingsPath(false, false)
 	global, err := settingsPath(false, true)
 	if err != nil {
 		return nil, err
 	}
-	return []string{project, global}, nil
+	return []string{filepath.Join(".claude", "settings.json"), global}, nil
 }
 
 func uninstallHooks() ([]string, error) {
@@ -88,7 +88,10 @@ func uninstallHooks() ([]string, error) {
 	var removed []string
 	for _, path := range targets {
 		if _, statErr := downStat(path); statErr != nil {
-			continue
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return nil, fmt.Errorf("down: stat %s: %w", path, statErr)
 		}
 		if err := installHooks(path, daemon.DiscoveryPath(), exe, true); err != nil {
 			return nil, err

@@ -293,7 +293,9 @@ func TestUninstallHooksTargetError(t *testing.T) {
 func TestDefaultHookTargets(t *testing.T) {
 	got, err := downHookTargets()
 	require.NoError(t, err)
-	assert.Len(t, got, 2)
+	require.Len(t, got, 2)
+	assert.Contains(t, got[0], filepath.Join(".claude", "settings.json"))
+	assert.Contains(t, got[1], filepath.Join(".claude", "settings.json"))
 }
 
 func TestUninstallHooksExeError(t *testing.T) {
@@ -310,6 +312,17 @@ func TestUninstallHooksInstallError(t *testing.T) {
 	orig := downHookTargets
 	downHookTargets = func() ([]string, error) { return []string{malformed}, nil }
 	t.Cleanup(func() { downHookTargets = orig })
+	_, err := uninstallHooks()
+	assert.Error(t, err)
+}
+
+func TestUninstallHooksStatError(t *testing.T) {
+	origT := downHookTargets
+	downHookTargets = func() ([]string, error) { return []string{"/x/settings.json"}, nil }
+	t.Cleanup(func() { downHookTargets = origT })
+	origS := downStat
+	downStat = func(string) (os.FileInfo, error) { return nil, errors.New("perm denied") }
+	t.Cleanup(func() { downStat = origS })
 	_, err := uninstallHooks()
 	assert.Error(t, err)
 }
