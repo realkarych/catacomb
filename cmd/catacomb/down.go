@@ -63,7 +63,40 @@ type downReport struct {
 var (
 	downReadDiscovery = daemon.ReadDiscovery
 	downRemove        = os.Remove
+	downStat          = os.Stat
+	downHookTargets   = defaultHookTargets
 )
+
+func defaultHookTargets() ([]string, error) {
+	project, _ := settingsPath(false, false)
+	global, err := settingsPath(false, true)
+	if err != nil {
+		return nil, err
+	}
+	return []string{project, global}, nil
+}
+
+func uninstallHooks() ([]string, error) {
+	targets, err := downHookTargets()
+	if err != nil {
+		return nil, err
+	}
+	exe, err := osExecutable()
+	if err != nil {
+		return nil, fmt.Errorf("down: executable: %w", err)
+	}
+	var removed []string
+	for _, path := range targets {
+		if _, statErr := downStat(path); statErr != nil {
+			continue
+		}
+		if err := installHooks(path, daemon.DiscoveryPath(), exe, true); err != nil {
+			return nil, err
+		}
+		removed = append(removed, path)
+	}
+	return removed, nil
+}
 
 func newDownCmd() *cobra.Command {
 	var opts downOpts
@@ -111,6 +144,14 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 			return fmt.Errorf("down: remove discovery: %w", err)
 		}
 		rep.DiscoveryRemoved = true
+	}
+
+	if opts.uninstall {
+		removed, err := uninstallHooks()
+		if err != nil {
+			return err
+		}
+		rep.HooksRemoved = removed
 	}
 
 	return writeDownReport(out, rep, opts.asJSON)

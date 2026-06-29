@@ -220,6 +220,9 @@ func TestRunDownRemoveError(t *testing.T) {
 
 func TestRunDownAllFlag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent.json")
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return nil, nil }
+	t.Cleanup(func() { downHookTargets = orig })
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{all: true}, path))
 	assert.Contains(t, out.String(), "no daemon")
@@ -247,4 +250,83 @@ func TestWriteDownReportLoops(t *testing.T) {
 	assert.Contains(t, s, "database: db1")
 	assert.Contains(t, s, "state: state1")
 	assert.Contains(t, s, "warning: warn1")
+}
+
+func TestUninstallHooksPrunesExistingOnly(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "proj.json")
+	glob := filepath.Join(t.TempDir(), "absent-global.json")
+	require.NoError(t, installHooks(proj, "/run/d.json", "/usr/bin/catacomb", false))
+
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return []string{proj, glob}, nil }
+	t.Cleanup(func() { downHookTargets = orig })
+
+	removed, err := uninstallHooks()
+	require.NoError(t, err)
+	assert.Equal(t, []string{proj}, removed)
+
+	_, statErr := os.Stat(glob)
+	assert.True(t, os.IsNotExist(statErr), "absent settings file must not be created")
+}
+
+func TestRunDownUninstall(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "proj.json")
+	require.NoError(t, installHooks(proj, "/run/d.json", "/usr/bin/catacomb", false))
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return []string{proj}, nil }
+	t.Cleanup(func() { downHookTargets = orig })
+
+	path := filepath.Join(t.TempDir(), "absent.json")
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{uninstall: true}, path))
+	assert.Contains(t, out.String(), "removed hooks")
+}
+
+func TestUninstallHooksTargetError(t *testing.T) {
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return nil, errors.New("no home") }
+	t.Cleanup(func() { downHookTargets = orig })
+	_, err := uninstallHooks()
+	assert.Error(t, err)
+}
+
+func TestDefaultHookTargets(t *testing.T) {
+	got, err := downHookTargets()
+	require.NoError(t, err)
+	assert.Len(t, got, 2)
+}
+
+func TestUninstallHooksExeError(t *testing.T) {
+	orig := osExecutable
+	t.Cleanup(func() { osExecutable = orig })
+	osExecutable = func() (string, error) { return "", errors.New("exe") }
+	_, err := uninstallHooks()
+	assert.Error(t, err)
+}
+
+func TestUninstallHooksInstallError(t *testing.T) {
+	malformed := filepath.Join(t.TempDir(), "bad.json")
+	require.NoError(t, os.WriteFile(malformed, []byte("{not json}"), 0o644))
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return []string{malformed}, nil }
+	t.Cleanup(func() { downHookTargets = orig })
+	_, err := uninstallHooks()
+	assert.Error(t, err)
+}
+
+func TestRunDownUninstallError(t *testing.T) {
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return nil, errors.New("boom") }
+	t.Cleanup(func() { downHookTargets = orig })
+	path := filepath.Join(t.TempDir(), "absent.json")
+	err := runDown(io.Discard, downOpts{uninstall: true}, path)
+	assert.Error(t, err)
+}
+
+func TestDefaultHookTargetsHomeError(t *testing.T) {
+	old := osUserHomeDir
+	t.Cleanup(func() { osUserHomeDir = old })
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	_, err := defaultHookTargets()
+	assert.Error(t, err)
 }
