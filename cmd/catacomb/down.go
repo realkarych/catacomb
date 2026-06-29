@@ -247,6 +247,10 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 		return derr
 	}
 
+	if opts.dryRun {
+		return planDown(out, opts, disc, haveDisc, discoveryPath)
+	}
+
 	if !haveDisc {
 		_, _ = fmt.Fprintln(out, "no daemon running")
 	} else {
@@ -279,6 +283,33 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 		rep.Warnings = warns
 	}
 
+	return writeDownReport(out, rep, opts.asJSON)
+}
+
+func planDown(out io.Writer, opts downOpts, disc daemon.Discovery, haveDisc bool, discoveryPath string) error {
+	rep := downReport{DryRun: true}
+	if haveDisc {
+		rep.DaemonStopped = true
+		rep.DiscoveryRemoved = true
+	}
+	if opts.uninstall {
+		if targets, err := downHookTargets(); err == nil {
+			for _, path := range targets {
+				if _, statErr := downStat(path); statErr == nil {
+					rep.HooksRemoved = append(rep.HooksRemoved, path)
+				}
+			}
+		}
+	}
+	if opts.purge {
+		rep.DatabasesRemoved = dbTargets(opts, disc, haveDisc)
+		if st, err := stateTargets(discoveryPath); err == nil {
+			rep.StateRemoved = st
+		}
+		if len(dbTargets(opts, disc, haveDisc)) == 0 {
+			rep.Warnings = append(rep.Warnings, "no database path known; pass --db")
+		}
+	}
 	return writeDownReport(out, rep, opts.asJSON)
 }
 

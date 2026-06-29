@@ -598,3 +598,82 @@ func TestRunDownPurgeError(t *testing.T) {
 	err := runDown(io.Discard, downOpts{purge: true, yes: true}, path)
 	assert.Error(t, err)
 }
+
+func TestRunDownAllNoDaemon(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "proj.json")
+	require.NoError(t, installHooks(proj, "/run/d.json", "/usr/bin/catacomb", false))
+	origTargets := downHookTargets
+	downHookTargets = func() ([]string, error) { return []string{proj}, nil }
+	t.Cleanup(func() { downHookTargets = origTargets })
+
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	path := filepath.Join(t.TempDir(), "absent.json")
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{all: true, yes: true}, path))
+	assert.Contains(t, out.String(), "removed hooks")
+}
+
+func TestRunDownDryRunChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "catacomb.db")
+	touch(t, db)
+	path, _ := writeDisc(t, 4242)
+
+	called := false
+	swapSignal(t, func(int, syscall.Signal) error { called = true; return nil })
+
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{all: true, dryRun: true, dbPaths: []string{db}}, path))
+
+	assert.False(t, called, "dry-run must not signal the daemon")
+	_, statErr := os.Stat(db)
+	assert.False(t, os.IsNotExist(statErr), "dry-run must not delete the database")
+	_, discErr := os.Stat(path)
+	assert.False(t, os.IsNotExist(discErr), "dry-run must not remove discovery")
+	assert.Contains(t, out.String(), "would")
+}
+
+func TestRunDownDryRunJSON(t *testing.T) {
+	path, _ := writeDisc(t, 4242)
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{dryRun: true, asJSON: true}, path))
+	var rep downReport
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &rep))
+	assert.True(t, rep.DryRun)
+}
+
+func TestPlanDownNoDisc(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent.json")
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{dryRun: true}, path))
+	assert.NotContains(t, out.String(), "would stop")
+}
+
+func TestPlanDownUninstallHookFound(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "proj.json")
+	require.NoError(t, installHooks(proj, "/run/d.json", "/usr/bin/catacomb", false))
+	orig := downHookTargets
+	downHookTargets = func() ([]string, error) { return []string{proj}, nil }
+	t.Cleanup(func() { downHookTargets = orig })
+
+	path := filepath.Join(t.TempDir(), "absent.json")
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{dryRun: true, uninstall: true}, path))
+	assert.Contains(t, out.String(), "would remove hooks")
+}
+
+func TestPlanDownPurgeNoDBWarning(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	path := filepath.Join(t.TempDir(), "absent.json")
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{dryRun: true, purge: true}, path))
+	assert.Contains(t, out.String(), "warning: no database path known")
+}
