@@ -16,7 +16,9 @@ var (
 	ErrRunNotFound       = errors.New("run not found")
 	ErrUnknownSink       = errors.New("unknown export sink")
 	ErrSinkNotConfigured = errors.New("export sink not configured (missing --otlp-export-endpoint / --postgres-export-dsn / --neo4j-export-uri)")
-	ErrModeUnsupported   = errors.New("export mode not supported for this sink (use --mode materialized)")
+	ErrModeUnsupported      = errors.New("export mode not supported for this sink (use --mode materialized)")
+	ErrDaemonStop           = errors.New("failed to stop the catacomb daemon")
+	ErrConfirmationRequired = errors.New("refusing a destructive teardown without --yes in a non-interactive shell")
 )
 
 func renderErr(err error) string {
