@@ -212,6 +212,14 @@ describe('outlineLabel', () => {
     expect(outlineLabel(n('mc', 'mcp_call'))).toEqual({ primary: 'mcp', secondary: '' });
   });
 
+  it('skill: uses node.name or falls back to "skill"', () => {
+    expect(outlineLabel(n('sk', 'skill', { name: 'verify' }))).toEqual({
+      primary: 'verify',
+      secondary: '',
+    });
+    expect(outlineLabel(n('sk', 'skill'))).toEqual({ primary: 'skill', secondary: '' });
+  });
+
   it('subagent: primary uses node.name when present', () => {
     expect(
       outlineLabel(n('sa', 'subagent', { name: 'Review PR1 reparent', subagent_type: 'claude-code' })),

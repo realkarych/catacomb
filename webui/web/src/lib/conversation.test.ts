@@ -148,6 +148,10 @@ describe('isToolNode', () => {
     expect(isToolNode('mcp_call')).toBe(true);
   });
 
+  it('returns true for skill', () => {
+    expect(isToolNode('skill')).toBe(true);
+  });
+
   it('returns false for user_prompt', () => {
     expect(isToolNode('user_prompt')).toBe(false);
   });

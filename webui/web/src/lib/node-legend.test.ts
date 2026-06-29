@@ -26,6 +26,10 @@ describe('nodeTypeInfo', () => {
     expect(nodeTypeInfo('mcp_call')).toEqual({ token: '--node-mcp_call', label: 'mcp call' });
   });
 
+  it('returns correct token and label for skill', () => {
+    expect(nodeTypeInfo('skill')).toEqual({ token: '--node-skill', label: 'skill' });
+  });
+
   it('returns correct token and label for hook_event', () => {
     expect(nodeTypeInfo('hook_event')).toEqual({ token: '--node-hook_event', label: 'hook event' });
   });
@@ -69,9 +73,9 @@ describe('presentNodeTypes', () => {
     ]);
   });
 
-  it('handles all eight known types without duplicates', () => {
-    const all = ['session', 'user_prompt', 'assistant_turn', 'tool_call', 'subagent', 'mcp_call', 'hook_event', 'marker'];
+  it('handles all nine known types without duplicates', () => {
+    const all = ['session', 'user_prompt', 'assistant_turn', 'tool_call', 'subagent', 'mcp_call', 'skill', 'hook_event', 'marker'];
     const result = presentNodeTypes(all);
-    expect(result).toHaveLength(8);
+    expect(result).toHaveLength(9);
   });
 });

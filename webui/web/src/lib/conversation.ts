@@ -3,7 +3,7 @@ export function isConversationNode(nodeType: string): boolean {
 }
 
 export function isToolNode(nodeType: string): boolean {
-  return nodeType === 'tool_call' || nodeType === 'mcp_call';
+  return nodeType === 'tool_call' || nodeType === 'mcp_call' || nodeType === 'skill';
 }
 
 type ContentBlock = { type: string; text?: string };
