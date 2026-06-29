@@ -61,4 +61,5 @@ func TestExpandPaths(t *testing.T) {
 	assert.Equal(t, "/home/u/run/d.json", got.Daemon.Discovery)
 	assert.Equal(t, "/home/u/proj", got.Sources.JSONL.TranscriptDir)
 	assert.Equal(t, "/home/u/out.jsonl", got.Sinks[0].Path)
+	assert.Equal(t, "~/out.jsonl", c.Sinks[0].Path)
 }
