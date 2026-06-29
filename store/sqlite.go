@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
@@ -90,6 +91,9 @@ func readOnlyDSN(path string) string {
 }
 
 func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("store.OpenSQLite mkdir: %w", err)
+	}
 	db, err := open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("store.OpenSQLite: %w", err)

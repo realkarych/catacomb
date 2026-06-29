@@ -42,7 +42,7 @@ web UI; to load history into the UI, use catacomb up --history.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&args.dbPath, "db", "catacomb.db", "SQLite database path")
+	cmd.Flags().StringVar(&args.dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&args.exportPath, "export-jsonl", "", "also write a JSONL graph snapshot")
 	return cmd
 }
