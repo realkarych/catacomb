@@ -343,3 +343,99 @@ func TestDefaultHookTargetsHomeError(t *testing.T) {
 	_, err := defaultHookTargets()
 	assert.Error(t, err)
 }
+
+func swapTTY(t *testing.T, v bool) {
+	t.Helper()
+	orig := downIsTerminal
+	downIsTerminal = func() bool { return v }
+	t.Cleanup(func() { downIsTerminal = orig })
+}
+
+func TestConfirmYesFlagBypasses(t *testing.T) {
+	ok, err := confirmDestructive(io.Discard, downOpts{purge: true, yes: true})
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestConfirmDryRunBypasses(t *testing.T) {
+	ok, err := confirmDestructive(io.Discard, downOpts{purge: true, dryRun: true})
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestConfirmNonDestructiveBypasses(t *testing.T) {
+	ok, err := confirmDestructive(io.Discard, downOpts{uninstall: true})
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestConfirmNonTTYRefuses(t *testing.T) {
+	swapTTY(t, false)
+	_, err := confirmDestructive(io.Discard, downOpts{purge: true})
+	assert.ErrorIs(t, err, ErrConfirmationRequired)
+}
+
+func TestConfirmTTYPromptYes(t *testing.T) {
+	swapTTY(t, true)
+	orig := downConfirm
+	downConfirm = func(io.Writer, string) (bool, error) { return true, nil }
+	t.Cleanup(func() { downConfirm = orig })
+	ok, err := confirmDestructive(io.Discard, downOpts{purge: true})
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestConfirmTTYPromptNo(t *testing.T) {
+	swapTTY(t, true)
+	orig := downConfirm
+	downConfirm = func(io.Writer, string) (bool, error) { return false, nil }
+	t.Cleanup(func() { downConfirm = orig })
+	ok, err := confirmDestructive(io.Discard, downOpts{purge: true})
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestReadConfirmVariants(t *testing.T) {
+	for _, in := range []string{"y\n", "yes\n", "Y\n"} {
+		ok, err := readConfirm(strings.NewReader(in), io.Discard, "p? ")
+		require.NoError(t, err)
+		assert.True(t, ok)
+	}
+	ok, err := readConfirm(strings.NewReader("n\n"), io.Discard, "p? ")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	ok, err = readConfirm(strings.NewReader(""), io.Discard, "p? ")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestDefaultIsTerminalPipeIsNotTTY(t *testing.T) {
+	r, _, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+	assert.False(t, defaultIsTerminal())
+}
+
+func TestReadConfirmReaderError(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	_ = w.Close()
+	_ = r.Close()
+	_, err = readConfirm(r, io.Discard, "p? ")
+	assert.Error(t, err)
+}
+
+func TestDownConfirmReadsStdin(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+	_, _ = w.WriteString("y\n")
+	_ = w.Close()
+	ok, err := downConfirm(io.Discard, "p? ")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}

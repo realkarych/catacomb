@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/daemon"
@@ -99,6 +102,37 @@ func uninstallHooks() ([]string, error) {
 		removed = append(removed, path)
 	}
 	return removed, nil
+}
+
+var (
+	downIsTerminal = defaultIsTerminal
+	downConfirm    = func(out io.Writer, prompt string) (bool, error) {
+		return readConfirm(os.Stdin, out, prompt)
+	}
+)
+
+func defaultIsTerminal() bool {
+	return isatty.IsTerminal(os.Stdin.Fd())
+}
+
+func readConfirm(in io.Reader, out io.Writer, prompt string) (bool, error) {
+	_, _ = fmt.Fprint(out, prompt)
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes", nil
+}
+
+func confirmDestructive(out io.Writer, opts downOpts) (bool, error) {
+	if !opts.purge || opts.yes || opts.dryRun {
+		return true, nil
+	}
+	if !downIsTerminal() {
+		return false, ErrConfirmationRequired
+	}
+	return downConfirm(out, "This permanently deletes catacomb data. Continue? [y/N] ")
 }
 
 func newDownCmd() *cobra.Command {
