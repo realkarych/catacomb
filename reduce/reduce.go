@@ -146,20 +146,23 @@ func (g *Graph) applyTool(o model.Observation) {
 
 	id := model.ToolCallID(o.ExecutionID, nodeKey(o.Correlation.ToolUseID, o.Correlation.SpanID, o.ObsID))
 	nodeType := model.NodeToolCall
-	if isMCP(name) {
+	switch {
+	case isMCP(name):
 		nodeType = model.NodeMCPCall
+	case isSkill(name):
+		nodeType = model.NodeSkill
 	}
 	n := g.node(id, o.RunID, nodeType)
-	if n.Type == model.NodeToolCall && nodeType == model.NodeMCPCall {
-		n.Type = model.NodeMCPCall
+	if n.Type == model.NodeToolCall && nodeType != model.NodeToolCall {
+		n.Type = nodeType
 	}
 	g.stamp(n, o)
 	setAgentID(n, o)
 	if o.Kind == "tool_result" {
 		g.stampEnd(n, o)
 	}
-	if name, ok := o.Attrs["name"].(string); ok {
-		g.setName(n, o, name)
+	if dn := toolDisplayName(o, name); dn != "" {
+		g.setName(n, o, dn)
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
@@ -438,9 +441,6 @@ func (g *Graph) stamp(n *model.Node, o model.Observation) {
 }
 
 func (g *Graph) setName(n *model.Node, o model.Observation, name string) {
-	if name == "" {
-		return
-	}
 	fs := g.stampsFor(n.ID)
 	if !fs.haveName || o.Seq < fs.nameSeq {
 		n.Name = name

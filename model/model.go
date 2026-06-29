@@ -23,6 +23,7 @@ const (
 	NodeToolCall      NodeType = "tool_call"
 	NodeSubagent      NodeType = "subagent"
 	NodeMCPCall       NodeType = "mcp_call"
+	NodeSkill         NodeType = "skill"
 	NodeHookEvent     NodeType = "hook_event"
 	NodeMarker        NodeType = "marker"
 )
