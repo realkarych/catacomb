@@ -548,14 +548,14 @@ func TestGateAcceptsOTelEdgeWhenSpanHasObservedChild(t *testing.T) {
 		Attrs:       map[string]any{"name": "Read"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2,
 	}
 	g.Apply(o)
-	tool := model.ToolCallID("e1", "")
+	tool := model.ToolCallID("e1", "span:spanMid")
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
 }
 
 func TestGateNeverAppliesToHookEdges(t *testing.T) {
 	g := NewGraph()
 	g.Apply(toolObs("e1", "s1", "", "Bash", "running", 1))
-	tool := model.ToolCallID("e1", "")
+	tool := model.ToolCallID("e1", "obs:o1")
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
 }
 
@@ -2822,4 +2822,143 @@ func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
 		}
 		assert.Equal(t, want, got, "permutation %d diverged", i)
 	}
+}
+
+func TestNodeKey(t *testing.T) {
+	assert.Equal(t, "abc", nodeKey("abc", "span1", "obs1"))
+	assert.Equal(t, "span:span1", nodeKey("", "span1", "obs1"))
+	assert.Equal(t, "obs:obs1", nodeKey("", "", "obs1"))
+}
+
+func TestToolSpanFallbackDistinctSpanIDs(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	o1 := model.Observation{
+		ObsID: "obs1", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: "s1"},
+		Attrs:       map[string]any{"name": "Bash"},
+		EventTime:   t0, ObservedAt: t0, Seq: 1,
+	}
+	o2 := model.Observation{
+		ObsID: "obs2", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: "s2"},
+		Attrs:       map[string]any{"name": "Read"},
+		EventTime:   t0, ObservedAt: t0, Seq: 2,
+	}
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{o1, o2})
+	n1 := g.Nodes[model.ToolCallID(execID, "span:s1")]
+	n2 := g.Nodes[model.ToolCallID(execID, "span:s2")]
+	require.NotNil(t, n1)
+	require.NotNil(t, n2)
+	assert.NotEqual(t, n1.ID, n2.ID)
+	assert.Nil(t, g.Nodes[model.ToolCallID(execID, "")])
+}
+
+func TestToolObsFallbackDistinctObsIDs(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	o1 := model.Observation{
+		ObsID: "o1", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: ""},
+		Attrs:       map[string]any{"name": "Bash"},
+		EventTime:   t0, ObservedAt: t0, Seq: 1,
+	}
+	o2 := model.Observation{
+		ObsID: "o2", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: ""},
+		Attrs:       map[string]any{"name": "Read"},
+		EventTime:   t0, ObservedAt: t0, Seq: 2,
+	}
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{o1, o2})
+	n1 := g.Nodes[model.ToolCallID(execID, "obs:o1")]
+	n2 := g.Nodes[model.ToolCallID(execID, "obs:o2")]
+	require.NotNil(t, n1)
+	require.NotNil(t, n2)
+	assert.NotEqual(t, n1.ID, n2.ID)
+	assert.Nil(t, g.Nodes[model.ToolCallID(execID, "")])
+}
+
+func TestTurnSpanFallbackDistinctSpanIDs(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	o1 := model.Observation{
+		ObsID: "obs1", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: "sp1"},
+		Attrs:       map[string]any{},
+		EventTime:   t0, ObservedAt: t0, Seq: 1,
+	}
+	o2 := model.Observation{
+		ObsID: "obs2", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: "sp2"},
+		Attrs:       map[string]any{},
+		EventTime:   t0, ObservedAt: t0, Seq: 2,
+	}
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{o1, o2})
+	n1 := g.Nodes[model.AssistantTurnID(execID, "span:sp1")]
+	n2 := g.Nodes[model.AssistantTurnID(execID, "span:sp2")]
+	require.NotNil(t, n1)
+	require.NotNil(t, n2)
+	assert.NotEqual(t, n1.ID, n2.ID)
+	assert.Nil(t, g.Nodes[model.AssistantTurnID(execID, "")])
+}
+
+func TestTurnNoMessageNoSpanCollapsesToOneNode(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	o1 := model.Observation{
+		ObsID: "ob1", RunID: runID, ExecutionID: execID,
+		Source: model.SourceStreamJSON, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: ""},
+		Attrs:       map[string]any{},
+		EventTime:   t0, ObservedAt: t0, Seq: 1,
+	}
+	o2 := model.Observation{
+		ObsID: "ob2", RunID: runID, ExecutionID: execID,
+		Source: model.SourceStreamJSON, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: ""},
+		Attrs:       map[string]any{},
+		EventTime:   t0, ObservedAt: t0, Seq: 2,
+	}
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{o1, o2})
+	collapsed := g.Nodes[model.AssistantTurnID(execID, "")]
+	require.NotNil(t, collapsed)
+	turns := 0
+	for _, n := range g.Nodes {
+		if n.Type == model.NodeAssistantTurn {
+			turns++
+		}
+	}
+	assert.Equal(t, 1, turns)
+}
+
+func TestPromptObsFallbackDistinctObsIDs(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	o1 := model.Observation{
+		ObsID: "po1", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "user_prompt",
+		Correlation: model.Correlation{SessionID: runID, UUID: ""},
+		Attrs:       map[string]any{},
+		EventTime:   t0, ObservedAt: t0, Seq: 1,
+	}
+	o2 := model.Observation{
+		ObsID: "po2", RunID: runID, ExecutionID: execID,
+		Source: model.SourceOTel, Kind: "user_prompt",
+		Correlation: model.Correlation{SessionID: runID, UUID: ""},
+		Attrs:       map[string]any{},
+		EventTime:   t0, ObservedAt: t0, Seq: 2,
+	}
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{o1, o2})
+	n1 := g.Nodes[model.UserPromptID(execID, "obs:po1")]
+	n2 := g.Nodes[model.UserPromptID(execID, "obs:po2")]
+	require.NotNil(t, n1)
+	require.NotNil(t, n2)
+	assert.NotEqual(t, n1.ID, n2.ID)
+	assert.Nil(t, g.Nodes[model.UserPromptID(execID, "")])
 }
