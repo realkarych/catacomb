@@ -67,9 +67,78 @@ type downReport struct {
 var (
 	downReadDiscovery = daemon.ReadDiscovery
 	downRemove        = os.Remove
+	downRemoveAll     = os.RemoveAll
 	downStat          = os.Stat
 	downHookTargets   = defaultHookTargets
 )
+
+func dbTargets(opts downOpts, disc daemon.Discovery, haveDisc bool) []string {
+	var targets []string
+	if haveDisc && disc.DBPath != "" {
+		targets = append(targets, disc.DBPath)
+	}
+	targets = append(targets, opts.dbPaths...)
+	return targets
+}
+
+func removeWithSiblings(db string) (bool, error) {
+	removedAny := false
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		err := downRemove(db + suffix)
+		if err == nil {
+			removedAny = true
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("down: remove %s: %w", db+suffix, err)
+		}
+	}
+	return removedAny, nil
+}
+
+func stateTargets(discoveryPath string) ([]string, error) {
+	home, err := osUserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("down: home: %w", err)
+	}
+	return []string{discoveryPath + ".log", filepath.Join(home, ".catacomb")}, nil
+}
+
+func purgeLocal(opts downOpts, disc daemon.Discovery, haveDisc bool, discoveryPath string) ([]string, []string, []string, error) {
+	var dbs, state, warnings []string
+
+	targets := dbTargets(opts, disc, haveDisc)
+	if len(targets) == 0 {
+		warnings = append(warnings, "no database path known; other databases may remain where you ran catacomb (pass --db)")
+	}
+	for _, db := range targets {
+		removed, err := removeWithSiblings(db)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if removed {
+			dbs = append(dbs, db)
+		}
+	}
+
+	st, err := stateTargets(discoveryPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for _, path := range st {
+		err := downRemoveAll(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, nil, nil, fmt.Errorf("down: remove %s: %w", path, err)
+		}
+		if _, statErr := downStat(path); os.IsNotExist(statErr) {
+			state = append(state, path)
+		}
+	}
+	return dbs, state, warnings, nil
+}
 
 func defaultHookTargets() ([]string, error) {
 	global, err := settingsPath(false, true)
@@ -163,6 +232,15 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 	}
 	rep := downReport{DryRun: opts.dryRun}
 
+	proceed, cerr := confirmDestructive(out, opts)
+	if cerr != nil {
+		return cerr
+	}
+	if !proceed {
+		_, _ = fmt.Fprintln(out, "aborted")
+		return nil
+	}
+
 	disc, derr := downReadDiscovery(discoveryPath)
 	haveDisc := derr == nil
 	if derr != nil && !errors.Is(derr, os.ErrNotExist) {
@@ -189,6 +267,16 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 			return err
 		}
 		rep.HooksRemoved = removed
+	}
+
+	if opts.purge {
+		dbs, state, warns, err := purgeLocal(opts, disc, haveDisc, discoveryPath)
+		if err != nil {
+			return err
+		}
+		rep.DatabasesRemoved = dbs
+		rep.StateRemoved = state
+		rep.Warnings = warns
 	}
 
 	return writeDownReport(out, rep, opts.asJSON)

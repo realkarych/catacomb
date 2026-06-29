@@ -219,12 +219,16 @@ func TestRunDownRemoveError(t *testing.T) {
 }
 
 func TestRunDownAllFlag(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
 	path := filepath.Join(t.TempDir(), "absent.json")
 	orig := downHookTargets
 	downHookTargets = func() ([]string, error) { return nil, nil }
 	t.Cleanup(func() { downHookTargets = orig })
 	var out strings.Builder
-	require.NoError(t, runDown(&out, downOpts{all: true}, path))
+	require.NoError(t, runDown(&out, downOpts{all: true, yes: true}, path))
 	assert.Contains(t, out.String(), "no daemon")
 }
 
@@ -438,4 +442,159 @@ func TestDownConfirmReadsStdin(t *testing.T) {
 	ok, err := downConfirm(io.Discard, "p? ")
 	require.NoError(t, err)
 	assert.True(t, ok)
+}
+
+func touch(t *testing.T, path string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+}
+
+func TestPurgeRemovesDBWithSiblings(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	dir := t.TempDir()
+	db := filepath.Join(dir, "catacomb.db")
+	touch(t, db)
+	touch(t, db+"-wal")
+	touch(t, db+"-shm")
+	disc := daemon.Discovery{DBPath: db}
+
+	dbs, _, _, err := purgeLocal(downOpts{purge: true, yes: true}, disc, true, filepath.Join(dir, "daemon.json"))
+	require.NoError(t, err)
+	assert.Contains(t, dbs, db)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_, statErr := os.Stat(db + suffix)
+		assert.True(t, os.IsNotExist(statErr))
+	}
+}
+
+func TestPurgeExtraDBPaths(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	dir := t.TempDir()
+	extra := filepath.Join(dir, "other.db")
+	touch(t, extra)
+	dbs, _, _, err := purgeLocal(downOpts{purge: true, yes: true, dbPaths: []string{extra}}, daemon.Discovery{}, false, filepath.Join(dir, "d.json"))
+	require.NoError(t, err)
+	assert.Contains(t, dbs, extra)
+}
+
+func TestPurgeWarnsWhenNoKnownDB(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	dir := t.TempDir()
+	_, _, warns, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{}, false, filepath.Join(dir, "d.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, warns)
+	assert.Contains(t, warns[0], "--db")
+}
+
+func TestPurgeRemovesStateAndLog(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	catacombDir := filepath.Join(home, ".catacomb")
+	require.NoError(t, os.MkdirAll(catacombDir, 0o700))
+	discPath := filepath.Join(t.TempDir(), "daemon.json")
+	touch(t, discPath+".log")
+
+	_, state, _, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{DBPath: "/nope"}, true, discPath)
+	require.NoError(t, err)
+	assert.Contains(t, state, catacombDir)
+	_, statErr := os.Stat(catacombDir)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestPurgeHomeError(t *testing.T) {
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	_, _, _, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{}, false, "/x/d.json")
+	assert.Error(t, err)
+}
+
+func TestRunDownPurgeAbortsOnNo(t *testing.T) {
+	swapTTY(t, true)
+	orig := downConfirm
+	downConfirm = func(io.Writer, string) (bool, error) { return false, nil }
+	t.Cleanup(func() { downConfirm = orig })
+	path := filepath.Join(t.TempDir(), "absent.json")
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{purge: true}, path))
+	assert.Contains(t, out.String(), "aborted")
+}
+
+func TestRunDownPurgeNonTTY(t *testing.T) {
+	swapTTY(t, false)
+	path := filepath.Join(t.TempDir(), "absent.json")
+	err := runDown(io.Discard, downOpts{purge: true}, path)
+	assert.ErrorIs(t, err, ErrConfirmationRequired)
+}
+
+func TestRemoveWithSiblingsRemoveError(t *testing.T) {
+	orig := downRemove
+	downRemove = func(string) error { return errors.New("eperm") }
+	t.Cleanup(func() { downRemove = orig })
+	_, err := removeWithSiblings("/whatever.db")
+	assert.Error(t, err)
+}
+
+func TestPurgeDBRemoveError(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	origRemove := downRemove
+	downRemove = func(string) error { return errors.New("eperm") }
+	t.Cleanup(func() { downRemove = origRemove })
+	dir := t.TempDir()
+	db := filepath.Join(dir, "catacomb.db")
+	touch(t, db)
+	disc := daemon.Discovery{DBPath: db}
+	_, _, _, err := purgeLocal(downOpts{purge: true, yes: true}, disc, true, filepath.Join(dir, "d.json"))
+	assert.Error(t, err)
+}
+
+func TestPurgeRemoveAllNotExistContinues(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	origRA := downRemoveAll
+	downRemoveAll = func(string) error { return os.ErrNotExist }
+	t.Cleanup(func() { downRemoveAll = origRA })
+	dir := t.TempDir()
+	_, state, _, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{}, false, filepath.Join(dir, "d.json"))
+	require.NoError(t, err)
+	assert.Empty(t, state)
+}
+
+func TestPurgeRemoveAllError(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	origRA := downRemoveAll
+	downRemoveAll = func(string) error { return errors.New("eperm") }
+	t.Cleanup(func() { downRemoveAll = origRA })
+	dir := t.TempDir()
+	_, _, _, err := purgeLocal(downOpts{purge: true, yes: true}, daemon.Discovery{}, false, filepath.Join(dir, "d.json"))
+	assert.Error(t, err)
+}
+
+func TestRunDownPurgeError(t *testing.T) {
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+	path := filepath.Join(t.TempDir(), "absent.json")
+	err := runDown(io.Discard, downOpts{purge: true, yes: true}, path)
+	assert.Error(t, err)
 }
