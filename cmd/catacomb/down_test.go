@@ -140,11 +140,16 @@ func TestRunDownNoDaemon(t *testing.T) {
 
 func TestRunDownStopsAndRemovesDiscovery(t *testing.T) {
 	swapSleepNoop(t)
+	sent := false
 	swapSignal(t, func(_ int, sig syscall.Signal) error {
 		if sig == syscall.SIGTERM {
+			sent = true
 			return nil
 		}
-		return errors.New("gone")
+		if sent {
+			return errors.New("gone")
+		}
+		return nil
 	})
 	path, _ := writeDisc(t, 4242)
 	var out strings.Builder
