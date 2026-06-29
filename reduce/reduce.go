@@ -161,8 +161,8 @@ func (g *Graph) applyTool(o model.Observation) {
 	if o.Kind == "tool_result" {
 		g.stampEnd(n, o)
 	}
-	if dn := toolDisplayName(o, name); dn != "" {
-		g.setName(n, o, dn)
+	if dn, strong := toolDisplayName(o, name); dn != "" {
+		g.setName(n, o, dn, strong)
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
@@ -375,6 +375,7 @@ type fieldStamps struct {
 	haveTiming  bool
 	nameSeq     uint64
 	haveName    bool
+	nameStrong  bool
 	tokenRank   int
 	haveToken   bool
 	payloadRank int
@@ -440,12 +441,13 @@ func (g *Graph) stamp(n *model.Node, o model.Observation) {
 	n.Sources = append(n.Sources, model.SourceRef{Source: o.Source, ObsID: o.ObsID, ObservedAt: o.ObservedAt})
 }
 
-func (g *Graph) setName(n *model.Node, o model.Observation, name string) {
+func (g *Graph) setName(n *model.Node, o model.Observation, name string, strong bool) {
 	fs := g.stampsFor(n.ID)
-	if !fs.haveName || o.Seq < fs.nameSeq {
+	if !fs.haveName || (strong && !fs.nameStrong) || (strong == fs.nameStrong && o.Seq < fs.nameSeq) {
 		n.Name = name
 		fs.nameSeq = o.Seq
 		fs.haveName = true
+		fs.nameStrong = strong
 	}
 }
 

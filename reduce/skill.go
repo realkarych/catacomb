@@ -32,17 +32,17 @@ func extractSkillName(o model.Observation) string {
 
 func cleanCommand(cmd string) string {
 	cmd = strings.TrimPrefix(strings.TrimSpace(cmd), "/")
-	if i := strings.IndexAny(cmd, " \t"); i >= 0 {
-		cmd = cmd[:i]
+	if f := strings.Fields(cmd); len(f) > 0 {
+		return f[0]
 	}
-	return cmd
+	return ""
 }
 
-func toolDisplayName(o model.Observation, name string) string {
+func toolDisplayName(o model.Observation, name string) (string, bool) {
 	if isSkill(name) {
 		if sn := extractSkillName(o); sn != "" {
-			return sn
+			return sn, true
 		}
 	}
-	return name
+	return name, false
 }

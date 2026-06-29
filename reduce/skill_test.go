@@ -76,3 +76,42 @@ func TestSlashCommandEmptyCommandFallback(t *testing.T) {
 	n := g.Nodes[model.ToolCallID(execID, "toolu_s6")]
 	assert.Equal(t, "SlashCommand", n.Name)
 }
+
+func TestSkillStrongNameOverridesLiteralRegardlessOfSeq(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	literal := ob("assistant_tool_use", "toolu_m1a", t0)
+	literal.Seq = 1
+	literal.Attrs = map[string]any{"name": "Skill"}
+
+	real := ob("assistant_tool_use", "toolu_m1a", t0)
+	real.Seq = 2
+	real.Attrs = map[string]any{"name": "Skill"}
+	real.Payload = &model.Payload{Input: json.RawMessage(`{"skill":"superpowers:verify"}`)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{literal, real})
+	n := g.Nodes[model.ToolCallID(execID, "toolu_m1a")]
+	assert.Equal(t, "superpowers:verify", n.Name)
+
+	g2 := NewGraph()
+	g2.ApplyAll([]model.Observation{real, literal})
+	n2 := g2.Nodes[model.ToolCallID(execID, "toolu_m1a")]
+	assert.Equal(t, "superpowers:verify", n2.Name)
+}
+
+func TestSkillWeakNameDoesNotOverrideStrong(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	real := ob("assistant_tool_use", "toolu_m1b", t0)
+	real.Seq = 1
+	real.Attrs = map[string]any{"name": "Skill"}
+	real.Payload = &model.Payload{Input: json.RawMessage(`{"skill":"superpowers:verify"}`)}
+
+	literal := ob("assistant_tool_use", "toolu_m1b", t0)
+	literal.Seq = 2
+	literal.Attrs = map[string]any{"name": "Skill"}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{real, literal})
+	n := g.Nodes[model.ToolCallID(execID, "toolu_m1b")]
+	assert.Equal(t, "superpowers:verify", n.Name)
+}
