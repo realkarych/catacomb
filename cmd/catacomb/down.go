@@ -25,8 +25,14 @@ const (
 
 var (
 	downSignal = signalProcess
-	downSleep  = time.Sleep
+	downSleep  = realSleep
 )
+
+func realSleep(d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	<-timer.C
+}
 
 func signalProcess(pid int, sig syscall.Signal) error {
 	p, _ := os.FindProcess(pid)
@@ -322,16 +328,17 @@ func writeDownReport(out io.Writer, rep downReport, asJSON bool) error {
 	if rep.DryRun {
 		verb = "would remove"
 	}
-	if rep.DryRun {
+	switch {
+	case rep.DryRun:
 		if rep.DaemonStopped {
 			_, _ = fmt.Fprintln(out, "would stop daemon")
 		}
 		if rep.DiscoveryRemoved {
 			_, _ = fmt.Fprintln(out, "would remove discovery file")
 		}
-	} else if rep.DaemonStopped {
+	case rep.DaemonStopped:
 		_, _ = fmt.Fprintln(out, "daemon stopped")
-	} else if rep.DiscoveryRemoved {
+	case rep.DiscoveryRemoved:
 		_, _ = fmt.Fprintln(out, "cleared stale discovery (daemon was not running)")
 	}
 	for _, h := range rep.HooksRemoved {

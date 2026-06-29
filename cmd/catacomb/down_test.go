@@ -121,14 +121,14 @@ func TestStopDaemonForceStillAlive(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDaemonStop)
 }
 
-func writeDisc(t *testing.T, pid int) (string, string) {
+func writeDisc(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "daemon.json")
 	require.NoError(t, daemon.WriteDiscovery(path, daemon.Discovery{
-		Addr: "127.0.0.1:1", Token: "tok", Pid: pid, DBPath: filepath.Join(dir, "catacomb.db"),
+		Addr: "127.0.0.1:1", Token: "tok", Pid: 4242, DBPath: filepath.Join(dir, "catacomb.db"),
 	}))
-	return path, dir
+	return path
 }
 
 func TestRunDownNoDaemon(t *testing.T) {
@@ -151,7 +151,7 @@ func TestRunDownStopsAndRemovesDiscovery(t *testing.T) {
 		}
 		return nil
 	})
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{}, path))
 	_, statErr := os.Stat(path)
@@ -161,7 +161,7 @@ func TestRunDownStopsAndRemovesDiscovery(t *testing.T) {
 
 func TestRunDownStaleDiscoveryRemoved(t *testing.T) {
 	swapSignal(t, func(int, syscall.Signal) error { return errors.New("dead") })
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{}, path))
 	_, statErr := os.Stat(path)
@@ -184,14 +184,14 @@ func TestRunDownStopError(t *testing.T) {
 		}
 		return nil
 	})
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	err := runDown(io.Discard, downOpts{}, path)
 	assert.ErrorIs(t, err, ErrDaemonStop)
 }
 
 func TestRunDownJSON(t *testing.T) {
 	swapSignal(t, func(int, syscall.Signal) error { return errors.New("dead") })
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{asJSON: true}, path))
 	var rep downReport
@@ -211,7 +211,7 @@ func TestNewDownCmdRegistered(t *testing.T) {
 
 func TestRunDownRemoveError(t *testing.T) {
 	swapSignal(t, func(int, syscall.Signal) error { return errors.New("dead") })
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	orig := downRemove
 	downRemove = func(string) error { return errors.New("permission denied") }
 	t.Cleanup(func() { downRemove = orig })
@@ -236,7 +236,7 @@ func TestRunDownAllFlag(t *testing.T) {
 
 func TestRunDownDryRun(t *testing.T) {
 	swapSignal(t, func(int, syscall.Signal) error { return errors.New("dead") })
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{dryRun: true}, path))
 	assert.Contains(t, out.String(), "would stop daemon")
@@ -625,7 +625,7 @@ func TestRunDownDryRunChangesNothing(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "catacomb.db")
 	touch(t, db)
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 
 	called := false
 	swapSignal(t, func(int, syscall.Signal) error { called = true; return nil })
@@ -642,7 +642,7 @@ func TestRunDownDryRunChangesNothing(t *testing.T) {
 }
 
 func TestRunDownDryRunJSON(t *testing.T) {
-	path, _ := writeDisc(t, 4242)
+	path := writeDisc(t)
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{dryRun: true, asJSON: true}, path))
 	var rep downReport
@@ -680,4 +680,9 @@ func TestPlanDownPurgeNoDBWarning(t *testing.T) {
 	var out strings.Builder
 	require.NoError(t, runDown(&out, downOpts{dryRun: true, purge: true}, path))
 	assert.Contains(t, out.String(), "warning: no database path known")
+}
+
+func TestRealSleep(t *testing.T) {
+	t.Helper()
+	realSleep(time.Millisecond)
 }

@@ -138,7 +138,7 @@ func runDaemonWith(
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := daemon.WriteDiscovery(discoveryPath, disc); err != nil {
+	if err = daemon.WriteDiscovery(discoveryPath, disc); err != nil {
 		return err
 	}
 	err = d.Serve(ctx, ln, grpcLn, token)
