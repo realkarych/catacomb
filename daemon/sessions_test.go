@@ -925,12 +925,14 @@ func TestSummarizeSessionFreeFnMatchesMethod(t *testing.T) {
 	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"sess-x","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
 
 	d.mu.Lock()
+	d.graphs["exec1"].Nodes["skill-x"] = &model.Node{ID: "skill-x", RunID: "sess-x", Type: model.NodeSkill}
 	dSum := d.summarizeSession("sess-x")
 	graphs := graphSlice(d.graphs)
 	d.mu.Unlock()
 
 	freeSum := SummarizeSession("sess-x", graphs)
 
+	assert.Equal(t, 2, dSum.ToolCount)
 	assert.Equal(t, dSum.NodeCount, freeSum.NodeCount)
 	assert.Equal(t, dSum.ToolCount, freeSum.ToolCount)
 	assert.Equal(t, dSum.RunIDs, freeSum.RunIDs)
