@@ -32,7 +32,7 @@
   --node-tool_call: oklch(0.74 0.12 75);
   --node-subagent: oklch(0.74 0.12 195);
   --node-mcp_call: oklch(0.74 0.12 340);
-  --node-skill: oklch(0.74 0.12 25);
+  --node-skill: oklch(0.74 0.12 275);
   --node-hook_event: oklch(0.74 0.12 110);
   --node-marker: oklch(0.74 0.03 70);
 
@@ -100,7 +100,7 @@
     --node-tool_call: oklch(0.42 0.13 75);
     --node-subagent: oklch(0.40 0.12 195);
     --node-mcp_call: oklch(0.40 0.12 340);
-    --node-skill: oklch(0.40 0.12 25);
+    --node-skill: oklch(0.40 0.12 275);
     --node-hook_event: oklch(0.40 0.12 110);
     --node-marker: oklch(0.45 0.03 75);
 
