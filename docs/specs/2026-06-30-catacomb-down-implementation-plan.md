@@ -32,10 +32,12 @@
 ## Task 1: Process-control primitives
 
 **Files:**
+
 - Create: `cmd/catacomb/down.go`
 - Test: `cmd/catacomb/down_test.go`
 
 **Interfaces:**
+
 - Produces: `signalProcess(pid int, sig syscall.Signal) error`; package vars `downSignal`, `downSleep`; `stopDaemon(pid int, force bool) (bool, error)`; `waitGone(pid int) bool`; consts `downStopInterval`, `downStopAttempts`.
 - Consumes: `ErrDaemonStop` (added here to `errors.go`).
 
@@ -262,11 +264,13 @@ git commit -m "feat(down): process-control primitives for daemon stop"
 ## Task 2: Bare `catacomb down` (stop + remove discovery) + registration
 
 **Files:**
+
 - Modify: `cmd/catacomb/down.go`
 - Modify: `cmd/catacomb/root.go`
 - Test: `cmd/catacomb/down_test.go`
 
 **Interfaces:**
+
 - Consumes: `stopDaemon` (Task 1); `daemon.ReadDiscovery`, `daemon.DiscoveryPath`, `daemon.Discovery`, `daemon.WriteDiscovery`.
 - Produces: `downOpts` struct, `downReport` struct, `runDown(out io.Writer, opts downOpts, discoveryPath string) error`, `newDownCmd() *cobra.Command`, seams `downReadDiscovery`/`downRemove`, `writeDownReport`.
 
@@ -501,10 +505,12 @@ git commit -m "feat(down): bare 'catacomb down' stops daemon and clears discover
 ## Task 3: `--uninstall` scope (reuse installHooks, existence-guarded)
 
 **Files:**
+
 - Modify: `cmd/catacomb/down.go`
 - Test: `cmd/catacomb/down_test.go`
 
 **Interfaces:**
+
 - Consumes: existing `installHooks(path, discovery, exe string, uninstall bool) error`, `settingsPath(project, global bool) (string, error)`, `osExecutable`, `daemon.DiscoveryPath`.
 - Produces: `uninstallHooks() ([]string, error)`, seams `downStat`, `downHookTargets`.
 
@@ -637,10 +643,12 @@ git commit -m "feat(down): --uninstall prunes hook entries from existing setting
 ## Task 4: Confirmation & non-TTY gate
 
 **Files:**
+
 - Modify: `cmd/catacomb/down.go`
 - Test: `cmd/catacomb/down_test.go`
 
 **Interfaces:**
+
 - Produces: `confirmDestructive(out io.Writer, opts downOpts) (bool, error)`; seams `downIsTerminal`, `downConfirm`; helpers `defaultIsTerminal`, `readConfirm`.
 - Consumes: `ErrConfirmationRequired` (Task 1).
 
@@ -798,10 +806,12 @@ git commit -m "feat(down): confirmation + non-TTY gate for destructive scopes"
 ## Task 5: `--purge` scope (database + state deletion)
 
 **Files:**
+
 - Modify: `cmd/catacomb/down.go`
 - Test: `cmd/catacomb/down_test.go`
 
 **Interfaces:**
+
 - Consumes: `confirmDestructive` (Task 4); `osUserHomeDir`; `downRemove` (Task 2).
 - Produces: `purgeLocal(opts downOpts, disc daemon.Discovery, haveDisc bool, discoveryPath string) (dbs, state, warnings []string, err error)`; helpers `dbTargets`, `stateTargets`, `removeWithSiblings`; seam `downRemoveAll`.
 
@@ -1029,10 +1039,12 @@ git commit -m "feat(down): --purge deletes local database, WAL siblings, and ~/.
 ## Task 6: `--all`, `--dry-run`, and full-report integration
 
 **Files:**
+
 - Modify: `cmd/catacomb/down.go`
 - Test: `cmd/catacomb/down_test.go`
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: `--dry-run` planning path through `runDown` (no side effects); integration coverage of `--all`.
 
@@ -1164,10 +1176,12 @@ git commit -m "feat(down): --all shorthand and --dry-run planning with no side e
 This is isolated from the command and closes the papercut where a manual `kill` or Ctrl-C on `catacomb daemon` leaves a stale discovery pointer. `down` already cleans stale discovery defensively; this makes any graceful exit self-clean.
 
 **Files:**
+
 - Modify: `cmd/catacomb/daemon.go`
 - Test: `cmd/catacomb/daemon_test.go` (or the existing test file covering `runDaemonWith`)
 
 **Interfaces:**
+
 - Consumes: existing `runDaemonWith(...)`, `daemon.WriteDiscovery`, `daemon.ReadDiscovery`.
 - Produces: discovery-file removal after `d.Serve` returns.
 
