@@ -376,6 +376,20 @@ func TestRunDaemonDiscoveryHasScope(t *testing.T) {
 	require.NoError(t, <-errc)
 }
 
+func TestRunDaemonRemovesDiscoveryOnShutdown(t *testing.T) {
+	discPath := filepath.Join(t.TempDir(), "daemon.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runDaemonWith(
+		ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken,
+		filepath.Join(t.TempDir(), "g.db"), discPath,
+		30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false,
+	)
+	require.NoError(t, err)
+	_, statErr := os.Stat(discPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
 func TestRunDaemonDiscoveryHasPidAndStartedAt(t *testing.T) {
 	dir := t.TempDir()
 	discovery := filepath.Join(dir, "d.json")

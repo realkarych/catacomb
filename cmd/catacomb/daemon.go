@@ -141,5 +141,7 @@ func runDaemonWith(
 	if err := daemon.WriteDiscovery(discoveryPath, disc); err != nil {
 		return err
 	}
-	return d.Serve(ctx, ln, grpcLn, token)
+	err = d.Serve(ctx, ln, grpcLn, token)
+	_ = os.Remove(discoveryPath)
+	return err
 }
