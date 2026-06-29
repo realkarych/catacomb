@@ -89,7 +89,7 @@ func Parse(line []byte, executionID string, nextSeq func() uint64) ([]model.Obse
 }
 
 func build(e envelope) ([]partial, error) {
-	base := model.Correlation{SessionID: e.SessionID, ParentToolUseID: e.ParentToolUseID}
+	base := model.Correlation{SessionID: e.SessionID, ParentToolUseID: e.ParentToolUseID, UUID: e.UUID}
 	switch e.Type {
 	case "system":
 		if e.Subtype != "init" {

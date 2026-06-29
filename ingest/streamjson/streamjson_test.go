@@ -274,3 +274,29 @@ func TestParseAssistantMultiTextBlocksConcatenated(t *testing.T) {
 	require.NoError(t, json.Unmarshal(turn.Payload.Output, &got))
 	assert.Equal(t, "hello world", got)
 }
+
+func TestParseUserPromptCarriesUUID(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"user","session_id":"s1","uuid":"u-123","message":{"content":"hello"}}`)
+	obs, err := Parse(line, "exec1", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, "user_prompt", obs[0].Kind)
+	assert.Equal(t, "u-123", obs[0].Correlation.UUID)
+}
+
+func TestParseUserPromptDistinctUUIDs(t *testing.T) {
+	fixedNow(time.Now())
+	sq := seq()
+	line1 := []byte(`{"type":"user","session_id":"s1","uuid":"uuid-A","message":{"content":"first"}}`)
+	line2 := []byte(`{"type":"user","session_id":"s1","uuid":"uuid-B","message":{"content":"second"}}`)
+	obs1, err := Parse(line1, "exec1", sq)
+	require.NoError(t, err)
+	obs2, err := Parse(line2, "exec1", sq)
+	require.NoError(t, err)
+	require.Len(t, obs1, 1)
+	require.Len(t, obs2, 1)
+	assert.Equal(t, "uuid-A", obs1[0].Correlation.UUID)
+	assert.Equal(t, "uuid-B", obs2[0].Correlation.UUID)
+	assert.NotEqual(t, obs1[0].Correlation.UUID, obs2[0].Correlation.UUID)
+}

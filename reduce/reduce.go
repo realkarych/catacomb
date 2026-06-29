@@ -51,7 +51,7 @@ func (g *Graph) Apply(o model.Observation) {
 		r.EndReason = "session_ended"
 		g.emit(cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
 	case "user_prompt":
-		n := g.node(model.UserPromptID(o.ExecutionID, o.Correlation.UUID), o.RunID, model.NodeUserPrompt)
+		n := g.node(model.UserPromptID(o.ExecutionID, nodeKey(o.Correlation.UUID, "", o.ObsID)), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
 		setAgentID(n, o)
 		if pk, ok := o.Attrs["prompt_kind"].(string); ok && pk != "" {
@@ -65,7 +65,11 @@ func (g *Graph) Apply(o model.Observation) {
 		g.upsertEdge(o.ExecutionID, o.RunID, groupRoot(o.ExecutionID, o.Correlation.AgentID), n.ID, o.Seq)
 		g.recordPrompt(o, n.ID)
 	case "assistant_turn":
-		n := g.node(model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), o.RunID, model.NodeAssistantTurn)
+		turnKey := o.Correlation.MessageID
+		if turnKey == "" && o.Correlation.SpanID != "" {
+			turnKey = "span:" + o.Correlation.SpanID
+		}
+		n := g.node(model.AssistantTurnID(o.ExecutionID, turnKey), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
 		setAgentID(n, o)
 		g.stampEnd(n, o)
@@ -112,6 +116,16 @@ func (g *Graph) structEdgeAllowed(o model.Observation) bool {
 	return true
 }
 
+func nodeKey(primary, span, obs string) string {
+	if primary != "" {
+		return primary
+	}
+	if span != "" {
+		return "span:" + span
+	}
+	return "obs:" + obs
+}
+
 func (g *Graph) applyTool(o model.Observation) {
 	name, _ := o.Attrs["name"].(string)
 	s := g.execState(o.ExecutionID)
@@ -130,7 +144,7 @@ func (g *Graph) applyTool(o model.Observation) {
 		return
 	}
 
-	id := model.ToolCallID(o.ExecutionID, o.Correlation.ToolUseID)
+	id := model.ToolCallID(o.ExecutionID, nodeKey(o.Correlation.ToolUseID, o.Correlation.SpanID, o.ObsID))
 	nodeType := model.NodeToolCall
 	if isMCP(name) {
 		nodeType = model.NodeMCPCall
