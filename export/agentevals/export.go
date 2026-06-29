@@ -51,7 +51,7 @@ func Build(nodes []*model.Node, edges []*model.Edge) []Message {
 		switch n.Type {
 		case model.NodeUserPrompt, model.NodeAssistantTurn:
 			topLevel = append(topLevel, n)
-		case model.NodeToolCall, model.NodeMCPCall:
+		case model.NodeToolCall, model.NodeMCPCall, model.NodeSkill:
 			pid := parentOf[n.ID]
 			if p, ok := byID[pid]; ok && p.Type == model.NodeAssistantTurn {
 				continue
@@ -69,7 +69,7 @@ func Build(nodes []*model.Node, edges []*model.Edge) []Message {
 			msgs = append(msgs, Message{Role: "user", Content: textOf(payloadInput(n))})
 		case model.NodeAssistantTurn:
 			msgs = append(msgs, assistantMessages(n, children[n.ID])...)
-		case model.NodeToolCall, model.NodeMCPCall:
+		case model.NodeToolCall, model.NodeMCPCall, model.NodeSkill:
 			msgs = append(msgs, Message{Role: "tool", Content: textOf(payloadOutput(n)), ToolCallID: n.ID})
 		}
 	}

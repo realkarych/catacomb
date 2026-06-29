@@ -112,7 +112,7 @@ func nodeToSpan(traceID string, n *model.Node, pm map[string]string) span {
 			OutputTokens: deref(n.TokensOut),
 			CostUSD:      n.CostUSD,
 		}
-	case model.NodeToolCall, model.NodeMCPCall:
+	case model.NodeToolCall, model.NodeMCPCall, model.NodeSkill:
 		s.Tool = &toolInfo{
 			ToolName:        n.Name,
 			ToolArgsBytes:   redactedLen(payloadInput(n)),
@@ -132,6 +132,8 @@ func spanType(n *model.Node) string {
 		return "tool"
 	case model.NodeMCPCall:
 		return "mcp"
+	case model.NodeSkill:
+		return "skill"
 	default:
 		return "agent"
 	}
