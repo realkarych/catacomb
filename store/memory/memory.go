@@ -204,6 +204,9 @@ func (s *Store) UpsertAnnotation(a model.Annotation) error {
 	k := annKey{exec: a.ExecutionID, source: a.SourceKey, owner: a.Owner, key: a.Key}
 	existing, ok := s.annotations[k]
 	if !ok || a.WriteSeq >= existing.WriteSeq {
+		if ok && a.StepKey == "" {
+			a.StepKey = existing.StepKey
+		}
 		s.annotations[k] = a
 	}
 	return nil
