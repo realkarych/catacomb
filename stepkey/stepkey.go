@@ -26,7 +26,7 @@ type Key struct {
 
 func eligible(t model.NodeType) bool {
 	switch t {
-	case model.NodeToolCall, model.NodeMCPCall, model.NodeSubagent:
+	case model.NodeToolCall, model.NodeMCPCall, model.NodeSkill, model.NodeSubagent:
 		return true
 	default:
 		return false
