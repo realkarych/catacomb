@@ -36,4 +36,3 @@ func PhaseWindow(nodes []*model.Node, execID, name string, occ int) (Window, boo
 	}
 	return Window{}, false
 }
-

@@ -58,4 +58,3 @@ func TestPhaseWindowOpenPhaseAndNilStart(t *testing.T) {
 	_, ok = PhaseWindow(nodes, exec, "bad", 0)
 	assert.False(t, ok)
 }
-
