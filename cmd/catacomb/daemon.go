@@ -156,13 +156,26 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	d := daemon.New(s)
 	d.SetReaperWindow(p.reaperWindow)
 	d.SetMaxShards(p.maxShards)
-	d.SetOTLPEndpoint(p.otlpEndpoint)
-	d.SetOTLPProject(p.otlpProject)
-	d.SetPostgresDSN(p.postgresDSN)
-	d.SetNeo4j(p.neo4jURI, p.neo4jUser, p.neo4jPassword)
+	var sinks []config.Sink
+	if p.otlpEndpoint != "" {
+		sinks = append(sinks, config.Sink{Type: config.SinkOTLP, Endpoint: p.otlpEndpoint, Project: p.otlpProject})
+	}
+	if p.postgresDSN != "" {
+		sinks = append(sinks, config.Sink{Type: config.SinkPostgres, DSN: p.postgresDSN})
+	}
+	if p.neo4jURI != "" {
+		sinks = append(sinks, config.Sink{Type: config.SinkNeo4j, URI: p.neo4jURI, User: p.neo4jUser, Password: p.neo4jPassword})
+	}
+	d.SetSinks(sinks)
+	jsonlEnabled := p.transcriptDir != ""
+	d.SetSources(config.SourcesConfig{
+		JSONL: config.JSONLSource{
+			Enabled:       &jsonlEnabled,
+			TranscriptDir: p.transcriptDir,
+			Exclude:       p.transcriptExclude,
+		},
+	})
 	d.SetDBPath(dbPath)
-	d.SetTranscriptDir(p.transcriptDir)
-	d.SetTranscriptExclude(p.transcriptExclude)
 	d.SetAllowPayloadAccess(p.allowPayloadAccess)
 	d.SetAllowAnnotations(p.allowAnnotations)
 	d.SetReproConfig(repro.Config{

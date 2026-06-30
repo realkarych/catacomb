@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/config"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/export/otlp"
 	"github.com/realkarych/catacomb/model"
@@ -138,15 +139,15 @@ func loopback(t *testing.T) net.Listener {
 
 func TestServeStartsExporterConsumer(t *testing.T) {
 	fake := &fakeSpanExporter{}
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
@@ -166,17 +167,17 @@ func TestServeStartsExporterConsumer(t *testing.T) {
 
 func TestServeExporterSnapshotsExistingGraphs(t *testing.T) {
 	fake := &fakeSpanExporter{}
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.NoError(t, d.Ingest("SessionEnd", []byte(`{"session_id":"s1","reason":"clear"}`)))
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
@@ -192,17 +193,17 @@ func TestServeExporterSnapshotsExistingGraphs(t *testing.T) {
 
 func TestServeSelfLoopEndpointSkipsExporter(t *testing.T) {
 	var called atomic.Bool
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+	orig := buildFn
+	buildFn = func(_ context.Context, sinks []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
 		called.Store(true)
-		return nil, errors.New("otlp exporter: endpoint targets the daemon's own receiver — self-loop refused")
+		return nil, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
 	httpLn, grpcLn := loopback(t), loopback(t)
-	d.SetOTLPEndpoint("grpc://" + grpcLn.Addr().String())
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://" + grpcLn.Addr().String()}})
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok2") }()
@@ -223,14 +224,14 @@ func TestExporterConsumerLoopExitsOnChannelClose(t *testing.T) {
 	t.Cleanup(func() { consumerLoopExitHook = origHook })
 
 	fake := &fakeSpanExporter{}
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -267,13 +268,13 @@ func TestStartExporterFlushesTerminalRunsOnAttach(t *testing.T) {
 	require.NoError(t, d2.Recover())
 
 	fake := &fakeSpanExporter{}
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
-	d2.SetOTLPEndpoint("grpc://collector.example:4317")
+	d2.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx := context.Background()
 	d2.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
@@ -580,7 +581,8 @@ func TestServeStartsTailerIngestsTranscript(t *testing.T) {
 	require.NoError(t, os.WriteFile(p, []byte(`{"type":"assistant","sessionId":"s9","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"ls"}}]}}`+"\n"), 0o600))
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetTranscriptDir(dir)
+	enabled := true
+	d.SetSources(config.SourcesConfig{JSONL: config.JSONLSource{Enabled: &enabled, TranscriptDir: dir}})
 	origTick := tailTick
 	tailTick = 10 * time.Millisecond
 	t.Cleanup(func() { tailTick = origTick })
@@ -610,28 +612,25 @@ func TestTailLoopDisabledWhenNoDir(t *testing.T) {
 func TestTailLoopLoadError(t *testing.T) {
 	dir := t.TempDir()
 	d := New(&tailLoadErrStore{Store: tempStore(t)})
-	d.SetTranscriptDir(dir)
+	enabled := true
+	d.SetSources(config.SourcesConfig{JSONL: config.JSONLSource{Enabled: &enabled, TranscriptDir: dir}})
 	d.tailLoop(context.Background())
 }
 
 func TestStartExporterAttachesTwoConsumersWhenBothConfigured(t *testing.T) {
 	fake := &fakeSpanExporter{}
-	origOTLP := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
-	}
-	t.Cleanup(func() { newExporterFn = origOTLP })
-
 	fakeExp := &fakeExporter{}
-	origPG := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return fakeExp, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake), fakeExp}, nil
 	}
-	t.Cleanup(func() { newPostgresFn = origPG })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
-	d.SetPostgresDSN("postgres://localhost/test")
+	d.SetSinks([]config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"},
+		{Type: config.SinkPostgres, DSN: "postgres://localhost/test"},
+	})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx := context.Background()
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
@@ -645,21 +644,17 @@ func TestStartExporterAttachesTwoConsumersWhenBothConfigured(t *testing.T) {
 
 func TestStartExporterPostgresErrorDisablesOnlyPostgres(t *testing.T) {
 	fake := &fakeSpanExporter{}
-	origOTLP := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
 	}
-	t.Cleanup(func() { newExporterFn = origOTLP })
-
-	origPG := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return nil, errors.New("connection refused")
-	}
-	t.Cleanup(func() { newPostgresFn = origPG })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
-	d.SetPostgresDSN("postgres://localhost/test")
+	d.SetSinks([]config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"},
+		{Type: config.SinkPostgres, DSN: "postgres://localhost/fail"},
+	})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx := context.Background()
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
@@ -672,15 +667,15 @@ func TestStartExporterPostgresErrorDisablesOnlyPostgres(t *testing.T) {
 
 func TestWiringPostgresDSNAttachesExporterAndReceivesDelta(t *testing.T) {
 	fakeExp := &fakeExporter{}
-	orig := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return fakeExp, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{fakeExp}, nil
 	}
-	t.Cleanup(func() { newPostgresFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetPostgresDSN("postgres://localhost/test")
+	d.SetSinks([]config.Sink{{Type: config.SinkPostgres, DSN: "postgres://localhost/test"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
@@ -701,12 +696,14 @@ func TestWiringPostgresDSNAttachesExporterAndReceivesDelta(t *testing.T) {
 
 func TestWiringEmptyPostgresDSNAttachesNothing(t *testing.T) {
 	called := false
-	orig := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		called = true
-		return &fakeExporter{}, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, sinks []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		if len(sinks) > 0 {
+			called = true
+		}
+		return nil, nil
 	}
-	t.Cleanup(func() { newPostgresFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	httpLn, grpcLn := loopback(t), loopback(t)
@@ -719,23 +716,19 @@ func TestWiringEmptyPostgresDSNAttachesNothing(t *testing.T) {
 
 func TestWiringOTLPAndPostgresRunTogether(t *testing.T) {
 	fake := &fakeSpanExporter{}
-	origOTLP := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
-	}
-	t.Cleanup(func() { newExporterFn = origOTLP })
-
 	fakeExp := &fakeExporter{}
-	origPG := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return fakeExp, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake), fakeExp}, nil
 	}
-	t.Cleanup(func() { newPostgresFn = origPG })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
-	d.SetPostgresDSN("postgres://localhost/test")
+	d.SetSinks([]config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"},
+		{Type: config.SinkPostgres, DSN: "postgres://localhost/test"},
+	})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
@@ -761,13 +754,13 @@ func TestSnapshotReceivedByPostgresExporterOnAttach(t *testing.T) {
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 
 	fakeExp := &fakeExporter{}
-	origPG := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return fakeExp, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{fakeExp}, nil
 	}
-	t.Cleanup(func() { newPostgresFn = origPG })
+	t.Cleanup(func() { buildFn = orig })
 
-	d.SetPostgresDSN("postgres://localhost/test")
+	d.SetSinks([]config.Sink{{Type: config.SinkPostgres, DSN: "postgres://localhost/test"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx := context.Background()
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
@@ -777,15 +770,15 @@ func TestSnapshotReceivedByPostgresExporterOnAttach(t *testing.T) {
 
 func TestWiringNeo4jURIAttachesExporterAndReceivesDelta(t *testing.T) {
 	fakeExp := &fakeExporter{}
-	orig := newNeo4jFn
-	newNeo4jFn = func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
-		return fakeExp, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{fakeExp}, nil
 	}
-	t.Cleanup(func() { newNeo4jFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetNeo4j("bolt://localhost:7687", "neo4j", "pw")
+	d.SetSinks([]config.Sink{{Type: config.SinkNeo4j, URI: "bolt://localhost:7687", User: "neo4j", Password: "pw"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
@@ -806,12 +799,14 @@ func TestWiringNeo4jURIAttachesExporterAndReceivesDelta(t *testing.T) {
 
 func TestWiringEmptyNeo4jURIAttachesNothing(t *testing.T) {
 	called := false
-	orig := newNeo4jFn
-	newNeo4jFn = func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
-		called = true
-		return &fakeExporter{}, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, sinks []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		if len(sinks) > 0 {
+			called = true
+		}
+		return nil, nil
 	}
-	t.Cleanup(func() { newNeo4jFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	httpLn, grpcLn := loopback(t), loopback(t)
@@ -822,31 +817,19 @@ func TestWiringEmptyNeo4jURIAttachesNothing(t *testing.T) {
 	assert.Empty(t, d.ExporterConsumersForTest())
 }
 
-func TestNewNeo4jFnWrapperLine(t *testing.T) {
-	orig := newNeo4jFn
-	t.Cleanup(func() { newNeo4jFn = orig })
-	exp, err := newNeo4jFn(context.Background(), "bolt://localhost:7687", "neo4j", "pw")
-	require.NoError(t, err)
-	require.NotNil(t, exp)
-}
-
 func TestStartExporterNeo4jErrorDisablesOnlyNeo4j(t *testing.T) {
 	fake := &fakeSpanExporter{}
-	origOTLP := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fake), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
 	}
-	t.Cleanup(func() { newExporterFn = origOTLP })
-
-	origNeo4j := newNeo4jFn
-	newNeo4jFn = func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
-		return nil, errors.New("connection refused")
-	}
-	t.Cleanup(func() { newNeo4jFn = origNeo4j })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
-	d.SetNeo4j("bolt://localhost:7687", "neo4j", "pw")
+	d.SetSinks([]config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"},
+		{Type: config.SinkNeo4j, URI: "bolt://localhost:7687", User: "neo4j", Password: "pw"},
+	})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx := context.Background()
 	d.startExporter(ctx, httpLn.Addr().String(), grpcLn.Addr().String())
@@ -1092,16 +1075,21 @@ func TestStaticHandlerSmokeHashedAssetResolves(t *testing.T) {
 
 func TestStartExporterProjectPropagates(t *testing.T) {
 	fakeSpan := &fakeSpanExporter{}
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
-		return otlp.ExporterWithSpanExporter(fakeSpan), nil
+	orig := buildFn
+	buildFn = func(_ context.Context, sinks []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		exp := otlp.ExporterWithSpanExporter(fakeSpan)
+		for _, sk := range sinks {
+			if sk.Type == config.SinkOTLP && sk.Project != "" {
+				exp.SetProject(sk.Project)
+			}
+		}
+		return []exportiface.Exporter{exp}, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
-	d.SetOTLPProject("proj-x")
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317", Project: "proj-x"}})
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 
 	httpLn, grpcLn := loopback(t), loopback(t)
@@ -1137,19 +1125,19 @@ func TestStartExporterProjectPropagates(t *testing.T) {
 func TestStartExporterSnapshotIsolatesPayload(t *testing.T) {
 	fakeSpan := &fakeSpanExporter{}
 	var capturedExp *otlp.Exporter
-	orig := newExporterFn
-	newExporterFn = func(_ context.Context, _, _, _ string) (*otlp.Exporter, error) {
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
 		capturedExp = otlp.ExporterWithSpanExporter(fakeSpan)
-		return capturedExp, nil
+		return []exportiface.Exporter{capturedExp}, nil
 	}
-	t.Cleanup(func() { newExporterFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
 	d := New(tempStore(t))
 	fixedExecID(d)
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"ls"}}`)))
 
-	d.SetOTLPEndpoint("grpc://collector.example:4317")
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"}})
 	httpLn, grpcLn := loopback(t), loopback(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -1197,13 +1185,13 @@ func TestStartExporterCallsSnapshotRunsForRunExporter(t *testing.T) {
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
 
 	fe := &fakeRunExporter{}
-	orig := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return fe, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{fe}, nil
 	}
-	t.Cleanup(func() { newPostgresFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
-	d.SetPostgresDSN("postgres://fake")
+	d.SetSinks([]config.Sink{{Type: config.SinkPostgres, DSN: "postgres://fake"}})
 	d.startExporter(context.Background(), "127.0.0.1:1", "127.0.0.1:2")
 
 	assert.Positive(t, fe.snapshotRunsCount(), "SnapshotRuns must be called with existing run")
@@ -1213,13 +1201,13 @@ func TestStartExporterRunDeltaCarriesRunToApplyDelta(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
 	fe := &fakeRunExporter{}
-	orig := newPostgresFn
-	newPostgresFn = func(_ context.Context, _ string) (exportiface.Exporter, error) {
-		return fe, nil
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return []exportiface.Exporter{fe}, nil
 	}
-	t.Cleanup(func() { newPostgresFn = orig })
+	t.Cleanup(func() { buildFn = orig })
 
-	d.SetPostgresDSN("postgres://fake")
+	d.SetSinks([]config.Sink{{Type: config.SinkPostgres, DSN: "postgres://fake"}})
 	d.startExporter(context.Background(), "127.0.0.1:1", "127.0.0.1:2")
 
 	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s2"}`)))
@@ -1234,4 +1222,114 @@ func TestStartExporterRunDeltaCarriesRunToApplyDelta(t *testing.T) {
 		}
 		return false
 	}, 2*time.Second, 5*time.Millisecond, "DeltaRunStarted should carry a non-nil Run")
+}
+
+func TestStartExporterBuildFnErrorLogsAndReturns(t *testing.T) {
+	orig := buildFn
+	buildFn = func(_ context.Context, _ []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		return nil, errors.New("unknown sink type")
+	}
+	t.Cleanup(func() { buildFn = orig })
+
+	d := New(tempStore(t))
+	d.SetSinks([]config.Sink{{Type: "bogus"}})
+	httpLn, grpcLn := loopback(t), loopback(t)
+	d.startExporter(context.Background(), httpLn.Addr().String(), grpcLn.Addr().String())
+
+	assert.Empty(t, d.ExporterConsumersForTest())
+}
+
+func TestHandlerHookGatedWhenDisabled(t *testing.T) {
+	d := New(tempStore(t))
+	disabled := false
+	d.SetSources(config.SourcesConfig{Hooks: config.SourceToggle{Enabled: &disabled}})
+	token := "tok"
+	h := d.Handler(token)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/hook/PreToolUse", strings.NewReader(`{"session_id":"s1"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandlerOtelGatedWhenDisabled(t *testing.T) {
+	d := New(tempStore(t))
+	disabled := false
+	d.SetSources(config.SourcesConfig{Otel: config.SourceToggle{Enabled: &disabled}})
+	token := "tok"
+	h := d.Handler(token)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/traces", strings.NewReader(""))
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandlerStreamJSONGatedWhenDisabled(t *testing.T) {
+	d := New(tempStore(t))
+	disabled := false
+	d.SetSources(config.SourcesConfig{StreamJSON: config.SourceToggle{Enabled: &disabled}})
+	token := "tok"
+	h := d.Handler(token)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/stream-json", strings.NewReader(""))
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandlerHookEnabledWhenNilToggle(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetSources(config.SourcesConfig{})
+	token := "tok"
+	h := d.Handler(token)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/hook/PreToolUse", strings.NewReader(`{"session_id":"s1"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestTailLoopNoopWhenJSONLDisabled(t *testing.T) {
+	d := New(tempStore(t))
+	disabled := false
+	d.SetSources(config.SourcesConfig{JSONL: config.JSONLSource{Enabled: &disabled, TranscriptDir: t.TempDir()}})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	d.tailLoop(ctx)
+}
+
+func TestTailLoopNoopWhenNoTranscriptDir(t *testing.T) {
+	d := New(tempStore(t))
+	enabled := true
+	d.SetSources(config.SourcesConfig{JSONL: config.JSONLSource{Enabled: &enabled, TranscriptDir: ""}})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	d.tailLoop(ctx)
+}
+
+func TestServeStartsExporterConsumerViaBuildFn(t *testing.T) {
+	fake := &fakeSpanExporter{}
+	orig := buildFn
+	t.Cleanup(func() { buildFn = orig })
+	called := make(chan struct{}, 1)
+	buildFn = func(_ context.Context, sinks []config.Sink, _, _ string) ([]exportiface.Exporter, error) {
+		if len(sinks) > 0 {
+			called <- struct{}{}
+		}
+		return []exportiface.Exporter{otlp.ExporterWithSpanExporter(fake)}, nil
+	}
+	d := New(tempStore(t))
+	d.SetSinks([]config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://collector.example:4317"}})
+	httpLn, grpcLn := loopback(t), loopback(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- d.Serve(ctx, httpLn, grpcLn, "tok") }()
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("buildFn not called")
+	}
+	cancel()
+	require.NoError(t, <-errc)
 }

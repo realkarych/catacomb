@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/ingest/hook"
 	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
@@ -69,16 +70,10 @@ type Daemon struct {
 	lastSeen           map[string]time.Time
 	startedAt          time.Time
 	storeWriteErrors   int64
-	otlpEndpoint       string
-	otlpProject        string
 	exporterConsumers  []*cdc.Consumer
-	postgresDSN        string
-	neo4jURI           string
-	neo4jUser          string
-	neo4jPassword      string
+	sinks              []config.Sink
+	sources            config.SourcesConfig
 	dbPath             string
-	transcriptDir      string
-	transcriptExclude  []string
 	lossyRuns          int64
 	pricer             reduce.Pricer
 	allowPayloadAccess bool
@@ -136,32 +131,6 @@ func (d *Daemon) SetReaperWindow(w time.Duration) {
 		w = defaultReaperWindow
 	}
 	d.reaperWindow = w
-}
-
-func (d *Daemon) SetOTLPEndpoint(s string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.otlpEndpoint = s
-}
-
-func (d *Daemon) SetOTLPProject(s string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.otlpProject = s
-}
-
-func (d *Daemon) SetPostgresDSN(s string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.postgresDSN = s
-}
-
-func (d *Daemon) SetNeo4j(uri, user, password string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.neo4jURI = uri
-	d.neo4jUser = user
-	d.neo4jPassword = password
 }
 
 func (d *Daemon) Recover() error {
@@ -485,16 +454,16 @@ func (d *Daemon) SetAllowPayloadAccess(v bool) {
 	d.allowPayloadAccess = v
 }
 
-func (d *Daemon) SetTranscriptDir(s string) {
+func (d *Daemon) SetSinks(sinks []config.Sink) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.transcriptDir = s
+	d.sinks = sinks
 }
 
-func (d *Daemon) SetTranscriptExclude(globs []string) {
+func (d *Daemon) SetSources(cfg config.SourcesConfig) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.transcriptExclude = globs
+	d.sources = cfg
 }
 
 func (d *Daemon) SetDBPath(s string) {
