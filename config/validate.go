@@ -53,6 +53,21 @@ func validateSinks(sinks []Sink) error {
 	return nil
 }
 
+func SinkKey(s Sink) string {
+	switch s.Type {
+	case SinkPostgres:
+		return s.Type + "|" + s.DSN
+	case SinkNeo4j:
+		return s.Type + "|" + s.URI
+	case SinkOTLP:
+		return s.Type + "|" + s.Endpoint
+	case SinkJSONL:
+		return s.Type + "|" + s.Path
+	default:
+		return s.Type
+	}
+}
+
 func sinkTarget(sk Sink) (string, error) {
 	switch sk.Type {
 	case SinkPostgres:

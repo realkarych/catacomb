@@ -20,6 +20,7 @@ import (
 	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/daemon"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -716,4 +717,66 @@ func TestDaemonCommandConfigError(t *testing.T) {
 	root.SetArgs([]string{"daemon"})
 	err := root.ExecuteContext(context.Background())
 	require.Error(t, err)
+}
+
+func TestFirstOTLPSinkAbsent(t *testing.T) {
+	ep, proj := firstOTLPSink(nil)
+	assert.Equal(t, "", ep)
+	assert.Equal(t, "", proj)
+}
+
+func TestFirstOTLPSinkPresent(t *testing.T) {
+	sinks := []config.Sink{
+		{Type: config.SinkPostgres, DSN: "postgres://host/db"},
+		{Type: config.SinkOTLP, Endpoint: "grpc://host:4317", Project: "myproj"},
+	}
+	ep, proj := firstOTLPSink(sinks)
+	assert.Equal(t, "grpc://host:4317", ep)
+	assert.Equal(t, "myproj", proj)
+}
+
+func TestFirstOTLPSinkMultipleReturnsFirst(t *testing.T) {
+	sinks := []config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://first:4317", Project: "proj-a"},
+		{Type: config.SinkOTLP, Endpoint: "grpc://second:4317", Project: "proj-b"},
+	}
+	ep, proj := firstOTLPSink(sinks)
+	assert.Equal(t, "grpc://first:4317", ep)
+	assert.Equal(t, "proj-a", proj)
+}
+
+func TestDedupSinksNoDuplicates(t *testing.T) {
+	sinks := []config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://host:4317"},
+		{Type: config.SinkPostgres, DSN: "postgres://host/db"},
+		{Type: config.SinkJSONL, Path: "/var/log/out.jsonl"},
+	}
+	got := dedupSinks(sinks)
+	assert.Equal(t, sinks, got)
+}
+
+func TestDedupSinksDuplicateRemoved(t *testing.T) {
+	configSink := config.Sink{Type: config.SinkOTLP, Endpoint: "grpc://host:4317", Project: "myproj"}
+	legacySink := config.Sink{Type: config.SinkOTLP, Endpoint: "grpc://host:4317", Project: "myproj"}
+	sinks := []config.Sink{configSink, legacySink}
+	got := dedupSinks(sinks)
+	require.Len(t, got, 1)
+	assert.Equal(t, configSink, got[0])
+}
+
+func TestReproConfigFromConfigOnlyOTLPSink(t *testing.T) {
+	sinks := []config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://collector:4317", Project: "phoenix"},
+	}
+	transcriptDir := "/home/user/.claude/projects"
+	sources := config.SourcesConfig{
+		JSONL: config.JSONLSource{Enabled: boolPtr(true), TranscriptDir: transcriptDir},
+	}
+	ep, proj := firstOTLPSink(dedupSinks(sinks))
+	got := repro.Config{OTLPEndpoint: ep, OTLPProject: proj, TranscriptDir: sources.JSONL.TranscriptDir}
+	assert.Equal(t, repro.Config{
+		OTLPEndpoint:  "grpc://collector:4317",
+		OTLPProject:   "phoenix",
+		TranscriptDir: transcriptDir,
+	}, got)
 }
