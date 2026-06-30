@@ -124,6 +124,7 @@ func TestSpanTypeMapping(t *testing.T) {
 		{model.NodeAssistantTurn, "llm"},
 		{model.NodeToolCall, "tool"},
 		{model.NodeMCPCall, "mcp"},
+		{model.NodeSkill, "skill"},
 		{model.NodeUserPrompt, "agent"},
 		{model.NodeSession, "agent"},
 	}

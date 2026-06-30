@@ -120,6 +120,7 @@ func TestNodeLabelMapping(t *testing.T) {
 		{model.NodeToolCall, "ToolCall"},
 		{model.NodeSubagent, "Subagent"},
 		{model.NodeMCPCall, "McpCall"},
+		{model.NodeSkill, "Skill"},
 		{model.NodeHookEvent, "HookEvent"},
 		{model.NodeMarker, "Marker"},
 	}

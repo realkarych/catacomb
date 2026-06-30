@@ -10,6 +10,7 @@ const NODE_TYPE_MAP: Record<string, NodeTypeInfo> = {
   tool_call: { token: '--node-tool_call', label: 'tool call' },
   subagent: { token: '--node-subagent', label: 'subagent' },
   mcp_call: { token: '--node-mcp_call', label: 'mcp call' },
+  skill: { token: '--node-skill', label: 'skill' },
   hook_event: { token: '--node-hook_event', label: 'hook event' },
   marker: { token: '--node-marker', label: 'marker' },
 };

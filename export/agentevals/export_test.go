@@ -169,6 +169,20 @@ func TestBuildEdgeCases(t *testing.T) {
 		assert.Equal(t, "tool-y", msgs[0].ToolCallID)
 	})
 
+	t.Run("orphan-skill-is-tool-role", func(t *testing.T) {
+		nodes := []*model.Node{
+			{ID: "sess-sk", RunID: "r", Type: model.NodeSession},
+			{ID: "skill-1", RunID: "r", Name: "my_skill", Type: model.NodeSkill, Payload: &model.Payload{Output: json.RawMessage(`"skill result"`)}},
+		}
+		edges := []*model.Edge{
+			{ID: "e1", RunID: "r", Type: model.EdgeParentChild, Src: "sess-sk", Dst: "skill-1"},
+		}
+		msgs := agentevals.Build(nodes, edges)
+		require.Len(t, msgs, 1)
+		assert.Equal(t, "tool", msgs[0].Role)
+		assert.Equal(t, "skill-1", msgs[0].ToolCallID)
+	})
+
 	t.Run("non-string-user-payload", func(t *testing.T) {
 		nodes := []*model.Node{
 			{ID: "p1", RunID: "r", Type: model.NodeUserPrompt, Payload: &model.Payload{Input: json.RawMessage(`{"complex":"data"}`)}},

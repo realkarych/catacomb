@@ -75,6 +75,8 @@ export function outlineLabel(node: Node): { primary: string; secondary: string }
       return { primary: node.name || 'tool', secondary: '' };
     case 'mcp_call':
       return { primary: node.name || 'mcp', secondary: '' };
+    case 'skill':
+      return { primary: node.name || 'skill', secondary: '' };
     case 'subagent':
       return {
         primary: node.name || 'subagent',

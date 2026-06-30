@@ -217,6 +217,7 @@ func TestOpenInferenceKindTable(t *testing.T) {
 	assert.Equal(t, "AGENT", openInferenceKind(model.NodeSubagent))
 	assert.Equal(t, "TOOL", openInferenceKind(model.NodeToolCall))
 	assert.Equal(t, "TOOL", openInferenceKind(model.NodeMCPCall))
+	assert.Equal(t, "TOOL", openInferenceKind(model.NodeSkill))
 	assert.Equal(t, "LLM", openInferenceKind(model.NodeAssistantTurn))
 	assert.Equal(t, "CHAIN", openInferenceKind(model.NodeMarker))
 	assert.Equal(t, "CHAIN", openInferenceKind(model.NodeSession))

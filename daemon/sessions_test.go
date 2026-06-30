@@ -905,11 +905,12 @@ func TestSummarizeRunAggregatesByRunID(t *testing.T) {
 	g.Nodes["n1"] = &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, TokensIn: &tokIn, TokensOut: &tokOut}
 	g.Nodes["n2"] = &model.Node{ID: "n2", RunID: "r1", Type: model.NodeAssistantTurn}
 	g.Nodes["n3"] = &model.Node{ID: "n3", RunID: "r2", Type: model.NodeToolCall}
+	g.Nodes["n4"] = &model.Node{ID: "n4", RunID: "r1", Type: model.NodeSkill}
 
 	sum := SummarizeRun("r1", []*reduce.Graph{g})
 
-	assert.Equal(t, 2, sum.NodeCount)
-	assert.Equal(t, 1, sum.ToolCount)
+	assert.Equal(t, 3, sum.NodeCount)
+	assert.Equal(t, 2, sum.ToolCount)
 	assert.Equal(t, int64(10), sum.TokensIn)
 	assert.Equal(t, int64(5), sum.TokensOut)
 	assert.Equal(t, "r1", sum.Session)
@@ -924,12 +925,14 @@ func TestSummarizeSessionFreeFnMatchesMethod(t *testing.T) {
 	require.NoError(t, d.Ingest("PostToolUse", []byte(`{"session_id":"sess-x","tool_name":"Bash","tool_use_id":"t1","tool_response":{}}`)))
 
 	d.mu.Lock()
+	d.graphs["exec1"].Nodes["skill-x"] = &model.Node{ID: "skill-x", RunID: "sess-x", Type: model.NodeSkill}
 	dSum := d.summarizeSession("sess-x")
 	graphs := graphSlice(d.graphs)
 	d.mu.Unlock()
 
 	freeSum := SummarizeSession("sess-x", graphs)
 
+	assert.Equal(t, 2, dSum.ToolCount)
 	assert.Equal(t, dSum.NodeCount, freeSum.NodeCount)
 	assert.Equal(t, dSum.ToolCount, freeSum.ToolCount)
 	assert.Equal(t, dSum.RunIDs, freeSum.RunIDs)

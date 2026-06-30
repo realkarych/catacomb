@@ -192,7 +192,7 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 			}
 			sum.CountsByType[string(n.Type)]++
 			sum.CountsByStatus[string(n.Status)]++
-			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall {
+			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall || n.Type == model.NodeSkill {
 				sum.ToolCount++
 			}
 			if n.Status == model.StatusError {
@@ -318,7 +318,7 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 			}
 			sum.CountsByType[string(n.Type)]++
 			sum.CountsByStatus[string(n.Status)]++
-			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall {
+			if n.Type == model.NodeToolCall || n.Type == model.NodeMCPCall || n.Type == model.NodeSkill {
 				sum.ToolCount++
 			}
 			if n.Status == model.StatusError {

@@ -308,6 +308,7 @@ func TestLiveTrueForOK(t *testing.T) {
 func TestEligibleTypes(t *testing.T) {
 	assert.True(t, eligible(model.NodeToolCall))
 	assert.True(t, eligible(model.NodeMCPCall))
+	assert.True(t, eligible(model.NodeSkill))
 	assert.True(t, eligible(model.NodeSubagent))
 	assert.False(t, eligible(model.NodeSession))
 	assert.False(t, eligible(model.NodeUserPrompt))

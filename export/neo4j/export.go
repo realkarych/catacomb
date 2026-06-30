@@ -103,6 +103,8 @@ func nodeLabel(t model.NodeType) string {
 		return "Subagent"
 	case model.NodeMCPCall:
 		return "McpCall"
+	case model.NodeSkill:
+		return "Skill"
 	case model.NodeHookEvent:
 		return "HookEvent"
 	default:

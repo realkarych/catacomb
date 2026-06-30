@@ -16,6 +16,8 @@ func NodeTypeLabel(t string) string {
 		return "mcp call"
 	case "hook_event":
 		return "hook event"
+	case "skill":
+		return "skill"
 	default:
 		return "marker"
 	}

@@ -176,7 +176,7 @@ func openInferenceKind(t model.NodeType) string {
 	switch t {
 	case model.NodeSubagent:
 		return "AGENT"
-	case model.NodeToolCall, model.NodeMCPCall:
+	case model.NodeToolCall, model.NodeMCPCall, model.NodeSkill:
 		return "TOOL"
 	case model.NodeAssistantTurn:
 		return "LLM"
