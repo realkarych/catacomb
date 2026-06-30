@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/daemon"
 )
 
@@ -327,4 +330,122 @@ func TestRunStatusObservingHistoryOff(t *testing.T) {
 	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
 	require.NoError(t, runStatus(context.Background(), &out, deps))
 	assert.Contains(t, out.String(), "history off")
+}
+
+func discWithSummary(t *testing.T, addr string) daemon.Discovery {
+	t.Helper()
+	return daemon.Discovery{
+		Addr:           addr,
+		Token:          "tok",
+		Pid:            42,
+		StartedAt:      time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339),
+		StoreBackend:   config.BackendMemory,
+		SinkTypes:      []string{config.SinkOTLP},
+		SourcesEnabled: []string{"hooks", "otel", "stream_json"},
+		ReaperWindow:   "30m0s",
+		MaxShards:      4096,
+	}
+}
+
+func TestRunStatusJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"session":"s1","node_count":10}]`))
+	}))
+	t.Cleanup(srv.Close)
+
+	disc := discWithSummary(t, strings.TrimPrefix(srv.URL, "http://"))
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, disc))
+
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    srv.Client(),
+		now:           time.Now,
+		asJSON:        true,
+	}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+
+	var rep statusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, 42, rep.Pid)
+	assert.Equal(t, config.BackendMemory, rep.StoreBackend)
+	assert.Equal(t, []string{config.SinkOTLP}, rep.SinkTypes)
+	assert.Contains(t, rep.SourcesEnabled, "hooks")
+	assert.Equal(t, "30m0s", rep.ReaperWindow)
+	assert.Equal(t, 4096, rep.MaxShards)
+	assert.Equal(t, 1, rep.Sessions)
+	assert.Equal(t, 10, rep.Nodes)
+	assert.True(t, rep.Healthy)
+}
+
+func TestRunStatusJSONUnhealthy(t *testing.T) {
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, daemon.Discovery{
+		Addr:  "127.0.0.1:1",
+		Token: "tok",
+		Pid:   99,
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    http.DefaultClient,
+		now:           time.Now,
+		asJSON:        true,
+	}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	var rep statusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, 99, rep.Pid)
+	assert.False(t, rep.Healthy)
+}
+
+func TestRunStatusJSONNoDaemon(t *testing.T) {
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: filepath.Join(t.TempDir(), "missing.json"),
+		httpClient:    http.DefaultClient,
+		now:           time.Now,
+		asJSON:        true,
+	}
+	err := runStatus(context.Background(), io.Discard, deps)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoDaemon)
+}
+
+func TestRunStatusTextEnriched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	disc := discWithSummary(t, strings.TrimPrefix(srv.URL, "http://"))
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, disc))
+
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    srv.Client(),
+		now:           time.Now,
+		asJSON:        false,
+	}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	text := out.String()
+	assert.Contains(t, text, "memory")
+	assert.Contains(t, text, "otlp")
+	assert.Contains(t, text, "hooks")
+	assert.Contains(t, text, "30m0s")
+	assert.Contains(t, text, "4096")
+}
+
+func TestStatusCmdJSONFlag(t *testing.T) {
+	cmd := newStatusCmd()
+	f := cmd.Flags().Lookup("json")
+	require.NotNil(t, f)
+	assert.Equal(t, "false", f.DefValue)
 }
