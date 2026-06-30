@@ -3,6 +3,7 @@ package jsonl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -11,6 +12,8 @@ import (
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
 )
+
+var ErrClosed = errors.New("jsonl: streamer closed")
 
 var _ exportiface.Exporter = (*Streamer)(nil)
 
@@ -33,6 +36,9 @@ func (s *Streamer) Name() string { return "jsonl" }
 func (s *Streamer) ApplyDelta(_ context.Context, d cdc.GraphDelta) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.f == nil {
+		return fmt.Errorf("jsonl.Streamer.ApplyDelta: %w", ErrClosed)
+	}
 	if err := s.enc.Encode(d); err != nil {
 		return fmt.Errorf("jsonl.Streamer.ApplyDelta: %w", err)
 	}
@@ -42,6 +48,9 @@ func (s *Streamer) ApplyDelta(_ context.Context, d cdc.GraphDelta) error {
 func (s *Streamer) SnapshotState(_ context.Context, nodes []*model.Node, edges []*model.Edge) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.f == nil {
+		return fmt.Errorf("jsonl.Streamer.SnapshotState: %w", ErrClosed)
+	}
 	for _, n := range nodes {
 		if err := s.enc.Encode(n); err != nil {
 			return fmt.Errorf("jsonl.Streamer.SnapshotState node: %w", err)

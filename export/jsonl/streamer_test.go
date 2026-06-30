@@ -3,6 +3,7 @@ package jsonl_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,4 +83,27 @@ func TestStreamerShutdownIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Shutdown(context.Background()))
 	require.NoError(t, s.Shutdown(context.Background()))
+}
+
+func TestStreamerApplyDeltaAfterShutdownReturnsErrClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.jsonl")
+	s, err := jsonl.NewStreamer(path)
+	require.NoError(t, err)
+	require.NoError(t, s.Shutdown(context.Background()))
+	d := cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeSession}}
+	err = s.ApplyDelta(context.Background(), d)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, jsonl.ErrClosed))
+}
+
+func TestStreamerSnapshotStateAfterShutdownReturnsErrClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.jsonl")
+	s, err := jsonl.NewStreamer(path)
+	require.NoError(t, err)
+	require.NoError(t, s.Shutdown(context.Background()))
+	nodes := []*model.Node{{ID: "n1", RunID: "r1", Type: model.NodeSession}}
+	edges := []*model.Edge{{ID: "e1", RunID: "r1", Src: "n1", Dst: "n2"}}
+	err = s.SnapshotState(context.Background(), nodes, edges)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, jsonl.ErrClosed))
 }
