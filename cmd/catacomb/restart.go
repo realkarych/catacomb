@@ -18,9 +18,8 @@ type restartDeps struct {
 	readDiscovery func(string) (daemon.Discovery, error)
 	discoveryPath string
 	stopFn        func(pid int, force bool) (bool, error)
-	waitGoneFn    func(pid int) bool
 	removeDisc    func(string) error
-	startDaemon   func() error
+	startDaemon   func(transcriptDir string) error
 	pollHealthz   func(ctx context.Context, addr string) error
 	after         func(time.Duration) <-chan time.Time
 	force         bool
@@ -46,9 +45,8 @@ func newRestartCmd() *cobra.Command {
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
 				stopFn:        stopDaemon,
-				waitGoneFn:    waitGone,
 				removeDisc:    os.Remove,
-				startDaemon:   buildStartDaemon(discPath, ""),
+				startDaemon:   func(td string) error { return buildStartDaemon(discPath, td)() },
 				pollHealthz:   prodPollHealthz,
 				after:         time.After,
 				force:         force,
@@ -76,22 +74,26 @@ func runRestart(ctx context.Context, out io.Writer, deps restartDeps) error {
 		if serr != nil {
 			return serr
 		}
-		if !stopped {
-			return ErrDaemonStop
-		}
-		rep.Stopped = true
+		rep.Stopped = stopped
 		if err := deps.removeDisc(deps.discoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("restart: remove discovery: %w", err)
 		}
 	}
 
-	if err := deps.startDaemon(); err != nil {
+	transcriptDir := ""
+	if derr == nil {
+		transcriptDir = disc.TranscriptDir
+	}
+	if err := deps.startDaemon(transcriptDir); err != nil {
 		return fmt.Errorf("restart: start daemon: %w", err)
 	}
 
 	ready := false
 	var newDisc daemon.Discovery
 	for attempt := 0; attempt < deps.waitSeconds; attempt++ {
+		if attempt > 0 {
+			<-deps.after(time.Second)
+		}
 		d, err := deps.readDiscovery(deps.discoveryPath)
 		if err == nil {
 			if hzErr := deps.pollHealthz(ctx, d.Addr); hzErr == nil {
@@ -100,7 +102,6 @@ func runRestart(ctx context.Context, out io.Writer, deps restartDeps) error {
 				break
 			}
 		}
-		<-deps.after(time.Second)
 	}
 	rep.Started = ready
 	if ready {
