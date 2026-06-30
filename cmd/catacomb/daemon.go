@@ -201,8 +201,10 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := daemon.WriteDiscovery(p.discoveryPath, disc); err != nil {
+	if err = daemon.WriteDiscovery(p.discoveryPath, disc); err != nil {
 		return err
 	}
-	return d.Serve(ctx, ln, grpcLn, token)
+	err = d.Serve(ctx, ln, grpcLn, token)
+	_ = os.Remove(p.discoveryPath)
+	return err
 }

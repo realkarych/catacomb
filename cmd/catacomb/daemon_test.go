@@ -394,6 +394,18 @@ func TestRunDaemonDiscoveryHasScope(t *testing.T) {
 	require.NoError(t, <-errc)
 }
 
+func TestRunDaemonRemovesDiscoveryOnShutdown(t *testing.T) {
+	discPath := filepath.Join(t.TempDir(), "daemon.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := testDaemonParams(t)
+	p.discoveryPath = discPath
+	err := runDaemonWith(ctx, testDaemonDeps(), p)
+	require.NoError(t, err)
+	_, statErr := os.Stat(discPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
 func TestRunDaemonDiscoveryHasPidAndStartedAt(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
