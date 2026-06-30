@@ -69,7 +69,12 @@
   });
 
   $effect(() => {
-    if (!selA || !selB || selA === selB) {
+    if (!selA || !selB) {
+      diffResult = null;
+      diffError = null;
+      return;
+    }
+    if (selA === selB && selPhaseA === selPhaseB) {
       diffResult = null;
       diffError = null;
       return;
