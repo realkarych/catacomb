@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -27,10 +28,28 @@ type statusDeps struct {
 	discoveryPath string
 	httpClient    *http.Client
 	now           func() time.Time
+	asJSON        bool
+}
+
+type statusReport struct {
+	Addr           string   `json:"addr"`
+	Pid            int      `json:"pid"`
+	Uptime         string   `json:"uptime"`
+	TokenAge       string   `json:"token_age"`
+	ObservingDir   string   `json:"observing_dir,omitempty"`
+	StoreBackend   string   `json:"store_backend,omitempty"`
+	SinkTypes      []string `json:"sink_types,omitempty"`
+	SourcesEnabled []string `json:"sources_enabled,omitempty"`
+	ReaperWindow   string   `json:"reaper_window,omitempty"`
+	MaxShards      int      `json:"max_shards,omitempty"`
+	Sessions       int      `json:"sessions"`
+	Nodes          int      `json:"nodes"`
+	Healthy        bool     `json:"healthy"`
 }
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Print daemon addr, pid, uptime, and session/node counts",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -39,10 +58,13 @@ func newStatusCmd() *cobra.Command {
 				discoveryPath: daemon.DiscoveryPath(),
 				httpClient:    statusHTTPClient,
 				now:           statusNowFn,
+				asJSON:        asJSON,
 			}
 			return runStatus(cmd.Context(), cmd.OutOrStdout(), deps)
 		},
 	}
+	cmd.Flags().BoolVarP(&asJSON, "json", "j", false, "output machine-readable JSON")
+	return cmd
 }
 
 func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
@@ -66,25 +88,62 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 	}
 
 	sessions, nodes, fetchErr := fetchSessionCounts(ctx, disc, deps.httpClient)
+	healthy := fetchErr == nil
+
+	rep := statusReport{
+		Addr:           disc.Addr,
+		Pid:            disc.Pid,
+		Uptime:         uptime,
+		TokenAge:       tokenAge,
+		ObservingDir:   disc.TranscriptDir,
+		StoreBackend:   disc.StoreBackend,
+		SinkTypes:      disc.SinkTypes,
+		SourcesEnabled: disc.SourcesEnabled,
+		ReaperWindow:   disc.ReaperWindow,
+		MaxShards:      disc.MaxShards,
+		Sessions:       sessions,
+		Nodes:          nodes,
+		Healthy:        healthy,
+	}
+
+	if deps.asJSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+
+	if fetchErr != nil && errors.Is(fetchErr, ErrDaemonRestarted) {
+		return ErrDaemonRestarted
+	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "addr\t%s\n", disc.Addr)
-	_, _ = fmt.Fprintf(w, "pid\t%d\n", disc.Pid)
-	_, _ = fmt.Fprintf(w, "uptime\t%s\n", uptime)
-	_, _ = fmt.Fprintf(w, "token age\t%s\n", tokenAge)
+	_, _ = fmt.Fprintf(w, "addr\t%s\n", rep.Addr)
+	_, _ = fmt.Fprintf(w, "pid\t%d\n", rep.Pid)
+	_, _ = fmt.Fprintf(w, "uptime\t%s\n", rep.Uptime)
+	_, _ = fmt.Fprintf(w, "token age\t%s\n", rep.TokenAge)
 	_, _ = fmt.Fprintf(w, "observing\t%s\n", observingLabel(disc.TranscriptDir))
+	if rep.StoreBackend != "" {
+		_, _ = fmt.Fprintf(w, "store\t%s\n", rep.StoreBackend)
+	}
+	if len(rep.SinkTypes) > 0 {
+		_, _ = fmt.Fprintf(w, "sinks\t%s\n", strings.Join(rep.SinkTypes, " "))
+	}
+	if len(rep.SourcesEnabled) > 0 {
+		_, _ = fmt.Fprintf(w, "sources\t%s\n", strings.Join(rep.SourcesEnabled, " "))
+	}
+	if rep.ReaperWindow != "" {
+		_, _ = fmt.Fprintf(w, "reaper\t%s\n", rep.ReaperWindow)
+	}
+	if rep.MaxShards > 0 {
+		_, _ = fmt.Fprintf(w, "shards\t%d\n", rep.MaxShards)
+	}
 	if fetchErr != nil {
-		if errors.Is(fetchErr, ErrDaemonRestarted) {
-			_ = w.Flush()
-			return ErrDaemonRestarted
-		}
 		_, _ = fmt.Fprintf(w, "sessions\tunavailable\n")
 		_, _ = fmt.Fprintf(w, "nodes\tunavailable\n")
-		_ = w.Flush()
-		return nil
+		return w.Flush()
 	}
-	_, _ = fmt.Fprintf(w, "sessions\t%d\n", sessions)
-	_, _ = fmt.Fprintf(w, "nodes\t%d\n", nodes)
+	_, _ = fmt.Fprintf(w, "sessions\t%d\n", rep.Sessions)
+	_, _ = fmt.Fprintf(w, "nodes\t%d\n", rep.Nodes)
 	return w.Flush()
 }
 
