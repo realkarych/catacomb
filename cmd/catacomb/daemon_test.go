@@ -508,6 +508,24 @@ func TestRunDaemonDiscoveryHasScope(t *testing.T) {
 	require.NoError(t, <-errc)
 }
 
+func TestRunDaemonConfigTranscriptDirInDiscovery(t *testing.T) {
+	transcripts := t.TempDir()
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	enabled := true
+	p.sources = config.SourcesConfig{JSONL: config.JSONLSource{Enabled: &enabled, TranscriptDir: transcripts}}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	d, err := daemon.ReadDiscovery(discovery)
+	require.NoError(t, err)
+	assert.Equal(t, transcripts, d.TranscriptDir)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
 func TestRunDaemonRemovesDiscoveryOnShutdown(t *testing.T) {
 	discPath := filepath.Join(t.TempDir(), "daemon.json")
 	ctx, cancel := context.WithCancel(context.Background())

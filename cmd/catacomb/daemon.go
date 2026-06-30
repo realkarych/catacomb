@@ -224,7 +224,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 		Addr:               ln.Addr().String(),
 		Token:              token,
 		GRPCAddr:           grpcLn.Addr().String(),
-		TranscriptDir:      p.transcriptDir,
+		TranscriptDir:      sources.JSONL.TranscriptDir,
 		DBPath:             dbPath,
 		AllowPayloadAccess: p.allowPayloadAccess,
 		AllowAnnotations:   p.allowAnnotations,
