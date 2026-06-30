@@ -19,7 +19,7 @@ type restartDeps struct {
 	discoveryPath string
 	stopFn        func(pid int, force bool) (bool, error)
 	removeDisc    func(string) error
-	startDaemon   func(transcriptDir string) error
+	startDaemon   func(transcriptDir, configPath string) error
 	pollHealthz   func(ctx context.Context, addr string) error
 	after         func(time.Duration) <-chan time.Time
 	force         bool
@@ -46,7 +46,7 @@ func newRestartCmd() *cobra.Command {
 				discoveryPath: discPath,
 				stopFn:        stopDaemon,
 				removeDisc:    os.Remove,
-				startDaemon:   func(td string) error { return buildStartDaemon(discPath, td)() },
+				startDaemon:   func(td, cp string) error { return buildStartDaemon(discPath, td, cp)() },
 				pollHealthz:   prodPollHealthz,
 				after:         time.After,
 				force:         force,
@@ -81,10 +81,12 @@ func runRestart(ctx context.Context, out io.Writer, deps restartDeps) error {
 	}
 
 	transcriptDir := ""
+	configPath := ""
 	if derr == nil {
 		transcriptDir = disc.TranscriptDir
+		configPath = disc.ConfigPath
 	}
-	if err := deps.startDaemon(transcriptDir); err != nil {
+	if err := deps.startDaemon(transcriptDir, configPath); err != nil {
 		return fmt.Errorf("restart: start daemon: %w", err)
 	}
 

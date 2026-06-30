@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -664,6 +665,46 @@ func TestDaemonCommandHomeError(t *testing.T) {
 	root.SetArgs([]string{"daemon"})
 	err := root.ExecuteContext(context.Background())
 	require.Error(t, err)
+}
+
+func TestRunDaemonConfigPathInDiscovery(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.configPath = "/etc/catacomb/custom.yaml"
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	d, err := daemon.ReadDiscovery(discovery)
+	require.NoError(t, err)
+	assert.Equal(t, "/etc/catacomb/custom.yaml", d.ConfigPath)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonStartupLogLine(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.postgresDSN = "postgres://user:secret@host/db"
+	p.sinks = []config.Sink{{Type: config.SinkPostgres, DSN: "postgres://user:secret@host/db"}}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+
+	line := buf.String()
+	assert.Contains(t, line, "catacomb daemon started")
+	assert.Contains(t, line, "addr=")
+	assert.NotContains(t, line, "secret")
+	assert.NotContains(t, line, "postgres://")
 }
 
 func TestDaemonCommandConfigError(t *testing.T) {

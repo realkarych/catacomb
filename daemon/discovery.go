@@ -18,6 +18,7 @@ type Discovery struct {
 	StartedAt          string   `json:"started_at,omitempty"`
 	TranscriptDir      string   `json:"transcript_dir,omitempty"`
 	DBPath             string   `json:"db_path,omitempty"`
+	ConfigPath         string   `json:"config_path,omitempty"`
 	AllowPayloadAccess bool     `json:"allow_payload_access,omitempty"`
 	AllowAnnotations   bool     `json:"allow_annotations,omitempty"`
 	StoreBackend       string   `json:"store_backend,omitempty"`

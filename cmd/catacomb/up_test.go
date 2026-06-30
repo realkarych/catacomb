@@ -526,7 +526,7 @@ func TestBuildStartDaemonOsExecutableError(t *testing.T) {
 	osExecutable = func() (string, error) { return "", errors.New("no exe") }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
 
-	fn := buildStartDaemon(t.TempDir()+"/d.json", "")
+	fn := buildStartDaemon(t.TempDir()+"/d.json", "", "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolve executable")
@@ -536,7 +536,7 @@ func TestBuildStartDaemonCreateRunDirError(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 
-	fn := buildStartDaemon(filepath.Join(blocker, "run", "d.json"), "")
+	fn := buildStartDaemon(filepath.Join(blocker, "run", "d.json"), "", "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create run dir")
@@ -551,7 +551,7 @@ func TestBuildStartDaemonLogOpenError(t *testing.T) {
 	discPath := dir + "/d.json"
 	require.NoError(t, os.MkdirAll(discPath+".log", 0o700))
 
-	fn := buildStartDaemon(discPath, "")
+	fn := buildStartDaemon(discPath, "", "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open daemon log")
@@ -571,7 +571,7 @@ func TestBuildStartDaemonCreatesRunDir(t *testing.T) {
 	runDir := base + "/run"
 
 	require.NoDirExists(t, runDir)
-	fn := buildStartDaemon(discPath, "")
+	fn := buildStartDaemon(discPath, "", "")
 	require.NoError(t, fn())
 	assert.DirExists(t, runDir)
 }
@@ -585,7 +585,7 @@ func TestBuildStartDaemonStartError(t *testing.T) {
 	startCmd = func(_ *exec.Cmd) error { return errors.New("start failed") }
 	t.Cleanup(func() { startCmd = origStartCmd })
 
-	fn := buildStartDaemon(t.TempDir()+"/d.json", "")
+	fn := buildStartDaemon(t.TempDir()+"/d.json", "", "")
 	err := fn()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "start daemon")
@@ -600,7 +600,7 @@ func TestBuildStartDaemonSuccess(t *testing.T) {
 	startCmd = func(_ *exec.Cmd) error { return nil }
 	t.Cleanup(func() { startCmd = origStartCmd })
 
-	fn := buildStartDaemon(t.TempDir()+"/d.json", "")
+	fn := buildStartDaemon(t.TempDir()+"/d.json", "", "")
 	err := fn()
 	require.NoError(t, err)
 }
@@ -777,7 +777,7 @@ func TestBuildStartDaemonHistoryAppendsTranscriptDir(t *testing.T) {
 	}
 	t.Cleanup(func() { execCommand = origExec })
 
-	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "/home/u/.claude/projects")())
+	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "/home/u/.claude/projects", "")())
 	assert.Contains(t, gotArgs, "--transcript-dir")
 	assert.Contains(t, gotArgs, "/home/u/.claude/projects")
 }
@@ -797,8 +797,47 @@ func TestBuildStartDaemonNoHistoryOmitsTranscriptDir(t *testing.T) {
 	}
 	t.Cleanup(func() { execCommand = origExec })
 
-	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "")())
+	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "", "")())
 	assert.NotContains(t, gotArgs, "--transcript-dir")
+}
+
+func TestBuildStartDaemonPassesConfigPath(t *testing.T) {
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+	origStart := startCmd
+	startCmd = func(_ *exec.Cmd) error { return nil }
+	t.Cleanup(func() { startCmd = origStart })
+	origExec := execCommand
+	var gotArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return origExec(name, args...)
+	}
+	t.Cleanup(func() { execCommand = origExec })
+
+	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "", "/etc/catacomb/custom.yaml")())
+	assert.Contains(t, gotArgs, "--config")
+	assert.Contains(t, gotArgs, "/etc/catacomb/custom.yaml")
+}
+
+func TestBuildStartDaemonNoConfigOmitsFlag(t *testing.T) {
+	origExe := osExecutable
+	osExecutable = func() (string, error) { return "/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origExe })
+	origStart := startCmd
+	startCmd = func(_ *exec.Cmd) error { return nil }
+	t.Cleanup(func() { startCmd = origStart })
+	origExec := execCommand
+	var gotArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return origExec(name, args...)
+	}
+	t.Cleanup(func() { execCommand = origExec })
+
+	require.NoError(t, buildStartDaemon(t.TempDir()+"/d.json", "", "")())
+	assert.NotContains(t, gotArgs, "--config")
 }
 
 func TestUpCmdHasHistoryFlag(t *testing.T) {

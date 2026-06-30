@@ -25,7 +25,7 @@ func fakeRestartDeps(discPath string) restartDeps {
 		discoveryPath: discPath,
 		stopFn:        func(_ int, _ bool) (bool, error) { return true, nil },
 		removeDisc:    func(_ string) error { return nil },
-		startDaemon:   func(_ string) error { return nil },
+		startDaemon:   func(_, _ string) error { return nil },
 		pollHealthz:   func(_ context.Context, _ string) error { return nil },
 		after:         func(_ time.Duration) <-chan time.Time { ch := make(chan time.Time, 1); ch <- time.Now(); return ch },
 		waitSeconds:   1,
@@ -36,7 +36,7 @@ func TestRunRestartNoDaemonStartsNew(t *testing.T) {
 	disc := filepath.Join(t.TempDir(), "d.json")
 	deps := fakeRestartDeps(disc)
 	started := false
-	deps.startDaemon = func(_ string) error { started = true; return nil }
+	deps.startDaemon = func(_, _ string) error { started = true; return nil }
 	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
 	assert.True(t, started)
 }
@@ -49,7 +49,7 @@ func TestRunRestartStopsAndRestarts(t *testing.T) {
 	stopped, started := false, false
 	deps := fakeRestartDeps(disc)
 	deps.stopFn = func(_ int, _ bool) (bool, error) { stopped = true; return true, nil }
-	deps.startDaemon = func(_ string) error { started = true; return nil }
+	deps.startDaemon = func(_, _ string) error { started = true; return nil }
 
 	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
 	assert.True(t, stopped)
@@ -83,7 +83,7 @@ func TestRunRestartStopError(t *testing.T) {
 func TestRunRestartStartError(t *testing.T) {
 	disc := filepath.Join(t.TempDir(), "d.json")
 	deps := fakeRestartDeps(disc)
-	deps.startDaemon = func(_ string) error { return errors.New("exec failed") }
+	deps.startDaemon = func(_, _ string) error { return errors.New("exec failed") }
 	err := runRestart(context.Background(), io.Discard, deps)
 	require.Error(t, err)
 }
@@ -160,7 +160,7 @@ func TestRunRestartStaleDiscProceeds(t *testing.T) {
 	deps := fakeRestartDeps(disc)
 	deps.stopFn = func(_ int, _ bool) (bool, error) { return false, nil }
 	deps.removeDisc = func(_ string) error { removeDiscCalled = true; return nil }
-	deps.startDaemon = func(_ string) error { startCalled = true; return nil }
+	deps.startDaemon = func(_, _ string) error { startCalled = true; return nil }
 
 	err := runRestart(context.Background(), io.Discard, deps)
 	require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestRunRestartPreservesTranscriptDir(t *testing.T) {
 
 	var gotTranscriptDir string
 	deps := fakeRestartDeps(disc)
-	deps.startDaemon = func(td string) error { gotTranscriptDir = td; return nil }
+	deps.startDaemon = func(td, _ string) error { gotTranscriptDir = td; return nil }
 
 	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
 	assert.Equal(t, "/old/transcripts", gotTranscriptDir)
@@ -216,11 +216,29 @@ func TestRunRestartPollRetries(t *testing.T) {
 	assert.Equal(t, 2, calls)
 }
 
+func TestRunRestartThreadsConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	disc := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:       "127.0.0.1:1",
+		Token:      "t",
+		Pid:        99,
+		ConfigPath: "/etc/catacomb/custom.yaml",
+	}))
+
+	var gotConfigPath string
+	deps := fakeRestartDeps(disc)
+	deps.startDaemon = func(_, cp string) error { gotConfigPath = cp; return nil }
+
+	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
+	assert.Equal(t, "/etc/catacomb/custom.yaml", gotConfigPath)
+}
+
 func TestRunRestartNoDaemonTranscriptDirEmpty(t *testing.T) {
 	disc := filepath.Join(t.TempDir(), "d.json")
 	var gotTranscriptDir string
 	deps := fakeRestartDeps(disc)
-	deps.startDaemon = func(td string) error { gotTranscriptDir = td; return nil }
+	deps.startDaemon = func(td, _ string) error { gotTranscriptDir = td; return nil }
 
 	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
 	assert.Equal(t, "", gotTranscriptDir)
@@ -253,7 +271,7 @@ func TestRestartUsesDownSignalForStop(t *testing.T) {
 	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{Addr: "127.0.0.1:1", Token: "t", Pid: 99}))
 	deps := fakeRestartDeps(disc)
 	deps.stopFn = stopDaemon
-	deps.startDaemon = func(_ string) error { return nil }
+	deps.startDaemon = func(_, _ string) error { return nil }
 	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
 	assert.GreaterOrEqual(t, n, 3)
 }

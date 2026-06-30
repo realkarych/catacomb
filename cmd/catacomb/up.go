@@ -105,7 +105,7 @@ exact command to restart it with history enabled.`,
 				noDemo = true
 				runCtx = fgCtx
 			}
-			startDaemonFn := buildStartDaemon(discPath, transcriptDir)
+			startDaemonFn := buildStartDaemon(discPath, transcriptDir, "")
 			if foreground {
 				startDaemonFn = func() error { return nil }
 			}
@@ -145,7 +145,7 @@ func claudeProjectsDir() (string, error) {
 	return filepath.Join(home, ".claude", "projects"), nil
 }
 
-func buildStartDaemon(discPath, transcriptDir string) func() error {
+func buildStartDaemon(discPath, transcriptDir, configPath string) func() error {
 	return func() error {
 		exe, err := osExecutable()
 		if err != nil {
@@ -162,6 +162,9 @@ func buildStartDaemon(discPath, transcriptDir string) func() error {
 		args := []string{"daemon"}
 		if transcriptDir != "" {
 			args = append(args, "--transcript-dir", transcriptDir)
+		}
+		if configPath != "" {
+			args = append(args, "--config", configPath)
 		}
 		c := execCommand(exe, args...)
 		c.Stdout = f

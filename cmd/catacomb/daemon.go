@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -29,6 +30,7 @@ type daemonParams struct {
 	sinks              []config.Sink
 	sources            config.SourcesConfig
 	discoveryPath      string
+	configPath         string
 	reaperWindow       time.Duration
 	maxShards          int
 	otlpEndpoint       string
@@ -133,6 +135,7 @@ remain the highest-precedence override.`,
 				allowPayloadAccess: allowPayloadAccess, allowPayloadAccessSet: cmd.Flags().Changed("allow-payload-access"),
 				allowAnnotations: allowAnnotations, allowAnnotationsSet: cmd.Flags().Changed("allow-annotations"),
 			}
+			resolvedConfigPath := configFilePath(flags, os.LookupEnv, home)
 			cfg, err := resolveConfig(flags, os.ReadFile, os.LookupEnv, home)
 			if err != nil {
 				return err
@@ -152,6 +155,7 @@ remain the highest-precedence override.`,
 				sinks:              cfg.Sinks,
 				sources:            cfg.Sources,
 				discoveryPath:      resolveDiscovery(cfg.Daemon.Discovery),
+				configPath:         resolvedConfigPath,
 				reaperWindow:       time.Duration(cfg.Daemon.ReaperWindow),
 				maxShards:          cfg.Daemon.MaxShards,
 				otlpEndpoint:       otlpEndpoint,
@@ -255,6 +259,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 		GRPCAddr:           grpcLn.Addr().String(),
 		TranscriptDir:      sources.JSONL.TranscriptDir,
 		DBPath:             dbPath,
+		ConfigPath:         p.configPath,
 		AllowPayloadAccess: p.allowPayloadAccess,
 		AllowAnnotations:   p.allowAnnotations,
 		StoreBackend:       p.store.Backend,
@@ -268,6 +273,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	if err = daemon.WriteDiscovery(p.discoveryPath, disc); err != nil {
 		return err
 	}
+	log.Printf("catacomb daemon started addr=%s store=%s sinks=%v sources=%v", disc.Addr, p.store.Backend, disc.SinkTypes, disc.SourcesEnabled)
 	err = d.Serve(ctx, ln, grpcLn, token)
 	_ = os.Remove(p.discoveryPath)
 	return err

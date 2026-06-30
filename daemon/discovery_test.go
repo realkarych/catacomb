@@ -159,6 +159,19 @@ func TestDiscoveryNewFieldsOmitEmpty(t *testing.T) {
 	assert.NotContains(t, string(b), "reaper_window")
 }
 
+func TestDiscoveryConfigPathRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	in := Discovery{
+		Addr:       "127.0.0.1:1",
+		Token:      "tok",
+		ConfigPath: "/etc/catacomb/custom.yaml",
+	}
+	require.NoError(t, WriteDiscovery(path, in))
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/etc/catacomb/custom.yaml", got.ConfigPath)
+}
+
 func TestWriteReadDiscoveryScopeFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.json")
 	in := Discovery{
