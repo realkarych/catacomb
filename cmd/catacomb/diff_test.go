@@ -156,6 +156,25 @@ func TestDiffCommandPhaseFlag(t *testing.T) {
 	assert.Contains(t, sb.String(), "unchanged: 1")
 }
 
+func TestRunDiffRange(t *testing.T) {
+	result, err := runDiff(diffArgs{
+		a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl",
+		aFrom: "plan", aTo: "plan", bFrom: "plan", bTo: "plan",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result.Added)
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+}
+
+func TestRunDiffRangeRequiresBoth(t *testing.T) {
+	_, err := runDiff(diffArgs{
+		a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl",
+		aFrom: "plan",
+	})
+	assert.ErrorIs(t, err, subgraph.ErrInvalidSelector)
+}
+
 func TestSummarizeDeltas(t *testing.T) {
 	d := catdiff.Deltas{}
 	assert.Equal(t, "", summarizeDeltas(d))

@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/realkarych/catacomb/diff"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/subgraph"
 )
-
-var ErrPhaseNotFound = errors.New("daemon: phase not found")
 
 func nodesWithoutPayload(nodes []*model.Node) []*model.Node {
 	out := make([]*model.Node, len(nodes))
@@ -38,11 +37,11 @@ func (d *Daemon) sessionGraphNodes(hash string) ([]*model.Node, []*model.Edge, e
 	return nodes, edges, nil
 }
 
-func (d *Daemon) scopedGraph(hash, phaseSel string) ([]*model.Node, []*model.Edge, error) {
-	if phaseSel == "" {
+func (d *Daemon) scopedGraph(hash string, spec subgraph.Spec) ([]*model.Node, []*model.Edge, error) {
+	if spec.Empty() {
 		return d.sessionGraphNodes(hash)
 	}
-	name, occ, err := subgraph.ParseSelector(phaseSel)
+	parsed, err := subgraph.ParseSpec(spec)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,7 +54,7 @@ func (d *Daemon) scopedGraph(hash, phaseSel string) ([]*model.Node, []*model.Edg
 	found := false
 	for _, execID := range execs {
 		n, e := d.graphs[execID].Snapshot()
-		sn, se, ok := subgraph.ScopeExecution(n, e, execID, name, occ)
+		sn, se, ok := subgraph.ScopeExecutionParsed(n, e, execID, parsed)
 		if !ok {
 			continue
 		}
@@ -64,19 +63,32 @@ func (d *Daemon) scopedGraph(hash, phaseSel string) ([]*model.Node, []*model.Edg
 		found = true
 	}
 	if !found {
-		return nil, nil, ErrPhaseNotFound
+		return nil, nil, subgraph.ErrPhaseNotFound
 	}
 	return nodes, edges, nil
 }
 
-func writeScopeErr(w http.ResponseWriter, hash, phase string, err error) {
+func writeScopeErr(w http.ResponseWriter, hash string, err error) {
 	switch {
 	case errors.Is(err, ErrSessionNotFound):
 		w.WriteHeader(http.StatusNotFound)
-	case errors.Is(err, ErrPhaseNotFound):
-		http.Error(w, fmt.Sprintf("phase %q not found in session %q", phase, hash), http.StatusBadRequest)
+	case errors.Is(err, subgraph.ErrPhaseNotFound):
+		http.Error(w, fmt.Sprintf("phase not found in session %q", hash), http.StatusBadRequest)
 	default:
-		http.Error(w, fmt.Sprintf("invalid phase selector %q for session %q", phase, hash), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("invalid phase selector for session %q", hash), http.StatusBadRequest)
+	}
+}
+
+func sideSpec(q url.Values, side string) subgraph.Spec {
+	phase := q.Get("phase")
+	sidePhase := q.Get(side + "Phase")
+	if sidePhase == "" {
+		sidePhase = phase
+	}
+	return subgraph.Spec{
+		Phase: sidePhase,
+		From:  q.Get(side + "From"),
+		To:    q.Get(side + "To"),
 	}
 }
 
@@ -88,19 +100,17 @@ func (d *Daemon) handleDiff(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	aPhase := q.Get("aPhase")
-	bPhase := q.Get("bPhase")
 	d.mu.Lock()
-	aN, aE, err := d.scopedGraph(a, aPhase)
+	aN, aE, err := d.scopedGraph(a, sideSpec(q, "a"))
 	if err != nil {
 		d.mu.Unlock()
-		writeScopeErr(w, a, aPhase, err)
+		writeScopeErr(w, a, err)
 		return
 	}
-	bN, bE, err := d.scopedGraph(b, bPhase)
+	bN, bE, err := d.scopedGraph(b, sideSpec(q, "b"))
 	if err != nil {
 		d.mu.Unlock()
-		writeScopeErr(w, b, bPhase, err)
+		writeScopeErr(w, b, err)
 		return
 	}
 	if !d.allowPayloadAccess {

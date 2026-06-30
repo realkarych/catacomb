@@ -36,12 +36,3 @@ func PhaseWindow(nodes []*model.Node, execID, name string, occ int) (Window, boo
 	}
 	return Window{}, false
 }
-
-func ScopeExecution(nodes []*model.Node, edges []*model.Edge, execID, name string, occ int) ([]*model.Node, []*model.Edge, bool) {
-	w, ok := PhaseWindow(nodes, execID, name, occ)
-	if !ok {
-		return nil, nil, false
-	}
-	sn, se := Subgraph(nodes, edges, w)
-	return sn, se, true
-}

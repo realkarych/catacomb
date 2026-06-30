@@ -58,22 +58,3 @@ func TestPhaseWindowOpenPhaseAndNilStart(t *testing.T) {
 	_, ok = PhaseWindow(nodes, exec, "bad", 0)
 	assert.False(t, ok)
 }
-
-func TestScopeExecution(t *testing.T) {
-	exec := "E"
-	markerID := model.PhaseMarkerID(exec, "plan", 0)
-	nodes := []*model.Node{
-		{ID: markerID, Type: model.NodeMarker, TStart: ts(100), TEnd: ts(200)},
-		{ID: "in", Type: model.NodeToolCall, TStart: ts(150)},
-		{ID: "out", Type: model.NodeToolCall, TStart: ts(900)},
-	}
-	edges := []*model.Edge{{ID: "e", Src: "in", Dst: "out"}}
-
-	sn, se, ok := ScopeExecution(nodes, edges, exec, "plan", 0)
-	require.True(t, ok)
-	assert.Equal(t, []string{"in"}, ids(sn))
-	assert.Empty(t, se)
-
-	_, _, ok = ScopeExecution(nodes, edges, exec, "missing", 0)
-	assert.False(t, ok)
-}
