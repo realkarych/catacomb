@@ -1,5 +1,11 @@
-<!-- A logo can go here: drop docs/assets/logo.png and swap the title below for an <img>. -->
-<h1 align="center">Catacomb</h1>
+<p align="center">
+  <a href="https://github.com/realkarych/catacomb">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/catacomb-lockup-dark.svg">
+      <img alt="Catacomb" src="docs/assets/catacomb-lockup-light.svg" width="360">
+    </picture>
+  </a>
+</p>
 
 <p align="center">
   Real-time execution-graph observability for

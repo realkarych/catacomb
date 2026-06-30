@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="Catacomb">
+  <path d="M14 14 L35 19 M14 14 L22 35 M35 19 L22 35" stroke="#c4bfb6" stroke-width="2"></path>
+  <circle cx="14" cy="14" r="4.6" fill="#ffffff" stroke="#6e6960" stroke-width="2.1"></circle>
+  <circle cx="22" cy="35" r="4.6" fill="#ffffff" stroke="#6e6960" stroke-width="2.1"></circle>
+  <circle cx="35" cy="19" r="5.4" fill="#c2802a"></circle>
+</svg>
