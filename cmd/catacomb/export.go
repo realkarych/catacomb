@@ -71,7 +71,7 @@ func newExportCmd() *cobra.Command {
 			return runExport(cmd.Context(), cmd.OutOrStdout(), deps, a)
 		},
 	}
-	cmd.Flags().StringVar(&a.dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&a.dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&a.to, "to", "", "export sink: jsonl|otlp|neo4j|postgres|agentevals|evalview")
 	cmd.Flags().StringVar(&a.runID, "run", "", "filter to a specific run ID")
 	cmd.Flags().StringVar(&a.mode, "mode", "", "export mode: materialized (default) or events")

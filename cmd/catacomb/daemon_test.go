@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,106 @@ func readAddr(t *testing.T, discovery string) string {
 		return addr != ""
 	}, 30*time.Second, 10*time.Millisecond)
 	return addr
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func readToken(t *testing.T, discovery string) string {
+	t.Helper()
+	var tok string
+	require.Eventually(t, func() bool {
+		d, err := daemon.ReadDiscovery(discovery)
+		if err != nil {
+			return false
+		}
+		tok = d.Token
+		return tok != ""
+	}, 30*time.Second, 10*time.Millisecond)
+	return tok
+}
+
+func TestRunDaemonWithSinksFromParams(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.sinks = []config.Sink{{Type: config.SinkJSONL, Path: filepath.Join(t.TempDir(), "out.jsonl")}}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonWithLegacyOTLPFlagMergedAsSink(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.otlpEndpoint = "grpc://collector.example:4317"
+	p.otlpProject = "test-proj"
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonSourcesFromParams(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.sources = config.SourcesConfig{
+		Hooks:      config.SourceToggle{Enabled: boolPtr(true)},
+		Otel:       config.SourceToggle{Enabled: boolPtr(false)},
+		StreamJSON: config.SourceToggle{Enabled: boolPtr(true)},
+		JSONL:      config.JSONLSource{Enabled: boolPtr(false)},
+	}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	addr := readAddr(t, discovery)
+	awaitHealthz(t, addr)
+	req, err := http.NewRequest("POST", "http://"+addr+"/v1/traces", strings.NewReader(""))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+readToken(t, discovery))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonTranscriptFlagOverridesSource(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.transcriptDir = t.TempDir()
+	p.transcriptExclude = []string{"*.tmp"}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestDaemonCommandTranscriptFlagsSetSource(t *testing.T) {
+	t.Setenv("CATACOMB_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
+	dir := t.TempDir()
+	discovery := filepath.Join(dir, "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	root := newRootCmd()
+	root.SetArgs([]string{
+		"daemon", "--db", filepath.Join(dir, "g.db"), "--discovery", discovery,
+		"--transcript-dir", t.TempDir(), "--transcript-exclude", "*.tmp",
+	})
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-done)
 }
 
 func TestDaemonEndToEnd(t *testing.T) {
@@ -339,6 +440,19 @@ func TestRunDaemonWithNeo4jURISet(t *testing.T) {
 	require.NoError(t, <-errc)
 }
 
+func TestRunDaemonWithPostgresDSN(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.postgresDSN = "postgres://user:pass@localhost:5432/db"
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
 func TestAllowPayloadAccessFlagRegistered(t *testing.T) {
 	cmd := newDaemonCmd()
 	f := cmd.Flags().Lookup("allow-payload-access")
@@ -390,6 +504,24 @@ func TestRunDaemonDiscoveryHasScope(t *testing.T) {
 	assert.Equal(t, transcripts, d.TranscriptDir)
 	assert.Equal(t, db, d.DBPath)
 	assert.True(t, d.AllowPayloadAccess)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonConfigTranscriptDirInDiscovery(t *testing.T) {
+	transcripts := t.TempDir()
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	enabled := true
+	p.sources = config.SourcesConfig{JSONL: config.JSONLSource{Enabled: &enabled, TranscriptDir: transcripts}}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	d, err := daemon.ReadDiscovery(discovery)
+	require.NoError(t, err)
+	assert.Equal(t, transcripts, d.TranscriptDir)
 	cancel()
 	require.NoError(t, <-errc)
 }

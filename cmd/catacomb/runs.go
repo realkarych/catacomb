@@ -24,7 +24,7 @@ func newRunsCmd() *cobra.Command {
 			return runRuns(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, dbPath, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
 }

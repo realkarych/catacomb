@@ -26,6 +26,8 @@ type daemonDeps struct {
 
 type daemonParams struct {
 	store              config.StoreConfig
+	sinks              []config.Sink
+	sources            config.SourcesConfig
 	discoveryPath      string
 	reaperWindow       time.Duration
 	maxShards          int
@@ -106,10 +108,20 @@ remain the highest-precedence override.`,
 			if err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("transcript-dir") {
+				enabled := true
+				cfg.Sources.JSONL.Enabled = &enabled
+				cfg.Sources.JSONL.TranscriptDir = transcriptDir
+			}
+			if cmd.Flags().Changed("transcript-exclude") {
+				cfg.Sources.JSONL.Exclude = transcriptExclude
+			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			params := daemonParams{
 				store:              cfg.Store,
+				sinks:              cfg.Sinks,
+				sources:            cfg.Sources,
 				discoveryPath:      resolveDiscovery(cfg.Daemon.Discovery),
 				reaperWindow:       time.Duration(cfg.Daemon.ReaperWindow),
 				maxShards:          cfg.Daemon.MaxShards,
@@ -132,13 +144,13 @@ remain the highest-precedence override.`,
 	cmd.Flags().StringVar(&discoveryPath, "discovery", "", "discovery file path (default: resolved CATACOMB_DISCOVERY)")
 	cmd.Flags().DurationVar(&reaperWindow, "reaper-window", 30*time.Minute, "idle window before a run is marked abandoned")
 	cmd.Flags().IntVar(&maxShards, "max-shards", 4096, "soft cap on in-memory execution shards")
-	cmd.Flags().StringVar(&otlpEndpoint, "otlp-export-endpoint", "", "downstream OTLP endpoint to export the reconstructed trace tree (empty = disabled)")
+	cmd.Flags().StringVar(&otlpEndpoint, "otlp-export-endpoint", "", "downstream OTLP endpoint to export the reconstructed trace tree (empty = disabled) [deprecated: prefer sinks in config.yaml]")
 	cmd.Flags().StringVar(&otlpProject, "otlp-export-project", "catacomb", "OpenInference project name (resource attribute openinference.project.name)")
-	cmd.Flags().StringVar(&postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN to export the materialized graph (empty = disabled)")
-	cmd.Flags().StringVar(&neo4jURI, "neo4j-export-uri", "", "Neo4j Bolt URI to export the materialized graph (empty = disabled)")
+	cmd.Flags().StringVar(&postgresDSN, "postgres-export-dsn", "", "PostgreSQL DSN to export the materialized graph (empty = disabled) [deprecated: prefer sinks in config.yaml]")
+	cmd.Flags().StringVar(&neo4jURI, "neo4j-export-uri", "", "Neo4j Bolt URI to export the materialized graph (empty = disabled) [deprecated: prefer sinks in config.yaml]")
 	cmd.Flags().StringVar(&neo4jUser, "neo4j-export-user", "", "Neo4j username for materialized graph export")
 	cmd.Flags().StringVar(&neo4jPassword, "neo4j-export-password", "", "Neo4j password for materialized graph export")
-	cmd.Flags().StringVar(&transcriptDir, "transcript-dir", "", "Claude Code transcript dir to tail (empty = disabled; recommended: ~/.claude/projects)")
+	cmd.Flags().StringVar(&transcriptDir, "transcript-dir", "", "Claude Code transcript dir to tail (empty = disabled; recommended: ~/.claude/projects) [deprecated: prefer sources.jsonl in config.yaml]")
 	cmd.Flags().StringArrayVar(&transcriptExclude, "transcript-exclude", nil, "glob(s) of transcript paths to never tail (repeatable; the daemon db + cwd are always excluded)")
 	cmd.Flags().BoolVar(&allowPayloadAccess, "allow-payload-access", false, "enable the node payload content endpoint (default off)")
 	cmd.Flags().BoolVar(&allowAnnotations, "allow-annotations", false, "enable the node annotation write endpoint (default off)")
@@ -156,13 +168,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	d := daemon.New(s)
 	d.SetReaperWindow(p.reaperWindow)
 	d.SetMaxShards(p.maxShards)
-	d.SetOTLPEndpoint(p.otlpEndpoint)
-	d.SetOTLPProject(p.otlpProject)
-	d.SetPostgresDSN(p.postgresDSN)
-	d.SetNeo4j(p.neo4jURI, p.neo4jUser, p.neo4jPassword)
 	d.SetDBPath(dbPath)
-	d.SetTranscriptDir(p.transcriptDir)
-	d.SetTranscriptExclude(p.transcriptExclude)
 	d.SetAllowPayloadAccess(p.allowPayloadAccess)
 	d.SetAllowAnnotations(p.allowAnnotations)
 	d.SetReproConfig(repro.Config{
@@ -170,6 +176,30 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 		OTLPProject:   p.otlpProject,
 		TranscriptDir: p.transcriptDir,
 	})
+
+	sinks := append([]config.Sink(nil), p.sinks...)
+	if p.otlpEndpoint != "" {
+		sinks = append(sinks, config.Sink{Type: config.SinkOTLP, Endpoint: p.otlpEndpoint, Project: p.otlpProject})
+	}
+	if p.postgresDSN != "" {
+		sinks = append(sinks, config.Sink{Type: config.SinkPostgres, DSN: p.postgresDSN})
+	}
+	if p.neo4jURI != "" {
+		sinks = append(sinks, config.Sink{Type: config.SinkNeo4j, URI: p.neo4jURI, User: p.neo4jUser, Password: p.neo4jPassword})
+	}
+	d.SetSinks(sinks)
+
+	sources := p.sources
+	if p.transcriptDir != "" {
+		enabled := true
+		sources.JSONL.Enabled = &enabled
+		sources.JSONL.TranscriptDir = p.transcriptDir
+		if p.transcriptExclude != nil {
+			sources.JSONL.Exclude = p.transcriptExclude
+		}
+	}
+	d.SetSources(sources)
+
 	err = d.Recover()
 	if err != nil {
 		return err
@@ -194,7 +224,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 		Addr:               ln.Addr().String(),
 		Token:              token,
 		GRPCAddr:           grpcLn.Addr().String(),
-		TranscriptDir:      p.transcriptDir,
+		TranscriptDir:      sources.JSONL.TranscriptDir,
 		DBPath:             dbPath,
 		AllowPayloadAccess: p.allowPayloadAccess,
 		AllowAnnotations:   p.allowAnnotations,

@@ -20,6 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/config"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
@@ -921,24 +922,6 @@ func TestExporterLagReflectsConsumerDropped(t *testing.T) {
 	assert.Positive(t, m.ExporterLag)
 }
 
-func TestSetOTLPEndpoint(t *testing.T) {
-	d := New(tempStore(t))
-	d.SetOTLPEndpoint("grpc://collector:4317")
-	d.mu.Lock()
-	got := d.otlpEndpoint
-	d.mu.Unlock()
-	assert.Equal(t, "grpc://collector:4317", got)
-}
-
-func TestSetOTLPProject(t *testing.T) {
-	d := New(nil)
-	d.SetOTLPProject("phoenix-demo")
-	d.mu.Lock()
-	got := d.otlpProject
-	d.mu.Unlock()
-	assert.Equal(t, "phoenix-demo", got)
-}
-
 func TestIngestStreamJSONSessionInit(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
@@ -1161,24 +1144,6 @@ func TestMetricsIncludesLossyRuns(t *testing.T) {
 	assert.Equal(t, int64(1), d.metricsSnapshot().LossyRuns)
 }
 
-func TestSetTranscriptDir(t *testing.T) {
-	d := New(tempStore(t))
-	d.SetTranscriptDir("/tmp/transcripts")
-	d.mu.Lock()
-	got := d.transcriptDir
-	d.mu.Unlock()
-	assert.Equal(t, "/tmp/transcripts", got)
-}
-
-func TestSetTranscriptExclude(t *testing.T) {
-	d := New(tempStore(t))
-	d.SetTranscriptExclude([]string{"*.db", "*.log"})
-	d.mu.Lock()
-	got := d.transcriptExclude
-	d.mu.Unlock()
-	assert.Equal(t, []string{"*.db", "*.log"}, got)
-}
-
 func TestSetDBPath(t *testing.T) {
 	d := New(tempStore(t))
 	d.SetDBPath("/data/catacomb.db")
@@ -1186,16 +1151,6 @@ func TestSetDBPath(t *testing.T) {
 	got := d.dbPath
 	d.mu.Unlock()
 	assert.Equal(t, "/data/catacomb.db", got)
-}
-
-func TestSetNeo4jStoresFields(t *testing.T) {
-	d := New(tempStore(t))
-	d.SetNeo4j("bolt://localhost:7687", "neo4j", "secret")
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	assert.Equal(t, "bolt://localhost:7687", d.neo4jURI)
-	assert.Equal(t, "neo4j", d.neo4jUser)
-	assert.Equal(t, "secret", d.neo4jPassword)
 }
 
 type lossyUpsertErrStore struct{ store.Store }
@@ -1566,4 +1521,31 @@ func TestReproTwoRunsSameConfigEqualHashes(t *testing.T) {
 	require.NotNil(t, r2.Repro)
 	assert.Equal(t, r1.Repro.PromptsHash, r2.Repro.PromptsHash)
 	assert.Equal(t, r1.Repro.CatacombConfigHash, r2.Repro.CatacombConfigHash)
+}
+
+func TestSetSinks(t *testing.T) {
+	d := New(tempStore(t))
+	sinks := []config.Sink{{Type: config.SinkOTLP, Endpoint: "grpc://host:4317"}}
+	d.SetSinks(sinks)
+	d.mu.Lock()
+	got := d.sinks
+	d.mu.Unlock()
+	require.Len(t, got, 1)
+	assert.Equal(t, config.SinkOTLP, got[0].Type)
+}
+
+func TestSetSources(t *testing.T) {
+	d := New(tempStore(t))
+	enabled := true
+	src := config.SourcesConfig{
+		Hooks: config.SourceToggle{Enabled: &enabled},
+		JSONL: config.JSONLSource{Enabled: &enabled, TranscriptDir: "/t"},
+	}
+	d.SetSources(src)
+	d.mu.Lock()
+	got := d.sources
+	d.mu.Unlock()
+	require.NotNil(t, got.Hooks.Enabled)
+	assert.True(t, *got.Hooks.Enabled)
+	assert.Equal(t, "/t", got.JSONL.TranscriptDir)
 }

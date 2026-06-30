@@ -18,32 +18,41 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/config"
 	exportiface "github.com/realkarych/catacomb/export"
-	neo4jexport "github.com/realkarych/catacomb/export/neo4j"
-	"github.com/realkarych/catacomb/export/otlp"
-	pgexport "github.com/realkarych/catacomb/export/postgres"
+	"github.com/realkarych/catacomb/export/build"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/webui"
 )
 
-var newExporterFn = otlp.New
-
-var newPostgresFn = func(ctx context.Context, dsn string) (exportiface.Exporter, error) {
-	return pgexport.New(ctx, dsn)
-}
-
-var newNeo4jFn = func(ctx context.Context, uri, user, password string) (exportiface.Exporter, error) {
-	return neo4jexport.New(ctx, uri, user, password)
-}
+var buildFn func(ctx context.Context, sinks []config.Sink, daemonGRPCAddr, daemonHTTPAddr string) ([]exportiface.Exporter, error) = build.Build
 
 var tailTick = 500 * time.Millisecond
 
 func (d *Daemon) Handler(token string) http.Handler {
+	d.mu.Lock()
+	src := d.sources
+	d.mu.Unlock()
+
+	enabled := func(b *bool) bool { return b == nil || *b }
+	notFound := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
-	mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
-	mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
+	if enabled(src.Hooks.Enabled) {
+		mux.HandleFunc("POST /hook/{type}", d.authed(token, d.handleHook))
+	} else {
+		mux.HandleFunc("POST /hook/{type}", notFound)
+	}
+	if enabled(src.Otel.Enabled) {
+		mux.HandleFunc("POST /v1/traces", d.authed(token, d.handleOTLP))
+	} else {
+		mux.HandleFunc("POST /v1/traces", notFound)
+	}
+	if enabled(src.StreamJSON.Enabled) {
+		mux.HandleFunc("POST /v1/stream-json", d.authed(token, d.handleStreamJSON))
+	} else {
+		mux.HandleFunc("POST /v1/stream-json", notFound)
+	}
 	mux.HandleFunc("POST /v1/transcript", d.authed(token, d.handleTranscript))
 	mux.HandleFunc("POST /v1/mark", d.authed(token, d.handleMark))
 	mux.HandleFunc("GET /v1/subscribe", d.authedAllowQuery(token, d.handleSSE))
@@ -173,13 +182,17 @@ func (d *Daemon) reapLoop(ctx context.Context) {
 
 func (d *Daemon) tailLoop(ctx context.Context) {
 	d.mu.Lock()
-	dir := d.transcriptDir
-	excludes := append([]string{d.dbPath, cwdTranscriptExclude()}, d.transcriptExclude...)
+	src := d.sources
+	dbPath := d.dbPath
 	d.mu.Unlock()
-	if dir == "" {
+	if src.JSONL.Enabled == nil || !*src.JSONL.Enabled {
 		return
 	}
-	tl := tailingest.New(dir, excludes, d.store, d)
+	if src.JSONL.TranscriptDir == "" {
+		return
+	}
+	excludes := append([]string{dbPath, cwdTranscriptExclude()}, src.JSONL.Exclude...)
+	tl := tailingest.New(src.JSONL.TranscriptDir, excludes, d.store, d)
 	if err := tl.Load(); err != nil {
 		log.Printf("catacomb: tailer load: %v", err)
 		return
@@ -193,44 +206,14 @@ var consumerLoopExitHook func()
 
 func (d *Daemon) startExporter(ctx context.Context, httpAddr, grpcAddr string) {
 	d.mu.Lock()
-	otlpEndpoint := d.otlpEndpoint
-	otlpProject := d.otlpProject
-	postgresDSN := d.postgresDSN
-	neo4jURI := d.neo4jURI
-	neo4jUser := d.neo4jUser
-	neo4jPassword := d.neo4jPassword
+	sinks := d.sinks
 	d.mu.Unlock()
 
-	var entries []exportiface.Exporter
-
-	if otlpEndpoint != "" {
-		exp, err := newExporterFn(ctx, otlpEndpoint, grpcAddr, httpAddr)
-		if err != nil {
-			log.Printf("catacomb: otlp exporter disabled: %v", err)
-		} else {
-			exp.SetProject(otlpProject)
-			entries = append(entries, exp)
-		}
+	entries, err := buildFn(ctx, sinks, grpcAddr, httpAddr)
+	if err != nil {
+		log.Printf("catacomb: sink build error: %v", err)
+		return
 	}
-
-	if postgresDSN != "" && newPostgresFn != nil {
-		exp, err := newPostgresFn(ctx, postgresDSN)
-		if err != nil {
-			log.Printf("catacomb: postgres exporter disabled: %v", err)
-		} else {
-			entries = append(entries, exp)
-		}
-	}
-
-	if neo4jURI != "" && newNeo4jFn != nil {
-		exp, err := newNeo4jFn(ctx, neo4jURI, neo4jUser, neo4jPassword)
-		if err != nil {
-			log.Printf("catacomb: neo4j exporter disabled: %v", err)
-		} else {
-			entries = append(entries, exp)
-		}
-	}
-
 	if len(entries) == 0 {
 		return
 	}
