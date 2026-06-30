@@ -18,6 +18,7 @@ It is domain- and evaluation-agnostic: it builds a faithful, queryable graph and
 
 ## Documentation
 
+- **User guide → [`docs/guide/`](docs/guide/)** — install, full CLI reference, configuration, ingestion setup, workflows (incl. checkpoints & phase-scoped diff), the web UI and terminal observer, privacy and operations
 - Design spec → [`docs/specs/2026-06-20-catacomb-design.md`](docs/specs/2026-06-20-catacomb-design.md)
 - Architecture decisions (ADRs) → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)
@@ -80,8 +81,8 @@ catacomb version          # print the version
 To read conversation content in the UI, start the daemon with
 `--allow-payload-access` (off by default — see [Privacy](#privacy)).
 
-By default the daemon's database is `catacomb.db` in the directory you launch
-it from, and its discovery file lives under `~/.catacomb/run/`.
+By default the daemon's database is `~/.catacomb/catacomb.db`, and its
+discovery file lives under `~/.catacomb/run/`.
 
 Install from source (`go install github.com/realkarych/catacomb/cmd/catacomb@latest`)
 or build locally with `make build`.
