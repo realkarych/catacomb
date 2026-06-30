@@ -906,6 +906,7 @@ func ExpandPaths(c Config, home string, getenv func(string) string) Config {
 - Consumes: `github.com/realkarych/catacomb/model`, `github.com/realkarych/catacomb/cdc`, stdlib `cmp`, `slices`, `sync`.
 
 Notes baked into the implementation (parity with `store/sqlite.go`):
+
 - Observations are appended in arrival order; readers sort by `Seq` (matches sqlite `ORDER BY seq`). `ObservationsSince(seq)` returns `Seq > seq`.
 - Annotation LWW key is `(ExecutionID, SourceKey, Owner, Key)`; write applies when `new.WriteSeq >= existing.WriteSeq` (mirrors the sqlite `excluded.write_seq>=annotations.write_seq` clause — equal seq overwrites).
 - `AnnotationsForExecution` orders by `(SourceKey, Owner, Key)`; `Runs`/`ListOpenRuns` order by `ID`; `LoadTailCursors` orders by `Path`.
@@ -1765,20 +1766,25 @@ func testDaemonParams(t *testing.T) daemonParams {
   Then replace each `runDaemonWith(...)` call with the struct API. The exact rewrites (each is the full replacement body of the named test's daemon call):
 
   - `TestRunDaemonOpenError`:
+
     ```go
     deps := testDaemonDeps()
     deps.openStore = func(config.StoreConfig) (store.Store, error) { return nil, errors.New("open") }
     err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
     require.Error(t, err)
     ```
+
   - `TestRunDaemonListenError`:
+
     ```go
     deps := testDaemonDeps()
     deps.listen = func() (net.Listener, error) { return nil, errors.New("listen") }
     err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
     require.Error(t, err)
     ```
+
   - `TestRunDaemonDiscoveryError`:
+
     ```go
     dir := t.TempDir()
     require.NoError(t, os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o600))
@@ -1787,39 +1793,51 @@ func testDaemonParams(t *testing.T) daemonParams {
     err := runDaemonWith(context.Background(), testDaemonDeps(), p)
     require.Error(t, err)
     ```
+
   - `TestRunDaemonRecoverError`:
+
     ```go
     deps := testDaemonDeps()
     deps.openStore = openFailSince
     err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
     require.Error(t, err)
     ```
+
     and change `openFailSince` to the new factory shape:
+
     ```go
     func openFailSince(config.StoreConfig) (store.Store, error) { return &failSinceStore{}, nil }
     ```
+
   - `TestRunDaemonNewTokenError`:
+
     ```go
     deps := testDaemonDeps()
     deps.newToken = func() (string, error) { return "", errors.New("token") }
     err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
     require.Error(t, err)
     ```
+
   - `TestRunDaemonWithGRPCListenError`:
+
     ```go
     deps := testDaemonDeps()
     deps.listenGRPC = func() (net.Listener, error) { return nil, errors.New("grpc listen") }
     err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
     require.Error(t, err)
     ```
+
   - `TestRunDaemonDiscoveryHasGRPCAddr`: keep the eventually-loop; change the goroutine to
+
     ```go
     p := testDaemonParams(t)
     p.discoveryPath = discovery
     go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
     ```
+
     (set `discovery := filepath.Join(t.TempDir(), "d.json")` and read it in the loop).
   - `TestRunDaemonWithOTLPEndpoint`:
+
     ```go
     discovery := filepath.Join(t.TempDir(), "d.json")
     p := testDaemonParams(t)
@@ -1831,7 +1849,9 @@ func testDaemonParams(t *testing.T) daemonParams {
     cancel()
     require.NoError(t, <-errc)
     ```
+
   - `TestRunDaemonWithTranscriptDir`:
+
     ```go
     disc := filepath.Join(t.TempDir(), "d.json")
     p := testDaemonParams(t)
@@ -1842,8 +1862,10 @@ func testDaemonParams(t *testing.T) daemonParams {
     p.transcriptExclude = []string{"x-*.jsonl"}
     go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
     ```
+
     (keep the `os.Stat(disc)` eventually-loop, `cancel()`, `<-errc`).
   - `TestRunDaemonWithNeo4jURISet`:
+
     ```go
     discovery := filepath.Join(t.TempDir(), "d.json")
     p := testDaemonParams(t)
@@ -1856,7 +1878,9 @@ func testDaemonParams(t *testing.T) daemonParams {
     cancel()
     require.NoError(t, <-errc)
     ```
+
   - `TestRunDaemonWithAllowPayloadAccessTrue`:
+
     ```go
     discovery := filepath.Join(t.TempDir(), "d.json")
     p := testDaemonParams(t)
@@ -1867,7 +1891,9 @@ func testDaemonParams(t *testing.T) daemonParams {
     cancel()
     require.NoError(t, <-errc)
     ```
+
   - `TestRunDaemonDiscoveryHasScope`: assert the resolved sqlite path is echoed in discovery:
+
     ```go
     db := filepath.Join(t.TempDir(), "g.db")
     transcripts := t.TempDir()
@@ -1879,24 +1905,30 @@ func testDaemonParams(t *testing.T) daemonParams {
     p.allowPayloadAccess = true
     go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
     ```
+
     (keep eventually-loop; assert `d.TranscriptDir == transcripts`, `d.DBPath == db`, `d.AllowPayloadAccess`).
   - `TestRunDaemonDiscoveryHasPidAndStartedAt`:
+
     ```go
     discovery := filepath.Join(t.TempDir(), "d.json")
     p := testDaemonParams(t)
     p.discoveryPath = discovery
     go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
     ```
+
     (keep the rest of the assertions).
   - `TestDaemonEndToEnd`: replace its `runDaemonWith(ctx, store.OpenSQLite, ...)` with
+
     ```go
     p := testDaemonParams(t)
     p.store = config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: dbPath}}
     p.discoveryPath = discovery
     go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
     ```
+
     (keep `dbPath`/`discovery` locals and downstream assertions).
 
+<!-- markdownlint-disable-next-line MD005 -->
 - [ ] **Add new tests** (memory backend serves + nil DBPath; default path resolution; `--config` flag exists):
 
 ```go
@@ -1935,9 +1967,11 @@ func TestDaemonDBFlagDefaultEmpty(t *testing.T) {
 ```
 
 - [ ] **Make full-command tests hermetic.** In `TestDaemonCommandWiring`, `TestDaemonCommandDefaultDiscovery`, `TestDaemonCommandReaperWindowFlag`, `TestDaemonCommandMaxShardsFlag`, add at the top (so RunE's config read never touches the real `~/.catacomb/config.yaml`):
+
   ```go
   t.Setenv("CATACOMB_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
   ```
+
   These tests keep passing `--db <temp>` / `--discovery`, which are highest precedence.
 
 - [ ] **Run** `go test ./cmd/catacomb/ -run 'TestRunDaemon|TestDaemonCommand|TestStoreDBPath|TestDaemonConfig|TestDaemonDBFlag|TestDaemonEndToEnd'` — expect FAIL to compile (`runDaemonWith` still has the old signature; `daemonParams`/`daemonDeps` undefined).

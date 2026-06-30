@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io/fs"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestResolveConfigDefaultsWhenNoFile(t *testing.T) {
 	cfg, err := resolveConfig(daemonFlags{}, read, envLookup(nil), "/home/u")
 	require.NoError(t, err)
 	assert.Equal(t, config.BackendSQLite, cfg.Store.Backend)
-	assert.Equal(t, "/home/u/.catacomb/catacomb.db", cfg.Store.SQLite.Path)
+	assert.Equal(t, filepath.FromSlash("/home/u/.catacomb/catacomb.db"), cfg.Store.SQLite.Path)
 }
 
 func TestResolveConfigFileThenEnvThenFlags(t *testing.T) {
@@ -70,7 +71,7 @@ func TestResolveConfigExpandsTilde(t *testing.T) {
 	}
 	cfg, err := resolveConfig(daemonFlags{}, read, envLookup(nil), "/home/u")
 	require.NoError(t, err)
-	assert.Equal(t, "/home/u/db/x.db", cfg.Store.SQLite.Path)
+	assert.Equal(t, filepath.FromSlash("/home/u/db/x.db"), cfg.Store.SQLite.Path)
 }
 
 func TestResolveConfigParseError(t *testing.T) {
@@ -96,7 +97,7 @@ func TestResolveConfigValidateError(t *testing.T) {
 func TestConfigFilePathPrecedence(t *testing.T) {
 	assert.Equal(t, "/flag.yaml", configFilePath(daemonFlags{configPath: "/flag.yaml", configPathSet: true}, envLookup(map[string]string{"CATACOMB_CONFIG": "/env.yaml"}), "/home/u"))
 	assert.Equal(t, "/env.yaml", configFilePath(daemonFlags{}, envLookup(map[string]string{"CATACOMB_CONFIG": "/env.yaml"}), "/home/u"))
-	assert.Equal(t, "/home/u/.catacomb/config.yaml", configFilePath(daemonFlags{}, envLookup(nil), "/home/u"))
+	assert.Equal(t, filepath.FromSlash("/home/u/.catacomb/config.yaml"), configFilePath(daemonFlags{}, envLookup(nil), "/home/u"))
 }
 
 func TestConfigFilePathExpandsEnvVar(t *testing.T) {
@@ -118,5 +119,5 @@ func TestResolveConfigHomeExpansion(t *testing.T) {
 	read := func(string) ([]byte, error) { return nil, fs.ErrNotExist }
 	cfg, err := resolveConfig(daemonFlags{}, read, envLookup(nil), "/home/other")
 	require.NoError(t, err)
-	assert.Equal(t, "/home/other/.catacomb/catacomb.db", cfg.Store.SQLite.Path)
+	assert.Equal(t, filepath.FromSlash("/home/other/.catacomb/catacomb.db"), cfg.Store.SQLite.Path)
 }

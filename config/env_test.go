@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +37,7 @@ func TestExpandPath(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"tilde only", "~", "/home/u"},
-		{"tilde slash", "~/.catacomb/x.db", "/home/u/.catacomb/x.db"},
+		{"tilde slash", "~/.catacomb/x.db", filepath.FromSlash("/home/u/.catacomb/x.db")},
 		{"env var", "$ROOT/x", "/r/x"},
 		{"braced env", "${ROOT}/x", "/r/x"},
 		{"absolute untouched", "/abs/x", "/abs/x"},
@@ -57,9 +58,9 @@ func TestExpandPaths(t *testing.T) {
 		Sinks:   []Sink{{Type: SinkJSONL, Path: "~/out.jsonl"}},
 	}
 	got := ExpandPaths(c, "/home/u", getenvMap(nil))
-	assert.Equal(t, "/home/u/.catacomb/x.db", got.Store.SQLite.Path)
-	assert.Equal(t, "/home/u/run/d.json", got.Daemon.Discovery)
-	assert.Equal(t, "/home/u/proj", got.Sources.JSONL.TranscriptDir)
-	assert.Equal(t, "/home/u/out.jsonl", got.Sinks[0].Path)
+	assert.Equal(t, filepath.FromSlash("/home/u/.catacomb/x.db"), got.Store.SQLite.Path)
+	assert.Equal(t, filepath.FromSlash("/home/u/run/d.json"), got.Daemon.Discovery)
+	assert.Equal(t, filepath.FromSlash("/home/u/proj"), got.Sources.JSONL.TranscriptDir)
+	assert.Equal(t, filepath.FromSlash("/home/u/out.jsonl"), got.Sinks[0].Path)
 	assert.Equal(t, "~/out.jsonl", c.Sinks[0].Path)
 }
