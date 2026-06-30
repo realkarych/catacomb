@@ -18,33 +18,35 @@ type diffArgs struct {
 	phase  string
 	aPhase string
 	bPhase string
+	aFrom  string
+	aTo    string
+	bFrom  string
+	bTo    string
 }
 
-func (a diffArgs) aSel() string {
-	if a.aPhase != "" {
-		return a.aPhase
+func (a diffArgs) spec(side string) subgraph.Spec {
+	phase := a.aPhase
+	from, to := a.aFrom, a.aTo
+	if side == "b" {
+		phase, from, to = a.bPhase, a.bFrom, a.bTo
 	}
-	return a.phase
-}
-
-func (a diffArgs) bSel() string {
-	if a.bPhase != "" {
-		return a.bPhase
+	if phase == "" {
+		phase = a.phase
 	}
-	return a.phase
+	return subgraph.Spec{Phase: phase, From: from, To: to}
 }
 
-func scopeCLISide(nodes []*model.Node, edges []*model.Edge, execID, sel string) ([]*model.Node, []*model.Edge, error) {
-	if sel == "" {
+func scopeCLISide(nodes []*model.Node, edges []*model.Edge, execID string, spec subgraph.Spec) ([]*model.Node, []*model.Edge, error) {
+	if spec.Empty() {
 		return nodes, edges, nil
 	}
-	name, occ, err := subgraph.ParseSelector(sel)
+	parsed, err := subgraph.ParseSpec(spec)
 	if err != nil {
 		return nil, nil, err
 	}
-	sn, se, ok := subgraph.ScopeExecution(nodes, edges, execID, name, occ)
+	sn, se, ok := subgraph.ScopeExecutionParsed(nodes, edges, execID, parsed)
 	if !ok {
-		return nil, nil, fmt.Errorf("diff: phase %q not found", sel)
+		return nil, nil, fmt.Errorf("diff: phase not found: %w", subgraph.ErrPhaseNotFound)
 	}
 	return sn, se, nil
 }
@@ -73,6 +75,10 @@ func newDiffCmd() *cobra.Command {
 	cmd.Flags().StringVar(&args.phase, "phase", "", "scope both sides to phase name[,occurrence]")
 	cmd.Flags().StringVar(&args.aPhase, "a-phase", "", "scope side A to phase name[,occurrence]")
 	cmd.Flags().StringVar(&args.bPhase, "b-phase", "", "scope side B to phase name[,occurrence]")
+	cmd.Flags().StringVar(&args.aFrom, "a-from", "", "scope side A from this checkpoint name[,occurrence]")
+	cmd.Flags().StringVar(&args.aTo, "a-to", "", "scope side A to this checkpoint name[,occurrence]")
+	cmd.Flags().StringVar(&args.bFrom, "b-from", "", "scope side B from this checkpoint name[,occurrence]")
+	cmd.Flags().StringVar(&args.bTo, "b-to", "", "scope side B to this checkpoint name[,occurrence]")
 	return cmd
 }
 
@@ -89,11 +95,11 @@ func runDiff(args diffArgs) (catdiff.DiffResult, error) {
 	}
 	an, ae := ag.Snapshot()
 	bn, be := bg.Snapshot()
-	an, ae, err = scopeCLISide(an, ae, aExec, args.aSel())
+	an, ae, err = scopeCLISide(an, ae, aExec, args.spec("a"))
 	if err != nil {
 		return catdiff.DiffResult{}, err
 	}
-	bn, be, err = scopeCLISide(bn, be, bExec, args.bSel())
+	bn, be, err = scopeCLISide(bn, be, bExec, args.spec("b"))
 	if err != nil {
 		return catdiff.DiffResult{}, err
 	}
