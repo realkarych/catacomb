@@ -36,6 +36,7 @@ type statusReport struct {
 	Pid            int      `json:"pid"`
 	Uptime         string   `json:"uptime"`
 	TokenAge       string   `json:"token_age"`
+	ConfigPath     string   `json:"config_path,omitempty"`
 	ObservingDir   string   `json:"observing_dir,omitempty"`
 	StoreBackend   string   `json:"store_backend,omitempty"`
 	SinkTypes      []string `json:"sink_types,omitempty"`
@@ -95,6 +96,7 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 		Pid:            disc.Pid,
 		Uptime:         uptime,
 		TokenAge:       tokenAge,
+		ConfigPath:     disc.ConfigPath,
 		ObservingDir:   disc.TranscriptDir,
 		StoreBackend:   disc.StoreBackend,
 		SinkTypes:      disc.SinkTypes,
@@ -109,7 +111,13 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 	if deps.asJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(rep)
+		if encErr := enc.Encode(rep); encErr != nil {
+			return encErr
+		}
+		if fetchErr != nil && errors.Is(fetchErr, ErrDaemonRestarted) {
+			return ErrDaemonRestarted
+		}
+		return nil
 	}
 
 	if fetchErr != nil && errors.Is(fetchErr, ErrDaemonRestarted) {
@@ -122,6 +130,9 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 	_, _ = fmt.Fprintf(w, "uptime\t%s\n", rep.Uptime)
 	_, _ = fmt.Fprintf(w, "token age\t%s\n", rep.TokenAge)
 	_, _ = fmt.Fprintf(w, "observing\t%s\n", observingLabel(disc.TranscriptDir))
+	if rep.ConfigPath != "" {
+		_, _ = fmt.Fprintf(w, "config\t%s\n", rep.ConfigPath)
+	}
 	if rep.StoreBackend != "" {
 		_, _ = fmt.Fprintf(w, "store\t%s\n", rep.StoreBackend)
 	}
