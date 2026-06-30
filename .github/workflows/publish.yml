@@ -1,0 +1,287 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'SemVer tag to release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.TAG }}
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Extract tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "TAG=${{ github.event.inputs.tag }}" >>"$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_REF#refs/tags/}" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ steps.tag.outputs.TAG }}
+        run: |
+          mkdir -p dist
+          BIN="catacomb"
+          [ "$GOOS" = "windows" ] && BIN="${BIN}.exe"
+          go build -trimpath -ldflags="-s -w -X 'main.Version=${VERSION}'" -o "dist/${BIN}" ./cmd/catacomb
+
+      - name: Archive binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ steps.tag.outputs.TAG }}
+        run: |
+          cd dist
+          ARCHIVE_PREFIX="${TAG}_catacomb_${GOOS}_${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            zip "${ARCHIVE_PREFIX}.zip" "catacomb.exe"
+          else
+            tar -czf "${ARCHIVE_PREFIX}.tar.gz" "catacomb"
+          fi
+
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v3.0.0
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG }}
+          name: ${{ steps.tag.outputs.TAG }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '') ||
+      startsWith(github.ref, 'refs/tags/')
+
+    env:
+      TAG: ${{ needs.build-and-publish.outputs.tag }}
+      TAP_REPO: realkarych/homebrew-tap
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Get tap default branch
+        id: tapinfo
+        run: |
+          branch=$(gh repo view "$TAP_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+          echo "BRANCH=$branch" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout tap
+        uses: actions/checkout@v7.0.0
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TOKEN }}
+          path: tap
+          ref: ${{ steps.tapinfo.outputs.BRANCH }}
+
+      - name: Download macOS archives
+        run: |
+          mkdir -p dl
+          gh release download "$TAG" -R realkarych/catacomb -D dl -p "${TAG}_catacomb_darwin_amd64.tar.gz"
+          gh release download "$TAG" -R realkarych/catacomb -D dl -p "${TAG}_catacomb_darwin_arm64.tar.gz"
+
+      - name: Calculate SHA256
+        id: shas
+        run: |
+          AMD=$(sha256sum dl/*darwin_amd64.tar.gz | cut -d' ' -f1)
+          ARM=$(sha256sum dl/*darwin_arm64.tar.gz | cut -d' ' -f1)
+          echo "AMD=$AMD" >>"$GITHUB_OUTPUT"
+          echo "ARM=$ARM" >>"$GITHUB_OUTPUT"
+
+      - name: Update formula
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/catacomb.rb <<EOF
+          class Catacomb < Formula
+            desc "Execution-graph observability for Claude Code agentic sessions"
+            homepage "https://github.com/realkarych/catacomb"
+            version "${TAG}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/realkarych/catacomb/releases/download/${TAG}/${TAG}_catacomb_darwin_arm64.tar.gz"
+                sha256 "${{ steps.shas.outputs.ARM }}"
+              else
+                url "https://github.com/realkarych/catacomb/releases/download/${TAG}/${TAG}_catacomb_darwin_amd64.tar.gz"
+                sha256 "${{ steps.shas.outputs.AMD }}"
+              end
+            end
+
+            def install
+              bin.install "catacomb"
+            end
+
+            test do
+              system "#{bin}/catacomb", "version"
+            end
+          end
+          EOF
+
+      - name: Commit and push formula
+        run: |
+          cd tap
+          git config user.name github-actions
+          git config user.email noreply@github.com
+          git add Formula/catacomb.rb
+          git commit -m "catacomb ${TAG}" || echo "Nothing to commit"
+          git push origin HEAD:${{ steps.tapinfo.outputs.BRANCH }}
+
+  update-apt:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '') ||
+      startsWith(github.ref, 'refs/tags/')
+
+    env:
+      TAG: ${{ needs.build-and-publish.outputs.tag }}
+      VER: ${{ needs.build-and-publish.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev gnupg2 aptly rsync
+          sudo gem install --no-document fpm
+
+      - name: Download linux artifacts
+        run: |
+          mkdir -p dl
+          gh release download "$TAG" -R realkarych/catacomb \
+            -D dl -p "${TAG}_catacomb_linux_*.tar.gz"
+
+      - name: Extract binaries
+        run: |
+          mkdir -p deb-src
+          for tgz in dl/*.tar.gz; do
+            arch=$(echo "$tgz" | sed -E 's/.*_linux_([a-z0-9]+)\.tar\.gz/\1/')
+            tar -xOzf "$tgz" > "deb-src/catacomb_${arch}"
+            chmod +x "deb-src/catacomb_${arch}"
+          done
+
+      - name: Build .deb packages
+        run: |
+          mkdir -p deb
+          cd deb-src
+          for bin in catacomb_*; do
+            arch=${bin##*_}
+            fpm -s dir -t deb \
+                -p "../deb/catacomb_${VER#v}_${arch}.deb" \
+                --name catacomb \
+                --version "${VER#v}" \
+                --architecture "$arch" \
+                --description "Execution-graph observability for Claude Code agentic sessions" \
+                --license Apache-2.0 \
+                --url "https://github.com/realkarych/catacomb" \
+                "$bin=/usr/bin/catacomb"
+          done
+
+      - name: Import GPG
+        env:
+          GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: echo "$GPG_KEY" | gpg --batch --import
+
+      - name: Checkout APT pages
+        uses: actions/checkout@v7.0.0
+        with:
+          repository: realkarych/catacomb-apt
+          token: ${{ secrets.DEB_TOKEN }}
+          path: apt
+          ref: gh-pages
+
+      - name: Publish repo
+        run: |
+          cd apt
+          aptly repo create -distribution=stable -component=main catacomb || true
+          aptly repo add catacomb ../deb/*.deb
+          KEYID=$(gpg --list-keys --with-colons | awk -F: '/^pub/ {print $5; exit}')
+          aptly publish repo -architectures="amd64,arm64" -gpg-key="$KEYID" catacomb
+          cp -r ~/.aptly/public/* .
+          rm -rf ~/.aptly
+
+      - name: Commit & push APT repo
+        run: |
+          cd apt
+          git config user.name github-actions
+          git config user.email noreply@github.com
+          git add .
+          git commit -m "APT release ${TAG}" || echo "no changes"
+          git push origin HEAD:gh-pages
+
+  docker-image:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4.0.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.0.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push image
+        uses: docker/build-push-action@v7.1.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.build-and-publish.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/realkarych/catacomb
+          tags: |
+            ghcr.io/realkarych/catacomb:${{ needs.build-and-publish.outputs.tag }}
+            ghcr.io/realkarych/catacomb:latest
+
+      - name: Smoke-test image
+        run: |
+          docker run --rm \
+            ghcr.io/realkarych/catacomb:${{ needs.build-and-publish.outputs.tag }} \
+            version
