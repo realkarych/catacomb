@@ -138,6 +138,62 @@ func readAddr(t *testing.T, discovery string) string {
 
 func boolPtr(b bool) *bool { return &b }
 
+func TestSinkTypeStrings(t *testing.T) {
+	assert.Nil(t, sinkTypeStrings(nil))
+	assert.Nil(t, sinkTypeStrings([]config.Sink{}))
+	got := sinkTypeStrings([]config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://host:4317"},
+		{Type: config.SinkPostgres, DSN: "postgres://secret"},
+	})
+	assert.Equal(t, []string{config.SinkOTLP, config.SinkPostgres}, got)
+}
+
+func TestEnabledSourceNames(t *testing.T) {
+	tr, fa := boolPtr(true), boolPtr(false)
+	got := enabledSourceNames(config.SourcesConfig{
+		Hooks:      config.SourceToggle{Enabled: tr},
+		Otel:       config.SourceToggle{Enabled: fa},
+		StreamJSON: config.SourceToggle{Enabled: nil},
+		JSONL:      config.JSONLSource{Enabled: tr},
+	})
+	assert.Equal(t, []string{"hooks", "stream_json", "jsonl"}, got)
+}
+
+func TestEnabledSourceNamesAllDefault(t *testing.T) {
+	got := enabledSourceNames(config.SourcesConfig{})
+	assert.Equal(t, []string{"hooks", "otel", "stream_json", "jsonl"}, got)
+}
+
+func TestRunDaemonWithSummaryFields(t *testing.T) {
+	discFile := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discFile
+	p.reaperWindow = 15 * time.Minute
+	p.maxShards = 512
+	p.sinks = []config.Sink{
+		{Type: config.SinkOTLP, Endpoint: "grpc://host:4317"},
+	}
+	enabled := true
+	p.sources = config.SourcesConfig{
+		Hooks: config.SourceToggle{Enabled: &enabled},
+		Otel:  config.SourceToggle{Enabled: boolPtr(false)},
+	}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discFile))
+	disc, err := daemon.ReadDiscovery(discFile)
+	require.NoError(t, err)
+	assert.Equal(t, config.BackendSQLite, disc.StoreBackend)
+	assert.Equal(t, []string{config.SinkOTLP}, disc.SinkTypes)
+	assert.Contains(t, disc.SourcesEnabled, "hooks")
+	assert.NotContains(t, disc.SourcesEnabled, "otel")
+	assert.Equal(t, "15m0s", disc.ReaperWindow)
+	assert.Equal(t, 512, disc.MaxShards)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
 func readToken(t *testing.T, discovery string) string {
 	t.Helper()
 	var tok string

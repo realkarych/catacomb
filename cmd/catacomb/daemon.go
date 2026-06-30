@@ -52,6 +52,35 @@ func defaultDaemonDeps() daemonDeps {
 	}
 }
 
+func sinkTypeStrings(sinks []config.Sink) []string {
+	if len(sinks) == 0 {
+		return nil
+	}
+	out := make([]string, len(sinks))
+	for i, s := range sinks {
+		out[i] = s.Type
+	}
+	return out
+}
+
+func enabledSourceNames(s config.SourcesConfig) []string {
+	enabled := func(b *bool) bool { return b == nil || *b }
+	var names []string
+	if enabled(s.Hooks.Enabled) {
+		names = append(names, "hooks")
+	}
+	if enabled(s.Otel.Enabled) {
+		names = append(names, "otel")
+	}
+	if enabled(s.StreamJSON.Enabled) {
+		names = append(names, "stream_json")
+	}
+	if enabled(s.JSONL.Enabled) {
+		names = append(names, "jsonl")
+	}
+	return names
+}
+
 func storeDBPath(c config.StoreConfig) string {
 	if c.Backend == config.BackendSQLite {
 		return c.SQLite.Path
@@ -228,6 +257,11 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 		DBPath:             dbPath,
 		AllowPayloadAccess: p.allowPayloadAccess,
 		AllowAnnotations:   p.allowAnnotations,
+		StoreBackend:       p.store.Backend,
+		SinkTypes:          sinkTypeStrings(sinks),
+		SourcesEnabled:     enabledSourceNames(sources),
+		ReaperWindow:       p.reaperWindow.String(),
+		MaxShards:          p.maxShards,
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
