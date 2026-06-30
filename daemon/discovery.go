@@ -11,15 +11,20 @@ import (
 )
 
 type Discovery struct {
-	Addr               string `json:"addr"`
-	Token              string `json:"token"`
-	GRPCAddr           string `json:"grpc_addr,omitempty"`
-	Pid                int    `json:"pid,omitempty"`
-	StartedAt          string `json:"started_at,omitempty"`
-	TranscriptDir      string `json:"transcript_dir,omitempty"`
-	DBPath             string `json:"db_path,omitempty"`
-	AllowPayloadAccess bool   `json:"allow_payload_access,omitempty"`
-	AllowAnnotations   bool   `json:"allow_annotations,omitempty"`
+	Addr               string   `json:"addr"`
+	Token              string   `json:"token"`
+	GRPCAddr           string   `json:"grpc_addr,omitempty"`
+	Pid                int      `json:"pid,omitempty"`
+	StartedAt          string   `json:"started_at,omitempty"`
+	TranscriptDir      string   `json:"transcript_dir,omitempty"`
+	DBPath             string   `json:"db_path,omitempty"`
+	AllowPayloadAccess bool     `json:"allow_payload_access,omitempty"`
+	AllowAnnotations   bool     `json:"allow_annotations,omitempty"`
+	StoreBackend       string   `json:"store_backend,omitempty"`
+	SinkTypes          []string `json:"sink_types,omitempty"`
+	SourcesEnabled     []string `json:"sources_enabled,omitempty"`
+	ReaperWindow       string   `json:"reaper_window,omitempty"`
+	MaxShards          int      `json:"max_shards"`
 }
 
 var (

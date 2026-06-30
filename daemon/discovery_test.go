@@ -126,6 +126,39 @@ func TestReadDiscoveryParseError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDiscoveryNewFieldsRoundTrip(t *testing.T) {
+	d := Discovery{
+		Addr:           "127.0.0.1:1",
+		Token:          "tok",
+		StoreBackend:   "memory",
+		SinkTypes:      []string{"otlp", "postgres"},
+		SourcesEnabled: []string{"hooks", "otel"},
+		ReaperWindow:   "30m0s",
+		MaxShards:      4096,
+	}
+	tmp := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, WriteDiscovery(tmp, d))
+	got, err := ReadDiscovery(tmp)
+	require.NoError(t, err)
+	assert.Equal(t, "memory", got.StoreBackend)
+	assert.Equal(t, []string{"otlp", "postgres"}, got.SinkTypes)
+	assert.Equal(t, []string{"hooks", "otel"}, got.SourcesEnabled)
+	assert.Equal(t, "30m0s", got.ReaperWindow)
+	assert.Equal(t, 4096, got.MaxShards)
+}
+
+func TestDiscoveryNewFieldsOmitEmpty(t *testing.T) {
+	d := Discovery{Addr: "127.0.0.1:1", Token: "tok"}
+	tmp := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, WriteDiscovery(tmp, d))
+	b, err := os.ReadFile(tmp)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "store_backend")
+	assert.NotContains(t, string(b), "sink_types")
+	assert.NotContains(t, string(b), "sources_enabled")
+	assert.NotContains(t, string(b), "reaper_window")
+}
+
 func TestWriteReadDiscoveryScopeFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.json")
 	in := Discovery{
