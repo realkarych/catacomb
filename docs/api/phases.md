@@ -17,10 +17,11 @@ Diff two sessions, optionally scoped per side.
 | `a`, `b` | session hashes (required) |
 | `phase` | scope BOTH sides to this phase |
 | `aPhase`, `bPhase` | per-side phase (overrides `phase` for that side) |
-| `aFrom`/`aTo`, `bFrom`/`bTo` | per-side range: subgraph between two checkpoints `[from, to)` |
+| `aFrom`/`aTo`, `bFrom`/`bTo` | per-side range: subgraph between two checkpoints `[from.start, to.start]` (inclusive) |
 
-`from`/`to` must be set together and are mutually exclusive with a phase selector on the
-same side. Missing phase → `400`; invalid selector → `400`; unknown session → `404`.
+`from`/`to` must be set together and are mutually exclusive with `aPhase`/`bPhase` on the
+same side; a per-side `phase` cannot be combined with `from`/`to` for that side.
+Missing phase → `400`; invalid selector → `400`; unknown session → `404`.
 With no selector params the response is byte-for-byte the unscoped diff.
 
 ## `GET /v1/sessions/{hash}/phase/{name}`

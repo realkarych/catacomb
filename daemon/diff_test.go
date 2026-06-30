@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/diff"
+	"github.com/realkarych/catacomb/model"
 )
 
 func TestHandleDiff_Identical(t *testing.T) {
@@ -403,4 +404,39 @@ func TestHandleDiff_PhaseUnionAcrossExecutions(t *testing.T) {
 	assert.Empty(t, result.Removed)
 	assert.Empty(t, result.Changed)
 	assert.Len(t, result.Unchanged, 2)
+}
+
+func TestHandleDiff_WithinRunPhasesContent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	clocks := []time.Time{
+		time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC),
+		time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	var idx int
+	nowFn = func() time.Time {
+		c := clocks[idx%len(clocks)]
+		idx++
+		return c
+	}
+	t.Cleanup(func() { nowFn = time.Now })
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "wide", Boundary: "start"}))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "wide", Boundary: "end"}))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "narrow", Boundary: "start"}))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "narrow", Boundary: "end"}))
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aPhase=wide&bPhase=narrow")
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result diff.DiffResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	toolNodeID := model.ToolCallID("exec1", "t1")
+	assert.NotEmpty(t, result.Removed, "tool node %s is in wide phase but absent in narrow phase; must appear in Removed", toolNodeID)
+	assert.Empty(t, result.Added)
 }
