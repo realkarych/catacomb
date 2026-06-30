@@ -7,12 +7,46 @@ import (
 	"github.com/spf13/cobra"
 
 	catdiff "github.com/realkarych/catacomb/diff"
+	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/subgraph"
 )
 
 type diffArgs struct {
-	a    string
-	b    string
-	json bool
+	a      string
+	b      string
+	json   bool
+	phase  string
+	aPhase string
+	bPhase string
+}
+
+func (a diffArgs) aSel() string {
+	if a.aPhase != "" {
+		return a.aPhase
+	}
+	return a.phase
+}
+
+func (a diffArgs) bSel() string {
+	if a.bPhase != "" {
+		return a.bPhase
+	}
+	return a.phase
+}
+
+func scopeCLISide(nodes []*model.Node, edges []*model.Edge, execID, sel string) ([]*model.Node, []*model.Edge, error) {
+	if sel == "" {
+		return nodes, edges, nil
+	}
+	name, occ, err := subgraph.ParseSelector(sel)
+	if err != nil {
+		return nil, nil, err
+	}
+	sn, se, ok := subgraph.ScopeExecution(nodes, edges, execID, name, occ)
+	if !ok {
+		return nil, nil, fmt.Errorf("diff: phase %q not found", sel)
+	}
+	return sn, se, nil
 }
 
 func newDiffCmd() *cobra.Command {
@@ -36,20 +70,33 @@ func newDiffCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&args.json, "json", false, "output as JSON")
+	cmd.Flags().StringVar(&args.phase, "phase", "", "scope both sides to phase name[,occurrence]")
+	cmd.Flags().StringVar(&args.aPhase, "a-phase", "", "scope side A to phase name[,occurrence]")
+	cmd.Flags().StringVar(&args.bPhase, "b-phase", "", "scope side B to phase name[,occurrence]")
 	return cmd
 }
 
 func runDiff(args diffArgs) (catdiff.DiffResult, error) {
-	ag, _, err := loadGraph(args.a, newExecutionID())
+	aExec := newExecutionID()
+	ag, _, err := loadGraph(args.a, aExec)
 	if err != nil {
 		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %w (%w)", args.a, err, ErrDiffInput)
 	}
-	bg, _, err := loadGraph(args.b, newExecutionID())
+	bExec := newExecutionID()
+	bg, _, err := loadGraph(args.b, bExec)
 	if err != nil {
 		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %w (%w)", args.b, err, ErrDiffInput)
 	}
 	an, ae := ag.Snapshot()
 	bn, be := bg.Snapshot()
+	an, ae, err = scopeCLISide(an, ae, aExec, args.aSel())
+	if err != nil {
+		return catdiff.DiffResult{}, err
+	}
+	bn, be, err = scopeCLISide(bn, be, bExec, args.bSel())
+	if err != nil {
+		return catdiff.DiffResult{}, err
+	}
 	return catdiff.DiffGraphs(an, ae, bn, be), nil
 }
 
