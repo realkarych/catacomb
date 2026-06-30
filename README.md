@@ -84,8 +84,52 @@ To read conversation content in the UI, start the daemon with
 By default the daemon's database is `~/.catacomb/catacomb.db`, and its
 discovery file lives under `~/.catacomb/run/`.
 
-Install from source (`go install github.com/realkarych/catacomb/cmd/catacomb@latest`)
-or build locally with `make build`.
+## Installation
+
+### Homebrew (macOS)
+
+```sh
+brew tap realkarych/tap
+brew install catacomb        # first install
+brew upgrade catacomb        # later updates
+```
+
+### Debian / Ubuntu (APT)
+
+```sh
+# Import the signing key
+curl -fsSL https://realkarych.github.io/catacomb-apt/public.key \
+  | sudo tee /etc/apt/trusted.gpg.d/catacomb.asc
+
+# Add the repository
+echo "deb [arch=$(dpkg --print-architecture)] \
+  https://realkarych.github.io/catacomb-apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/catacomb.list
+
+# Install / update
+sudo apt update
+sudo apt install catacomb
+```
+
+### Docker (GHCR)
+
+```sh
+docker run --rm ghcr.io/realkarych/catacomb:latest version
+```
+
+### Other platforms / Windows
+
+Download a pre-built archive from the
+[Releases](https://github.com/realkarych/catacomb/releases) page, unpack it,
+and add the binary to your `PATH`.
+
+### Go install (Go >= 1.26)
+
+```sh
+go install github.com/realkarych/catacomb/cmd/catacomb@latest
+```
+
+Or build locally with `make build`.
 
 ## Privacy
 
