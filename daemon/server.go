@@ -61,6 +61,7 @@ func (d *Daemon) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /v1/diff", d.authedAllowQuery(token, d.handleDiff))
 	mux.HandleFunc("GET /v1/sessions/{hash}/nodes/{nodeId}/payload", d.authedAllowQuery(token, d.handleNodePayload))
 	mux.HandleFunc("GET /v1/sessions/{hash}/subagent/{agentId}", d.authedAllowQuery(token, d.handleSubagentSubtree))
+	mux.HandleFunc("GET /v1/sessions/{hash}/phase/{phaseSel}", d.authedAllowQuery(token, d.handlePhaseFocus))
 	mux.HandleFunc("POST /v1/sessions/{hash}/nodes/{nodeId}/annotations", d.authed(token, d.handleNodeAnnotate))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
