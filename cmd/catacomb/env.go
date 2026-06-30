@@ -15,7 +15,7 @@ func newEnvCmd() *cobra.Command {
 		Short: "Print OTLP environment variables for connecting to the running daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if discoveryPath == "" {
-				discoveryPath = daemon.DiscoveryPath()
+				discoveryPath = clientDiscoveryPath()
 			}
 			d, err := daemon.ReadDiscovery(discoveryPath)
 			if err != nil {

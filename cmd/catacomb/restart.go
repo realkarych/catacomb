@@ -40,7 +40,7 @@ func newRestartCmd() *cobra.Command {
 		Short: "Stop the running daemon and start a fresh one",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			discPath := daemon.DiscoveryPath()
+			discPath := clientDiscoveryPath()
 			deps := restartDeps{
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,

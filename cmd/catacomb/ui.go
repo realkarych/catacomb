@@ -38,7 +38,7 @@ func newUICmd() *cobra.Command {
 		Short: "Open the catacomb web UI in the default browser",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUI(
-				daemon.DiscoveryPath(),
+				clientDiscoveryPath(),
 				noOpen,
 				cmd.OutOrStdout(),
 			)

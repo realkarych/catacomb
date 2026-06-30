@@ -26,7 +26,7 @@ func newWatchCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runWatch(
 				cmd.Context(),
-				daemon.DiscoveryPath(),
+				clientDiscoveryPath(),
 				runFilter, nodeTypes, tiers,
 				http.DefaultClient,
 				cmd.OutOrStdout(),

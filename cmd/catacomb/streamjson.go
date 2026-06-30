@@ -76,7 +76,7 @@ func newIngestCmd() *cobra.Command {
 		Use:   "stream-json",
 		Short: "Forward stream-json NDJSON from stdin to the catacomb daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			streamForward(cmd.ErrOrStderr(), daemon.DiscoveryPath(), cmd.InOrStdin())
+			streamForward(cmd.ErrOrStderr(), clientDiscoveryPath(), cmd.InOrStdin())
 			return nil
 		},
 	}
@@ -91,7 +91,7 @@ func newRunCmd() *cobra.Command {
 		Short: "Run a Claude Code command, tee its stream-json to the terminal and the daemon",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), daemon.DiscoveryPath(), runID, args)
+			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args)
 		},
 	}
 	cmd.Flags().StringVar(&runID, "run-id", "", "CATACOMB_RUN_ID value exported to the child for multi-session grouping")

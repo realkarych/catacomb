@@ -449,3 +449,152 @@ func TestStatusCmdJSONFlag(t *testing.T) {
 	require.NotNil(t, f)
 	assert.Equal(t, "false", f.DefValue)
 }
+
+func TestRunStatusTextShowsConfigPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	cfgPath := filepath.Join(t.TempDir(), "catacomb.toml")
+	disc := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:       strings.TrimPrefix(srv.URL, "http://"),
+		Token:      "tok",
+		ConfigPath: cfgPath,
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.Contains(t, out.String(), "config")
+	assert.Contains(t, out.String(), cfgPath)
+}
+
+func TestRunStatusTextOmitsConfigPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	disc := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "tok",
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	for _, line := range strings.Split(out.String(), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			assert.NotEqual(t, "config", fields[0])
+		}
+	}
+}
+
+func TestRunStatusJSONIncludesConfigPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	cfgPath := filepath.Join(t.TempDir(), "catacomb.toml")
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, daemon.Discovery{
+		Addr:       strings.TrimPrefix(srv.URL, "http://"),
+		Token:      "tok",
+		ConfigPath: cfgPath,
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    srv.Client(),
+		now:           time.Now,
+		asJSON:        true,
+	}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	var rep statusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, cfgPath, rep.ConfigPath)
+}
+
+func TestRunStatusJSONOmitsConfigPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "tok",
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    srv.Client(),
+		now:           time.Now,
+		asJSON:        true,
+	}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.NotContains(t, out.String(), "config_path")
+}
+
+func TestRunStatusJSONDaemonRestarted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "oldtok",
+		Pid:   22222,
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    srv.Client(),
+		now:           time.Now,
+		asJSON:        true,
+	}
+	err := runStatus(context.Background(), &out, deps)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrDaemonRestarted))
+	var rep statusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, 22222, rep.Pid)
+	assert.False(t, rep.Healthy)
+}
+
+type statusErrWriter struct{ err error }
+
+func (e statusErrWriter) Write(_ []byte) (int, error) { return 0, e.err }
+
+func TestRunStatusJSONEncodeWriteError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	discPath := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discPath, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "tok",
+		Pid:   1,
+	}))
+	writeErr := errors.New("write failure")
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: discPath,
+		httpClient:    srv.Client(),
+		now:           time.Now,
+		asJSON:        true,
+	}
+	err := runStatus(context.Background(), statusErrWriter{err: writeErr}, deps)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, writeErr)
+}

@@ -55,7 +55,7 @@ tree, and per-node detail. Pass a session hash to open straight into it.`,
 			}
 			deps := observeDeps{
 				readDiscovery: daemon.ReadDiscovery,
-				discoveryPath: daemon.DiscoveryPath(),
+				discoveryPath: clientDiscoveryPath(),
 				newClient:     func(d daemon.Discovery) tui.Client { return tui.NewHTTPClient(d) },
 				newModel:      tui.NewModel,
 				runProgram:    teaRun,

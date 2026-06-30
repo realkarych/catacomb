@@ -36,7 +36,7 @@ a populated graph without a live session.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps := demoDeps{
 				readDiscovery: daemon.ReadDiscovery,
-				discoveryPath: daemon.DiscoveryPath(),
+				discoveryPath: clientDiscoveryPath(),
 				transcript:    demoTranscript,
 				httpClient:    demoHTTPClient,
 			}

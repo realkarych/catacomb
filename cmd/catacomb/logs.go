@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/realkarych/catacomb/daemon"
 )
 
 type logsDeps struct {
@@ -34,7 +32,7 @@ func newLogsCmd() *cobra.Command {
 				tick = t.C
 			}
 			deps := logsDeps{
-				logPath: daemon.DiscoveryPath() + ".log",
+				logPath: clientDiscoveryPath() + ".log",
 				openLog: func(p string) (io.ReadCloser, error) { return os.Open(p) },
 				follow:  follow,
 				tick:    tick,

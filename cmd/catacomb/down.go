@@ -164,7 +164,7 @@ func uninstallHooks() ([]string, error) {
 			}
 			return nil, fmt.Errorf("down: stat %s: %w", path, statErr)
 		}
-		if err := installHooks(path, daemon.DiscoveryPath(), exe, true); err != nil {
+		if err := installHooks(path, clientDiscoveryPath(), exe, true); err != nil {
 			return nil, err
 		}
 		removed = append(removed, path)
@@ -210,7 +210,7 @@ func newDownCmd() *cobra.Command {
 		Short: "Stop the daemon and optionally remove catacomb's artifacts",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDown(cmd.OutOrStdout(), opts, daemon.DiscoveryPath())
+			return runDown(cmd.OutOrStdout(), opts, clientDiscoveryPath())
 		},
 	}
 	cmd.Flags().BoolVar(&opts.uninstall, "uninstall", false, "also remove catacomb hook entries from .claude/settings.json")
