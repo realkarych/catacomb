@@ -339,6 +339,19 @@ func TestRunDaemonWithNeo4jURISet(t *testing.T) {
 	require.NoError(t, <-errc)
 }
 
+func TestRunDaemonWithPostgresDSN(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.postgresDSN = "postgres://user:pass@localhost:5432/db"
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	cancel()
+	require.NoError(t, <-errc)
+}
+
 func TestAllowPayloadAccessFlagRegistered(t *testing.T) {
 	cmd := newDaemonCmd()
 	f := cmd.Flags().Lookup("allow-payload-access")
