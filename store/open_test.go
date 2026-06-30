@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -22,7 +23,9 @@ func TestOpenSQLite(t *testing.T) {
 }
 
 func TestOpenSQLiteError(t *testing.T) {
-	_, err := store.Open(config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: "/nonexistent/dir/g.db"}})
+	blocker := filepath.Join(t.TempDir(), "nodir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+	_, err := store.Open(config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: filepath.Join(blocker, "g.db")}})
 	require.Error(t, err)
 }
 
