@@ -276,6 +276,53 @@ func TestHandleDiff_SessionNotFoundWithPhase(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+func TestHandleDiff_CombinedPhaseParam(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&phase=phase1")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result diff.DiffResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Empty(t, result.Added)
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+}
+
+func TestHandleDiff_RangeFromTo(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aFrom=phase1&aTo=phase2&bFrom=phase1&bTo=phase2")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result diff.DiffResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Empty(t, result.Added)
+}
+
+func TestHandleDiff_RangeRequiresBoth(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aFrom=phase1")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestHandleDiff_PhaseUnionAcrossExecutions(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
