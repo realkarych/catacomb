@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/cdc"
+	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/daemon"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/store"
@@ -48,38 +49,63 @@ func (f *failSinceStore) UpsertAnnotation(model.Annotation) error               
 func (f *failSinceStore) AnnotationsForExecution(string) ([]model.Annotation, error) { return nil, nil }
 func (f *failSinceStore) MoveAnnotations(string, string, string) error               { return nil }
 
-func openFailSince(string) (store.Store, error) {
+func openFailSince(config.StoreConfig) (store.Store, error) {
 	return &failSinceStore{}, nil
 }
 
+func testDaemonDeps() daemonDeps {
+	return daemonDeps{
+		openStore:  store.Open,
+		listen:     daemon.ListenLoopback,
+		listenGRPC: daemon.ListenLoopback,
+		newToken:   daemon.NewToken,
+	}
+}
+
+func testDaemonParams(t *testing.T) daemonParams {
+	t.Helper()
+	return daemonParams{
+		store:         config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: filepath.Join(t.TempDir(), "g.db")}},
+		discoveryPath: filepath.Join(t.TempDir(), "d.json"),
+		reaperWindow:  30 * time.Minute,
+		maxShards:     4096,
+	}
+}
+
 func TestRunDaemonOpenError(t *testing.T) {
-	open := func(string) (store.Store, error) { return nil, errors.New("open") }
-	err := runDaemonWith(context.Background(), open, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
+	deps := testDaemonDeps()
+	deps.openStore = func(config.StoreConfig) (store.Store, error) { return nil, errors.New("open") }
+	err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
 	require.Error(t, err)
 }
 
 func TestRunDaemonListenError(t *testing.T) {
-	listen := func() (net.Listener, error) { return nil, errors.New("listen") }
-	err := runDaemonWith(context.Background(), store.OpenSQLite, listen, daemon.ListenLoopback, daemon.NewToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
+	deps := testDaemonDeps()
+	deps.listen = func() (net.Listener, error) { return nil, errors.New("listen") }
+	err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
 	require.Error(t, err)
 }
 
 func TestRunDaemonDiscoveryError(t *testing.T) {
 	dir := t.TempDir()
-	badDiscovery := filepath.Join(dir, "afile", "d.json")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o600))
-	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), badDiscovery, 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
+	p := testDaemonParams(t)
+	p.discoveryPath = filepath.Join(dir, "afile", "d.json")
+	err := runDaemonWith(context.Background(), testDaemonDeps(), p)
 	require.Error(t, err)
 }
 
 func TestRunDaemonRecoverError(t *testing.T) {
-	err := runDaemonWith(context.Background(), openFailSince, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, "x", filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
+	deps := testDaemonDeps()
+	deps.openStore = openFailSince
+	err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
 	require.Error(t, err)
 }
 
 func TestRunDaemonNewTokenError(t *testing.T) {
-	failToken := func() (string, error) { return "", errors.New("token") }
-	err := runDaemonWith(context.Background(), store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, failToken, filepath.Join(t.TempDir(), "g.db"), filepath.Join(t.TempDir(), "d.json"), 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
+	deps := testDaemonDeps()
+	deps.newToken = func() (string, error) { return "", errors.New("token") }
+	err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
 	require.Error(t, err)
 }
 
@@ -115,9 +141,10 @@ func TestDaemonEndToEnd(t *testing.T) {
 	discovery := filepath.Join(dir, "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, dbPath, discovery, 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
-	}()
+	p := testDaemonParams(t)
+	p.store = config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: dbPath}}
+	p.discoveryPath = discovery
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	awaitHealthz(t, readAddr(t, discovery))
 
 	for _, f := range []struct{ typ, file string }{
@@ -145,6 +172,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 }
 
 func TestDaemonCommandWiring(t *testing.T) {
+	t.Setenv("CATACOMB_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
 	dir := t.TempDir()
 	discovery := filepath.Join(dir, "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -158,6 +186,7 @@ func TestDaemonCommandWiring(t *testing.T) {
 }
 
 func TestDaemonCommandDefaultDiscovery(t *testing.T) {
+	t.Setenv("CATACOMB_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
 	dir := t.TempDir()
 	t.Setenv("CATACOMB_DISCOVERY", filepath.Join(dir, "d.json"))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -171,6 +200,7 @@ func TestDaemonCommandDefaultDiscovery(t *testing.T) {
 }
 
 func TestDaemonCommandReaperWindowFlag(t *testing.T) {
+	t.Setenv("CATACOMB_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
 	dir := t.TempDir()
 	discovery := filepath.Join(dir, "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -184,6 +214,7 @@ func TestDaemonCommandReaperWindowFlag(t *testing.T) {
 }
 
 func TestDaemonCommandMaxShardsFlag(t *testing.T) {
+	t.Setenv("CATACOMB_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
 	dir := t.TempDir()
 	discovery := filepath.Join(dir, "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -197,28 +228,19 @@ func TestDaemonCommandMaxShardsFlag(t *testing.T) {
 }
 
 func TestRunDaemonWithGRPCListenError(t *testing.T) {
-	listenGRPC := func() (net.Listener, error) { return nil, errors.New("grpc listen") }
-	err := runDaemonWith(
-		context.Background(),
-		store.OpenSQLite,
-		daemon.ListenLoopback,
-		listenGRPC,
-		daemon.NewToken,
-		filepath.Join(t.TempDir(), "g.db"),
-		filepath.Join(t.TempDir(), "d.json"),
-		30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false,
-	)
+	deps := testDaemonDeps()
+	deps.listenGRPC = func() (net.Listener, error) { return nil, errors.New("grpc listen") }
+	err := runDaemonWith(context.Background(), deps, testDaemonParams(t))
 	require.Error(t, err)
 }
 
 func TestRunDaemonDiscoveryHasGRPCAddr(t *testing.T) {
-	dir := t.TempDir()
-	discovery := filepath.Join(dir, "d.json")
+	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
-	}()
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	var grpcAddr string
 	require.Eventually(t, func() bool {
 		d, err := daemon.ReadDiscovery(discovery)
@@ -248,27 +270,30 @@ func TestDaemonOTLPProjectFlagRegistered(t *testing.T) {
 }
 
 func TestRunDaemonWithOTLPEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	discovery := filepath.Join(dir, "d.json")
+	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "grpc://collector.example:4317", "phoenix-demo", "", "", "", "", "", nil, false, false)
-	}()
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.otlpEndpoint = "grpc://collector.example:4317"
+	p.otlpProject = "phoenix-demo"
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	awaitHealthz(t, readAddr(t, discovery))
 	cancel()
 	require.NoError(t, <-errc)
 }
 
 func TestRunDaemonWithTranscriptDir(t *testing.T) {
-	dir := t.TempDir()
-	db := filepath.Join(t.TempDir(), "c.db")
 	ctx, cancel := context.WithCancel(context.Background())
 	disc := filepath.Join(t.TempDir(), "d.json")
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, db, disc, time.Minute, 16, "", "", "", "", "", "", dir, []string{"x-*.jsonl"}, false, false)
-	}()
+	p := testDaemonParams(t)
+	p.discoveryPath = disc
+	p.reaperWindow = time.Minute
+	p.maxShards = 16
+	p.transcriptDir = t.TempDir()
+	p.transcriptExclude = []string{"x-*.jsonl"}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(disc)
 		return err == nil
@@ -300,19 +325,15 @@ func TestNeo4jFlagsRegistered(t *testing.T) {
 }
 
 func TestRunDaemonWithNeo4jURISet(t *testing.T) {
-	dir := t.TempDir()
-	discovery := filepath.Join(dir, "d.json")
+	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken,
-			filepath.Join(dir, "g.db"), discovery,
-			30*time.Minute, 4096,
-			"", "",
-			"", "bolt://localhost:7687", "neo4j", "pw",
-			"", nil, false, false,
-		)
-	}()
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.neo4jURI = "bolt://localhost:7687"
+	p.neo4jUser = "neo4j"
+	p.neo4jPassword = "pw"
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	awaitHealthz(t, readAddr(t, discovery))
 	cancel()
 	require.NoError(t, <-errc)
@@ -333,33 +354,30 @@ func TestAllowAnnotationsFlagRegistered(t *testing.T) {
 }
 
 func TestRunDaemonWithAllowPayloadAccessTrue(t *testing.T) {
-	dir := t.TempDir()
-	discovery := filepath.Join(dir, "d.json")
+	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken,
-			filepath.Join(dir, "g.db"), discovery,
-			30*time.Minute, 4096,
-			"", "", "", "", "", "",
-			"", nil, true, false,
-		)
-	}()
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	p.allowPayloadAccess = true
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	awaitHealthz(t, readAddr(t, discovery))
 	cancel()
 	require.NoError(t, <-errc)
 }
 
 func TestRunDaemonDiscoveryHasScope(t *testing.T) {
-	dir := t.TempDir()
 	db := filepath.Join(t.TempDir(), "g.db")
 	transcripts := t.TempDir()
-	discovery := filepath.Join(dir, "d.json")
+	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, db, discovery, 30*time.Minute, 4096, "", "", "", "", "", "", transcripts, nil, true, false)
-	}()
+	p := testDaemonParams(t)
+	p.store = config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: db}}
+	p.discoveryPath = discovery
+	p.transcriptDir = transcripts
+	p.allowPayloadAccess = true
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	var d daemon.Discovery
 	require.Eventually(t, func() bool {
 		disc, err := daemon.ReadDiscovery(discovery)
@@ -380,24 +398,21 @@ func TestRunDaemonRemovesDiscoveryOnShutdown(t *testing.T) {
 	discPath := filepath.Join(t.TempDir(), "daemon.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := runDaemonWith(
-		ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken,
-		filepath.Join(t.TempDir(), "g.db"), discPath,
-		30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false,
-	)
+	p := testDaemonParams(t)
+	p.discoveryPath = discPath
+	err := runDaemonWith(ctx, testDaemonDeps(), p)
 	require.NoError(t, err)
 	_, statErr := os.Stat(discPath)
 	assert.True(t, os.IsNotExist(statErr))
 }
 
 func TestRunDaemonDiscoveryHasPidAndStartedAt(t *testing.T) {
-	dir := t.TempDir()
-	discovery := filepath.Join(dir, "d.json")
+	discovery := filepath.Join(t.TempDir(), "d.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
-	go func() {
-		errc <- runDaemonWith(ctx, store.OpenSQLite, daemon.ListenLoopback, daemon.ListenLoopback, daemon.NewToken, filepath.Join(dir, "g.db"), discovery, 30*time.Minute, 4096, "", "", "", "", "", "", "", nil, false, false)
-	}()
+	p := testDaemonParams(t)
+	p.discoveryPath = discovery
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
 	var d daemon.Discovery
 	require.Eventually(t, func() bool {
 		disc, err := daemon.ReadDiscovery(discovery)
@@ -412,4 +427,64 @@ func TestRunDaemonDiscoveryHasPidAndStartedAt(t *testing.T) {
 	require.NoError(t, err)
 	cancel()
 	require.NoError(t, <-errc)
+}
+
+func TestRunDaemonMemoryBackendServesAndDiscoveryDBEmpty(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := daemonParams{store: config.StoreConfig{Backend: config.BackendMemory}, discoveryPath: discovery, reaperWindow: 30 * time.Minute, maxShards: 4096}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	d, err := daemon.ReadDiscovery(discovery)
+	require.NoError(t, err)
+	assert.Equal(t, "", d.DBPath)
+	cancel()
+	require.NoError(t, <-errc)
+}
+
+func TestStoreDBPath(t *testing.T) {
+	assert.Equal(t, "/x.db", storeDBPath(config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: "/x.db"}}))
+	assert.Equal(t, "", storeDBPath(config.StoreConfig{Backend: config.BackendMemory}))
+}
+
+func TestDaemonConfigFlagRegistered(t *testing.T) {
+	cmd := newDaemonCmd()
+	f := cmd.Flags().Lookup("config")
+	require.NotNil(t, f)
+	assert.Equal(t, "", f.DefValue)
+}
+
+func TestDaemonDBFlagDefaultEmpty(t *testing.T) {
+	cmd := newDaemonCmd()
+	f := cmd.Flags().Lookup("db")
+	require.NotNil(t, f)
+	assert.Equal(t, "", f.DefValue)
+}
+
+func TestResolveDiscoveryEmpty(t *testing.T) {
+	t.Setenv("CATACOMB_DISCOVERY", "")
+	got := resolveDiscovery("")
+	assert.NotEmpty(t, got)
+}
+
+func TestDaemonCommandHomeError(t *testing.T) {
+	orig := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = orig })
+	root := newRootCmd()
+	root.SetArgs([]string{"daemon"})
+	err := root.ExecuteContext(context.Background())
+	require.Error(t, err)
+}
+
+func TestDaemonCommandConfigError(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.yaml")
+	require.NoError(t, os.WriteFile(bad, []byte("store:\n  nope: 1\n"), 0o600))
+	t.Setenv("CATACOMB_CONFIG", bad)
+	root := newRootCmd()
+	root.SetArgs([]string{"daemon"})
+	err := root.ExecuteContext(context.Background())
+	require.Error(t, err)
 }

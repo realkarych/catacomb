@@ -141,6 +141,13 @@ func TestOpenSQLitePublicHappyPath(t *testing.T) {
 	require.NoError(t, s.Close())
 }
 
+func TestOpenSQLiteCreatesParentDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "nested", "g.db")
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+}
+
 func TestAppendDeltasInsertsObservation(t *testing.T) {
 	s := fileStore(t)
 	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}

@@ -88,9 +88,11 @@ func TestRunReplayMalformedInput(t *testing.T) {
 }
 
 func TestRunReplayBadDBPath(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "nodir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 	_, err := runReplay(replayArgs{
 		input:  "testdata/session.jsonl",
-		dbPath: filepath.Join(t.TempDir(), "nodir", "g.db"),
+		dbPath: filepath.Join(blocker, "g.db"),
 	})
 	require.Error(t, err)
 }

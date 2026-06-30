@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
@@ -54,7 +55,7 @@ const (
 	insertQuarantine             = `INSERT INTO quarantine(body) VALUES(?)`
 	upsertTailCursor             = `INSERT INTO tail_cursors(path, offset, fingerprint, size, mtime) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, fingerprint=excluded.fingerprint, size=excluded.size, mtime=excluded.mtime`
 	selectTailCursors            = `SELECT path, offset, fingerprint, size, mtime FROM tail_cursors ORDER BY path`
-	upsertAnnotation             = `INSERT INTO annotations(execution_id,source_key,step_key,owner,key,value,write_seq) VALUES(?,?,?,?,?,?,?) ON CONFLICT(execution_id,source_key,owner,key) DO UPDATE SET value=excluded.value,step_key=excluded.step_key,write_seq=excluded.write_seq WHERE excluded.write_seq>=annotations.write_seq`
+	upsertAnnotation             = `INSERT INTO annotations(execution_id,source_key,step_key,owner,key,value,write_seq) VALUES(?,?,?,?,?,?,?) ON CONFLICT(execution_id,source_key,owner,key) DO UPDATE SET value=excluded.value,step_key=COALESCE(excluded.step_key,annotations.step_key),write_seq=excluded.write_seq WHERE excluded.write_seq>=annotations.write_seq`
 	selectAnnotations            = `SELECT execution_id,source_key,step_key,owner,key,value FROM annotations WHERE execution_id=? ORDER BY source_key,owner,key`
 	selectAnnotationsBySourceKey = `SELECT execution_id,source_key,step_key,owner,key,value,write_seq FROM annotations WHERE execution_id=? AND source_key=?`
 	deleteAnnotationsBySourceKey = `DELETE FROM annotations WHERE execution_id=? AND source_key=?`
@@ -90,6 +91,9 @@ func readOnlyDSN(path string) string {
 }
 
 func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("store.OpenSQLite mkdir: %w", err)
+	}
 	db, err := open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("store.OpenSQLite: %w", err)
