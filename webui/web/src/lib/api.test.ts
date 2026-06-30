@@ -5,6 +5,7 @@ import {
   fetchSubagentSubtree,
   fetchNodePayload,
   fetchDiff,
+  fetchSessionPhases,
   NotFoundError,
   ForbiddenError,
 } from './api';
@@ -182,7 +183,7 @@ describe('fetchDiff', () => {
 
   it('returns DiffResult on 200', async () => {
     const f = mockFetch(200, sampleResult);
-    const result = await fetchDiff('hash-a', 'hash-b', 'mytoken', f);
+    const result = await fetchDiff('hash-a', 'hash-b', 'mytoken', {}, f);
     expect(result).toEqual(sampleResult);
     expect(f).toHaveBeenCalledWith(
       '/v1/diff?a=hash-a&b=hash-b&token=mytoken',
@@ -191,17 +192,63 @@ describe('fetchDiff', () => {
 
   it('encodes a, b, and token in URL', async () => {
     const f = mockFetch(200, sampleResult);
-    await fetchDiff('a/1', 'b/2', 'tok/x', f);
+    await fetchDiff('a/1', 'b/2', 'tok/x', {}, f);
     expect(f).toHaveBeenCalledWith('/v1/diff?a=a%2F1&b=b%2F2&token=tok%2Fx');
   });
 
   it('throws NotFoundError on 404', async () => {
     const f = mockFetch(404, null);
-    await expect(fetchDiff('a', 'b', 'tok', f)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(fetchDiff('a', 'b', 'tok', {}, f)).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it('throws Error on 500', async () => {
     const f = mockFetch(500, null);
-    await expect(fetchDiff('a', 'b', 'tok', f)).rejects.toBeInstanceOf(Error);
+    await expect(fetchDiff('a', 'b', 'tok', {}, f)).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('fetchDiff phase params', () => {
+  const sampleResult: DiffResult = { added: [], removed: [], changed: [], unchanged: [] };
+
+  it('appends aPhase and bPhase when set', async () => {
+    const f = mockFetch(200, sampleResult);
+    await fetchDiff('a', 'b', 'tok', { aPhase: 'plan', bPhase: 'impl,1' }, f);
+    expect(f).toHaveBeenCalledWith('/v1/diff?a=a&b=b&token=tok&aPhase=plan&bPhase=impl%2C1');
+  });
+
+  it('omits phase params when not set', async () => {
+    const f = mockFetch(200, sampleResult);
+    await fetchDiff('a', 'b', 'tok', {}, f);
+    expect(f).toHaveBeenCalledWith('/v1/diff?a=a&b=b&token=tok');
+  });
+
+  it('throws on 400 (invalid/absent phase)', async () => {
+    const f = mockFetch(400, null);
+    await expect(fetchDiff('a', 'b', 'tok', { aPhase: 'ghost' }, f)).rejects.toThrow(/phase/);
+  });
+});
+
+describe('fetchSessionPhases', () => {
+  function nodeEvent(type: string, name?: string): SseEvent {
+    return { kind: 'node_upsert', rev: 1, node: { id: type + (name ?? ''), run_id: 'r', type, name, rev: 1 } };
+  }
+
+  it('returns de-duplicated marker names in order', async () => {
+    const events: SseEvent[] = [
+      nodeEvent('tool_call', 'Bash'),
+      nodeEvent('marker', 'plan'),
+      nodeEvent('marker', 'impl'),
+      nodeEvent('marker', 'plan'),
+      nodeEvent('marker'),
+      { kind: 'edge_upsert', rev: 1 },
+    ];
+    const f = mockFetch(200, events);
+    const result = await fetchSessionPhases('h', 'tok', f);
+    expect(result).toEqual(['plan', 'impl']);
+  });
+
+  it('propagates NotFoundError on 404', async () => {
+    const f = mockFetch(404, null);
+    await expect(fetchSessionPhases('h', 'tok', f)).rejects.toBeInstanceOf(NotFoundError);
   });
 });

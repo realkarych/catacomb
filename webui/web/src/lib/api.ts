@@ -58,10 +58,33 @@ export async function fetchNodePayload(
   return res.json() as Promise<PayloadView>;
 }
 
-export async function fetchDiff(a: string, b: string, token: string, f = fetch): Promise<DiffResult> {
-  const url = `/v1/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&token=${encodeURIComponent(token)}`;
+export async function fetchDiff(
+  a: string,
+  b: string,
+  token: string,
+  opts: { aPhase?: string; bPhase?: string } = {},
+  f = fetch,
+): Promise<DiffResult> {
+  let url = `/v1/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&token=${encodeURIComponent(token)}`;
+  if (opts.aPhase) url += `&aPhase=${encodeURIComponent(opts.aPhase)}`;
+  if (opts.bPhase) url += `&bPhase=${encodeURIComponent(opts.bPhase)}`;
   const res = await f(url);
   if (res.status === 404) throw new NotFoundError('session not found');
+  if (res.status === 400) throw new Error('invalid or missing phase selector');
   if (!res.ok) throw new Error(`fetchDiff failed: ${res.status}`);
   return res.json() as Promise<DiffResult>;
+}
+
+export async function fetchSessionPhases(hash: string, token: string, f = fetch): Promise<string[]> {
+  const events = await fetchSessionGraph(hash, token, f);
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const ev of events) {
+    const n = ev.node;
+    if (!n || n.type !== 'marker' || !n.name) continue;
+    if (seen.has(n.name)) continue;
+    seen.add(n.name);
+    names.push(n.name);
+  }
+  return names;
 }
