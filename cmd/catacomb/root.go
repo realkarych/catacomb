@@ -56,6 +56,7 @@ Run 'catacomb <command> --help' for details on any command.`,
 	root.AddCommand(observe(newWatchCmd()))
 	root.AddCommand(observe(newStatusCmd()))
 	root.AddCommand(observe(newObserveCmd()))
+	root.AddCommand(observe(newLogsCmd()))
 	root.AddCommand(setup(newDaemonCmd()))
 	root.AddCommand(setup(newInstallHooksCmd()))
 	root.AddCommand(setup(newEnvCmd()))
