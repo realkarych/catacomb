@@ -919,6 +919,163 @@ func TestUpHelpDocumentsScope(t *testing.T) {
 	assert.NotEmpty(t, cmd.Example)
 }
 
+func TestRunUpForegroundBlocksOnDone(t *testing.T) {
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	deps := fakeDepsWithDisc(t, disc)
+	done := make(chan error, 1)
+	done <- nil
+	deps.daemonDone = done
+	deps.noDemo = true
+	require.NoError(t, runUp(context.Background(), io.Discard, deps))
+}
+
+func TestRunUpForegroundPropagatesDaemonError(t *testing.T) {
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	deps := fakeDepsWithDisc(t, disc)
+	done := make(chan error, 1)
+	done <- errors.New("daemon exited unexpectedly")
+	deps.daemonDone = done
+	deps.noDemo = true
+	err := runUp(context.Background(), io.Discard, deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "daemon exited")
+}
+
+func TestRunUpNoDaemonDoneIsNil(t *testing.T) {
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	deps := fakeDepsWithDisc(t, disc)
+	deps.daemonDone = nil
+	deps.noDemo = true
+	require.NoError(t, runUp(context.Background(), io.Discard, deps))
+}
+
+func TestUpCmdForegroundFlag(t *testing.T) {
+	cmd := newUpCmd()
+	f := cmd.Flags().Lookup("foreground")
+	require.NotNil(t, f, "up must have --foreground flag")
+	assert.Equal(t, "false", f.DefValue)
+}
+
+func TestUpCmdForegroundHomeError(t *testing.T) {
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	cmd := newUpCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground"}))
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve home")
+}
+
+func TestUpCmdForegroundConfigError(t *testing.T) {
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	blocker := filepath.Join(t.TempDir(), "config-dir")
+	require.NoError(t, os.MkdirAll(blocker, 0o700))
+	t.Setenv("CATACOMB_CONFIG", blocker)
+
+	cmd := newUpCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground"}))
+	err := cmd.Execute()
+	require.Error(t, err)
+}
+
+func TestUpCmdForeground(t *testing.T) {
+	t.Chdir(t.TempDir())
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	discPath := t.TempDir() + "/d.json"
+	require.NoError(t, daemon.WriteDiscovery(discPath, disc))
+	t.Setenv("CATACOMB_DISCOVERY", discPath)
+
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	origFgRunDaemon := fgRunDaemon
+	fgRunDaemon = func(ctx context.Context, _ daemonDeps, _ daemonParams) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() { fgRunDaemon = origFgRunDaemon })
+
+	origOpenBrowser := openBrowser
+	openBrowser = func(_ string) error { return nil }
+	t.Cleanup(func() { openBrowser = origOpenBrowser })
+
+	origOsExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origOsExecutable })
+
+	origPollHealthz := upPollHealthz
+	upPollHealthz = func(_ context.Context, _ string) error { return nil }
+	t.Cleanup(func() { upPollHealthz = origPollHealthz })
+
+	cmd := newUpCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&bytes.Buffer{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd.SetContext(ctx)
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open"}))
+	err := cmd.Execute()
+	assert.True(t, err == nil || errors.Is(err, context.Canceled))
+	assert.Contains(t, buf.String(), "127.0.0.1:12345")
+}
+
+func TestUpCmdForegroundWithHistory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	discPath := t.TempDir() + "/d.json"
+	require.NoError(t, daemon.WriteDiscovery(discPath, disc))
+	t.Setenv("CATACOMB_DISCOVERY", discPath)
+
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	origFgRunDaemon := fgRunDaemon
+	fgRunDaemon = func(ctx context.Context, _ daemonDeps, _ daemonParams) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() { fgRunDaemon = origFgRunDaemon })
+
+	origOpenBrowser := openBrowser
+	openBrowser = func(_ string) error { return nil }
+	t.Cleanup(func() { openBrowser = origOpenBrowser })
+
+	origOsExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origOsExecutable })
+
+	origPollHealthz := upPollHealthz
+	upPollHealthz = func(_ context.Context, _ string) error { return nil }
+	t.Cleanup(func() { upPollHealthz = origPollHealthz })
+
+	cmd := newUpCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&bytes.Buffer{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd.SetContext(ctx)
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open", "--history"}))
+	err := cmd.Execute()
+	assert.True(t, err == nil || errors.Is(err, context.Canceled))
+	assert.Contains(t, buf.String(), "127.0.0.1:12345")
+}
+
 func TestUpCmdRunE(t *testing.T) {
 	t.Chdir(t.TempDir())
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}

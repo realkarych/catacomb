@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,9 +34,11 @@ type upDeps struct {
 	noDemo        bool
 	history       bool
 	projectsDir   string
+	daemonDone    <-chan error
 }
 
 func newUpCmd() *cobra.Command {
+	var foreground bool
 	var noOpen, noDemo, global, history bool
 	cmd := &cobra.Command{
 		Use:   "up",
@@ -66,6 +70,41 @@ exact command to restart it with history enabled.`,
 				}
 				transcriptDir = projects
 			}
+			var daemonDone <-chan error
+			runCtx := cmd.Context()
+			if foreground {
+				home, herr := osUserHomeDir()
+				if herr != nil {
+					return fmt.Errorf("up: resolve home: %w", herr)
+				}
+				cfg, cerr := resolveConfig(daemonFlags{}, os.ReadFile, os.LookupEnv, home)
+				if cerr != nil {
+					return cerr
+				}
+				if transcriptDir != "" {
+					enabled := true
+					cfg.Sources.JSONL.Enabled = &enabled
+					cfg.Sources.JSONL.TranscriptDir = transcriptDir
+				}
+				fgParams := daemonParams{
+					store:              cfg.Store,
+					sinks:              cfg.Sinks,
+					sources:            cfg.Sources,
+					discoveryPath:      resolveDiscovery(cfg.Daemon.Discovery),
+					reaperWindow:       time.Duration(cfg.Daemon.ReaperWindow),
+					maxShards:          cfg.Daemon.MaxShards,
+					allowPayloadAccess: cfg.Daemon.AllowPayloadAccess,
+					allowAnnotations:   cfg.Daemon.AllowAnnotations,
+				}
+				fgCtx, fgStop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+				defer fgStop()
+				done := make(chan error, 1)
+				go func() { done <- fgRunDaemon(fgCtx, defaultDaemonDeps(), fgParams) }()
+				daemonDone = done
+				discPath = fgParams.discoveryPath
+				noDemo = true
+				runCtx = fgCtx
+			}
 			deps := upDeps{
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
@@ -81,14 +120,16 @@ exact command to restart it with history enabled.`,
 				noDemo:        noDemo,
 				history:       history,
 				projectsDir:   transcriptDir,
+				daemonDone:    daemonDone,
 			}
-			return runUp(cmd.Context(), cmd.OutOrStdout(), deps)
+			return runUp(runCtx, cmd.OutOrStdout(), deps)
 		},
 	}
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "print the URL without opening a browser")
 	cmd.Flags().BoolVar(&noDemo, "no-demo", false, "skip the demo fallback if no session appears")
 	cmd.Flags().BoolVar(&global, "global", false, "install hooks for all projects (~/.claude/settings.json) instead of the current directory")
 	cmd.Flags().BoolVar(&history, "history", false, "tail ~/.claude/projects so past sessions appear in the UI")
+	cmd.Flags().BoolVarP(&foreground, "foreground", "F", false, "run the daemon attached in the current process (no fork; Ctrl-C stops; for debugging)")
 	return cmd
 }
 
@@ -143,6 +184,8 @@ func buildInstallHooks(discPath string, global bool) func() error {
 		return installHooks(path, discPath, exe, false)
 	}
 }
+
+var fgRunDaemon = runDaemonWith
 
 var upPollHealthz = func(ctx context.Context, addr string) error {
 	target := "http://" + addr + "/healthz"
@@ -235,6 +278,9 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 	}
 
 	if deps.noDemo {
+		if deps.daemonDone != nil {
+			return <-deps.daemonDone
+		}
 		return nil
 	}
 
