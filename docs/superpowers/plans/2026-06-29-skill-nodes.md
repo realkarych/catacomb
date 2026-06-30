@@ -23,12 +23,14 @@
 This is the keystone. Every later task depends on `model.NodeSkill` existing.
 
 **Files:**
+
 - Modify: `model/model.go` (NodeType const block, ~line 25)
 - Modify: `reduce/reduce.go` (`applyTool`, ~lines 147-163)
 - Create: `reduce/skill.go`
 - Create: `reduce/skill_test.go`
 
 **Interfaces:**
+
 - Produces: `model.NodeSkill NodeType = "skill"`; `isSkill(name string) bool`; `extractSkillName(o model.Observation) string`; `toolDisplayName(o model.Observation, name string) string` (all in package `reduce`, except the const in `model`).
 - Consumes: existing `ob(kind, toolUse string, ts time.Time) model.Observation` helper and `execID` const from `reduce/reduce_test.go`.
 
@@ -255,10 +257,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 2: Step-key eligibility for skills
 
 **Files:**
+
 - Modify: `stepkey/stepkey.go` (`eligible`, ~line 29)
 - Modify: `stepkey/stepkey_test.go` (`TestEligibleTypes`, ~line 308)
 
 **Interfaces:**
+
 - Consumes: `model.NodeSkill` (Task 1).
 
 - [ ] **Step 1: Extend the failing test** — add to `TestEligibleTypes`:
@@ -298,12 +302,14 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 3: Exporter parity (neo4j, otlp, evalview, agentevals)
 
 **Files:**
+
 - Modify: `export/neo4j/export.go` (`nodeLabel`, ~line 104) + `export/neo4j/export_test.go` (`TestNodeLabelMapping`, ~line 112)
 - Modify: `export/otlp/export.go` (`openInferenceKind`, ~line 179) + `export/otlp/export_test.go` (`TestOpenInferenceKindTable`, ~line 216)
 - Modify: `export/evalview/export.go` (`spanType` ~line 131, `nodeToSpan` tool case ~line 115) + `export/evalview/export_test.go` (`TestSpanTypeMapping`, ~line 119)
 - Modify: `export/agentevals/export.go` (both switch cases, ~lines 54 and 72) + `export/agentevals/export_test.go`
 
 **Interfaces:**
+
 - Consumes: `model.NodeSkill` (Task 1).
 
 - [ ] **Step 1: Write failing exporter test rows.**
@@ -393,10 +399,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 4: Daemon session stats count skills as tools
 
 **Files:**
+
 - Modify: `daemon/sessions.go` (both `ToolCount` sites, ~lines 195 and 321)
 - Modify: `daemon/sessions_test.go` (mirror an existing `ToolCount` assertion, ~lines 77 / 912)
 
 **Interfaces:**
+
 - Consumes: `model.NodeSkill` (Task 1).
 
 - [ ] **Step 1: Write the failing test.** In `daemon/sessions_test.go`, find the test that constructs a graph with a tool node and asserts `ToolCount`. Add a `model.NodeSkill` node to that graph fixture (unique ID, attached like the existing tool node) and bump the expected `ToolCount` by 1. If the simplest existing target is the summary test at ~line 912 (`assert.Equal(t, 1, sum.ToolCount)`), add one skill node and change the expectation to `2`. Mirror the exact node construction already used in that test.
@@ -433,10 +441,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 5: TUI label for skills
 
 **Files:**
+
 - Modify: `tui/vocab.go` (`NodeTypeLabel`, ~line 15)
 - Modify: `tui/vocab_test.go` (`TestNodeTypeLabel`, ~line 9)
 
 **Interfaces:**
+
 - Consumes: none beyond the string `"skill"` node type.
 
 - [ ] **Step 1: Write the failing test** — add to `TestNodeTypeLabel` (mirror the `mcp_call` row):
@@ -476,6 +486,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 6: Web UI — legend, color token, outline label, conversation grouping
 
 **Files:**
+
 - Modify: `webui/web/src/lib/node-legend.ts` (`NODE_TYPE_MAP`, ~line 12)
 - Modify: `webui/web/src/lib/node-legend.test.ts` (~lines 25, 72)
 - Modify: `webui/web/style.css` (dark ~line 34, light ~line 101)
@@ -485,6 +496,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Modify: `webui/web/src/lib/conversation.test.ts` (`isToolNode` cases)
 
 **Interfaces:**
+
 - Produces (CSS): `--node-skill` token. Consumes: `'skill'` node type string.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -584,10 +596,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Proves the full claim: a `Skill` tool call ingested from a transcript reduces to a `NodeSkill` named after the skill.
 
 **Files:**
+
 - Create: `ingest/jsonl/testdata/skill.jsonl`
 - Modify: `ingest/jsonl/jsonl_test.go` (add one test, mirror `TestSubagentTranscriptBuildsNodeAndEdge` ~line 295)
 
 **Interfaces:**
+
 - Consumes: `ParseReader`, `reduce.NewGraph`, `model.NodeSkill`, `model.ToolCallID`.
 
 - [ ] **Step 1: Create the fixture** `ingest/jsonl/testdata/skill.jsonl` (single line):
