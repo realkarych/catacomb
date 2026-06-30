@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fetchSessions, fetchDiff } from '../lib/api';
+  import { fetchSessions, fetchDiff, fetchSessionPhases } from '../lib/api';
   import { toHash } from '../lib/router';
   import { diffCounts, isEmptyDiff, changedFields } from '../lib/diff';
   import { shortHash } from '../lib/format/format';
@@ -21,6 +21,35 @@
   let diffLoading = $state(false);
   let diffError: string | null = $state(null);
 
+  let phasesA: string[] = $state([]);
+  let phasesB: string[] = $state([]);
+  let selPhaseA: string = $state('');
+  let selPhaseB: string = $state('');
+
+  $effect(() => {
+    const h = selA;
+    selPhaseA = '';
+    phasesA = [];
+    if (!h) return;
+    let cancelled = false;
+    fetchSessionPhases(h, token)
+      .then((p) => { if (!cancelled) phasesA = p; })
+      .catch(() => { if (!cancelled) phasesA = []; });
+    return () => { cancelled = true; };
+  });
+
+  $effect(() => {
+    const h = selB;
+    selPhaseB = '';
+    phasesB = [];
+    if (!h) return;
+    let cancelled = false;
+    fetchSessionPhases(h, token)
+      .then((p) => { if (!cancelled) phasesB = p; })
+      .catch(() => { if (!cancelled) phasesB = []; });
+    return () => { cancelled = true; };
+  });
+
   onMount(async () => {
     try {
       sessions = await fetchSessions(token);
@@ -40,18 +69,28 @@
   });
 
   $effect(() => {
-    if (!selA || !selB || selA === selB) {
+    if (!selA || !selB) {
+      diffResult = null;
+      diffError = null;
+      return;
+    }
+    if (selA === selB && selPhaseA === selPhaseB) {
       diffResult = null;
       diffError = null;
       return;
     }
     const captA = selA;
     const captB = selB;
+    const captPhaseA = selPhaseA;
+    const captPhaseB = selPhaseB;
     let cancelled = false;
     diffLoading = true;
     diffError = null;
     diffResult = null;
-    fetchDiff(captA, captB, token)
+    fetchDiff(captA, captB, token, {
+      aPhase: captPhaseA || undefined,
+      bPhase: captPhaseB || undefined,
+    })
       .then((r) => {
         if (!cancelled) {
           diffResult = r;
@@ -79,6 +118,14 @@
         <option value={session.session}>{session.label ?? shortHash(session.session)}</option>
       {/each}
     </select>
+    {#if phasesA.length > 0}
+      <select class="diff-phase" aria-label="Phase A" bind:value={selPhaseA}>
+        <option value="">— all phases —</option>
+        {#each phasesA as p (p)}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
+    {/if}
     <span class="diff-vs">vs</span>
     <label for="diff-select-b">Session B</label>
     <select id="diff-select-b" bind:value={selB}>
@@ -87,6 +134,14 @@
         <option value={session.session}>{session.label ?? shortHash(session.session)}</option>
       {/each}
     </select>
+    {#if phasesB.length > 0}
+      <select class="diff-phase" aria-label="Phase B" bind:value={selPhaseB}>
+        <option value="">— all phases —</option>
+        {#each phasesB as p (p)}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
+    {/if}
   </div>
 
   {#if sessionsError}
@@ -151,7 +206,8 @@
     letter-spacing: 0.04em;
   }
 
-  .diff-toolbar select {
+  .diff-toolbar select,
+  .diff-phase {
     padding: var(--s1) var(--s3);
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -163,7 +219,8 @@
     min-width: 140px;
   }
 
-  .diff-toolbar select:focus-visible {
+  .diff-toolbar select:focus-visible,
+  .diff-phase:focus-visible {
     border-color: var(--ring);
     box-shadow: 0 0 0 2px var(--ring);
   }
