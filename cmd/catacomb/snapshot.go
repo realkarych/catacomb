@@ -22,7 +22,7 @@ func newSnapshotCmd() *cobra.Command {
 			return runSnapshot(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, dbPath, runID, outPath)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&runID, "run", "", "filter to a specific run ID")
 	cmd.Flags().StringVar(&outPath, "out", "", "write to file instead of stdout")
 	return cmd
