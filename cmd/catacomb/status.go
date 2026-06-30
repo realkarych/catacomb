@@ -56,7 +56,7 @@ func newStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps := statusDeps{
 				readDiscovery: daemon.ReadDiscovery,
-				discoveryPath: daemon.DiscoveryPath(),
+				discoveryPath: clientDiscoveryPath(),
 				httpClient:    statusHTTPClient,
 				now:           statusNowFn,
 				asJSON:        asJSON,

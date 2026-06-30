@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/realkarych/catacomb/daemon"
 )
 
 var hookEvents = []string{
@@ -45,7 +43,7 @@ directory. --global writes ~/.claude/settings.json and observes every project.`,
 			if err != nil {
 				return fmt.Errorf("install-hooks executable: %w", err)
 			}
-			return installHooks(path, daemon.DiscoveryPath(), exe, uninstall)
+			return installHooks(path, clientDiscoveryPath(), exe, uninstall)
 		},
 	}
 	cmd.Flags().BoolVar(&project, "project", false, "write .claude/settings.json in the current directory (default)")

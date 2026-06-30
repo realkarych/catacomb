@@ -19,7 +19,7 @@ func newHookCmd() *cobra.Command {
 		Short: "Forward a Claude Code hook event to the catacomb daemon",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			forward(cmd.ErrOrStderr(), daemon.DiscoveryPath(), args[0], cmd.InOrStdin())
+			forward(cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], cmd.InOrStdin())
 			return nil
 		},
 	}

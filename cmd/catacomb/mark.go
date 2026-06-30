@@ -29,7 +29,7 @@ func newMarkCmd() *cobra.Command {
 		Short: "Record a phase boundary marker in a running session",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			a.discoveryPath = daemon.DiscoveryPath()
+			a.discoveryPath = clientDiscoveryPath()
 			a.hasOccurrence = cmd.Flags().Changed("occurrence")
 			return runMark(a)
 		},

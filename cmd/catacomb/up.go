@@ -61,7 +61,7 @@ exact command to restart it with history enabled.`,
   # also load past sessions from ~/.claude/projects
   catacomb up --global --history`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			discPath := daemon.DiscoveryPath()
+			discPath := clientDiscoveryPath()
 			var transcriptDir string
 			if history {
 				projects, err := claudeProjectsDir()
