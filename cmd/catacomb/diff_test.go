@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	catdiff "github.com/realkarych/catacomb/diff"
+	"github.com/realkarych/catacomb/subgraph"
 )
 
 func TestRunDiffIdentical(t *testing.T) {
@@ -117,6 +118,42 @@ func TestRenderDiffChanged(t *testing.T) {
 	renderDiff(cmd, result)
 	assert.Contains(t, sb.String(), "~")
 	assert.Contains(t, sb.String(), "cost")
+}
+
+func TestRunDiffPhaseScopeReducesSet(t *testing.T) {
+	whole, err := runDiff(diffArgs{a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl"})
+	require.NoError(t, err)
+	scoped, err := runDiff(diffArgs{a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl", phase: "plan"})
+	require.NoError(t, err)
+	assert.Len(t, whole.Unchanged, 3)
+	assert.Len(t, scoped.Unchanged, 1)
+}
+
+func TestRunDiffAPhaseOnly(t *testing.T) {
+	result, err := runDiff(diffArgs{a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl", aPhase: "plan"})
+	require.NoError(t, err)
+	assert.Len(t, result.Unchanged, 1)
+	assert.Len(t, result.Added, 2)
+}
+
+func TestRunDiffBPhaseNotFound(t *testing.T) {
+	_, err := runDiff(diffArgs{a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl", bPhase: "ghost"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestRunDiffInvalidSelector(t *testing.T) {
+	_, err := runDiff(diffArgs{a: "testdata/session_marked.jsonl", b: "testdata/session_marked.jsonl", phase: "plan,x"})
+	assert.ErrorIs(t, err, subgraph.ErrInvalidSelector)
+}
+
+func TestDiffCommandPhaseFlag(t *testing.T) {
+	root := newRootCmd()
+	var sb strings.Builder
+	root.SetOut(&sb)
+	root.SetArgs([]string{"diff", "--phase", "plan", "testdata/session_marked.jsonl", "testdata/session_marked.jsonl"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, sb.String(), "unchanged: 1")
 }
 
 func TestSummarizeDeltas(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,4 +170,156 @@ func TestHandleDiff_ChangedArgsPayloadGate_AccessOn(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected a changed step with arg deltas")
+}
+
+func advancingClock(t *testing.T) {
+	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	var tick int64
+	nowFn = func() time.Time {
+		tick++
+		return base.Add(time.Duration(tick) * time.Second)
+	}
+	t.Cleanup(func() { nowFn = time.Now })
+}
+
+func phaseSession(t *testing.T, d *Daemon) {
+	t.Helper()
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "start"}))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "end"}))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase2", Boundary: "start"}))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t2","tool_input":{}}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase2", Boundary: "end"}))
+}
+
+func getDiff(t *testing.T, srv *httptest.Server, query string) *http.Response {
+	t.Helper()
+	resp, err := http.Get(srv.URL + "/v1/diff?token=testtoken&" + query)
+	require.NoError(t, err)
+	return resp
+}
+
+func TestHandleDiff_PhaseScopeOK(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aPhase=phase1&bPhase=phase1")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result diff.DiffResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Empty(t, result.Added)
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+}
+
+func TestHandleDiff_WithinRunPhases(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aPhase=phase1&bPhase=phase2")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var result diff.DiffResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Empty(t, result.Added)
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+	assert.Empty(t, result.Unchanged)
+}
+
+func TestHandleDiff_PhaseNotFound(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aPhase=ghost")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleDiff_InvalidSelector(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&bPhase=phase1,x")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleDiff_SessionNotFoundWithPhase(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	advancingClock(t)
+	phaseSession(t, d)
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=nope&b=s1&aPhase=phase1")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestHandleDiff_PhaseUnionAcrossExecutions(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+
+	var tick int
+	nowFn = func() time.Time {
+		tick++
+		if tick%2 == 1 {
+			return time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+		return time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	t.Cleanup(func() { nowFn = time.Now })
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "start"}))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "end"}))
+
+	d.mu.Lock()
+	delete(d.execBySession, "s1")
+	d.mu.Unlock()
+
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "start"}))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
+	require.NoError(t, d.IngestMark(MarkInput{SessionID: "s1", Name: "phase1", Boundary: "end"}))
+
+	d.mu.Lock()
+	execs := d.executionsForSession("s1")
+	d.mu.Unlock()
+	require.Len(t, execs, 2)
+
+	srv := httptest.NewServer(d.Handler("testtoken"))
+	t.Cleanup(srv.Close)
+
+	resp := getDiff(t, srv, "a=s1&b=s1&aPhase=phase1&bPhase=phase1")
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result diff.DiffResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Empty(t, result.Added)
+	assert.Empty(t, result.Removed)
+	assert.Empty(t, result.Changed)
+	assert.Len(t, result.Unchanged, 2)
 }

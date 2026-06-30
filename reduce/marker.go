@@ -7,6 +7,7 @@ import (
 
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/phasekey"
+	"github.com/realkarych/catacomb/subgraph"
 )
 
 type markerBound struct {
@@ -224,6 +225,7 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 }
 
 func (g *Graph) addMarkerSpans(execID, runID, markerID string, tStart time.Time, tEnd *time.Time) {
+	w := subgraph.Window{Start: tStart, End: tEnd}
 	for nodeID, n := range g.Nodes {
 		if nodeID == markerID {
 			continue
@@ -231,13 +233,7 @@ func (g *Graph) addMarkerSpans(execID, runID, markerID string, tStart time.Time,
 		if n.Type == model.NodeMarker {
 			continue
 		}
-		if n.TStart == nil {
-			continue
-		}
-		if n.TStart.Before(tStart) {
-			continue
-		}
-		if tEnd != nil && n.TStart.After(*tEnd) {
+		if !subgraph.InWindow(n, w) {
 			continue
 		}
 		edgeID := model.EdgeID(execID, model.EdgeMarkerSpan, markerID, nodeID)
