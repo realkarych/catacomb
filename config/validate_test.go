@@ -45,6 +45,25 @@ func TestValidateSources(t *testing.T) {
 	require.NoError(t, Validate(nilEnabled))
 }
 
+func TestSinkKey(t *testing.T) {
+	tests := []struct {
+		name string
+		sink Sink
+		want string
+	}{
+		{"postgres", Sink{Type: SinkPostgres, DSN: "postgres://host/db"}, "postgres|postgres://host/db"},
+		{"neo4j", Sink{Type: SinkNeo4j, URI: "bolt://localhost:7687"}, "neo4j|bolt://localhost:7687"},
+		{"otlp", Sink{Type: SinkOTLP, Endpoint: "grpc://host:4317"}, "otlp|grpc://host:4317"},
+		{"jsonl", Sink{Type: SinkJSONL, Path: "/var/log/out.jsonl"}, "jsonl|/var/log/out.jsonl"},
+		{"unknown", Sink{Type: "kafka"}, "kafka"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, SinkKey(tt.sink))
+		})
+	}
+}
+
 func TestValidateSinks(t *testing.T) {
 	tests := []struct {
 		name  string

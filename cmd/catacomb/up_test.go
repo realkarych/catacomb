@@ -1163,6 +1163,51 @@ func TestUpCmdForegroundDoesNotForkDaemon(t *testing.T) {
 	assert.False(t, startCmdCalled, "startCmd must not be called in foreground mode")
 }
 
+func TestUpCmdForegroundSetsConfigPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tmpDir := t.TempDir()
+	discPath := filepath.Join(tmpDir, "d.json")
+	t.Setenv("CATACOMB_DISCOVERY", discPath)
+
+	customCfg := filepath.Join(t.TempDir(), "custom.yaml")
+	t.Setenv("CATACOMB_CONFIG", customCfg)
+
+	home := t.TempDir()
+	origHome := osUserHomeDir
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { osUserHomeDir = origHome })
+
+	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
+	var capturedConfigPath string
+	origFgRunDaemon := fgRunDaemon
+	fgRunDaemon = func(_ context.Context, _ daemonDeps, params daemonParams) error {
+		capturedConfigPath = params.configPath
+		_ = daemon.WriteDiscovery(params.discoveryPath, disc)
+		return nil
+	}
+	t.Cleanup(func() { fgRunDaemon = origFgRunDaemon })
+
+	origOpenBrowser := openBrowser
+	openBrowser = func(_ string) error { return nil }
+	t.Cleanup(func() { openBrowser = origOpenBrowser })
+
+	origOsExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
+	t.Cleanup(func() { osExecutable = origOsExecutable })
+
+	origPollHealthz := upPollHealthz
+	upPollHealthz = func(_ context.Context, _ string) error { return nil }
+	t.Cleanup(func() { upPollHealthz = origPollHealthz })
+
+	cmd := newUpCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&bytes.Buffer{})
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open"}))
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, customCfg, capturedConfigPath, "foreground daemon must record the resolved config path")
+}
+
 func TestUpCmdRunE(t *testing.T) {
 	t.Chdir(t.TempDir())
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}

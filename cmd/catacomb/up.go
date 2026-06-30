@@ -91,6 +91,7 @@ exact command to restart it with history enabled.`,
 					sinks:              cfg.Sinks,
 					sources:            cfg.Sources,
 					discoveryPath:      resolveDiscovery(cfg.Daemon.Discovery),
+					configPath:         configFilePath(daemonFlags{}, os.LookupEnv, home),
 					reaperWindow:       time.Duration(cfg.Daemon.ReaperWindow),
 					maxShards:          cfg.Daemon.MaxShards,
 					allowPayloadAccess: cfg.Daemon.AllowPayloadAccess,
@@ -105,9 +106,11 @@ exact command to restart it with history enabled.`,
 				noDemo = true
 				runCtx = fgCtx
 			}
-			startDaemonFn := buildStartDaemon(discPath, transcriptDir, "")
+			var startDaemonFn func() error
 			if foreground {
 				startDaemonFn = func() error { return nil }
+			} else {
+				startDaemonFn = buildStartDaemon(discPath, transcriptDir, "")
 			}
 			deps := upDeps{
 				readDiscovery: daemon.ReadDiscovery,

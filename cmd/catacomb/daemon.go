@@ -54,6 +54,29 @@ func defaultDaemonDeps() daemonDeps {
 	}
 }
 
+func firstOTLPSink(sinks []config.Sink) (endpoint, project string) {
+	for _, s := range sinks {
+		if s.Type == config.SinkOTLP {
+			return s.Endpoint, s.Project
+		}
+	}
+	return "", ""
+}
+
+func dedupSinks(sinks []config.Sink) []config.Sink {
+	seen := make(map[string]struct{}, len(sinks))
+	out := make([]config.Sink, 0, len(sinks))
+	for _, s := range sinks {
+		k := config.SinkKey(s)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 func sinkTypeStrings(sinks []config.Sink) []string {
 	if len(sinks) == 0 {
 		return nil
@@ -204,11 +227,6 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	d.SetDBPath(dbPath)
 	d.SetAllowPayloadAccess(p.allowPayloadAccess)
 	d.SetAllowAnnotations(p.allowAnnotations)
-	d.SetReproConfig(repro.Config{
-		OTLPEndpoint:  p.otlpEndpoint,
-		OTLPProject:   p.otlpProject,
-		TranscriptDir: p.transcriptDir,
-	})
 
 	sinks := append([]config.Sink(nil), p.sinks...)
 	if p.otlpEndpoint != "" {
@@ -220,7 +238,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	if p.neo4jURI != "" {
 		sinks = append(sinks, config.Sink{Type: config.SinkNeo4j, URI: p.neo4jURI, User: p.neo4jUser, Password: p.neo4jPassword})
 	}
-	d.SetSinks(sinks)
+	sinks = dedupSinks(sinks)
 
 	sources := p.sources
 	if p.transcriptDir != "" {
@@ -231,6 +249,14 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 			sources.JSONL.Exclude = p.transcriptExclude
 		}
 	}
+
+	otlpEndpoint, otlpProject := firstOTLPSink(sinks)
+	d.SetReproConfig(repro.Config{
+		OTLPEndpoint:  otlpEndpoint,
+		OTLPProject:   otlpProject,
+		TranscriptDir: sources.JSONL.TranscriptDir,
+	})
+	d.SetSinks(sinks)
 	d.SetSources(sources)
 
 	err = d.Recover()
