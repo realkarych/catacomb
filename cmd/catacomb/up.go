@@ -105,10 +105,14 @@ exact command to restart it with history enabled.`,
 				noDemo = true
 				runCtx = fgCtx
 			}
+			startDaemonFn := buildStartDaemon(discPath, transcriptDir)
+			if foreground {
+				startDaemonFn = func() error { return nil }
+			}
 			deps := upDeps{
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
-				startDaemon:   buildStartDaemon(discPath, transcriptDir),
+				startDaemon:   startDaemonFn,
 				installHooks:  buildInstallHooks(discPath, global),
 				pollHealthz:   prodPollHealthz,
 				sessionCount:  prodSessionCount,
