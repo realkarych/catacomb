@@ -35,10 +35,12 @@
 ### Task 1: `subgraph` core — `Window`, `InWindow`, `Subgraph`
 
 **Files:**
+
 - Create: `subgraph/subgraph.go`
 - Test: `subgraph/subgraph_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `type Window struct { Start time.Time; End *time.Time }`
   - `func InWindow(n *model.Node, w Window) bool` — `true` iff `n.TStart != nil` and `n.TStart` is in the **closed** interval `[w.Start, w.End]` (`w.End == nil` ⇒ unbounded right).
@@ -190,10 +192,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 2: `subgraph` resolver — `PhaseWindow`, `ParseSelector`, `ScopeExecution`
 
 **Files:**
+
 - Create: `subgraph/resolve.go`
 - Test: `subgraph/resolve_test.go`
 
 **Interfaces:**
+
 - Consumes: `Window`, `Subgraph` (Task 1); `model.PhaseMarkerID(executionID, name string, occ int) string`.
 - Produces:
   - `var ErrInvalidSelector = errors.New("subgraph: invalid phase selector")`
@@ -361,10 +365,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 3: `reduce` parity refactor — `addMarkerSpans` uses `subgraph.InWindow`
 
 **Files:**
+
 - Modify: `reduce/marker.go` (`addMarkerSpans`, lines 226-253; add `subgraph` import)
 - Test: existing `reduce/marker_test.go` is the parity oracle (must stay green); add one focused assertion.
 
 **Interfaces:**
+
 - Consumes: `subgraph.Window`, `subgraph.InWindow` (Task 1).
 - Produces: no API change. Behavior of `EdgeMarkerSpan` synthesis is byte-identical.
 
@@ -431,10 +437,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 4: daemon — phase-scoped `/v1/diff`
 
 **Files:**
+
 - Modify: `daemon/diff.go` (add `ErrPhaseNotFound`, `scopedGraph`, `writeScopeErr`; rewrite `handleDiff`; add `fmt` + `subgraph` imports)
 - Test: `daemon/diff_test.go`
 
 **Interfaces:**
+
 - Consumes: `subgraph.ParseSelector`, `subgraph.ScopeExecution`, `subgraph.ErrInvalidSelector` (Task 2); existing `d.sessionGraphNodes`, `d.executionsForSession`, `d.graphs[execID].Snapshot()`, `ErrSessionNotFound`, `nodesWithoutPayload`.
 - Produces: `GET /v1/diff` now accepts optional `aPhase` / `bPhase` query params (`name[,occurrence]`). Empty ⇒ unchanged whole-run behavior. Missing phase ⇒ 400; invalid selector ⇒ 400; session not found ⇒ 404.
 
@@ -654,11 +662,13 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 5: CLI — `--phase` / `--a-phase` / `--b-phase` on `catacomb diff`
 
 **Files:**
+
 - Create: `cmd/catacomb/testdata/session_marked.jsonl`
 - Modify: `cmd/catacomb/diff.go` (`diffArgs` fields, flags, `aSel`/`bSel`, `scopeCLISide`, `runDiff`; add `model` + `subgraph` imports)
 - Test: `cmd/catacomb/diff_test.go`
 
 **Interfaces:**
+
 - Consumes: `subgraph.ParseSelector`, `subgraph.ScopeExecution`, `subgraph.ErrInvalidSelector` (Task 2); existing `loadGraph`, `newExecutionID`, `catdiff.DiffGraphs`.
 - Produces: `diffArgs{ a, b string; json bool; phase, aPhase, bPhase string }`; flags `--phase`, `--a-phase`, `--b-phase`. Per-side effective selector = side flag if set, else `--phase`.
 
@@ -829,6 +839,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```bash
 go test -race ./... && go test ./internal/codepolicy && make cover
 ```
+
 Expected: all tests pass; `make cover` reports 100% (file/package/total); codepolicy finds no disallowed comments. If `make cover` flags an uncovered line, add a test for that branch before declaring done — do not lower the threshold.
 
 - [ ] **Confirm no import cycle and clean build**
@@ -836,4 +847,5 @@ Expected: all tests pass; `make cover` reports 100% (file/package/total); codepo
 ```bash
 go build ./... && go vet ./...
 ```
+
 Expected: clean.
