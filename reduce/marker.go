@@ -163,6 +163,7 @@ func pairPhaseEnds(bounds, starts []markerBound) map[int]markerBound {
 	pairs := make(map[int]markerBound, len(starts))
 	claimed := make([]bool, len(starts))
 	stack := make([]int, 0, len(starts))
+	var leftover []markerBound
 	next := 0
 	for _, b := range bounds {
 		if b.boundary == "start" {
@@ -187,8 +188,18 @@ func pairPhaseEnds(bounds, starts []markerBound) map[int]markerBound {
 			if idx >= 0 {
 				pairs[idx] = b
 				claimed[idx] = true
+			} else {
+				leftover = append(leftover, b)
 			}
 		}
+	}
+	for _, end := range leftover {
+		if len(stack) == 0 {
+			break
+		}
+		i := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		pairs[i] = end
 	}
 	return pairs
 }

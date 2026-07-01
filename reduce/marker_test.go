@@ -730,6 +730,37 @@ func TestOverlappingSameNamePhasesExplicitOccurrence(t *testing.T) {
 	assert.Equal(t, tEndB, *nodeMap[id1].TEnd, "explicit occurrence 1 must bind its own end, overriding LIFO for overlapping phases")
 }
 
+func TestOverlappingSameNamePhasesNotRecoveredWithoutOccurrence(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(1 * time.Second)
+	t2 := t0.Add(2 * time.Second)
+	t3 := t0.Add(3 * time.Second)
+	t4 := t0.Add(4 * time.Second)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("s1", "p", "start", "", nil, t1, 2))
+	g.Apply(markerToolUse("s2", "p", "start", "", nil, t2, 3))
+	g.Apply(markerToolUse("e1", "p", "end", "", nil, t3, 4))
+	g.Apply(markerToolUse("e2", "p", "end", "", nil, t4, 5))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	id1 := model.PhaseMarkerID(execID, "p", 1)
+	nodeMap := map[string]*model.Node{}
+	for _, n := range nodes {
+		nodeMap[n.ID] = n
+	}
+
+	require.NotNil(t, nodeMap[id0])
+	require.NotNil(t, nodeMap[id1])
+	require.NotNil(t, nodeMap[id0].TEnd)
+	require.NotNil(t, nodeMap[id1].TEnd)
+	assert.Equal(t, t4, *nodeMap[id0].TEnd, "without explicit occurrence LIFO reads bounds as nested; overlapping [t1,t3] is not recovered")
+	assert.Equal(t, t3, *nodeMap[id1].TEnd, "without explicit occurrence LIFO reads bounds as nested; overlapping [t2,t4] is not recovered")
+}
+
 func TestMarkerSpanBoundaryHalfOpen(t *testing.T) {
 	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	tA := t0.Add(1 * time.Second)
@@ -1107,6 +1138,9 @@ func TestNegativeDurationDropped(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "marker should be synthesized even with negative duration")
+	require.NotNil(t, found.TEnd, "out-of-order end (clock skew) must still CLOSE the phase, not leave it stuck-running")
+	assert.Equal(t, t2, *found.TEnd, "phase closes at its end marker even when the end precedes the start")
+	assert.Equal(t, model.StatusOK, found.Status, "a closed phase must not report Running")
 	assert.Nil(t, found.DurationMS, "negative duration must be dropped per ADR-0018")
 }
 
