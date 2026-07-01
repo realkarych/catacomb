@@ -82,3 +82,80 @@ func TestNode_CleanPayloadPassesThrough(t *testing.T) {
 func TestNode_NilNodeReturnsNil(t *testing.T) {
 	assert.Nil(t, redact.Node(nil))
 }
+
+func TestNode_RedactsName(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	n := &model.Node{ID: "n1", Name: "cwd=/home/user key=" + secret}
+	out := redact.Node(n)
+	assert.NotContains(t, out.Name, secret)
+	assert.Contains(t, out.Name, "‹redacted:")
+}
+
+func TestNode_CleanNamePassesThroughUnchanged(t *testing.T) {
+	n := &model.Node{ID: "n1", Name: "Read src/main.go"}
+	out := redact.Node(n)
+	assert.Equal(t, "Read src/main.go", out.Name)
+}
+
+func TestNode_EmptyNameUnchanged(t *testing.T) {
+	n := &model.Node{ID: "n1"}
+	out := redact.Node(n)
+	assert.Empty(t, out.Name)
+}
+
+func TestNode_RedactsStringAttrs(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	n := &model.Node{
+		ID:    "n1",
+		Attrs: map[string]any{"command": "aws configure set key " + secret},
+	}
+	out := redact.Node(n)
+	got, ok := out.Attrs["command"].(string)
+	require.True(t, ok)
+	assert.NotContains(t, got, secret)
+	assert.Contains(t, got, "‹redacted:")
+}
+
+func TestNode_NonStringAttrsUnchanged(t *testing.T) {
+	n := &model.Node{
+		ID: "n1",
+		Attrs: map[string]any{
+			"tokens":  int64(42),
+			"cost":    1.5,
+			"success": true,
+			"nested":  map[string]any{"k": "v"},
+		},
+	}
+	out := redact.Node(n)
+	assert.Equal(t, int64(42), out.Attrs["tokens"])
+	assert.Equal(t, 1.5, out.Attrs["cost"])
+	assert.Equal(t, true, out.Attrs["success"])
+	assert.Equal(t, map[string]any{"k": "v"}, out.Attrs["nested"])
+}
+
+func TestNode_NilAttrsUnchanged(t *testing.T) {
+	n := &model.Node{ID: "n1"}
+	out := redact.Node(n)
+	assert.Nil(t, out.Attrs)
+}
+
+func TestNode_DoesNotMutateOriginalAttrs(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	n := &model.Node{
+		ID:    "n1",
+		Attrs: map[string]any{"command": "aws configure set key " + secret},
+	}
+	out := redact.Node(n)
+
+	assert.Equal(t, "aws configure set key "+secret, n.Attrs["command"], "original Attrs map must be unchanged")
+	assert.NotContains(t, out.Attrs["command"], secret)
+}
+
+func TestNode_CleanAttrsPassThroughUnchanged(t *testing.T) {
+	n := &model.Node{
+		ID:    "n1",
+		Attrs: map[string]any{"command": "ls -la"},
+	}
+	out := redact.Node(n)
+	assert.Equal(t, "ls -la", out.Attrs["command"])
+}

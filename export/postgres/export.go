@@ -12,6 +12,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 var (
@@ -315,14 +316,15 @@ func jsonMarshal(v any) string {
 }
 
 func nodeArgs(n *model.Node) []any {
+	rn := redact.Node(n)
 	return []any{
-		n.ID, n.RunID, string(n.Type), n.Name, string(n.Status), n.Tier,
-		n.ParentID, n.AgentID,
-		n.TStart, n.TEnd, n.DurationMS, n.TokensIn, n.TokensOut, n.CostUSD,
-		n.PayloadHash,
-		jsonMarshal(n.Attrs),
-		jsonMarshal(n.Annotations),
-		n.Rev,
+		rn.ID, rn.RunID, string(rn.Type), rn.Name, string(rn.Status), rn.Tier,
+		rn.ParentID, rn.AgentID,
+		rn.TStart, rn.TEnd, rn.DurationMS, rn.TokensIn, rn.TokensOut, rn.CostUSD,
+		rn.PayloadHash,
+		jsonMarshal(rn.Attrs),
+		jsonMarshal(rn.Annotations),
+		rn.Rev,
 	}
 }
 
