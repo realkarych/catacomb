@@ -138,7 +138,10 @@ func (b *builder) lessSibling(a, c *model.Node) bool {
 	case at != nil && ct == nil:
 		return true
 	}
-	return b.sig(a) < b.sig(c)
+	if sa, sc := b.sig(a), b.sig(c); sa != sc {
+		return sa < sc
+	}
+	return a.ID < c.ID
 }
 
 func (b *builder) sig(n *model.Node) string {
