@@ -110,5 +110,14 @@ can be compared.
 The selector syntax is `name` (occurrence defaults to 0) or `name,occurrence`
 for when the same phase name appears more than once.
 
+When the same phase name appears more than once, starts and ends pair by
+**LIFO nesting** by default: each end closes the most recently opened,
+still-open phase of that name (correct bracket matching), so a `plan` nested
+inside an outer `plan` closes the inner one first. Occurrence numbers are
+assigned to starts in time order (first start is occurrence 0). If you supply
+an explicit `--occurrence` on **both** the start and the end, that pairing wins
+over LIFO — this is how you disambiguate phases of the same name that genuinely
+*overlap* (neither nested nor sequential), which are otherwise ambiguous.
+
 Phases are used for scoped diffs and subgraph extraction. See
 [Workflows](workflows.md) for recipes.
