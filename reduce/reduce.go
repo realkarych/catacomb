@@ -684,8 +684,25 @@ func rank(s model.Status) int {
 	}
 }
 
+func terminalRank(s model.Status) int {
+	switch s {
+	case model.StatusError:
+		return 2
+	case model.StatusBlocked:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func resolveStatus(cur, next model.Status) model.Status {
 	rc, rn := rank(cur), rank(next)
+	if rc == 3 && rn == 3 {
+		if terminalRank(next) > terminalRank(cur) {
+			return next
+		}
+		return cur
+	}
 	if rc == 3 && rn < 3 {
 		return cur
 	}

@@ -356,6 +356,42 @@ func TestResolveStatusTieTakesNext(t *testing.T) {
 	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusRunning, model.StatusRunning))
 }
 
+func TestResolveStatusTerminalPrecedence(t *testing.T) {
+	cases := []struct {
+		name string
+		cur  model.Status
+		next model.Status
+		want model.Status
+	}{
+		{"error then ok stays error", model.StatusError, model.StatusOK, model.StatusError},
+		{"ok then error becomes error", model.StatusOK, model.StatusError, model.StatusError},
+		{"running then ok becomes ok", model.StatusRunning, model.StatusOK, model.StatusOK},
+		{"blocked then ok stays blocked", model.StatusBlocked, model.StatusOK, model.StatusBlocked},
+		{"ok then blocked becomes blocked", model.StatusOK, model.StatusBlocked, model.StatusBlocked},
+		{"blocked then error becomes error", model.StatusBlocked, model.StatusError, model.StatusError},
+		{"error then blocked stays error", model.StatusError, model.StatusBlocked, model.StatusError},
+		{"ok then ok stays ok", model.StatusOK, model.StatusOK, model.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveStatus(tc.cur, tc.next))
+		})
+	}
+}
+
+func TestToolStatusErrorNotMaskedByLaterOK(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	errRes := ob("tool_result", "toolu_err", t0)
+	errRes.Attrs = map[string]any{"status": string(model.StatusError)}
+	okHook := ob("tool_result", "toolu_err", t0.Add(time.Second))
+	okHook.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{errRes, okHook})
+
+	assert.Equal(t, model.StatusError, g.Nodes[model.ToolCallID(execID, "toolu_err")].Status)
+}
+
 func sessionStartObs(exec, runID string, seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
