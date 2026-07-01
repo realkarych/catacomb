@@ -214,6 +214,9 @@ remain the highest-precedence override.`,
 }
 
 func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
+	if existing, rerr := daemon.ReadDiscovery(p.discoveryPath); rerr == nil && daemonOwned(existing) {
+		return fmt.Errorf("daemon: %w", ErrDaemonAlreadyRunning)
+	}
 	s, err := deps.openStore(p.store)
 	if err != nil {
 		return err
@@ -296,6 +299,10 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	}
 	disc.Pid = os.Getpid()
 	disc.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	if tok, tokErr := processStartTime(disc.Pid); tokErr == nil {
+		disc.StartToken = tok
+	}
+	disc.BootID = bootID()
 	if err = daemon.WriteDiscovery(p.discoveryPath, disc); err != nil {
 		return err
 	}

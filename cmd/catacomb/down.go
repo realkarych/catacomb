@@ -253,11 +253,13 @@ func runDown(out io.Writer, opts downOpts, discoveryPath string) error {
 	if !haveDisc {
 		_, _ = fmt.Fprintln(out, "no daemon running")
 	} else {
-		stopped, serr := stopDaemon(disc.Pid, opts.force)
-		if serr != nil {
-			return serr
+		if daemonOwned(disc) {
+			stopped, serr := stopDaemon(disc.Pid, opts.force)
+			if serr != nil {
+				return serr
+			}
+			rep.DaemonStopped = stopped
 		}
-		rep.DaemonStopped = stopped
 		if err := downRemove(discoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("down: remove discovery: %w", err)
 		}

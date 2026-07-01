@@ -17,6 +17,7 @@ import (
 type restartDeps struct {
 	readDiscovery func(string) (daemon.Discovery, error)
 	discoveryPath string
+	owned         func(daemon.Discovery) bool
 	stopFn        func(pid int, force bool) (bool, error)
 	removeDisc    func(string) error
 	startDaemon   func(transcriptDir, configPath string) error
@@ -44,6 +45,7 @@ func newRestartCmd() *cobra.Command {
 			deps := restartDeps{
 				readDiscovery: daemon.ReadDiscovery,
 				discoveryPath: discPath,
+				owned:         daemonOwned,
 				stopFn:        stopDaemon,
 				removeDisc:    os.Remove,
 				startDaemon:   func(td, cp string) error { return buildStartDaemon(discPath, td, cp)() },
@@ -70,11 +72,13 @@ func runRestart(ctx context.Context, out io.Writer, deps restartDeps) error {
 	}
 
 	if derr == nil {
-		stopped, serr := deps.stopFn(disc.Pid, deps.force)
-		if serr != nil {
-			return serr
+		if deps.owned(disc) {
+			stopped, serr := deps.stopFn(disc.Pid, deps.force)
+			if serr != nil {
+				return serr
+			}
+			rep.Stopped = stopped
 		}
-		rep.Stopped = stopped
 		if err := deps.removeDisc(deps.discoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("restart: remove discovery: %w", err)
 		}

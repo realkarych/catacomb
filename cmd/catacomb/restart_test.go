@@ -23,6 +23,7 @@ func fakeRestartDeps(discPath string) restartDeps {
 	return restartDeps{
 		readDiscovery: daemon.ReadDiscovery,
 		discoveryPath: discPath,
+		owned:         func(daemon.Discovery) bool { return true },
 		stopFn:        func(_ int, _ bool) (bool, error) { return true, nil },
 		removeDisc:    func(_ string) error { return nil },
 		startDaemon:   func(_, _ string) error { return nil },
@@ -166,6 +167,40 @@ func TestRunRestartStaleDiscProceeds(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, removeDiscCalled)
 	assert.True(t, startCalled)
+}
+
+func TestRunRestartSkipsStopWhenNotOwned(t *testing.T) {
+	dir := t.TempDir()
+	disc := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{Addr: "127.0.0.1:1", Token: "t", Pid: 99}))
+	deps := fakeRestartDeps(disc)
+	deps.owned = func(daemon.Discovery) bool { return false }
+	stopCalled := false
+	deps.stopFn = func(_ int, _ bool) (bool, error) { stopCalled = true; return true, nil }
+	removeCalled := false
+	deps.removeDisc = func(_ string) error { removeCalled = true; return nil }
+	started := false
+	deps.startDaemon = func(_, _ string) error { started = true; return nil }
+
+	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
+	assert.False(t, stopCalled, "must not signal a PID we do not own")
+	assert.True(t, removeCalled, "stale discovery must be cleared")
+	assert.True(t, started, "restart must still start a fresh daemon")
+}
+
+func TestRunRestartStopsWhenOwned(t *testing.T) {
+	dir := t.TempDir()
+	disc := filepath.Join(dir, "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{Addr: "127.0.0.1:1", Token: "t", Pid: 99}))
+	deps := fakeRestartDeps(disc)
+	deps.owned = func(daemon.Discovery) bool { return true }
+	stopCalled, started := false, false
+	deps.stopFn = func(_ int, _ bool) (bool, error) { stopCalled = true; return true, nil }
+	deps.startDaemon = func(_, _ string) error { started = true; return nil }
+
+	require.NoError(t, runRestart(context.Background(), io.Discard, deps))
+	assert.True(t, stopCalled)
+	assert.True(t, started)
 }
 
 func TestRunRestartRemoveDiscError(t *testing.T) {

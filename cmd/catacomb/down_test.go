@@ -169,6 +169,52 @@ func TestRunDownStaleDiscoveryRemoved(t *testing.T) {
 	assert.Contains(t, out.String(), "cleared stale discovery")
 }
 
+func swapDaemonOwned(t *testing.T, fn func(daemon.Discovery) bool) {
+	t.Helper()
+	orig := daemonOwned
+	daemonOwned = fn
+	t.Cleanup(func() { daemonOwned = orig })
+}
+
+func TestRunDownSkipsSignalWhenNotOwned(t *testing.T) {
+	swapDaemonOwned(t, func(daemon.Discovery) bool { return false })
+	signaled := false
+	swapSignal(t, func(_ int, sig syscall.Signal) error {
+		if sig != syscall.Signal(0) {
+			signaled = true
+		}
+		return nil
+	})
+	path := writeDisc(t)
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{force: true}, path))
+	assert.False(t, signaled, "must not signal a PID we do not own")
+	assert.Contains(t, out.String(), "cleared stale discovery")
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestRunDownSignalsWhenOwned(t *testing.T) {
+	swapDaemonOwned(t, func(daemon.Discovery) bool { return true })
+	swapSleepNoop(t)
+	signaled := false
+	swapSignal(t, func(_ int, sig syscall.Signal) error {
+		if sig == syscall.SIGTERM {
+			signaled = true
+			return nil
+		}
+		if signaled {
+			return errors.New("gone")
+		}
+		return nil
+	})
+	path := writeDisc(t)
+	var out strings.Builder
+	require.NoError(t, runDown(&out, downOpts{}, path))
+	assert.True(t, signaled)
+	assert.Contains(t, out.String(), "daemon stopped")
+}
+
 func TestRunDownReadDiscoveryError(t *testing.T) {
 	orig := downReadDiscovery
 	downReadDiscovery = func(string) (daemon.Discovery, error) { return daemon.Discovery{}, errors.New("boom") }

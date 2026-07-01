@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -170,6 +172,67 @@ func TestDiscoveryConfigPathRoundTrip(t *testing.T) {
 	got, err := ReadDiscovery(path)
 	require.NoError(t, err)
 	assert.Equal(t, "/etc/catacomb/custom.yaml", got.ConfigPath)
+}
+
+func TestWriteDiscoveryAtomicNoTempLeftover(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.json")
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok"}))
+	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	require.NoError(t, err)
+	assert.Empty(t, matches, "temp file must be renamed away, not left behind")
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:1", got.Addr)
+}
+
+func fixedRand(t *testing.T, val byte) {
+	t.Helper()
+	old := randRead
+	randRead = func(b []byte) (int, error) {
+		for i := range b {
+			b[i] = val
+		}
+		return len(b), nil
+	}
+	t.Cleanup(func() { randRead = old })
+}
+
+func TestWriteDiscoveryTempWriteError(t *testing.T) {
+	fixedRand(t, 0xab)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.json")
+	tmp := fmt.Sprintf("%s.%d.%x.tmp", path, os.Getpid(), bytes.Repeat([]byte{0xab}, 8))
+	require.NoError(t, os.MkdirAll(tmp, 0o700))
+	err := WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok"})
+	require.Error(t, err)
+}
+
+func TestWriteDiscoveryRandError(t *testing.T) {
+	old := randRead
+	randRead = func([]byte) (int, error) { return 0, errors.New("no rand") }
+	t.Cleanup(func() { randRead = old })
+	err := WriteDiscovery(filepath.Join(t.TempDir(), "daemon.json"), Discovery{Addr: "x", Token: "t"})
+	require.Error(t, err)
+}
+
+func TestWriteDiscoveryUniqueTempPerWriter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.json")
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok"}))
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:2", Token: "tok"}))
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:2", got.Addr)
+}
+
+func TestWriteDiscoveryStartTokenRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok", StartToken: 424242, BootID: "boot-xyz"}))
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(424242), got.StartToken)
+	assert.Equal(t, "boot-xyz", got.BootID)
 }
 
 func TestWriteReadDiscoveryScopeFields(t *testing.T) {

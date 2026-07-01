@@ -18,6 +18,7 @@ var (
 	ErrSinkNotConfigured    = errors.New("export sink not configured (missing --otlp-export-endpoint / --postgres-export-dsn / --neo4j-export-uri)")
 	ErrModeUnsupported      = errors.New("export mode not supported for this sink (use --mode materialized)")
 	ErrDaemonStop           = errors.New("failed to stop the catacomb daemon")
+	ErrDaemonAlreadyRunning = errors.New("a catacomb daemon is already running for this discovery path. Stop it first: catacomb down")
 	ErrConfirmationRequired = errors.New("refusing a destructive teardown without --yes in a non-interactive shell")
 )
 
