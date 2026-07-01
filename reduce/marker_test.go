@@ -663,6 +663,51 @@ func TestNestedSameNamePhasesPairedByOccurrence(t *testing.T) {
 	assert.Equal(t, tEnd1, *nodeMap[id1].TEnd, "occurrence 1 end must bind to occurrence 1 start, not cross")
 }
 
+func TestMarkerSpanBoundaryHalfOpen(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tA := t0.Add(1 * time.Second)
+	tB := t0.Add(2 * time.Second)
+	tC := t0.Add(3 * time.Second)
+	tD := t0.Add(4 * time.Second)
+	occ := 0
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+
+	bnd := ob("user_prompt", "", tB)
+	bnd.Seq = 20
+	bnd.Correlation.UUID = "boundary"
+	g.Apply(bnd)
+
+	g.Apply(markerToolUse("sa", "a", "start", "", &occ, tA, 2))
+	g.Apply(markerToolUse("ea", "a", "end", "", &occ, tB, 3))
+	g.Apply(markerToolUse("sb", "b", "start", "", &occ, tB, 4))
+	g.Apply(markerToolUse("eb", "b", "end", "", &occ, tC, 5))
+	g.Apply(markerToolUse("sc", "c", "start", "", &occ, tC, 6))
+	g.Apply(markerToolUse("ec", "c", "end", "", &occ, tD, 7))
+
+	_, edges := g.Snapshot()
+
+	boundaryID := model.UserPromptID(execID, "boundary")
+	markerA := model.PhaseMarkerID(execID, "a", 0)
+	markerB := model.PhaseMarkerID(execID, "b", 0)
+	spanA := model.EdgeID(execID, model.EdgeMarkerSpan, markerA, boundaryID)
+	spanB := model.EdgeID(execID, model.EdgeMarkerSpan, markerB, boundaryID)
+
+	edgeIDs := map[string]bool{}
+	spanCount := 0
+	for _, e := range edges {
+		edgeIDs[e.ID] = true
+		if e.Type == model.EdgeMarkerSpan && e.Dst == boundaryID {
+			spanCount++
+		}
+	}
+
+	assert.False(t, edgeIDs[spanA], "boundary node must not belong to the phase that ends at it")
+	assert.True(t, edgeIDs[spanB], "boundary node belongs to the phase that starts at it")
+	assert.Equal(t, 1, spanCount, "boundary node must receive exactly one marker_span")
+}
+
 func TestMarkerSpanSelfExcluded(t *testing.T) {
 	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Second)
