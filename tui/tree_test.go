@@ -145,6 +145,30 @@ func TestFlattenNoKidsNode(t *testing.T) {
 	assert.Equal(t, "leaf", rows[0].Node.ID)
 }
 
+func TestFlattenStaleDepthDoesNotLeakAcrossSiblings(t *testing.T) {
+	g := EmptyGraph()
+	Apply(&g, nodeEv("node_upsert", "root", "session", "ok", 1))
+	tA := "2026-01-01T00:00:01Z"
+	tB := "2026-01-01T00:00:02Z"
+	Apply(&g, SseEvent{Kind: "node_upsert", Rev: 2, Node: &Node{ID: "a", RunID: "r", Type: "tool_call", Status: "ok", TStart: &tA, Rev: 2}})
+	Apply(&g, SseEvent{Kind: "node_upsert", Rev: 3, Node: &Node{ID: "b", RunID: "r", Type: "tool_call", Status: "ok", TStart: &tB, Rev: 3}})
+	Apply(&g, nodeEv("node_upsert", "a1", "user_prompt", "ok", 4))
+	Apply(&g, nodeEv("node_upsert", "b1", "user_prompt", "ok", 5))
+	Apply(&g, nodeEv("node_upsert", "b2", "user_prompt", "ok", 6))
+	Apply(&g, SseEvent{Kind: "edge_upsert", Rev: 7, Edge: &Edge{ID: "e1", Type: "parent_child", Src: "root", Dst: "a", Rev: 7}})
+	Apply(&g, SseEvent{Kind: "edge_upsert", Rev: 8, Edge: &Edge{ID: "e2", Type: "parent_child", Src: "root", Dst: "b", Rev: 8}})
+	Apply(&g, SseEvent{Kind: "edge_upsert", Rev: 9, Edge: &Edge{ID: "e3", Type: "parent_child", Src: "a", Dst: "a1", Rev: 9}})
+	Apply(&g, SseEvent{Kind: "edge_upsert", Rev: 10, Edge: &Edge{ID: "e4", Type: "parent_child", Src: "b", Dst: "b1", Rev: 10}})
+	Apply(&g, SseEvent{Kind: "edge_upsert", Rev: 11, Edge: &Edge{ID: "e5", Type: "parent_child", Src: "b1", Dst: "b2", Rev: 11}})
+
+	rows := Flatten(g, map[string]bool{"root": true, "a": true, "a1": true})
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		ids[i] = r.Node.ID
+	}
+	assert.Equal(t, []string{"root", "a", "a1", "b"}, ids)
+}
+
 func TestBuildTreeTStartNilVsNonNil(t *testing.T) {
 	g := EmptyGraph()
 	Apply(&g, nodeEv("node_upsert", "p", "session", "ok", 1))

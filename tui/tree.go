@@ -167,18 +167,15 @@ func sortSiblings(nodes []Node, seqEdges map[string][]string) {
 
 func Flatten(g Graph, expanded map[string]bool) []TreeRow {
 	full := BuildTree(g)
-	lastAtDepth := make(map[int]string)
+	var idStack []string
+	var visStack []bool
 	var visible []TreeRow
 	for _, row := range full {
-		if row.Depth == 0 {
+		idStack = append(idStack[:row.Depth], row.Node.ID)
+		visRow := row.Depth == 0 || (visStack[row.Depth-1] && expanded[idStack[row.Depth-1]])
+		visStack = append(visStack[:row.Depth], visRow)
+		if visRow {
 			visible = append(visible, row)
-			lastAtDepth[0] = row.Node.ID
-		} else {
-			parentID := lastAtDepth[row.Depth-1]
-			if expanded[parentID] {
-				visible = append(visible, row)
-				lastAtDepth[row.Depth] = row.Node.ID
-			}
 		}
 	}
 	return visible
