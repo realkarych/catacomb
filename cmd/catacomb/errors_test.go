@@ -103,6 +103,11 @@ func TestErrModeUnsupportedIsCheckable(t *testing.T) {
 	assert.True(t, errors.Is(wrapped, ErrModeUnsupported))
 }
 
+func TestErrDaemonAlreadyRunningIsCheckable(t *testing.T) {
+	wrapped := fmt.Errorf("daemon: %w", ErrDaemonAlreadyRunning)
+	assert.True(t, errors.Is(wrapped, ErrDaemonAlreadyRunning))
+}
+
 func TestRenderErrStoreNotFound(t *testing.T) {
 	assert.Equal(t, ErrStoreNotFound.Error(), renderErr(ErrStoreNotFound))
 }

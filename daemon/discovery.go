@@ -16,6 +16,7 @@ type Discovery struct {
 	GRPCAddr           string   `json:"grpc_addr,omitempty"`
 	Pid                int      `json:"pid,omitempty"`
 	StartedAt          string   `json:"started_at,omitempty"`
+	StartToken         int64    `json:"start_token,omitempty"`
 	TranscriptDir      string   `json:"transcript_dir,omitempty"`
 	DBPath             string   `json:"db_path,omitempty"`
 	ConfigPath         string   `json:"config_path,omitempty"`
@@ -73,8 +74,13 @@ func WriteDiscovery(path string, d Discovery) error {
 	if err != nil {
 		return fmt.Errorf("daemon.WriteDiscovery marshal: %w", err)
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	tmp := path + ".new"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return fmt.Errorf("daemon.WriteDiscovery write: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("daemon.WriteDiscovery rename: %w", err)
 	}
 	return nil
 }

@@ -98,6 +98,55 @@ func TestRunDaemonDiscoveryError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRunDaemonRefusesWhenAlreadyRunning(t *testing.T) {
+	p := testDaemonParams(t)
+	require.NoError(t, daemon.WriteDiscovery(p.discoveryPath, daemon.Discovery{
+		Addr: "127.0.0.1:1", Token: "t", Pid: 4242, StartToken: 99,
+	}))
+	orig := daemonOwned
+	daemonOwned = func(daemon.Discovery) bool { return true }
+	t.Cleanup(func() { daemonOwned = orig })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runDaemonWith(ctx, testDaemonDeps(), p)
+	require.ErrorIs(t, err, ErrDaemonAlreadyRunning)
+}
+
+func TestRunDaemonProceedsWhenDiscoveryStale(t *testing.T) {
+	p := testDaemonParams(t)
+	require.NoError(t, daemon.WriteDiscovery(p.discoveryPath, daemon.Discovery{
+		Addr: "127.0.0.1:1", Token: "t", Pid: 4242, StartToken: 99,
+	}))
+	orig := daemonOwned
+	daemonOwned = func(daemon.Discovery) bool { return false }
+	t.Cleanup(func() { daemonOwned = orig })
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	readAddr(t, p.discoveryPath)
+	cancel()
+	<-errc
+}
+
+func TestRunDaemonWritesStartToken(t *testing.T) {
+	p := testDaemonParams(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	var tok int64
+	require.Eventually(t, func() bool {
+		d, err := daemon.ReadDiscovery(p.discoveryPath)
+		if err != nil {
+			return false
+		}
+		tok = d.StartToken
+		return true
+	}, 30*time.Second, 10*time.Millisecond)
+	cancel()
+	<-errc
+	assert.NotZero(t, tok)
+}
+
 func TestRunDaemonRecoverError(t *testing.T) {
 	deps := testDaemonDeps()
 	deps.openStore = openFailSince

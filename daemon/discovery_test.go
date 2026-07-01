@@ -172,6 +172,32 @@ func TestDiscoveryConfigPathRoundTrip(t *testing.T) {
 	assert.Equal(t, "/etc/catacomb/custom.yaml", got.ConfigPath)
 }
 
+func TestWriteDiscoveryAtomicNoTempLeftover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok"}))
+	_, statErr := os.Stat(path + ".new")
+	assert.True(t, os.IsNotExist(statErr), "temp file must be renamed away, not left behind")
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:1", got.Addr)
+}
+
+func TestWriteDiscoveryTempWriteError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.json")
+	require.NoError(t, os.MkdirAll(path+".new", 0o700))
+	err := WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok"})
+	require.Error(t, err)
+}
+
+func TestWriteDiscoveryStartTokenRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok", StartToken: 424242}))
+	got, err := ReadDiscovery(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(424242), got.StartToken)
+}
+
 func TestWriteReadDiscoveryScopeFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.json")
 	in := Discovery{
