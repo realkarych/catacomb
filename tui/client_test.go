@@ -528,6 +528,63 @@ func TestSubscribeReconnect401StopsWithDaemonRestarted(t *testing.T) {
 	})
 }
 
+func TestSubscribeMidLineErrorReconnectsNotFatal(t *testing.T) {
+	synctest.Test(t, func(st *testing.T) {
+		ev5 := SseEvent{Kind: "node_upsert", Rev: 5}
+		ev5Bytes, _ := json.Marshal(ev5)
+		ev10 := SseEvent{Kind: "node_upsert", Rev: 10}
+		ev10Bytes, _ := json.Marshal(ev10)
+
+		lastEventIDs := make(chan string, 8)
+		var calls int
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			lastEventIDs <- req.Header.Get("Last-Event-ID")
+			if calls == 1 {
+				body := io.MultiReader(
+					strings.NewReader("data: "+string(ev5Bytes)+"\n\ndata: {\"kind\":\"node_upsert\",\"rev\":10"),
+					errReader{err: errFakeStreamBreak},
+				)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(body),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("data: " + string(ev10Bytes) + "\n\n")),
+			}, nil
+		})
+
+		c := NewHTTPClient(daemon.Discovery{Addr: "127.0.0.1:0", Token: "tok"})
+		c.sseHTTP.Transport = rt
+
+		ch, err := c.Subscribe(st.Context(), "h", 0)
+		require.NoError(st, err)
+
+		id1 := <-lastEventIDs
+		require.Equal(st, "", id1)
+
+		var got []uint64
+		var sawErr error
+		for m := range ch {
+			if m.Err != nil {
+				sawErr = m.Err
+			}
+			if m.Event.Rev > 0 {
+				got = append(got, m.Event.Rev)
+			}
+		}
+		require.NoError(st, sawErr)
+		require.Equal(st, []uint64{5, 10}, got)
+
+		id2 := <-lastEventIDs
+		require.Equal(st, "5", id2)
+	})
+}
+
 func TestSubscribeReconnectRetriesOnNon2xxThenSucceeds(t *testing.T) {
 	synctest.Test(t, func(st *testing.T) {
 		ev := SseEvent{Kind: "node_upsert", Rev: 3}

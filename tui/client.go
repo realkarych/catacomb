@@ -188,17 +188,6 @@ func readSSE(r io.Reader, ch chan<- StreamMsg, lastRev *uint64) bool {
 	br := bufio.NewReader(r)
 	for {
 		line, err := br.ReadString('\n')
-		if data, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "data: "); ok {
-			var ev SseEvent
-			if uerr := json.Unmarshal([]byte(data), &ev); uerr != nil {
-				ch <- StreamMsg{Err: uerr}
-				return false
-			}
-			if ev.Rev > *lastRev {
-				*lastRev = ev.Rev
-			}
-			ch <- StreamMsg{Event: ev}
-		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				ch <- StreamMsg{Done: true}
@@ -206,6 +195,19 @@ func readSSE(r io.Reader, ch chan<- StreamMsg, lastRev *uint64) bool {
 			}
 			return true
 		}
+		data, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "data: ")
+		if !ok {
+			continue
+		}
+		var ev SseEvent
+		if uerr := json.Unmarshal([]byte(data), &ev); uerr != nil {
+			ch <- StreamMsg{Err: uerr}
+			return false
+		}
+		if ev.Rev > *lastRev {
+			*lastRev = ev.Rev
+		}
+		ch <- StreamMsg{Event: ev}
 	}
 }
 
