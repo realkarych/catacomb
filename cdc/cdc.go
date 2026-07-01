@@ -1,8 +1,6 @@
 package cdc
 
 import (
-	"slices"
-	"strings"
 	"sync"
 
 	"github.com/realkarych/catacomb/model"
@@ -34,11 +32,16 @@ type GraphDelta struct {
 }
 
 type Consumer struct {
-	C       <-chan GraphDelta
-	Dropped func() int64
-	ch      chan GraphDelta
-	dropped int64
-	dirty   map[string]GraphDelta
+	C        <-chan GraphDelta
+	Dropped  func() int64
+	ch       chan GraphDelta
+	wake     chan struct{}
+	done     chan struct{}
+	drained  sync.WaitGroup
+	mu       sync.Mutex
+	dropped  int64
+	dirty    map[string]GraphDelta
+	draining bool
 }
 
 type Bus struct {
@@ -51,13 +54,16 @@ func NewBus() *Bus {
 }
 
 func (b *Bus) Subscribe(bufSize int) *Consumer {
-	ch := make(chan GraphDelta, bufSize)
-	c := &Consumer{C: ch, ch: ch, dirty: map[string]GraphDelta{}}
-	c.Dropped = func() int64 {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		return c.dropped
+	c := &Consumer{
+		ch:    make(chan GraphDelta, bufSize),
+		wake:  make(chan struct{}, 1),
+		done:  make(chan struct{}),
+		dirty: map[string]GraphDelta{},
 	}
+	c.C = c.ch
+	c.Dropped = c.droppedCount
+	c.drained.Add(1)
+	go c.drain()
 	b.mu.Lock()
 	b.consumers = append(b.consumers, c)
 	b.mu.Unlock()
@@ -66,14 +72,17 @@ func (b *Bus) Subscribe(bufSize int) *Consumer {
 
 func (b *Bus) Unsubscribe(c *Consumer) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for i, x := range b.consumers {
 		if x == c {
 			b.consumers = append(b.consumers[:i], b.consumers[i+1:]...)
+			b.mu.Unlock()
+			close(c.done)
+			c.drained.Wait()
 			close(c.ch)
 			return
 		}
 	}
+	b.mu.Unlock()
 }
 
 func coalesceKey(d GraphDelta) string {
@@ -102,35 +111,82 @@ func (b *Bus) Publish(d GraphDelta) {
 }
 
 func (c *Consumer) deliver(d GraphDelta) {
-	if len(c.dirty) > 0 {
-		keys := make([]string, 0, len(c.dirty))
-		for k := range c.dirty {
-			keys = append(keys, k)
+	c.mu.Lock()
+	if !c.draining {
+		select {
+		case c.ch <- d:
+			c.mu.Unlock()
+			return
+		default:
 		}
-		slices.SortFunc(keys, func(a, b string) int {
-			pa, pb := c.dirty[a], c.dirty[b]
-			if pa.Rev != pb.Rev {
-				if pa.Rev < pb.Rev {
-					return -1
-				}
-				return 1
-			}
-			return strings.Compare(a, b)
-		})
-		for _, k := range keys {
+	}
+	c.dirty[coalesceKey(d)] = d
+	c.dropped++
+	c.draining = true
+	c.mu.Unlock()
+	c.signalWake()
+}
+
+func (c *Consumer) drain() {
+	defer c.drained.Done()
+	for {
+		c.mu.Lock()
+		key, d, ok := c.lowestLocked()
+		if !ok {
+			c.draining = false
+			c.mu.Unlock()
 			select {
-			case c.ch <- c.dirty[k]:
-				delete(c.dirty, k)
-			default:
+			case <-c.wake:
+				continue
+			case <-c.done:
+				return
 			}
 		}
+		delete(c.dirty, key)
+		c.mu.Unlock()
+		select {
+		case c.ch <- d:
+		case <-c.wake:
+			c.restore(key, d)
+		case <-c.done:
+			return
+		}
 	}
+}
+
+func (c *Consumer) lowestLocked() (string, GraphDelta, bool) {
+	var (
+		bestKey   string
+		bestDelta GraphDelta
+		found     bool
+	)
+	for k, d := range c.dirty {
+		if !found || d.Rev < bestDelta.Rev || (d.Rev == bestDelta.Rev && k < bestKey) {
+			bestKey, bestDelta, found = k, d, true
+		}
+	}
+	return bestKey, bestDelta, found
+}
+
+func (c *Consumer) restore(key string, d GraphDelta) {
+	c.mu.Lock()
+	if _, ok := c.dirty[key]; !ok {
+		c.dirty[key] = d
+	}
+	c.mu.Unlock()
+}
+
+func (c *Consumer) signalWake() {
 	select {
-	case c.ch <- d:
+	case c.wake <- struct{}{}:
 	default:
-		c.dirty[coalesceKey(d)] = d
-		c.dropped++
 	}
+}
+
+func (c *Consumer) droppedCount() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dropped
 }
 
 func (b *Bus) TotalDropped() int64 {
@@ -138,7 +194,7 @@ func (b *Bus) TotalDropped() int64 {
 	defer b.mu.Unlock()
 	var total int64
 	for _, c := range b.consumers {
-		total += c.dropped
+		total += c.droppedCount()
 	}
 	return total
 }
