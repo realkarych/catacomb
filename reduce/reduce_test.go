@@ -1916,6 +1916,29 @@ func TestAssistantTurnCostEstimatedProvenance(t *testing.T) {
 	assert.Equal(t, "estimated", n.Attrs["cost_source"])
 }
 
+func TestAssistantTurnCostIncludesCacheTokens(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		usd := float64(in.TokensIn+in.TokensOut+in.CacheReadIn+in.CacheWrite) / 1000
+		return PriceResult{USD: usd, Source: "estimated"}, true
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc_cache"
+	o.Attrs = map[string]any{
+		"model":         "model-x",
+		"tokens_in":     int64(10),
+		"tokens_out":    int64(5),
+		"cache_read_in": int64(1000),
+		"cache_write":   int64(2000),
+	}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc_cache")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, float64(10+5+1000+2000)/1000, *n.CostUSD, 1e-9)
+}
+
 func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
 	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
 		return PriceResult{}, false

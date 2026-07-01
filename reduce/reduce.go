@@ -508,6 +508,12 @@ func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
 	if n.TokensOut != nil {
 		in.TokensOut = *n.TokensOut
 	}
+	if v, ok := toInt64(attrs["cache_read_in"]); ok {
+		in.CacheReadIn = v
+	}
+	if v, ok := toInt64(attrs["cache_write"]); ok {
+		in.CacheWrite = v
+	}
 	if v, ok := toFloat64(attrs["cost_usd"]); ok {
 		in.ReportedUSD = &v
 	}

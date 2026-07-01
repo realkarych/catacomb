@@ -118,6 +118,31 @@ func TestParseLLMSpan(t *testing.T) {
 	assert.Equal(t, expectedEventTime, o.EventTime)
 }
 
+func TestParseAssistantTurnCacheTokens(t *testing.T) {
+	fixedNow(time.Now())
+	span := &tracev1.Span{
+		SpanId: spanID(1),
+		Name:   "claude_code.llm_request",
+		Attributes: []*commonv1.KeyValue{
+			strAttr("message.id", "msg_c"),
+			intAttr("gen_ai.usage.input_tokens", 100),
+			intAttr("gen_ai.usage.output_tokens", 50),
+			intAttr("gen_ai.usage.cache_read_input_tokens", 4096),
+			intAttr("gen_ai.usage.cache_creation_input_tokens", 128),
+		},
+	}
+	resource := &resourcev1.Resource{Attributes: []*commonv1.KeyValue{strAttr("session.id", "sess_c")}}
+
+	obs, err := Parse(makeReq(resource, span), "exec1", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+
+	o := obs[0]
+	assert.Equal(t, "assistant_turn", o.Kind)
+	assert.Equal(t, int64(4096), o.Attrs["cache_read_in"])
+	assert.Equal(t, int64(128), o.Attrs["cache_write"])
+}
+
 func TestParseToolSpan(t *testing.T) {
 	fixedNow(time.Now())
 	span := &tracev1.Span{

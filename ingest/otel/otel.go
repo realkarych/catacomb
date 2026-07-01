@@ -145,6 +145,12 @@ func buildAttrs(kind string, span *tracev1.Span, resourceAttrs []*commonv1.KeyVa
 		if v, ok := lookupInt(attrs, "gen_ai.usage.output_tokens"); ok {
 			m["tokens_out"] = v
 		}
+		if v, ok := lookupInt(attrs, "gen_ai.usage.cache_read_input_tokens"); ok {
+			m["cache_read_in"] = v
+		}
+		if v, ok := lookupInt(attrs, "gen_ai.usage.cache_creation_input_tokens"); ok {
+			m["cache_write"] = v
+		}
 		if v, ok := lookupString(resourceAttrs, "claude_code.version"); ok {
 			m["claude_code_version"] = v
 		}

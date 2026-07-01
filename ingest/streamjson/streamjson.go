@@ -34,8 +34,10 @@ type message struct {
 }
 
 type usage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 }
 
 type block struct {
@@ -131,6 +133,8 @@ func build(e envelope) ([]partial, error) {
 		if e.Usage != nil {
 			attrs["tokens_in"] = e.Usage.InputTokens
 			attrs["tokens_out"] = e.Usage.OutputTokens
+			attrs["cache_read_in"] = e.Usage.CacheReadInputTokens
+			attrs["cache_write"] = e.Usage.CacheCreationInputTokens
 		}
 		if e.TotalCostUSD != nil {
 			attrs["cost_usd"] = *e.TotalCostUSD
@@ -173,6 +177,8 @@ func assistantParts(base model.Correlation, msg message, text string, blocks []b
 	if msg.Usage != nil {
 		attrs["tokens_in"] = msg.Usage.InputTokens
 		attrs["tokens_out"] = msg.Usage.OutputTokens
+		attrs["cache_read_in"] = msg.Usage.CacheReadInputTokens
+		attrs["cache_write"] = msg.Usage.CacheCreationInputTokens
 	}
 	turnPart := partial{kind: "assistant_turn", correlation: turn, attrs: attrs}
 	resolved := text
