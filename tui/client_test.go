@@ -3,10 +3,14 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -337,4 +341,241 @@ func TestPayloadBadJSON(t *testing.T) {
 	c := newClientFor(t, h)
 	_, err := c.Payload(t.Context(), "h", "n")
 	require.Error(t, err)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+var (
+	errFakeStreamBreak = errors.New("client_test: fake stream break")
+	errFakeDialErr     = errors.New("client_test: fake dial error")
+)
+
+func TestSubscribeAppliesLineLargerThan64KB(t *testing.T) {
+	big := strings.Repeat("x", 100*1024)
+	ev := SseEvent{Kind: "node_upsert", Rev: 5, Node: &Node{ID: "n1", Type: "tool_call", Name: big}}
+	evBytes, err := json.Marshal(ev)
+	require.NoError(t, err)
+	require.Greater(t, len(evBytes), 64*1024)
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: "))
+		_, _ = w.Write(evBytes)
+		_, _ = w.Write([]byte("\n\n"))
+		fl.Flush()
+		<-r.Context().Done()
+	})
+	c := newClientFor(t, h)
+	ctx, cancel := context.WithCancel(t.Context())
+	ch, err := c.Subscribe(ctx, "h", 0)
+	require.NoError(t, err)
+
+	msg := <-ch
+	require.NoError(t, msg.Err)
+	require.False(t, msg.Done)
+	require.NotNil(t, msg.Event.Node)
+	require.Equal(t, "n1", msg.Event.Node.ID)
+	require.Equal(t, big, msg.Event.Node.Name)
+
+	cancel()
+	for range ch {
+	}
+}
+
+func TestSubscribeReconnectsAndResumesFromLastRev(t *testing.T) {
+	synctest.Test(t, func(st *testing.T) {
+		ev9 := SseEvent{Kind: "node_upsert", Rev: 9}
+		ev9Bytes, _ := json.Marshal(ev9)
+		ev10 := SseEvent{Kind: "node_upsert", Rev: 10}
+		ev10Bytes, _ := json.Marshal(ev10)
+
+		type observedAttempt struct{ lastEventID string }
+		attempts := make(chan observedAttempt, 8)
+
+		var calls int
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			attempts <- observedAttempt{lastEventID: req.Header.Get("Last-Event-ID")}
+			switch calls {
+			case 1:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(errReader{err: errFakeStreamBreak}),
+				}, nil
+			case 2:
+				body := io.MultiReader(
+					strings.NewReader("data: "+string(ev9Bytes)+"\n\n"),
+					errReader{err: errFakeStreamBreak},
+				)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(body),
+				}, nil
+			default:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("data: " + string(ev10Bytes) + "\n\n")),
+				}, nil
+			}
+		})
+
+		c := NewHTTPClient(daemon.Discovery{Addr: "127.0.0.1:0", Token: "tok"})
+		c.sseHTTP.Transport = rt
+
+		ch, err := c.Subscribe(st.Context(), "h", 7)
+		require.NoError(st, err)
+
+		a1 := <-attempts
+		require.Equal(st, "7", a1.lastEventID)
+
+		a2 := <-attempts
+		require.Equal(st, "7", a2.lastEventID)
+
+		msg9 := <-ch
+		require.NoError(st, msg9.Err)
+		require.Equal(st, uint64(9), msg9.Event.Rev)
+
+		a3 := <-attempts
+		require.Equal(st, "9", a3.lastEventID)
+
+		msg10 := <-ch
+		require.NoError(st, msg10.Err)
+		require.Equal(st, uint64(10), msg10.Event.Rev)
+
+		for range ch {
+		}
+	})
+}
+
+func TestSubscribeReconnectBackoffPacedAndExitsOnCancel(t *testing.T) {
+	synctest.Test(t, func(st *testing.T) {
+		attemptTimes := make(chan time.Time, 32)
+		var calls int
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			attemptTimes <- time.Now()
+			if calls == 1 {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(errReader{err: errFakeStreamBreak}),
+				}, nil
+			}
+			return nil, errFakeDialErr
+		})
+
+		c := NewHTTPClient(daemon.Discovery{Addr: "127.0.0.1:0", Token: "tok"})
+		c.sseHTTP.Transport = rt
+
+		ctx, cancel := context.WithCancel(st.Context())
+		ch, err := c.Subscribe(ctx, "h", 0)
+		require.NoError(st, err)
+
+		t1 := <-attemptTimes
+		t2 := <-attemptTimes
+		require.GreaterOrEqual(st, t2.Sub(t1), reconnectBaseDelay)
+
+		t3 := <-attemptTimes
+		require.GreaterOrEqual(st, t3.Sub(t2), reconnectBaseDelay)
+
+		cancel()
+		for range ch {
+		}
+	})
+}
+
+func TestSubscribeReconnect401StopsWithDaemonRestarted(t *testing.T) {
+	synctest.Test(t, func(st *testing.T) {
+		var calls int
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(errReader{err: errFakeStreamBreak}),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		})
+
+		c := NewHTTPClient(daemon.Discovery{Addr: "127.0.0.1:0", Token: "tok"})
+		c.sseHTTP.Transport = rt
+
+		ch, err := c.Subscribe(st.Context(), "h", 0)
+		require.NoError(st, err)
+
+		var last StreamMsg
+		for m := range ch {
+			last = m
+		}
+		require.ErrorIs(st, last.Err, ErrDaemonRestarted)
+	})
+}
+
+func TestSubscribeReconnectRetriesOnNon2xxThenSucceeds(t *testing.T) {
+	synctest.Test(t, func(st *testing.T) {
+		ev := SseEvent{Kind: "node_upsert", Rev: 3}
+		evBytes, _ := json.Marshal(ev)
+		var calls int
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			switch calls {
+			case 1:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(errReader{err: errFakeStreamBreak}),
+				}, nil
+			case 2:
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("")),
+				}, nil
+			default:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("data: " + string(evBytes) + "\n\n")),
+				}, nil
+			}
+		})
+
+		c := NewHTTPClient(daemon.Discovery{Addr: "127.0.0.1:0", Token: "tok"})
+		c.sseHTTP.Transport = rt
+
+		ch, err := c.Subscribe(st.Context(), "h", 0)
+		require.NoError(st, err)
+
+		msg := <-ch
+		require.NoError(st, msg.Err)
+		require.Equal(st, uint64(3), msg.Event.Rev)
+
+		for range ch {
+		}
+	})
+}
+
+func TestReconnectDelayGrowsThenCaps(t *testing.T) {
+	require.Equal(t, 250*time.Millisecond, reconnectDelay(1))
+	require.Equal(t, 500*time.Millisecond, reconnectDelay(2))
+	require.Equal(t, 1*time.Second, reconnectDelay(3))
+	require.Equal(t, 5*time.Second, reconnectDelay(10))
+	require.Equal(t, 5*time.Second, reconnectDelay(1000))
 }
