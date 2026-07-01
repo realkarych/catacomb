@@ -137,10 +137,12 @@ func (g *Graph) applyTool(o model.Observation) {
 		if mn, mb, ms, mocc, mok := extractMarkerFromPayload(o); mok {
 			mergeMarkerBound(s, key, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
 		}
-		s.markerTools[o.Correlation.ToolUseID] = true
+		if o.Correlation.ToolUseID != "" {
+			s.markerTools[o.Correlation.ToolUseID] = true
+		}
 		return
 	}
-	if s.markerTools[o.Correlation.ToolUseID] {
+	if o.Correlation.ToolUseID != "" && s.markerTools[o.Correlation.ToolUseID] {
 		return
 	}
 

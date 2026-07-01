@@ -239,6 +239,41 @@ func TestStatusLatticeProvisionalThenTerminal(t *testing.T) {
 	assert.Equal(t, model.StatusError, g.Nodes[model.ToolCallID(execID, "toolu_y")].Status)
 }
 
+func TestEmptyToolUseIDMarkerDoesNotDropLaterTool(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	mark := model.Observation{
+		ObsID:       "mark_obs",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceOTel,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID},
+		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
+		Payload:     &model.Payload{Input: []byte(`{"name":"phase1","boundary":"start"}`)},
+		EventTime:   t0,
+		ObservedAt:  t0,
+		Seq:         1,
+	}
+	tool := model.Observation{
+		ObsID:       "tool_obs",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceOTel,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID},
+		Attrs:       map[string]any{"name": "Bash"},
+		EventTime:   t0.Add(time.Second),
+		ObservedAt:  t0.Add(time.Second),
+		Seq:         2,
+	}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{mark, tool})
+
+	id := model.ToolCallID(execID, nodeKey("", "", "tool_obs"))
+	assert.NotNil(t, g.Nodes[id], "ordinary tool with empty ToolUseID must not be dropped by empty-key marker poison")
+}
+
 func TestToolWithoutMessageIDAttachesToSession(t *testing.T) {
 	use := ob("assistant_tool_use", "toolu_z", time.Unix(0, 0).UTC())
 	use.Attrs = map[string]any{"name": "Bash"}
