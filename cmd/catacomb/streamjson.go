@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/daemon"
+	"github.com/realkarych/catacomb/model"
 )
 
 const streamTeeBuffer = 1024
@@ -89,15 +91,19 @@ func newIngestCmd() *cobra.Command {
 
 func newRunCmd() *cobra.Command {
 	var runID string
+	var labels []string
 	cmd := &cobra.Command{
 		Use:   "run -- <cmd...>",
 		Short: "Run a Claude Code command, tee its stream-json to the terminal and the daemon",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args, os.Getenv("CATACOMB_LABELS"))
+			merged := model.MergeLabels(model.ParseLabels(os.Getenv("CATACOMB_LABELS")), model.ParseLabels(strings.Join(labels, ",")))
+			canonical := model.FormatLabels(merged)
+			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args, canonical)
 		},
 	}
 	cmd.Flags().StringVar(&runID, "run-id", "", "CATACOMB_RUN_ID value exported to the child for multi-session grouping")
+	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label recorded on the run (repeatable; adds to CATACOMB_LABELS)")
 	return cmd
 }
 
@@ -107,6 +113,9 @@ func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []stri
 	child.Env = os.Environ()
 	if runID != "" {
 		child.Env = append(child.Env, "CATACOMB_RUN_ID="+runID)
+	}
+	if labels != "" {
+		child.Env = append(child.Env, "CATACOMB_LABELS="+labels)
 	}
 	pr, pw := io.Pipe()
 	lossy := &lossyWriter{ch: make(chan []byte, streamTeeBuffer)}

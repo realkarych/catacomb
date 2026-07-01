@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +111,7 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(7)
 	case len(args) > 0 && args[0] == "ENV":
 		for _, e := range os.Environ() {
-			if len(e) >= 16 && e[:15] == "CATACOMB_RUN_ID" {
+			if strings.HasPrefix(e, "CATACOMB_RUN_ID=") || strings.HasPrefix(e, "CATACOMB_LABELS=") {
 				fmt.Fprintln(os.Stdout, e)
 			}
 		}
@@ -276,6 +277,49 @@ func TestRunChildForwardsLabelsHeader(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("daemon never received forwarded data")
 	}
+}
+
+func TestRunLabelFlagMergesWithEnv(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	t.Setenv("CATACOMB_LABELS", "basket=b1,variant=v1")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "ENV", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"run", "--label", "variant=v2", "--label", "rep=3", "--", "claude"})
+	require.NoError(t, root.Execute())
+
+	got := make([]string, 0, 1)
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if strings.HasPrefix(l, "CATACOMB_LABELS=") {
+			got = append(got, l)
+		}
+	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "CATACOMB_LABELS=basket=b1,rep=3,variant=v2", got[0])
+}
+
+func TestRunNoLabelsLeavesChildEnvUnset(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "ENV", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	var out bytes.Buffer
+	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}, ""))
+	assert.NotContains(t, out.String(), "CATACOMB_LABELS=")
 }
 
 func TestRunChildShutdownNoHang(t *testing.T) {
