@@ -339,12 +339,15 @@ catacomb run [flags] -- <cmd...>
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--run-id` | (empty) | Sets `CATACOMB_RUN_ID` for the child process (multi-session grouping) |
+| `--label` | (repeatable) | `k=v` label recorded on the run; adds to `CATACOMB_LABELS`, flag wins per key |
 
 Exits with the child's exit code. The child inherits `CATACOMB_DISCOVERY` from the
-environment so hooks also fire.
+environment so hooks also fire. Labels passed with `--label` merge over any inherited from
+`CATACOMB_LABELS` and are carried to the daemon on every event from that child. See
+[ingestion.md](ingestion.md#run-labels) for label rules and caps.
 
 ```sh
-catacomb run --run-id sprint-42 -- claude --model claude-opus-4-5 "refactor the auth module"
+catacomb run --run-id sprint-42 --label basket=checkout -- claude --model claude-opus-4-5 "refactor the auth module"
 ```
 
 ---
@@ -452,12 +455,16 @@ catacomb runs [flags]
 | --- | --- | --- |
 | `--db` | `~/.catacomb/catacomb.db` | Database path to read from |
 | `--json` | false | Emit JSON output |
+| `--label` | (repeatable) | `k=v` selector; keep only runs matching every term (AND) |
 
 Outputs a table (or JSON) of runs with status, start time, tool counts, token counts, and
-cost.
+cost. Repeat `--label` to narrow the listing to runs carrying all of the given labels; the
+JSON output includes each run's `labels` object. See
+[ingestion.md](ingestion.md#run-labels) for how labels are attached.
 
 ```sh
 catacomb runs --db ~/.catacomb/catacomb.db --json
+catacomb runs --label basket=checkout --label rep=1 --json
 ```
 
 ---

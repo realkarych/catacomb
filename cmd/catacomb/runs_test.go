@@ -30,7 +30,7 @@ func seedDB(t *testing.T) string {
 func TestRunsHumanOutput(t *testing.T) {
 	dbPath := seedDB(t)
 	var buf strings.Builder
-	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, false)
+	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, false, nil)
 	require.NoError(t, err)
 	out := buf.String()
 	assert.Contains(t, out, "RUN")
@@ -40,7 +40,7 @@ func TestRunsHumanOutput(t *testing.T) {
 func TestRunsJSON(t *testing.T) {
 	dbPath := seedDB(t)
 	var buf strings.Builder
-	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, true)
+	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, true, nil)
 	require.NoError(t, err)
 	var summaries []daemon.SessionSummary
 	require.NoError(t, json.Unmarshal([]byte(buf.String()), &summaries))
@@ -50,7 +50,7 @@ func TestRunsJSON(t *testing.T) {
 
 func TestRunsStoreMissing(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "nope.db")
-	err := runRuns(nil, store.OpenSQLiteReadOnly, newPricer, dbPath, false)
+	err := runRuns(nil, store.OpenSQLiteReadOnly, newPricer, dbPath, false, nil)
 	assert.True(t, errors.Is(err, ErrStoreNotFound))
 }
 
@@ -73,13 +73,70 @@ func TestRunsCmdExecuteViaRoot(t *testing.T) {
 	assert.Contains(t, buf.String(), "RUN")
 }
 
+func seedRunsWithLabels(t *testing.T, runs map[string]string) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	d := daemon.New(s)
+	for id, labels := range runs {
+		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+id+`"}`), labels))
+	}
+	require.NoError(t, s.Close())
+	return dbPath
+}
+
+func TestRunsLabelSelectorFiltersJSON(t *testing.T) {
+	dbPath := seedRunsWithLabels(t, map[string]string{"r1": "basket=b1", "r2": "basket=b2"})
+
+	var buf strings.Builder
+	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, true, []string{"basket=b1"})
+	require.NoError(t, err)
+
+	var summaries []daemon.SessionSummary
+	require.NoError(t, json.Unmarshal([]byte(buf.String()), &summaries))
+	require.Len(t, summaries, 1)
+	assert.Equal(t, "r1", summaries[0].Session)
+	assert.Equal(t, map[string]string{"basket": "b1"}, summaries[0].Labels)
+}
+
+func TestRunsLabelSelectorANDsTerms(t *testing.T) {
+	dbPath := seedRunsWithLabels(t, map[string]string{"r1": "basket=b1,rep=1", "r2": "basket=b1,rep=2"})
+
+	var buf strings.Builder
+	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, true, []string{"basket=b1", "rep=1"})
+	require.NoError(t, err)
+
+	var summaries []daemon.SessionSummary
+	require.NoError(t, json.Unmarshal([]byte(buf.String()), &summaries))
+	require.Len(t, summaries, 1)
+	assert.Equal(t, "r1", summaries[0].Session)
+	assert.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, summaries[0].Labels)
+}
+
+func TestRunsLabelFlagViaRoot(t *testing.T) {
+	dbPath := seedRunsWithLabels(t, map[string]string{"r1": "basket=b1", "r2": "basket=b2"})
+
+	root := newRootCmd()
+	root.SetArgs([]string{"runs", "--db", dbPath, "--json", "--label", "basket=b2"})
+	var buf strings.Builder
+	root.SetOut(&buf)
+	require.NoError(t, root.Execute())
+
+	var summaries []daemon.SessionSummary
+	require.NoError(t, json.Unmarshal([]byte(buf.String()), &summaries))
+	require.Len(t, summaries, 1)
+	assert.Equal(t, "r2", summaries[0].Session)
+	assert.Equal(t, map[string]string{"basket": "b2"}, summaries[0].Labels)
+}
+
 func TestRunsStoreReadError(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "g.db")
 	require.NoError(t, err)
 	_ = f.Close()
 	err = runRuns(io.Discard, func(string) (store.Store, error) {
 		return &obsErrStore{}, nil
-	}, newPricer, f.Name(), false)
+	}, newPricer, f.Name(), false, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store read")
 }
