@@ -2,6 +2,7 @@ package cdc
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,93 @@ import (
 
 	"github.com/realkarych/catacomb/model"
 )
+
+func TestCoalescedFinalDeltaDeliveredOnIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "n1", Status: model.StatusRunning, Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaNodeStatus, Rev: 2, Node: &model.Node{ID: "n1", Status: model.StatusOK, Rev: 2}})
+		require.Equal(t, int64(1), c.Dropped())
+		first := <-c.C
+		require.Equal(t, model.StatusRunning, first.Node.Status)
+		final := <-c.C
+		assert.Equal(t, model.StatusOK, final.Node.Status)
+		assert.Equal(t, uint64(2), final.Rev)
+		b.Unsubscribe(c)
+	})
+}
+
+func TestDrainerExitsOnUnsubscribeWhileBlocked(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "n1", Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 2, Node: &model.Node{ID: "n1", Rev: 2}})
+		synctest.Wait()
+		b.Unsubscribe(c)
+		_, open := <-c.C
+		assert.True(t, open)
+		_, open = <-c.C
+		assert.False(t, open)
+	})
+}
+
+func TestDrainerResumesAfterIdleWhenNewDirtyArrives(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "a", Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 2, Node: &model.Node{ID: "b", Rev: 2}})
+		first := <-c.C
+		assert.Equal(t, uint64(1), first.Rev)
+		synctest.Wait()
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 3, Node: &model.Node{ID: "cc", Rev: 3}})
+		second := <-c.C
+		assert.Equal(t, uint64(2), second.Rev)
+		third := <-c.C
+		assert.Equal(t, uint64(3), third.Rev)
+		b.Unsubscribe(c)
+	})
+}
+
+func TestDrainerRepicksLowerWhenItArrivesDuringBlockedSend(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "fill", Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 30, Node: &model.Node{ID: "hi", Rev: 30}})
+		synctest.Wait()
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 10, Node: &model.Node{ID: "lo", Rev: 10}})
+		synctest.Wait()
+		first := <-c.C
+		assert.Equal(t, uint64(1), first.Rev)
+		second := <-c.C
+		assert.Equal(t, uint64(10), second.Rev)
+		third := <-c.C
+		assert.Equal(t, uint64(30), third.Rev)
+		b.Unsubscribe(c)
+	})
+}
+
+func TestDrainerDropsStaleInflightWhenNewerCoalesced(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "fill", Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 5, Node: &model.Node{ID: "n1", Rev: 5}})
+		synctest.Wait()
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 9, Node: &model.Node{ID: "n1", Rev: 9}})
+		synctest.Wait()
+		first := <-c.C
+		assert.Equal(t, uint64(1), first.Rev)
+		got := <-c.C
+		assert.Equal(t, uint64(9), got.Rev)
+		b.Unsubscribe(c)
+		_, open := <-c.C
+		assert.False(t, open)
+	})
+}
 
 func TestDeltaKindConstants(t *testing.T) {
 	assert.Equal(t, GraphDeltaKind("node_upsert"), DeltaNodeUpsert)
@@ -71,39 +159,20 @@ func TestPublishDropsAndCoalescesWhenFull(t *testing.T) {
 	assert.Equal(t, uint64(1), first.Rev)
 }
 
-func TestDroppedDeltaReEmittedWithLatestStateOnNextPublish(t *testing.T) {
-	b := NewBus()
-	c := b.Subscribe(1)
-	n1 := &model.Node{ID: "n1", Rev: 1}
-	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: n1})
-	stale := &model.Node{ID: "n1", Rev: 2}
-	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 2, Node: stale})
-	latest := &model.Node{ID: "n1", Rev: 9}
-	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 9, Node: latest})
-	assert.Equal(t, int64(2), c.Dropped())
-	first := <-c.C
-	assert.Equal(t, uint64(1), first.Rev)
-	b.Publish(GraphDelta{Kind: DeltaRunStarted, RunID: "flush"})
-	got := drainLatestForID(t, c, "n1")
-	assert.Equal(t, uint64(9), got.Rev)
-}
-
-func drainLatestForID(t *testing.T, c *Consumer, id string) GraphDelta {
-	t.Helper()
-	var last GraphDelta
-	found := false
-	for {
-		select {
-		case d := <-c.C:
-			if d.Node != nil && d.Node.ID == id {
-				last = d
-				found = true
-			}
-		default:
-			require.True(t, found, "no delta for id %q drained", id)
-			return last
-		}
-	}
+func TestDroppedDeltaReEmittedWithLatestStateOnIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "n1", Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 2, Node: &model.Node{ID: "n1", Rev: 2}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 9, Node: &model.Node{ID: "n1", Rev: 9}})
+		assert.Equal(t, int64(2), c.Dropped())
+		first := <-c.C
+		assert.Equal(t, uint64(1), first.Rev)
+		got := <-c.C
+		assert.Equal(t, uint64(9), got.Rev)
+		b.Unsubscribe(c)
+	})
 }
 
 func TestCoalesceKeyDistinguishesNodeEdgeAndLifecycle(t *testing.T) {
@@ -119,24 +188,20 @@ func TestCoalesceKeyDistinguishesNodeEdgeAndLifecycle(t *testing.T) {
 }
 
 func TestLifecycleDeltaNotCoalescedAwayByNodeChurn(t *testing.T) {
-	b := NewBus()
-	c := b.Subscribe(1)
-	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "n1"}})
-	b.Publish(GraphDelta{Kind: DeltaSessionEnded, Rev: 2, RunID: "r1"})
-	b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 3, Node: &model.Node{ID: "n1"}})
-	<-c.C
-	var sawEnded bool
-	for i := range 8 {
-		select {
-		case d := <-c.C:
-			if d.Kind == DeltaSessionEnded {
-				sawEnded = true
-			}
-		default:
-		}
-		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: uint64(10 + i), Node: &model.Node{ID: "filler"}})
-	}
-	assert.True(t, sawEnded)
+	synctest.Test(t, func(t *testing.T) {
+		b := NewBus()
+		c := b.Subscribe(1)
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 1, Node: &model.Node{ID: "n1", Rev: 1}})
+		b.Publish(GraphDelta{Kind: DeltaSessionEnded, Rev: 2, RunID: "r1"})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 3, Node: &model.Node{ID: "n1", Rev: 3}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 4, Node: &model.Node{ID: "n1", Rev: 4}})
+		b.Publish(GraphDelta{Kind: DeltaNodeUpsert, Rev: 5, Node: &model.Node{ID: "n1", Rev: 5}})
+		first := <-c.C
+		assert.Equal(t, uint64(1), first.Rev)
+		second := <-c.C
+		assert.Equal(t, DeltaSessionEnded, second.Kind)
+		b.Unsubscribe(c)
+	})
 }
 
 func TestConsumerCountTracksSubscriptions(t *testing.T) {
@@ -187,15 +252,11 @@ func TestDirtyFlushIsRevOrdered(t *testing.T) {
 	b.Publish(GraphDelta{Kind: DeltaRunStarted, Rev: 999, RunID: "flush"})
 
 	var revs []uint64
-	for {
-		select {
-		case d := <-c.C:
-			revs = append(revs, d.Rev)
-		default:
-			assert.Equal(t, []uint64{10, 10, 20, 30, 999}, revs)
-			return
-		}
+	for range 5 {
+		revs = append(revs, (<-c.C).Rev)
 	}
+	assert.Equal(t, []uint64{10, 10, 20, 30, 999}, revs)
+	b.Unsubscribe(c)
 }
 
 func TestDirtyDrainStopsWhenChannelRefillsDuringFlush(t *testing.T) {
