@@ -101,8 +101,9 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, fmt.Errorf("store.OpenSQLite wal: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
-		return nil, fmt.Errorf("store.OpenSQLite schema: %w", err)
+	if err := migrate(db, schemaMigrations); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", err)
 	}
 	return &sqliteStore{db: db, marshal: json.Marshal}, nil
 }
