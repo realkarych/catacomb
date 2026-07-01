@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,11 @@ var (
 	ErrContentDisabled   = errors.New("content viewing disabled by the daemon")
 	ErrSessionNotFound   = errors.New("session not found")
 	ErrPayloadNotFound   = errors.New("payload not found")
+)
+
+const (
+	reconnectBaseDelay = 250 * time.Millisecond
+	reconnectMaxDelay  = 5 * time.Second
 )
 
 type StreamMsg struct {
@@ -103,7 +109,7 @@ func (c *HTTPClient) Graph(ctx context.Context, hash string) ([]SseEvent, error)
 	return evs, nil
 }
 
-func (c *HTTPClient) Subscribe(ctx context.Context, hash string, sinceRev uint64) (<-chan StreamMsg, error) {
+func (c *HTTPClient) doSubscribeRequest(ctx context.Context, hash string, sinceRev uint64) (*http.Response, error) {
 	url := c.addr + "/v1/subscribe?session=" + hash
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("Authorization", "Bearer "+c.token)
@@ -114,6 +120,14 @@ func (c *HTTPClient) Subscribe(ctx context.Context, hash string, sinceRev uint64
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
+	return resp, nil
+}
+
+func (c *HTTPClient) Subscribe(ctx context.Context, hash string, sinceRev uint64) (<-chan StreamMsg, error) {
+	resp, err := c.doSubscribeRequest(ctx, hash, sinceRev)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		_ = resp.Body.Close()
 		return nil, ErrDaemonRestarted
@@ -123,30 +137,100 @@ func (c *HTTPClient) Subscribe(ctx context.Context, hash string, sinceRev uint64
 		return nil, fmt.Errorf("subscribe: status %d", resp.StatusCode)
 	}
 	ch := make(chan StreamMsg, 64)
-	go func() {
-		defer close(ch)
-		defer resp.Body.Close()
-		sc := bufio.NewScanner(resp.Body)
-		for sc.Scan() {
-			line := sc.Text()
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			data := strings.TrimPrefix(line, "data: ")
-			var ev SseEvent
-			if err := json.Unmarshal([]byte(data), &ev); err != nil {
-				ch <- StreamMsg{Err: err}
-				return
-			}
-			ch <- StreamMsg{Event: ev}
-		}
-		if err := sc.Err(); err != nil {
-			ch <- StreamMsg{Err: err}
+	go c.streamLoop(ctx, ch, resp, hash, sinceRev)
+	return ch, nil
+}
+
+func (c *HTTPClient) streamLoop(ctx context.Context, ch chan StreamMsg, resp *http.Response, hash string, sinceRev uint64) {
+	defer close(ch)
+	lastRev := sinceRev
+	for {
+		retryable := readSSE(resp.Body, ch, &lastRev)
+		_ = resp.Body.Close()
+		if !retryable {
 			return
 		}
-		ch <- StreamMsg{Done: true}
-	}()
-	return ch, nil
+		next, rerr := c.reconnectLoop(ctx, hash, &lastRev)
+		if next == nil {
+			if errors.Is(rerr, ErrDaemonRestarted) {
+				ch <- StreamMsg{Err: ErrDaemonRestarted}
+			} else {
+				ch <- StreamMsg{Done: true}
+			}
+			return
+		}
+		resp = next
+	}
+}
+
+func (c *HTTPClient) reconnectLoop(ctx context.Context, hash string, lastRev *uint64) (*http.Response, error) {
+	for attempt := 1; ; attempt++ {
+		if !waitOrDone(ctx, reconnectDelay(attempt)) {
+			return nil, ctx.Err()
+		}
+		resp, err := c.doSubscribeRequest(ctx, hash, *lastRev)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			_ = resp.Body.Close()
+			return nil, ErrDaemonRestarted
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_ = resp.Body.Close()
+			continue
+		}
+		return resp, nil
+	}
+}
+
+func readSSE(r io.Reader, ch chan<- StreamMsg, lastRev *uint64) bool {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				ch <- StreamMsg{Done: true}
+				return false
+			}
+			return true
+		}
+		data, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "data: ")
+		if !ok {
+			continue
+		}
+		var ev SseEvent
+		if uerr := json.Unmarshal([]byte(data), &ev); uerr != nil {
+			ch <- StreamMsg{Err: uerr}
+			return false
+		}
+		if ev.Rev > *lastRev {
+			*lastRev = ev.Rev
+		}
+		ch <- StreamMsg{Event: ev}
+	}
+}
+
+func reconnectDelay(attempt int) time.Duration {
+	d := reconnectBaseDelay
+	for i := 1; i < attempt && d < reconnectMaxDelay; i++ {
+		d *= 2
+	}
+	if d > reconnectMaxDelay {
+		d = reconnectMaxDelay
+	}
+	return d
+}
+
+func waitOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (c *HTTPClient) Payload(ctx context.Context, hash, nodeID string) (PayloadView, error) {
