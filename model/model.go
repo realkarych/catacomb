@@ -137,6 +137,7 @@ type Run struct {
 	StartedAt  *time.Time     `json:"started_at,omitempty"`
 	EndedAt    *time.Time     `json:"ended_at,omitempty"`
 	Meta       map[string]any `json:"meta,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
 	Repro      *ReproMeta     `json:"repro,omitempty"`
 }
 
