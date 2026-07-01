@@ -72,11 +72,7 @@ func schemaVersionGuard(db *sql.DB, current int) (int, error) {
 	return version, nil
 }
 
-func migrate(db *sql.DB, migrations []migration, current int) error {
-	version, err := schemaVersionGuard(db, current)
-	if err != nil {
-		return err
-	}
+func migrate(db *sql.DB, version int, migrations []migration) error {
 	for _, m := range migrations {
 		if m.from < version {
 			continue

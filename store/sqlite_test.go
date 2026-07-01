@@ -75,13 +75,16 @@ func TestOpenError(t *testing.T) {
 }
 
 func TestWALError(t *testing.T) {
-	open := func(driver, dsn string) (*sql.DB, error) {
-		db, err := sql.Open(driver, dsn)
-		require.NoError(t, err)
-		require.NoError(t, db.Close())
-		return db, nil
+	path := filepath.Join(t.TempDir(), "ro.db")
+	seed, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = seed.Exec(schema)
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+	open := func(driver, _ string) (*sql.DB, error) {
+		return sql.Open(driver, "file:"+path+"?mode=ro")
 	}
-	_, err := openSQLite(open, ":memory:")
+	_, err = openSQLite(open, path)
 	require.Error(t, err)
 }
 
