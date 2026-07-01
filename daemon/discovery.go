@@ -75,7 +75,11 @@ func WriteDiscovery(path string, d Discovery) error {
 	if err != nil {
 		return fmt.Errorf("daemon.WriteDiscovery marshal: %w", err)
 	}
-	tmp := path + ".new"
+	suffix := make([]byte, 8)
+	if _, err := randRead(suffix); err != nil {
+		return fmt.Errorf("daemon.WriteDiscovery rand: %w", err)
+	}
+	tmp := fmt.Sprintf("%s.%d.%x.tmp", path, os.Getpid(), suffix)
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return fmt.Errorf("daemon.WriteDiscovery write: %w", err)
 	}
