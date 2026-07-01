@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -24,6 +25,7 @@ func TestParseLabels(t *testing.T) {
 		{"missing value dropped", "a,b=2", map[string]string{"b": "2"}},
 		{"empty value kept", "a=,b=2", map[string]string{"a": "", "b": "2"}},
 		{"value cap dropped", "a=" + strings.Repeat("x", 257) + ",b=2", map[string]string{"b": "2"}},
+		{"value byte cap multibyte dropped", "a=" + strings.Repeat("я", 129) + ",b=2", map[string]string{"b": "2"}},
 		{"key cap dropped", strings.Repeat("k", 65) + "=1,b=2", map[string]string{"b": "2"}},
 	}
 	for _, tt := range tests {
@@ -44,6 +46,22 @@ func TestParseLabelsPairCap(t *testing.T) {
 	assert.Len(t, model.ParseLabels(b.String()), 32)
 }
 
+func TestParseLabelsPairCapUpdateExistingDropNew(t *testing.T) {
+	var b strings.Builder
+	for i := range 32 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(fmt.Sprintf("k%d=v", i))
+	}
+	b.WriteString(",k0=new,extra=x")
+	got := model.ParseLabels(b.String())
+	assert.Len(t, got, 32)
+	assert.Equal(t, "new", got["k0"])
+	_, ok := got["extra"]
+	assert.False(t, ok)
+}
+
 func TestFormatLabelsCanonical(t *testing.T) {
 	assert.Equal(t, "a=1,b=2", model.FormatLabels(map[string]string{"b": "2", "a": "1"}))
 	assert.Equal(t, "", model.FormatLabels(nil))
@@ -60,6 +78,7 @@ func TestMergeLabels(t *testing.T) {
 func TestMatchLabels(t *testing.T) {
 	labels := map[string]string{"basket": "checkout", "variant": "v2"}
 	assert.True(t, model.MatchLabels(labels, map[string]string{"basket": "checkout"}))
+	assert.True(t, model.MatchLabels(labels, map[string]string{}))
 	assert.True(t, model.MatchLabels(labels, nil))
 	assert.False(t, model.MatchLabels(labels, map[string]string{"basket": "other"}))
 	assert.False(t, model.MatchLabels(labels, map[string]string{"missing": "x"}))
