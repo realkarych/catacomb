@@ -66,6 +66,25 @@ func TestNode_EmptyPayloadFieldsUnchanged(t *testing.T) {
 	assert.Empty(t, out.Payload.Output)
 }
 
+func TestNode_CleanPayloadCopyDoesNotAliasBackingArray(t *testing.T) {
+	clean := `{"file":"main.go"}`
+	n := &model.Node{
+		ID: "n1",
+		Payload: &model.Payload{
+			Input:  append(json.RawMessage(nil), clean...),
+			Output: append(json.RawMessage(nil), clean...),
+		},
+	}
+	out := redact.Node(n)
+	require.NotNil(t, out.Payload)
+
+	n.Payload.Input[0] = 'X'
+	n.Payload.Output[0] = 'X'
+
+	assert.Equal(t, clean, string(out.Payload.Input), "clean input copy must not share a backing array with the original")
+	assert.Equal(t, clean, string(out.Payload.Output), "clean output copy must not share a backing array with the original")
+}
+
 func TestNode_CleanPayloadPassesThrough(t *testing.T) {
 	n := &model.Node{
 		ID: "n1",
