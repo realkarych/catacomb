@@ -226,6 +226,16 @@ func TestParseNoSidechainNoSubagent(t *testing.T) {
 	assert.Empty(t, byKind(obs, "subagent_stop"))
 }
 
+func TestParseReaderAssistantCacheTokens(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(
+		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":321,"cache_creation_input_tokens":99}}}`+"\n"), "e")
+	require.NoError(t, err)
+	turn := byKind(obs, "assistant_turn")
+	require.Len(t, turn, 1)
+	assert.Equal(t, int64(321), turn[0].Attrs["cache_read_in"])
+	assert.Equal(t, int64(99), turn[0].Attrs["cache_write"])
+}
+
 func TestParseReaderAssistantTextPayload(t *testing.T) {
 	obs, err := ParseReader(strings.NewReader(
 		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"here is the answer"}]}}`+"\n"), "e")

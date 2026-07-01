@@ -137,10 +137,12 @@ func (g *Graph) applyTool(o model.Observation) {
 		if mn, mb, ms, mocc, mok := extractMarkerFromPayload(o); mok {
 			mergeMarkerBound(s, key, mn, mb, ms, mocc, o.Correlation.AgentID, o.EventTime, o.Seq)
 		}
-		s.markerTools[o.Correlation.ToolUseID] = true
+		if o.Correlation.ToolUseID != "" {
+			s.markerTools[o.Correlation.ToolUseID] = true
+		}
 		return
 	}
-	if s.markerTools[o.Correlation.ToolUseID] {
+	if o.Correlation.ToolUseID != "" && s.markerTools[o.Correlation.ToolUseID] {
 		return
 	}
 
@@ -506,6 +508,12 @@ func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
 	if n.TokensOut != nil {
 		in.TokensOut = *n.TokensOut
 	}
+	if v, ok := toInt64(attrs["cache_read_in"]); ok {
+		in.CacheReadIn = v
+	}
+	if v, ok := toInt64(attrs["cache_write"]); ok {
+		in.CacheWrite = v
+	}
 	if v, ok := toFloat64(attrs["cost_usd"]); ok {
 		in.ReportedUSD = &v
 	}
@@ -684,8 +692,25 @@ func rank(s model.Status) int {
 	}
 }
 
+func terminalRank(s model.Status) int {
+	switch s {
+	case model.StatusError:
+		return 2
+	case model.StatusBlocked:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func resolveStatus(cur, next model.Status) model.Status {
 	rc, rn := rank(cur), rank(next)
+	if rc == 3 && rn == 3 {
+		if terminalRank(next) > terminalRank(cur) {
+			return next
+		}
+		return cur
+	}
 	if rc == 3 && rn < 3 {
 		return cur
 	}

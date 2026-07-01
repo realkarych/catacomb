@@ -13,6 +13,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/pricing"
 )
 
 const (
@@ -239,6 +240,41 @@ func TestStatusLatticeProvisionalThenTerminal(t *testing.T) {
 	assert.Equal(t, model.StatusError, g.Nodes[model.ToolCallID(execID, "toolu_y")].Status)
 }
 
+func TestEmptyToolUseIDMarkerDoesNotDropLaterTool(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	mark := model.Observation{
+		ObsID:       "mark_obs",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceOTel,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID},
+		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
+		Payload:     &model.Payload{Input: []byte(`{"name":"phase1","boundary":"start"}`)},
+		EventTime:   t0,
+		ObservedAt:  t0,
+		Seq:         1,
+	}
+	tool := model.Observation{
+		ObsID:       "tool_obs",
+		RunID:       runID,
+		ExecutionID: execID,
+		Source:      model.SourceOTel,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID},
+		Attrs:       map[string]any{"name": "Bash"},
+		EventTime:   t0.Add(time.Second),
+		ObservedAt:  t0.Add(time.Second),
+		Seq:         2,
+	}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{mark, tool})
+
+	id := model.ToolCallID(execID, nodeKey("", "", "tool_obs"))
+	assert.NotNil(t, g.Nodes[id], "ordinary tool with empty ToolUseID must not be dropped by empty-key marker poison")
+}
+
 func TestToolWithoutMessageIDAttachesToSession(t *testing.T) {
 	use := ob("assistant_tool_use", "toolu_z", time.Unix(0, 0).UTC())
 	use.Attrs = map[string]any{"name": "Bash"}
@@ -354,6 +390,42 @@ func TestResolveStatusRunningOverPending(t *testing.T) {
 func TestResolveStatusTieTakesNext(t *testing.T) {
 	assert.Equal(t, model.StatusError, resolveStatus(model.StatusOK, model.StatusError))
 	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusRunning, model.StatusRunning))
+}
+
+func TestResolveStatusTerminalPrecedence(t *testing.T) {
+	cases := []struct {
+		name string
+		cur  model.Status
+		next model.Status
+		want model.Status
+	}{
+		{"error then ok stays error", model.StatusError, model.StatusOK, model.StatusError},
+		{"ok then error becomes error", model.StatusOK, model.StatusError, model.StatusError},
+		{"running then ok becomes ok", model.StatusRunning, model.StatusOK, model.StatusOK},
+		{"blocked then ok stays blocked", model.StatusBlocked, model.StatusOK, model.StatusBlocked},
+		{"ok then blocked becomes blocked", model.StatusOK, model.StatusBlocked, model.StatusBlocked},
+		{"blocked then error becomes error", model.StatusBlocked, model.StatusError, model.StatusError},
+		{"error then blocked stays error", model.StatusError, model.StatusBlocked, model.StatusError},
+		{"ok then ok stays ok", model.StatusOK, model.StatusOK, model.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveStatus(tc.cur, tc.next))
+		})
+	}
+}
+
+func TestToolStatusErrorNotMaskedByLaterOK(t *testing.T) {
+	t0 := time.Unix(0, 0).UTC()
+	errRes := ob("tool_result", "toolu_err", t0)
+	errRes.Attrs = map[string]any{"status": string(model.StatusError)}
+	okHook := ob("tool_result", "toolu_err", t0.Add(time.Second))
+	okHook.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{errRes, okHook})
+
+	assert.Equal(t, model.StatusError, g.Nodes[model.ToolCallID(execID, "toolu_err")].Status)
 }
 
 func sessionStartObs(exec, runID string, seq uint64) model.Observation {
@@ -1843,6 +1915,63 @@ func TestAssistantTurnCostEstimatedProvenance(t *testing.T) {
 	require.NotNil(t, n.CostUSD)
 	assert.InDelta(t, 1.0, *n.CostUSD, 1e-9)
 	assert.Equal(t, "estimated", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnCostIncludesCacheTokens(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		usd := float64(in.TokensIn+in.TokensOut+in.CacheReadIn+in.CacheWrite) / 1000
+		return PriceResult{USD: usd, Source: "estimated"}, true
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc_cache"
+	o.Attrs = map[string]any{
+		"model":         "model-x",
+		"tokens_in":     int64(10),
+		"tokens_out":    int64(5),
+		"cache_read_in": int64(1000),
+		"cache_write":   int64(2000),
+	}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc_cache")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, float64(10+5+1000+2000)/1000, *n.CostUSD, 1e-9)
+}
+
+func TestAssistantTurnReportedCostWinsOverCacheEstimate(t *testing.T) {
+	eng := pricing.New()
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		r, ok := eng.Cost(pricing.Inputs{
+			ModelID:     in.ModelID,
+			TokensIn:    in.TokensIn,
+			TokensOut:   in.TokensOut,
+			CacheReadIn: in.CacheReadIn,
+			CacheWrite:  in.CacheWrite,
+			ReportedUSD: in.ReportedUSD,
+		})
+		return PriceResult{USD: r.USD, Source: r.Source}, ok
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Source = model.SourceStreamJSON
+	o.Correlation.MessageID = "mc_reported"
+	o.Attrs = map[string]any{
+		"model":         "claude-opus-4-8",
+		"tokens_in":     int64(1000),
+		"tokens_out":    int64(500),
+		"cache_read_in": int64(1_000_000),
+		"cache_write":   int64(1_000_000),
+		"cost_usd":      float64(0.25),
+	}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc_reported")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, 0.25, *n.CostUSD, 1e-9)
+	assert.Equal(t, "reported", n.Attrs["cost_source"])
 }
 
 func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {

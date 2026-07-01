@@ -45,6 +45,33 @@ func TestParseSystemInit(t *testing.T) {
 	assert.NotEmpty(t, o.ObsID)
 }
 
+func TestParseAssistantCacheTokens(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"assistant","session_id":"s","message":{"id":"m1","model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":1234,"cache_creation_input_tokens":567}}}`)
+
+	obs, err := Parse(line, "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+
+	turn := obs[0]
+	assert.Equal(t, "assistant_turn", turn.Kind)
+	assert.Equal(t, int64(1234), turn.Attrs["cache_read_in"])
+	assert.Equal(t, int64(567), turn.Attrs["cache_write"])
+}
+
+func TestParseResultCacheTokens(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"result","session_id":"s","usage":{"input_tokens":7,"output_tokens":9,"cache_read_input_tokens":11,"cache_creation_input_tokens":13}}`)
+
+	obs, err := Parse(line, "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+
+	o := obs[0]
+	assert.Equal(t, int64(11), o.Attrs["cache_read_in"])
+	assert.Equal(t, int64(13), o.Attrs["cache_write"])
+}
+
 func TestParseAssistantTurnAndToolUse(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"assistant","session_id":"sess_2","message":{"id":"msg_a","model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}`)
