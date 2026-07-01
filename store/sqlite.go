@@ -79,6 +79,10 @@ func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path str
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLiteReadOnly ping: %w", err)
 	}
+	if _, err := schemaVersionGuard(db, currentSchemaVersion); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store.OpenSQLiteReadOnly schema: %w", err)
+	}
 	return &sqliteStore{db: db, marshal: json.Marshal}, nil
 }
 
@@ -101,7 +105,7 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, fmt.Errorf("store.OpenSQLite wal: %w", err)
 	}
-	if err := migrate(db, schemaMigrations); err != nil {
+	if err := migrate(db, schemaMigrations, currentSchemaVersion); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", err)
 	}

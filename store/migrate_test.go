@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,40 @@ import (
 
 	"github.com/realkarych/catacomb/model"
 )
+
+func tooNewDB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	_, err = s.(*sqliteStore).db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion+1))
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	return path
+}
+
+func TestOpenSQLiteRefusesNewerSchema(t *testing.T) {
+	path := tooNewDB(t)
+	_, err := openSQLite(sql.Open, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaTooNew)
+
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	assert.Equal(t, currentSchemaVersion+1, userVersion(t, db))
+	var n int
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM runs").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+func TestOpenSQLiteReadOnlyRefusesNewerSchema(t *testing.T) {
+	path := tooNewDB(t)
+	_, err := openSQLiteReadOnly(sql.Open, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaTooNew)
+}
 
 func rawDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -74,7 +109,7 @@ func TestMigrateAppliesInOrder(t *testing.T) {
 		{from: 0, to: 1, apply: func(*sql.Tx) error { order = append(order, 1); return nil }},
 		{from: 1, to: 2, apply: func(*sql.Tx) error { order = append(order, 2); return nil }},
 	}
-	require.NoError(t, migrate(db, migs))
+	require.NoError(t, migrate(db, migs, 2))
 	assert.Equal(t, []int{1, 2}, order)
 	assert.Equal(t, 2, userVersion(t, db))
 }
@@ -85,7 +120,7 @@ func TestMigrateFailingStepRollsBackWithSentinel(t *testing.T) {
 		{from: 0, to: 1, apply: func(*sql.Tx) error { return nil }},
 		{from: 1, to: 2, apply: func(*sql.Tx) error { return errors.New("boom") }},
 	}
-	err := migrate(db, migs)
+	err := migrate(db, migs, 2)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
 	assert.Equal(t, 1, userVersion(t, db))
@@ -129,7 +164,7 @@ func TestApplyMigrationStampError(t *testing.T) {
 func TestMigrateReadVersionError(t *testing.T) {
 	db := rawDB(t)
 	require.NoError(t, db.Close())
-	require.Error(t, migrate(db, schemaMigrations))
+	require.Error(t, migrate(db, schemaMigrations, currentSchemaVersion))
 }
 
 func TestApplySchemaV1Error(t *testing.T) {

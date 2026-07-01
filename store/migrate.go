@@ -8,7 +8,10 @@ import (
 
 const currentSchemaVersion = 1
 
-var ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
+var (
+	ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
+	ErrSchemaTooNew          = errors.New("store: on-disk schema is newer than this catacomb binary; upgrade catacomb")
+)
 
 type migration struct {
 	from  int
@@ -58,8 +61,19 @@ func applyMigration(db *sql.DB, m migration) error {
 	return tx.Commit()
 }
 
-func migrate(db *sql.DB, migrations []migration) error {
+func schemaVersionGuard(db *sql.DB, current int) (int, error) {
 	version, err := readSchemaVersion(db)
+	if err != nil {
+		return 0, err
+	}
+	if version > current {
+		return 0, fmt.Errorf("store.schemaVersionGuard: on-disk=%d supported=%d: %w", version, current, ErrSchemaTooNew)
+	}
+	return version, nil
+}
+
+func migrate(db *sql.DB, migrations []migration, current int) error {
+	version, err := schemaVersionGuard(db, current)
 	if err != nil {
 		return err
 	}
