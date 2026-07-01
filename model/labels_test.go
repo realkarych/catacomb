@@ -52,7 +52,7 @@ func TestParseLabelsPairCapUpdateExistingDropNew(t *testing.T) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(fmt.Sprintf("k%d=v", i))
+		fmt.Fprintf(&b, "k%d=v", i)
 	}
 	b.WriteString(",k0=new,extra=x")
 	got := model.ParseLabels(b.String())
