@@ -11,6 +11,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 var (
@@ -144,18 +145,19 @@ func safeRFC3339(t *time.Time) string {
 }
 
 func nodeProps(n *model.Node) map[string]any {
+	rn := redact.Node(n)
 	return map[string]any{
-		"run_id":       n.RunID,
-		"type":         string(n.Type),
-		"name":         n.Name,
-		"status":       string(n.Status),
-		"tier":         n.Tier,
-		"parent_id":    n.ParentID,
-		"agent_id":     n.AgentID,
-		"payload_hash": n.PayloadHash,
-		"attrs":        jsonMarshal(n.Attrs),
-		"annotations":  jsonMarshal(n.Annotations),
-		"rev":          int64(n.Rev),
+		"run_id":       rn.RunID,
+		"type":         string(rn.Type),
+		"name":         rn.Name,
+		"status":       string(rn.Status),
+		"tier":         rn.Tier,
+		"parent_id":    rn.ParentID,
+		"agent_id":     rn.AgentID,
+		"payload_hash": rn.PayloadHash,
+		"attrs":        jsonMarshal(rn.Attrs),
+		"annotations":  jsonMarshal(rn.Annotations),
+		"rev":          int64(rn.Rev),
 	}
 }
 

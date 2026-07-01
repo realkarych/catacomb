@@ -110,6 +110,50 @@ func TestBuildConversation(t *testing.T) {
 	assert.Equal(t, "tool-mcp-1", msgs[3].ToolCallID)
 }
 
+func TestBuildRedactsToolFunctionName(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	nodes := []*model.Node{
+		{ID: "turn-1", RunID: "run-1", Type: model.NodeAssistantTurn, TStart: mustTime("2024-01-01T00:00:00Z")},
+		{ID: "tool-1", RunID: "run-1", Name: "run " + secret, Type: model.NodeToolCall, TStart: mustTime("2024-01-01T00:00:01Z")},
+	}
+	edges := []*model.Edge{
+		{ID: "e1", RunID: "run-1", Type: model.EdgeParentChild, Src: "turn-1", Dst: "tool-1"},
+	}
+	msgs := agentevals.Build(nodes, edges)
+	require.Len(t, msgs, 2)
+	require.Len(t, msgs[0].ToolCalls, 1)
+	assert.NotContains(t, msgs[0].ToolCalls[0].Function.Name, secret, "raw secret in node Name must not appear in tool function name")
+	assert.Contains(t, msgs[0].ToolCalls[0].Function.Name, "‹redacted:")
+}
+
+func TestWriteAllRedactsToolFunctionName(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	nodes := []*model.Node{
+		{ID: "turn-1", RunID: "run-1", Type: model.NodeAssistantTurn, TStart: mustTime("2024-01-01T00:00:00Z")},
+		{ID: "tool-1", RunID: "run-1", Name: "run " + secret, Type: model.NodeToolCall, TStart: mustTime("2024-01-01T00:00:01Z")},
+	}
+	edges := []*model.Edge{
+		{ID: "e1", RunID: "run-1", Type: model.EdgeParentChild, Src: "turn-1", Dst: "tool-1"},
+	}
+	var buf strings.Builder
+	require.NoError(t, agentevals.WriteAll(&buf, nodes, edges))
+	assert.NotContains(t, buf.String(), secret, "raw secret must not appear anywhere in agentevals output")
+}
+
+func TestBuildKeepsCleanToolFunctionName(t *testing.T) {
+	nodes := []*model.Node{
+		{ID: "turn-1", RunID: "run-1", Type: model.NodeAssistantTurn, TStart: mustTime("2024-01-01T00:00:00Z")},
+		{ID: "tool-1", RunID: "run-1", Name: "Bash", Type: model.NodeToolCall, TStart: mustTime("2024-01-01T00:00:01Z")},
+	}
+	edges := []*model.Edge{
+		{ID: "e1", RunID: "run-1", Type: model.EdgeParentChild, Src: "turn-1", Dst: "tool-1"},
+	}
+	msgs := agentevals.Build(nodes, edges)
+	require.Len(t, msgs, 2)
+	require.Len(t, msgs[0].ToolCalls, 1)
+	assert.Equal(t, "Bash", msgs[0].ToolCalls[0].Function.Name)
+}
+
 func TestBuildGolden(t *testing.T) {
 	msgs := agentevals.Build(sampleNodes(), sampleEdges())
 	got, err := json.Marshal(msgs)

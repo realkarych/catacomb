@@ -306,6 +306,58 @@ func TestApplyDeltaNodeUpsertPayloadNeverInCypher(t *testing.T) {
 	}
 }
 
+func TestApplyDeltaNodeUpsertRedactsNameAndAttrs(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	n := &model.Node{
+		ID: "n5", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1,
+		Name:  "cwd=/home/user key=" + secret,
+		Attrs: map[string]any{"command": "aws configure set key " + secret, "tokens": int64(7)},
+	}
+	require.NoError(t, e.ApplyDelta(context.Background(), cdc.GraphDelta{
+		Kind: cdc.DeltaNodeUpsert, Rev: 1, RunID: "r1", Node: n,
+	}))
+	require.Len(t, r.calls, 1)
+	props, ok := r.calls[0].params["props"].(map[string]any)
+	require.True(t, ok)
+
+	name, ok := props["name"].(string)
+	require.True(t, ok)
+	assert.NotContains(t, name, secret)
+	assert.Contains(t, name, "‹redacted:")
+
+	attrsStr, ok := props["attrs"].(string)
+	require.True(t, ok)
+	assert.NotContains(t, attrsStr, secret)
+	assert.Contains(t, attrsStr, "‹redacted:")
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(attrsStr), &m))
+	assert.InEpsilon(t, float64(7), m["tokens"], 0)
+
+	assert.NotContains(t, n.Name, "‹redacted:", "original node Name must be unchanged")
+	assert.Contains(t, n.Attrs["command"], secret, "original node Attrs must be unchanged")
+}
+
+func TestSnapshotStateRedactsNameAndAttrs(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	r := &recordRunner{}
+	e := ExporterWithRunner(r)
+	nodes := []*model.Node{
+		{
+			ID: "n6", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, Rev: 1,
+			Name: "leaked " + secret,
+		},
+	}
+	require.NoError(t, e.SnapshotState(context.Background(), nodes, nil))
+	require.Len(t, r.calls, 1)
+	props, ok := r.calls[0].params["props"].(map[string]any)
+	require.True(t, ok)
+	name, ok := props["name"].(string)
+	require.True(t, ok)
+	assert.NotContains(t, name, secret)
+}
+
 func TestApplyDeltaNodeUpsertRunError(t *testing.T) {
 	runErr := errors.New("run error")
 	e := ExporterWithRunner(&errorRunner{runErr: runErr})

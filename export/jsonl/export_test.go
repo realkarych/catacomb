@@ -84,6 +84,42 @@ func TestSnapshotRunWriterError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSnapshotRedactsPayloadInput(t *testing.T) {
+	secret := "Authorization: Bearer sk-live_ABC123DEF456GHI789JKL"
+	original := json.RawMessage(`{"cmd":"` + secret + `"}`)
+	nodes := []*model.Node{
+		{
+			ID:      "n1",
+			RunID:   "s1",
+			Type:    model.NodeToolCall,
+			Payload: &model.Payload{Input: append(json.RawMessage(nil), original...)},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, Snapshot(&buf, nodes, nil, nil))
+
+	assert.NotContains(t, buf.String(), secret, "raw secret must not appear in jsonl output")
+	assert.Contains(t, buf.String(), "‹redacted:", "redaction marker must appear in jsonl output")
+	assert.Equal(t, string(original), string(nodes[0].Payload.Input), "original node payload must be unchanged after Snapshot")
+}
+
+func TestSnapshotRedactsPayloadOutput(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	nodes := []*model.Node{
+		{
+			ID:      "n1",
+			RunID:   "s1",
+			Type:    model.NodeToolCall,
+			Payload: &model.Payload{Output: json.RawMessage(`{"result":"` + secret + `"}`)},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, Snapshot(&buf, nodes, nil, nil))
+
+	assert.NotContains(t, buf.String(), secret, "raw secret must not appear in jsonl output")
+	assert.Contains(t, buf.String(), "‹redacted:", "redaction marker must appear in jsonl output")
+}
+
 func TestSnapshotAllKindsOrdered(t *testing.T) {
 	nodes := []*model.Node{{ID: "n1", RunID: "s1", Type: model.NodeSession}}
 	edges := []*model.Edge{{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}}
