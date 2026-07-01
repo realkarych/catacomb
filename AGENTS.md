@@ -6,7 +6,7 @@ Real-time execution-graph observability for Claude Code agentic pipelines. A sid
 - Architecture decisions → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)
 
-**Status:** early development (milestone M0.1).
+**Status:** observability substrate complete (M0–M5 + eval-core, PRs #1–#98); current focus is the eval-management layer — baskets, run-group aggregation, regression gates (ADR-0022).
 
 ## Principles
 
