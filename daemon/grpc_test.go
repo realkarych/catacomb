@@ -596,34 +596,46 @@ func TestSubscribeFilterDropsNonMatchingRun(t *testing.T) {
 	client, d := newBufconnServer(t, "filter-tok")
 	fixedExecID(d)
 
-	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s-A"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"run-A"}`)))
 
-	stream, err := client.Subscribe(authCtx("filter-tok"), &catacombv1.SubscribeRequest{RunId: d.execBySession["s-A"]})
+	stream, err := client.Subscribe(authCtx("filter-tok"), &catacombv1.SubscribeRequest{RunId: "run-A"})
 	require.NoError(t, err)
 
 	first, err := stream.Recv()
 	require.NoError(t, err)
 	require.Equal(t, "node_upsert", first.Kind)
+	require.Equal(t, "run-A", first.RunId)
 
-	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s-B"}`)))
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s-other"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"run-A","tool_name":"Bash","tool_use_id":"t1","tool_input":{}}`)))
 
-	recvCh := make(chan *catacombv1.GraphDelta, 4)
+	recvCh := make(chan *catacombv1.GraphDelta, 8)
+	errCh := make(chan error, 1)
 	go func() {
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
+				errCh <- err
 				return
 			}
 			recvCh <- msg
 		}
 	}()
 
-	timer := time.NewTimer(300 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case ev := <-recvCh:
-		t.Fatalf("expected no events for filtered run, got: %v", ev)
-	case <-timer.C:
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case ev := <-recvCh:
+			require.NotEqual(t, "s-other", ev.RunId,
+				"filtered subscriber must never receive the non-matching run, got: %v", ev)
+			if ev.RunId == "run-A" && ev.Kind == "node_upsert" && ev.Node != nil && ev.Node.Type == "tool_call" {
+				return
+			}
+		case err := <-errCh:
+			t.Fatalf("stream error before receiving run-A tool call: %v", err)
+		case <-deadline:
+			t.Fatal("timed out waiting for run-A tool-call event on filtered subscriber")
+		}
 	}
 }
 
