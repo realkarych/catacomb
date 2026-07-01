@@ -12,6 +12,7 @@ import (
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 func strAttr(key, val string) *commonv1.KeyValue {
@@ -141,6 +142,35 @@ func TestParseAssistantTurnCacheTokens(t *testing.T) {
 	assert.Equal(t, "assistant_turn", o.Kind)
 	assert.Equal(t, int64(4096), o.Attrs["cache_read_in"])
 	assert.Equal(t, int64(128), o.Attrs["cache_write"])
+}
+
+func TestParseAssistantTurnCacheTokensSpecSpelling(t *testing.T) {
+	fixedNow(time.Now())
+	span := &tracev1.Span{
+		SpanId: spanID(1),
+		Name:   "claude_code.llm_request",
+		Attributes: []*commonv1.KeyValue{
+			strAttr("message.id", "msg_spec"),
+			intAttr("gen_ai.usage.cache_read.input_tokens", 4096),
+			intAttr("gen_ai.usage.cache_creation.input_tokens", 128),
+		},
+	}
+	resource := &resourcev1.Resource{Attributes: []*commonv1.KeyValue{strAttr("session.id", "sess_spec")}}
+
+	obs, err := Parse(makeReq(resource, span), "exec1", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+
+	p := reduce.PricerFunc(func(in reduce.PriceInputs) (reduce.PriceResult, bool) {
+		return reduce.PriceResult{USD: float64(in.CacheReadIn + in.CacheWrite), Source: "estimated"}, true
+	})
+	g := reduce.NewGraphWithPricer(p)
+	g.Apply(obs[0])
+
+	n := g.Nodes[model.AssistantTurnID("exec1", "msg_spec")]
+	require.NotNil(t, n)
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, float64(4096+128), *n.CostUSD, 1e-9)
 }
 
 func TestParseToolSpan(t *testing.T) {
