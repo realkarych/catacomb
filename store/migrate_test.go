@@ -48,6 +48,49 @@ func TestReopenAtCurrentDoesNotRemigrate(t *testing.T) {
 	require.Len(t, runs, 1)
 }
 
+func TestOpenMigratesUnversionedDBPreservingData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	_, err = s.(*sqliteStore).db.Exec("PRAGMA user_version = 0")
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
+	runs, err := migrated.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "r1", runs[0].ID)
+}
+
+func TestMigrateAppliesInOrder(t *testing.T) {
+	db := rawDB(t)
+	var order []int
+	migs := []migration{
+		{from: 0, to: 1, apply: func(*sql.Tx) error { order = append(order, 1); return nil }},
+		{from: 1, to: 2, apply: func(*sql.Tx) error { order = append(order, 2); return nil }},
+	}
+	require.NoError(t, migrate(db, migs))
+	assert.Equal(t, []int{1, 2}, order)
+	assert.Equal(t, 2, userVersion(t, db))
+}
+
+func TestMigrateFailingStepRollsBackWithSentinel(t *testing.T) {
+	db := rawDB(t)
+	migs := []migration{
+		{from: 0, to: 1, apply: func(*sql.Tx) error { return nil }},
+		{from: 1, to: 2, apply: func(*sql.Tx) error { return errors.New("boom") }},
+	}
+	err := migrate(db, migs)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
+	assert.Equal(t, 1, userVersion(t, db))
+}
+
 func TestReadSchemaVersionError(t *testing.T) {
 	db := rawDB(t)
 	require.NoError(t, db.Close())

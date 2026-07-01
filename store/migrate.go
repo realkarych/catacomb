@@ -2,10 +2,13 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
 const currentSchemaVersion = 1
+
+var ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
 
 type migration struct {
 	from  int
@@ -42,15 +45,15 @@ func setSchemaVersion(tx *sql.Tx, v int) error {
 func applyMigration(db *sql.DB, m migration) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("store.applyMigration v%d->v%d begin: %w", m.from, m.to, err)
+		return fmt.Errorf("store.applyMigration v%d->v%d begin: %w: %w", m.from, m.to, ErrSchemaMigrationFailed, err)
 	}
 	if err := m.apply(tx); err != nil {
 		_ = tx.Rollback()
-		return fmt.Errorf("store.applyMigration v%d->v%d apply: %w", m.from, m.to, err)
+		return fmt.Errorf("store.applyMigration v%d->v%d apply: %w: %w", m.from, m.to, ErrSchemaMigrationFailed, err)
 	}
 	if err := setSchemaVersion(tx, m.to); err != nil {
 		_ = tx.Rollback()
-		return fmt.Errorf("store.applyMigration v%d->v%d stamp: %w", m.from, m.to, err)
+		return fmt.Errorf("store.applyMigration v%d->v%d stamp: %w: %w", m.from, m.to, ErrSchemaMigrationFailed, err)
 	}
 	return tx.Commit()
 }
