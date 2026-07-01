@@ -302,6 +302,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	if tok, tokErr := processStartTime(disc.Pid); tokErr == nil {
 		disc.StartToken = tok
 	}
+	disc.BootID = bootID()
 	if err = daemon.WriteDiscovery(p.discoveryPath, disc); err != nil {
 		return err
 	}

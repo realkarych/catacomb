@@ -13,8 +13,17 @@ import (
 
 var (
 	readProcStat    = os.ReadFile
+	readBootID      = os.ReadFile
 	errProcStatForm = errors.New("ownership: malformed /proc stat")
 )
+
+func bootID() string {
+	b, err := readBootID("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
 
 func processStartTime(pid int) (int64, error) {
 	b, err := readProcStat(fmt.Sprintf("/proc/%d/stat", pid))

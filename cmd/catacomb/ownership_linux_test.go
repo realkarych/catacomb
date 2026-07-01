@@ -64,3 +64,17 @@ func TestProcessStartTimeLinuxReadErrorInjected(t *testing.T) {
 	_, err := processStartTime(1)
 	require.Error(t, err)
 }
+
+func TestBootIDLinuxReads(t *testing.T) {
+	orig := readBootID
+	readBootID = func(string) ([]byte, error) { return []byte("boot-uuid-123\n"), nil }
+	t.Cleanup(func() { readBootID = orig })
+	assert.Equal(t, "boot-uuid-123", bootID())
+}
+
+func TestBootIDLinuxReadError(t *testing.T) {
+	orig := readBootID
+	readBootID = func(string) ([]byte, error) { return nil, errors.New("nope") }
+	t.Cleanup(func() { readBootID = orig })
+	assert.Empty(t, bootID())
+}

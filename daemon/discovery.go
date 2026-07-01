@@ -17,6 +17,7 @@ type Discovery struct {
 	Pid                int      `json:"pid,omitempty"`
 	StartedAt          string   `json:"started_at,omitempty"`
 	StartToken         int64    `json:"start_token,omitempty"`
+	BootID             string   `json:"boot_id,omitempty"`
 	TranscriptDir      string   `json:"transcript_dir,omitempty"`
 	DBPath             string   `json:"db_path,omitempty"`
 	ConfigPath         string   `json:"config_path,omitempty"`

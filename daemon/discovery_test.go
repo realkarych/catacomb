@@ -192,10 +192,11 @@ func TestWriteDiscoveryTempWriteError(t *testing.T) {
 
 func TestWriteDiscoveryStartTokenRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.json")
-	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok", StartToken: 424242}))
+	require.NoError(t, WriteDiscovery(path, Discovery{Addr: "127.0.0.1:1", Token: "tok", StartToken: 424242, BootID: "boot-xyz"}))
 	got, err := ReadDiscovery(path)
 	require.NoError(t, err)
 	assert.Equal(t, int64(424242), got.StartToken)
+	assert.Equal(t, "boot-xyz", got.BootID)
 }
 
 func TestWriteReadDiscoveryScopeFields(t *testing.T) {

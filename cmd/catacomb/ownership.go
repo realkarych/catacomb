@@ -9,6 +9,7 @@ import (
 var (
 	ownershipAlive     = func(pid int) bool { return downSignal(pid, syscall.Signal(0)) == nil }
 	ownershipStartTime = processStartTime
+	ownershipBootID    = bootID
 	daemonOwned        = isOurLiveDaemon
 )
 
@@ -26,5 +27,8 @@ func isOurLiveDaemon(disc daemon.Discovery) bool {
 	if err != nil {
 		return false
 	}
-	return tok == disc.StartToken
+	if tok != disc.StartToken {
+		return false
+	}
+	return disc.BootID == ownershipBootID()
 }
