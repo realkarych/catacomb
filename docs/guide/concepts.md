@@ -96,14 +96,28 @@ catacomb mark --session <id> --name <name> --boundary start|end
 Or from inside an agent session via the `mcp__catacomb__mark` tool (which
 rides the trace stream without extra wiring).
 
-A phase is the time window `[start_marker.t_start, end_marker.t_start]`. Every
-node whose `t_start` falls inside that window receives a `marker_span` edge
-from the marker. The `phase_key` is `hash(enclosingStepKey, name, occurrence)`
+A phase is the half-open time window `[start_marker.t_start, end_marker.t_start)`
+— the start is inclusive, the end is exclusive. Every node whose `t_start`
+falls inside that window receives a `marker_span` edge from the marker. The
+half-open bound means a node whose `t_start` lands exactly on a shared boundary
+(one phase's end is the next phase's start) belongs to the phase that starts at
+it, never both, so it is never double-counted. The same rule scopes a `--from`/
+`--to` range: `--from a --to b` excludes any node sitting exactly on b's start.
+The `phase_key` is `hash(enclosingStepKey, name, occurrence)`
 and is deterministic across runs, so the same phase in two different sessions
 can be compared.
 
 The selector syntax is `name` (occurrence defaults to 0) or `name,occurrence`
 for when the same phase name appears more than once.
+
+When the same phase name appears more than once, starts and ends pair by
+**LIFO nesting** by default: each end closes the most recently opened,
+still-open phase of that name (correct bracket matching), so a `plan` nested
+inside an outer `plan` closes the inner one first. Occurrence numbers are
+assigned to starts in time order (first start is occurrence 0). If you supply
+an explicit `--occurrence` on **both** the start and the end, that pairing wins
+over LIFO — this is how you disambiguate phases of the same name that genuinely
+*overlap* (neither nested nor sequential), which are otherwise ambiguous.
 
 Phases are used for scoped diffs and subgraph extraction. See
 [Workflows](workflows.md) for recipes.

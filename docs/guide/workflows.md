@@ -62,6 +62,14 @@ catacomb mark --session <hash> --name plan --boundary end
 catacomb mark --session <hash> --name retry --boundary start --occurrence 1
 ```
 
+Repeated phases of the same name pair by LIFO nesting when you omit
+`--occurrence`: each `end` closes the most recently opened, still-open phase of
+that name, so nested same-name phases bracket correctly (the inner one closes
+first). Occurrence numbers follow start order (first start is `0`). Reach for an
+explicit `--occurrence` on both the start and the end only when same-name phases
+genuinely overlap (neither nested nor sequential) — there LIFO cannot tell which
+end belongs to which start, and the explicit occurrence pins the pairing.
+
 The agent can also call `mcp__catacomb__mark` directly, which rides the trace stream.
 
 The HTTP endpoint `POST /v1/mark` accepts the same fields: `session_id`, `name`,

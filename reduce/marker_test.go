@@ -629,6 +629,211 @@ func TestMultipleOccurrencesSameName(t *testing.T) {
 	assert.Equal(t, t4, *nodeMap[id1].TEnd)
 }
 
+func TestNestedSameNamePhasesPairedByOccurrence(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tStart0 := t0.Add(1 * time.Second)
+	tStart1 := t0.Add(2 * time.Second)
+	tEnd1 := t0.Add(3 * time.Second)
+	tEnd0 := t0.Add(4 * time.Second)
+	occ0, occ1 := 0, 1
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("s0", "p", "start", "", &occ0, tStart0, 2))
+	g.Apply(markerToolUse("s1", "p", "start", "", &occ1, tStart1, 3))
+	g.Apply(markerToolUse("e1", "p", "end", "", &occ1, tEnd1, 4))
+	g.Apply(markerToolUse("e0", "p", "end", "", &occ0, tEnd0, 5))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	id1 := model.PhaseMarkerID(execID, "p", 1)
+	nodeMap := map[string]*model.Node{}
+	for _, n := range nodes {
+		nodeMap[n.ID] = n
+	}
+
+	require.NotNil(t, nodeMap[id0])
+	require.NotNil(t, nodeMap[id1])
+	assert.Equal(t, tStart0, *nodeMap[id0].TStart)
+	require.NotNil(t, nodeMap[id0].TEnd)
+	assert.Equal(t, tEnd0, *nodeMap[id0].TEnd, "occurrence 0 end must bind to occurrence 0 start, not cross")
+	assert.Equal(t, tStart1, *nodeMap[id1].TStart)
+	require.NotNil(t, nodeMap[id1].TEnd)
+	assert.Equal(t, tEnd1, *nodeMap[id1].TEnd, "occurrence 1 end must bind to occurrence 1 start, not cross")
+}
+
+func TestNestedSameNamePhasesImplicitLIFO(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tOuterStart := t0.Add(1 * time.Second)
+	tInnerStart := t0.Add(2 * time.Second)
+	tInnerEnd := t0.Add(3 * time.Second)
+	tOuterEnd := t0.Add(4 * time.Second)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("s_outer", "p", "start", "", nil, tOuterStart, 2))
+	g.Apply(markerToolUse("s_inner", "p", "start", "", nil, tInnerStart, 3))
+	g.Apply(markerToolUse("e_inner", "p", "end", "", nil, tInnerEnd, 4))
+	g.Apply(markerToolUse("e_outer", "p", "end", "", nil, tOuterEnd, 5))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	id1 := model.PhaseMarkerID(execID, "p", 1)
+	nodeMap := map[string]*model.Node{}
+	for _, n := range nodes {
+		nodeMap[n.ID] = n
+	}
+
+	require.NotNil(t, nodeMap[id0])
+	require.NotNil(t, nodeMap[id1])
+	assert.Equal(t, tOuterStart, *nodeMap[id0].TStart)
+	require.NotNil(t, nodeMap[id0].TEnd)
+	assert.Equal(t, tOuterEnd, *nodeMap[id0].TEnd, "outer phase must close at the later end (LIFO), not the inner end")
+	assert.Equal(t, tInnerStart, *nodeMap[id1].TStart)
+	require.NotNil(t, nodeMap[id1].TEnd)
+	assert.Equal(t, tInnerEnd, *nodeMap[id1].TEnd, "inner phase must close at the earlier end (LIFO), not the outer end")
+}
+
+func TestOverlappingSameNamePhasesExplicitOccurrence(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tStartA := t0.Add(1 * time.Second)
+	tStartB := t0.Add(2 * time.Second)
+	tEndA := t0.Add(3 * time.Second)
+	tEndB := t0.Add(4 * time.Second)
+	occA, occB := 0, 1
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("sA", "p", "start", "", &occA, tStartA, 2))
+	g.Apply(markerToolUse("sB", "p", "start", "", &occB, tStartB, 3))
+	g.Apply(markerToolUse("eA", "p", "end", "", &occA, tEndA, 4))
+	g.Apply(markerToolUse("eB", "p", "end", "", &occB, tEndB, 5))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	id1 := model.PhaseMarkerID(execID, "p", 1)
+	nodeMap := map[string]*model.Node{}
+	for _, n := range nodes {
+		nodeMap[n.ID] = n
+	}
+
+	require.NotNil(t, nodeMap[id0])
+	require.NotNil(t, nodeMap[id1])
+	assert.Equal(t, tStartA, *nodeMap[id0].TStart)
+	require.NotNil(t, nodeMap[id0].TEnd)
+	assert.Equal(t, tEndA, *nodeMap[id0].TEnd, "explicit occurrence 0 must bind its own end, overriding LIFO for overlapping phases")
+	assert.Equal(t, tStartB, *nodeMap[id1].TStart)
+	require.NotNil(t, nodeMap[id1].TEnd)
+	assert.Equal(t, tEndB, *nodeMap[id1].TEnd, "explicit occurrence 1 must bind its own end, overriding LIFO for overlapping phases")
+}
+
+func TestOverlappingSameNamePhasesNotRecoveredWithoutOccurrence(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(1 * time.Second)
+	t2 := t0.Add(2 * time.Second)
+	t3 := t0.Add(3 * time.Second)
+	t4 := t0.Add(4 * time.Second)
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("s1", "p", "start", "", nil, t1, 2))
+	g.Apply(markerToolUse("s2", "p", "start", "", nil, t2, 3))
+	g.Apply(markerToolUse("e1", "p", "end", "", nil, t3, 4))
+	g.Apply(markerToolUse("e2", "p", "end", "", nil, t4, 5))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	id1 := model.PhaseMarkerID(execID, "p", 1)
+	nodeMap := map[string]*model.Node{}
+	for _, n := range nodes {
+		nodeMap[n.ID] = n
+	}
+
+	require.NotNil(t, nodeMap[id0])
+	require.NotNil(t, nodeMap[id1])
+	require.NotNil(t, nodeMap[id0].TEnd)
+	require.NotNil(t, nodeMap[id1].TEnd)
+	assert.Equal(t, t4, *nodeMap[id0].TEnd, "without explicit occurrence LIFO reads bounds as nested; overlapping [t1,t3] is not recovered")
+	assert.Equal(t, t3, *nodeMap[id1].TEnd, "without explicit occurrence LIFO reads bounds as nested; overlapping [t2,t4] is not recovered")
+}
+
+func TestExplicitPairingSurvivesStrayEndInCleanup(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tStray := t0.Add(1 * time.Second)
+	tStart := t0.Add(2 * time.Second)
+	tEnd := t0.Add(3 * time.Second)
+	occ0 := 0
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("stray_end", "p", "end", "", nil, tStray, 2))
+	g.Apply(markerToolUse("s0", "p", "start", "", &occ0, tStart, 3))
+	g.Apply(markerToolUse("e0", "p", "end", "", &occ0, tEnd, 4))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	var found *model.Node
+	for _, n := range nodes {
+		if n.ID == id0 {
+			found = n
+			break
+		}
+	}
+	require.NotNil(t, found)
+	require.NotNil(t, found.TEnd)
+	assert.Equal(t, tEnd, *found.TEnd, "explicit occurrence-0 pairing must survive; a stray occurrence-less end must not overwrite it in cleanup")
+}
+
+func TestMarkerSpanBoundaryHalfOpen(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tA := t0.Add(1 * time.Second)
+	tB := t0.Add(2 * time.Second)
+	tC := t0.Add(3 * time.Second)
+	tD := t0.Add(4 * time.Second)
+	occ := 0
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+
+	bnd := ob("user_prompt", "", tB)
+	bnd.Seq = 20
+	bnd.Correlation.UUID = "boundary"
+	g.Apply(bnd)
+
+	g.Apply(markerToolUse("sa", "a", "start", "", &occ, tA, 2))
+	g.Apply(markerToolUse("ea", "a", "end", "", &occ, tB, 3))
+	g.Apply(markerToolUse("sb", "b", "start", "", &occ, tB, 4))
+	g.Apply(markerToolUse("eb", "b", "end", "", &occ, tC, 5))
+	g.Apply(markerToolUse("sc", "c", "start", "", &occ, tC, 6))
+	g.Apply(markerToolUse("ec", "c", "end", "", &occ, tD, 7))
+
+	_, edges := g.Snapshot()
+
+	boundaryID := model.UserPromptID(execID, "boundary")
+	markerA := model.PhaseMarkerID(execID, "a", 0)
+	markerB := model.PhaseMarkerID(execID, "b", 0)
+	spanA := model.EdgeID(execID, model.EdgeMarkerSpan, markerA, boundaryID)
+	spanB := model.EdgeID(execID, model.EdgeMarkerSpan, markerB, boundaryID)
+
+	edgeIDs := map[string]bool{}
+	spanCount := 0
+	for _, e := range edges {
+		edgeIDs[e.ID] = true
+		if e.Type == model.EdgeMarkerSpan && e.Dst == boundaryID {
+			spanCount++
+		}
+	}
+
+	assert.False(t, edgeIDs[spanA], "boundary node must not belong to the phase that ends at it")
+	assert.True(t, edgeIDs[spanB], "boundary node belongs to the phase that starts at it")
+	assert.Equal(t, 1, spanCount, "boundary node must receive exactly one marker_span")
+}
+
 func TestMarkerSpanSelfExcluded(t *testing.T) {
 	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Second)
@@ -961,6 +1166,9 @@ func TestNegativeDurationDropped(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "marker should be synthesized even with negative duration")
+	require.NotNil(t, found.TEnd, "out-of-order end (clock skew) must still CLOSE the phase, not leave it stuck-running")
+	assert.Equal(t, t2, *found.TEnd, "phase closes at its end marker even when the end precedes the start")
+	assert.Equal(t, model.StatusOK, found.Status, "a closed phase must not report Running")
 	assert.Nil(t, found.DurationMS, "negative duration must be dropped per ADR-0018")
 }
 

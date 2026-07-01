@@ -133,26 +133,81 @@ func (g *Graph) synthesizeExecMarkers(execID string, s *execState) {
 
 	for _, name := range names {
 		bounds := byName[name]
-		var starts, ends []markerBound
+		var starts []markerBound
 		for _, b := range bounds {
-			switch b.boundary {
-			case "start":
+			if b.boundary == "start" {
 				starts = append(starts, b)
-			case "end":
-				ends = append(ends, b)
 			}
 		}
+		pairs := pairPhaseEnds(bounds, starts)
 		for i, start := range starts {
 			occ := i
 			if start.occ >= 0 {
 				occ = start.occ
 			}
-			g.buildMarker(execID, sessNode, name, occ, start, ends, i)
+			end, hasEnd := pairs[i]
+			g.buildMarker(execID, sessNode, name, occ, start, end, hasEnd)
 		}
 	}
 }
 
-func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, occ int, start markerBound, ends []markerBound, idx int) {
+func pairPhaseEnds(bounds, starts []markerBound) map[int]markerBound {
+	startByOcc := make(map[int]int, len(starts))
+	for i, s := range starts {
+		occ := i
+		if s.occ >= 0 {
+			occ = s.occ
+		}
+		startByOcc[occ] = i
+	}
+	pairs := make(map[int]markerBound, len(starts))
+	claimed := make([]bool, len(starts))
+	stack := make([]int, 0, len(starts))
+	var leftover []markerBound
+	next := 0
+	for _, b := range bounds {
+		if b.boundary == "start" {
+			stack = append(stack, next)
+			next++
+			continue
+		}
+		if b.boundary == "end" {
+			idx := -1
+			if b.occ >= 0 {
+				if s, ok := startByOcc[b.occ]; ok && !claimed[s] {
+					idx = s
+				}
+			}
+			for idx < 0 && len(stack) > 0 {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				if !claimed[top] {
+					idx = top
+				}
+			}
+			if idx >= 0 {
+				pairs[idx] = b
+				claimed[idx] = true
+			} else {
+				leftover = append(leftover, b)
+			}
+		}
+	}
+	for _, end := range leftover {
+		for len(stack) > 0 {
+			i := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if !claimed[i] {
+				pairs[i] = end
+				claimed[i] = true
+				break
+			}
+		}
+	}
+	return pairs
+}
+
+func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, occ int, start, end markerBound, hasEnd bool) {
 	id := model.PhaseMarkerID(execID, name, occ)
 	runID := sessNode.RunID
 
@@ -162,8 +217,8 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 	}
 
 	var tEnd *time.Time
-	if idx < len(ends) {
-		t := ends[idx].ts
+	if hasEnd {
+		t := end.ts
 		tEnd = &t
 	} else {
 		attrs["open"] = true

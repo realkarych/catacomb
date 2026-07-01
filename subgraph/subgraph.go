@@ -18,7 +18,7 @@ func InWindow(n *model.Node, w Window) bool {
 	if n.TStart.Before(w.Start) {
 		return false
 	}
-	if w.End != nil && n.TStart.After(*w.End) {
+	if w.End != nil && !n.TStart.Before(*w.End) {
 		return false
 	}
 	return true
