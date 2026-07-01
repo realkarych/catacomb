@@ -13,6 +13,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/pricing"
 )
 
 const (
@@ -1937,6 +1938,40 @@ func TestAssistantTurnCostIncludesCacheTokens(t *testing.T) {
 	n := g.Nodes[model.AssistantTurnID(execID, "mc_cache")]
 	require.NotNil(t, n.CostUSD)
 	assert.InDelta(t, float64(10+5+1000+2000)/1000, *n.CostUSD, 1e-9)
+}
+
+func TestAssistantTurnReportedCostWinsOverCacheEstimate(t *testing.T) {
+	eng := pricing.New()
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		r, ok := eng.Cost(pricing.Inputs{
+			ModelID:     in.ModelID,
+			TokensIn:    in.TokensIn,
+			TokensOut:   in.TokensOut,
+			CacheReadIn: in.CacheReadIn,
+			CacheWrite:  in.CacheWrite,
+			ReportedUSD: in.ReportedUSD,
+		})
+		return PriceResult{USD: r.USD, Source: r.Source}, ok
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Source = model.SourceStreamJSON
+	o.Correlation.MessageID = "mc_reported"
+	o.Attrs = map[string]any{
+		"model":         "claude-opus-4-8",
+		"tokens_in":     int64(1000),
+		"tokens_out":    int64(500),
+		"cache_read_in": int64(1_000_000),
+		"cache_write":   int64(1_000_000),
+		"cost_usd":      float64(0.25),
+	}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc_reported")]
+	require.NotNil(t, n.CostUSD)
+	assert.InDelta(t, 0.25, *n.CostUSD, 1e-9)
+	assert.Equal(t, "reported", n.Attrs["cost_source"])
 }
 
 func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
