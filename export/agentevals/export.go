@@ -89,7 +89,7 @@ func assistantMessages(turn *model.Node, toolNodes []*model.Node) []Message {
 			ID:   tn.ID,
 			Type: "function",
 			Function: ToolFunction{
-				Name:      tn.Name,
+				Name:      redact.Node(tn).Name,
 				Arguments: args,
 			},
 		})

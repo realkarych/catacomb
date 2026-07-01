@@ -187,6 +187,27 @@ func TestNodeToSpanOmitsAbsentTokensAndCost(t *testing.T) {
 	assert.False(t, hasCost)
 }
 
+func TestNodeToSpanRedactsToolName(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "run " + secret, Status: model.StatusOK}
+	ro := e.nodeToSpan(n, "")
+	m := attrMap(ro)
+	assert.NotContains(t, ro.Name(), secret, "span name must not contain the raw secret")
+	assert.NotContains(t, m["graph.node.name"], secret)
+	assert.NotContains(t, m["tool.name"], secret)
+	assert.NotContains(t, m["tool_call.function.name"], secret)
+	assert.Contains(t, m["graph.node.name"], "‹redacted:")
+}
+
+func TestNodeToSpanKeepsCleanName(t *testing.T) {
+	e := newWithExporter(&recordExporter{})
+	n := &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK}
+	ro := e.nodeToSpan(n, "")
+	assert.Equal(t, "Bash", ro.Name())
+	assert.Equal(t, "Bash", attrMap(ro)["tool.name"])
+}
+
 func TestNodeToSpanParentLinkage(t *testing.T) {
 	e := newWithExporter(&recordExporter{})
 	n := &model.Node{ID: "child", RunID: "r1", Type: model.NodeMCPCall, Status: model.StatusOK}

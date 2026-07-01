@@ -292,6 +292,7 @@ func (e *Exporter) SnapshotState(_ context.Context, nodes []*model.Node, edges [
 
 func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadOnlySpan {
 	kind := openInferenceKind(n.Type)
+	name := redact.Node(n).Name
 	attrs := []attribute.KeyValue{
 		attribute.String("openinference.span.kind", kind),
 		attribute.String("gen_ai.provider.name", "anthropic"),
@@ -300,8 +301,8 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 	if n.RunID != "" {
 		attrs = append(attrs, attribute.String("session.id", n.RunID))
 	}
-	if n.Name != "" {
-		attrs = append(attrs, attribute.String("graph.node.name", n.Name))
+	if name != "" {
+		attrs = append(attrs, attribute.String("graph.node.name", name))
 	}
 	if parentNodeID != "" {
 		attrs = append(attrs, attribute.String("graph.node.parent_id", parentNodeID))
@@ -326,8 +327,8 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 			attrs = append(attrs, attribute.String("llm.model_name", m), attribute.String("gen_ai.request.model", m))
 		}
 	}
-	if kind == "TOOL" && n.Name != "" {
-		attrs = append(attrs, attribute.String("tool.name", n.Name), attribute.String("tool_call.function.name", n.Name))
+	if kind == "TOOL" && name != "" {
+		attrs = append(attrs, attribute.String("tool.name", name), attribute.String("tool_call.function.name", name))
 	}
 	if n.Payload != nil {
 		if v, ok := redactedValue(n.Payload.Input); ok {
@@ -356,7 +357,7 @@ func (e *Exporter) nodeToSpan(n *model.Node, parentNodeID string) sdktrace.ReadO
 		end = *n.TEnd
 	}
 	stub := tracetest.SpanStub{
-		Name: n.Name,
+		Name: name,
 		SpanContext: trace.NewSpanContext(trace.SpanContextConfig{
 			TraceID:    traceID(n.RunID),
 			SpanID:     spanID(n.ID),

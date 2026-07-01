@@ -90,13 +90,14 @@ func WriteAll(w io.Writer, nodes []*model.Node, edges []*model.Edge) error {
 }
 
 func nodeToSpan(traceID string, n *model.Node, pm map[string]string) span {
+	name := redact.Node(n).Name
 	s := span{
 		Type:         "span",
 		TraceID:      traceID,
 		SpanID:       n.ID,
 		ParentSpanID: pm[n.ID],
 		SpanType:     spanType(n),
-		Name:         n.Name,
+		Name:         name,
 		StartTime:    formatTime(n.TStart),
 		EndTime:      formatTime(n.TEnd),
 		LatencyMS:    latency(n),
@@ -114,7 +115,7 @@ func nodeToSpan(traceID string, n *model.Node, pm map[string]string) span {
 		}
 	case model.NodeToolCall, model.NodeMCPCall, model.NodeSkill:
 		s.Tool = &toolInfo{
-			ToolName:        n.Name,
+			ToolName:        name,
 			ToolArgsBytes:   redactedLen(payloadInput(n)),
 			ToolResultBytes: redactedLen(payloadOutput(n)),
 			ToolSuccess:     n.Status == model.StatusOK,

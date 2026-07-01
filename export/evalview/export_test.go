@@ -224,6 +224,32 @@ func TestWriteTraceRedactsToBytes(t *testing.T) {
 	assert.NotContains(t, buf.String(), "AKIAIOSFODNN7EXAMPLE")
 }
 
+func TestWriteTraceRedactsNameToBytes(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	nodes := []*model.Node{
+		{
+			ID:     "tool-1",
+			RunID:  "run-1",
+			Name:   "run " + secret,
+			Type:   model.NodeToolCall,
+			Status: model.StatusOK,
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, writeTrace(&buf, "run-1", nodes, nil))
+	assert.NotContains(t, buf.String(), secret, "raw secret in node Name must not appear in evalview output")
+	assert.Contains(t, buf.String(), "‹redacted:", "redaction marker must appear")
+}
+
+func TestWriteTraceKeepsCleanName(t *testing.T) {
+	nodes := []*model.Node{
+		{ID: "tool-1", RunID: "run-1", Name: "Bash", Type: model.NodeToolCall, Status: model.StatusOK},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, writeTrace(&buf, "run-1", nodes, nil))
+	assert.Contains(t, buf.String(), `"Bash"`)
+}
+
 func TestWriteAllConcatenatesTracesSorted(t *testing.T) {
 	t1 := mustTime("2024-01-01T00:00:01Z")
 	nodes := []*model.Node{
