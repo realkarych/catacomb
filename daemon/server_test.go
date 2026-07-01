@@ -304,6 +304,60 @@ func TestHandlerHookSuccess(t *testing.T) {
 	require.NotNil(t, d.graphs["exec1"].Nodes[model.SessionNodeID("exec1")])
 }
 
+func TestHandlerHookLabelsHeader(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	rec := httptest.NewRecorder()
+	req := authedReq("/hook/SessionStart", "tok", strings.NewReader(`{"session_id":"s1"}`))
+	req.Header.Set("X-Catacomb-Labels", "basket=b1,rep=1")
+	d.Handler("tok").ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	r := d.graphs["exec1"].Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, r.Labels)
+}
+
+func TestHandlerHookLabelsHeaderNilAttrsObservation(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	rec := httptest.NewRecorder()
+	req := authedReq("/hook/Stop", "tok", strings.NewReader(`{"session_id":"s1"}`))
+	req.Header.Set("X-Catacomb-Labels", "team=core")
+	d.Handler("tok").ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	r := d.graphs["exec1"].Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, map[string]string{"team": "core"}, r.Labels)
+}
+
+func TestHandlerHookMalformedLabelsHeaderIgnored(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	rec := httptest.NewRecorder()
+	req := authedReq("/hook/SessionStart", "tok", strings.NewReader(`{"session_id":"s1"}`))
+	req.Header.Set("X-Catacomb-Labels", "!!!")
+	d.Handler("tok").ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	r := d.graphs["exec1"].Runs["s1"]
+	require.NotNil(t, r)
+	assert.Empty(t, r.Labels)
+}
+
+func TestHandlerStreamJSONLabelsHeader(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	body := strings.NewReader(`{"type":"system","subtype":"init","session_id":"s1","model":"m"}` + "\n")
+	req := authedReq("/v1/stream-json", "tok", body)
+	req.Header.Set("X-Catacomb-Labels", "basket=b1,rep=1")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, d.GraphsForTest(), 1)
+	r := d.graphs["exec1"].Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, r.Labels)
+}
+
 func TestHandlerHookUnauthorized(t *testing.T) {
 	d := New(tempStore(t))
 	rec := httptest.NewRecorder()

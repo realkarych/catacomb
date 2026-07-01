@@ -100,6 +100,7 @@ func (d *Daemon) handleStreamJSON(w http.ResponseWriter, r *http.Request) {
 	}()
 	sc := bufio.NewScanner(r.Body)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+	labels := r.Header.Get("X-Catacomb-Labels")
 	var currentSession string
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -112,7 +113,7 @@ func (d *Daemon) handleStreamJSON(w http.ResponseWriter, r *http.Request) {
 		if s := streamSessionID(buf); s != "" {
 			currentSession = s
 		}
-		_ = d.IngestStreamJSON(buf, currentSession)
+		_ = d.IngestStreamJSONWithLabels(buf, currentSession, labels)
 	}
 	if err := sc.Err(); err != nil {
 		log.Printf("catacomb: stream-json scan: %v", err)
@@ -158,7 +159,7 @@ func (d *Daemon) handleHook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	_ = d.Ingest(r.PathValue("type"), payload)
+	_ = d.IngestWithLabels(r.PathValue("type"), payload, r.Header.Get("X-Catacomb-Labels"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
