@@ -196,6 +196,30 @@ func TestSchemaVersionGuardReadError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestApplyMigrationRollsBackPartialDDL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ddl.db")
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	m := migration{from: 0, to: 1, apply: func(tx *sql.Tx) error {
+		if _, e := tx.Exec("CREATE TABLE probe(x)"); e != nil {
+			return e
+		}
+		return errors.New("boom after ddl")
+	}}
+	err = applyMigration(db, m)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
+	require.NoError(t, db.Close())
+
+	fresh, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = fresh.Close() })
+	var tables int
+	require.NoError(t, fresh.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='probe'").Scan(&tables))
+	assert.Equal(t, 0, tables)
+	assert.Equal(t, 0, userVersion(t, fresh))
+}
+
 func TestApplySchemaV1Error(t *testing.T) {
 	db := rawDB(t)
 	_, err := db.Exec("CREATE TABLE observations(x)")
