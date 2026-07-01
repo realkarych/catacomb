@@ -364,7 +364,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 		payload, err := os.ReadFile(filepath.Join("..", "..", "ingest", "hook", "testdata", f.file))
 		require.NoError(t, err)
 		warn := &bytes.Buffer{}
-		forward(warn, discovery, f.typ, bytes.NewReader(payload))
+		forward(warn, discovery, f.typ, bytes.NewReader(payload), "")
 		require.Empty(t, warn.String())
 	}
 

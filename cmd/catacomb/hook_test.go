@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func runTestDaemon(t *testing.T) (*daemon.Daemon, string) {
 func TestForwardDelivers(t *testing.T) {
 	d, discovery := runTestDaemon(t)
 	var warn bytes.Buffer
-	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{"session_id":"s1"}`)))
+	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{"session_id":"s1"}`)), "")
 	assert.Empty(t, warn.String())
 	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 30*time.Second, 10*time.Millisecond)
 }
@@ -65,19 +66,19 @@ func TestForwardNon2xx(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: d.Addr, Token: "wrong"}))
 	var warn bytes.Buffer
-	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{"session_id":"s1"}`)))
+	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{"session_id":"s1"}`)), "")
 	assert.Contains(t, warn.String(), "status 401")
 }
 
 func TestForwardStdinReadError(t *testing.T) {
 	var warn bytes.Buffer
-	forward(&warn, filepath.Join(t.TempDir(), "d.json"), "X", errReader{})
+	forward(&warn, filepath.Join(t.TempDir(), "d.json"), "X", errReader{}, "")
 	assert.Contains(t, warn.String(), "read stdin")
 }
 
 func TestForwardMissingDiscovery(t *testing.T) {
 	var warn bytes.Buffer
-	forward(&warn, filepath.Join(t.TempDir(), "nope.json"), "X", bytes.NewReader([]byte(`{}`)))
+	forward(&warn, filepath.Join(t.TempDir(), "nope.json"), "X", bytes.NewReader([]byte(`{}`)), "")
 	assert.Contains(t, warn.String(), "discovery")
 }
 
@@ -85,8 +86,39 @@ func TestForwardBadAddr(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: "\x7f", Token: "t"}))
 	var warn bytes.Buffer
-	forward(&warn, discovery, "X", bytes.NewReader([]byte(`{}`)))
+	forward(&warn, discovery, "X", bytes.NewReader([]byte(`{}`)), "")
 	assert.NotEmpty(t, warn.String())
+}
+
+func TestForwardSetsLabelsHeader(t *testing.T) {
+	gotHeader := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader <- r.Header.Get("X-Catacomb-Labels")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	var warn bytes.Buffer
+	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{}`)), "team=alpha,env=prod")
+	assert.Empty(t, warn.String())
+	assert.Equal(t, "team=alpha,env=prod", <-gotHeader)
+}
+
+func TestForwardOmitsLabelsHeaderWhenEmpty(t *testing.T) {
+	present := make(chan bool, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, ok := r.Header["X-Catacomb-Labels"]
+		present <- ok
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	var warn bytes.Buffer
+	forward(&warn, discovery, "SessionStart", bytes.NewReader([]byte(`{}`)), "")
+	assert.Empty(t, warn.String())
+	assert.False(t, <-present)
 }
 
 func TestForwardDaemonDown(t *testing.T) {
@@ -97,7 +129,7 @@ func TestForwardDaemonDown(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: addr, Token: "t"}))
 	var warn bytes.Buffer
-	forward(&warn, discovery, "X", bytes.NewReader([]byte(`{}`)))
+	forward(&warn, discovery, "X", bytes.NewReader([]byte(`{}`)), "")
 	assert.Contains(t, warn.String(), "forward")
 }
 

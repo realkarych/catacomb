@@ -43,7 +43,7 @@ func (w *lossyWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func streamForward(warn io.Writer, discoveryPath string, body io.Reader) {
+func streamForward(warn io.Writer, discoveryPath string, body io.Reader, labels string) {
 	d, err := daemon.ReadDiscovery(discoveryPath)
 	if err != nil {
 		fmt.Fprintf(warn, "catacomb stream-json: discovery: %v\n", err)
@@ -56,6 +56,9 @@ func streamForward(warn io.Writer, discoveryPath string, body io.Reader) {
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Token)
 	req.Header.Set("Content-Type", "application/x-ndjson")
+	if labels != "" {
+		req.Header.Set("X-Catacomb-Labels", labels)
+	}
 	resp, err := streamHTTPClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(warn, "catacomb stream-json: forward to %s: %v\n", d.Addr, err)
@@ -76,7 +79,7 @@ func newIngestCmd() *cobra.Command {
 		Use:   "stream-json",
 		Short: "Forward stream-json NDJSON from stdin to the catacomb daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			streamForward(cmd.ErrOrStderr(), clientDiscoveryPath(), cmd.InOrStdin())
+			streamForward(cmd.ErrOrStderr(), clientDiscoveryPath(), cmd.InOrStdin(), os.Getenv("CATACOMB_LABELS"))
 			return nil
 		},
 	}
@@ -91,14 +94,14 @@ func newRunCmd() *cobra.Command {
 		Short: "Run a Claude Code command, tee its stream-json to the terminal and the daemon",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args)
+			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args, os.Getenv("CATACOMB_LABELS"))
 		},
 	}
 	cmd.Flags().StringVar(&runID, "run-id", "", "CATACOMB_RUN_ID value exported to the child for multi-session grouping")
 	return cmd
 }
 
-func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []string) error {
+func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []string, labels string) error {
 	child := execCommand(args[0], args[1:]...)
 	child.Stdin = os.Stdin
 	child.Env = os.Environ()
@@ -121,7 +124,7 @@ func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []stri
 	fwdDone := make(chan struct{})
 	go func() {
 		defer close(fwdDone)
-		streamForward(stderr, discoveryPath, pr)
+		streamForward(stderr, discoveryPath, pr, labels)
 		_, _ = io.Copy(io.Discard, pr)
 	}()
 	teardown := func() {

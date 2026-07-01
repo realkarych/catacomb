@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,13 +20,13 @@ func newHookCmd() *cobra.Command {
 		Short: "Forward a Claude Code hook event to the catacomb daemon",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			forward(cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], cmd.InOrStdin())
+			forward(cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], cmd.InOrStdin(), os.Getenv("CATACOMB_LABELS"))
 			return nil
 		},
 	}
 }
 
-func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader) {
+func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader, labels string) {
 	payload, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(warn, "catacomb hook: read stdin: %v\n", err)
@@ -43,6 +44,9 @@ func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader) {
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Token)
 	req.Header.Set("Content-Type", "application/json")
+	if labels != "" {
+		req.Header.Set("X-Catacomb-Labels", labels)
+	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
