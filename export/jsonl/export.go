@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 func Snapshot(w io.Writer, nodes []*model.Node, edges []*model.Edge, runs []model.Run) error {
@@ -13,7 +14,7 @@ func Snapshot(w io.Writer, nodes []*model.Node, edges []*model.Edge, runs []mode
 		if err := enc.Encode(struct {
 			Kind string `json:"kind"`
 			*model.Node
-		}{"node", n}); err != nil {
+		}{"node", redact.Node(n)}); err != nil {
 			return err
 		}
 	}
