@@ -1,11 +1,21 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 	"strings"
 )
 
 func SessionNodeID(executionID string) string { return "session:" + executionID }
+
+func PromptUUID(sessionID, content string) string {
+	h := sha256.New()
+	h.Write([]byte(sessionID))
+	h.Write([]byte{0})
+	h.Write([]byte(strings.TrimSpace(content)))
+	return "pc-" + hex.EncodeToString(h.Sum(nil))
+}
 
 func NodeSourceKey(nodeID string) string {
 	if strings.HasPrefix(nodeID, "session:") {

@@ -302,17 +302,17 @@ func TestParseAssistantMultiTextBlocksConcatenated(t *testing.T) {
 	assert.Equal(t, "hello world", got)
 }
 
-func TestParseUserPromptCarriesUUID(t *testing.T) {
+func TestParseUserPromptCanonicalUUID(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s1","uuid":"u-123","message":{"content":"hello"}}`)
 	obs, err := Parse(line, "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "user_prompt", obs[0].Kind)
-	assert.Equal(t, "u-123", obs[0].Correlation.UUID)
+	assert.Equal(t, model.PromptUUID("s1", "hello"), obs[0].Correlation.UUID)
 }
 
-func TestParseUserPromptDistinctUUIDs(t *testing.T) {
+func TestParseUserPromptDistinctContentDistinctUUID(t *testing.T) {
 	fixedNow(time.Now())
 	sq := seq()
 	line1 := []byte(`{"type":"user","session_id":"s1","uuid":"uuid-A","message":{"content":"first"}}`)
@@ -323,7 +323,7 @@ func TestParseUserPromptDistinctUUIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, obs1, 1)
 	require.Len(t, obs2, 1)
-	assert.Equal(t, "uuid-A", obs1[0].Correlation.UUID)
-	assert.Equal(t, "uuid-B", obs2[0].Correlation.UUID)
+	assert.Equal(t, model.PromptUUID("s1", "first"), obs1[0].Correlation.UUID)
+	assert.Equal(t, model.PromptUUID("s1", "second"), obs2[0].Correlation.UUID)
 	assert.NotEqual(t, obs1[0].Correlation.UUID, obs2[0].Correlation.UUID)
 }

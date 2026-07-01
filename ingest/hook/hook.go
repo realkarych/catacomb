@@ -3,7 +3,6 @@ package hook
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -42,7 +41,7 @@ func Parse(hookType string, payload []byte, executionID string, nextSeq func() u
 	}
 	seq := nextSeq()
 	if p.kind == "user_prompt" {
-		p.correlation.UUID = "p" + strconv.FormatUint(seq, 10)
+		p.correlation.UUID = model.PromptUUID(e.SessionID, e.Prompt)
 	}
 	ts := nowFn().UTC()
 	return []model.Observation{{

@@ -1,10 +1,20 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestPromptUUID(t *testing.T) {
+	a := PromptUUID("s1", "list files")
+	assert.True(t, strings.HasPrefix(a, "pc-"))
+	assert.Equal(t, a, PromptUUID("s1", "list files"))
+	assert.Equal(t, a, PromptUUID("s1", "  list files\n"))
+	assert.NotEqual(t, a, PromptUUID("s1", "list dirs"))
+	assert.NotEqual(t, a, PromptUUID("s2", "list files"))
+}
 
 func TestCanonicalIDs(t *testing.T) {
 	assert.Equal(t, "session:exec1", SessionNodeID("exec1"))

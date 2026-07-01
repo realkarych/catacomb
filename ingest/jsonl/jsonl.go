@@ -175,7 +175,9 @@ func userParts(base model.Correlation, text string, blocks []block) []partial {
 		encoded, _ := json.Marshal(text)
 		pl := &model.Payload{Input: encoded}
 		pl.Hash = model.HashPayload(pl)
-		parts = append(parts, partial{kind: "user_prompt", correlation: base, attrs: map[string]any{"prompt_kind": model.PromptKind(text)}, payload: pl})
+		c := base
+		c.UUID = model.PromptUUID(base.SessionID, text)
+		parts = append(parts, partial{kind: "user_prompt", correlation: c, attrs: map[string]any{"prompt_kind": model.PromptKind(text)}, payload: pl})
 	}
 	for _, b := range blocks {
 		if b.Type != "tool_result" {
