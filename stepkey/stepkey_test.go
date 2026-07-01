@@ -170,6 +170,35 @@ func TestComputeOrderInvariant(t *testing.T) {
 	assert.Equal(t, ka["A:bash"].Key, kb["A:bash"].Key)
 }
 
+func TestLessSiblingTiebreaksOnNodeIDWhenSignaturesTie(t *testing.T) {
+	parent := tnode("parent", model.NodeUserPrompt, "", 0, "")
+	a := tnode("sib-a", model.NodeToolCall, "Bash", 5, `{"command":"ls"}`)
+	c := tnode("sib-c", model.NodeToolCall, "Bash", 5, `{"command":"ls"}`)
+
+	nodes := []*model.Node{parent, a, c}
+	edgesAC := []*model.Edge{edge("parent", "sib-a"), edge("parent", "sib-c")}
+	edgesCA := []*model.Edge{edge("parent", "sib-c"), edge("parent", "sib-a")}
+	nodesRev := []*model.Node{c, a, parent}
+
+	kBase := Compute(nodes, edgesAC)
+	kEdgeReversed := Compute(nodes, edgesCA)
+	kBothReversed := Compute(nodesRev, edgesCA)
+
+	require.Contains(t, kBase, "sib-a")
+	require.Contains(t, kBase, "sib-c")
+	require.Contains(t, kEdgeReversed, "sib-a")
+	require.Contains(t, kEdgeReversed, "sib-c")
+	require.Contains(t, kBothReversed, "sib-a")
+	require.Contains(t, kBothReversed, "sib-c")
+
+	assert.Equal(t, kBase["sib-a"].Key, kEdgeReversed["sib-a"].Key, "sib-a key must not depend on edge order")
+	assert.Equal(t, kBase["sib-c"].Key, kEdgeReversed["sib-c"].Key, "sib-c key must not depend on edge order")
+	assert.Equal(t, kBase["sib-a"].Key, kBothReversed["sib-a"].Key, "sib-a key must not depend on node+edge order")
+	assert.Equal(t, kBase["sib-c"].Key, kBothReversed["sib-c"].Key, "sib-c key must not depend on node+edge order")
+
+	assert.NotEqual(t, kBase["sib-a"].Key, kBase["sib-c"].Key, "distinct tied siblings must still get distinct keys")
+}
+
 func TestSupersededSiblingDoesNotShiftLiveIndex(t *testing.T) {
 	ts1 := time.Unix(1, 0).UTC()
 	ts2 := time.Unix(2, 0).UTC()
