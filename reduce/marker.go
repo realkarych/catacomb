@@ -142,17 +142,30 @@ func (g *Graph) synthesizeExecMarkers(execID string, s *execState) {
 				ends = append(ends, b)
 			}
 		}
+		endByOcc := make(map[int]markerBound, len(ends))
+		for i, end := range ends {
+			eocc := i
+			if end.occ >= 0 {
+				eocc = end.occ
+			}
+			endByOcc[eocc] = end
+		}
 		for i, start := range starts {
 			occ := i
 			if start.occ >= 0 {
 				occ = start.occ
 			}
-			g.buildMarker(execID, sessNode, name, occ, start, ends, i)
+			end, hasEnd := endByOcc[occ]
+			if !hasEnd && i < len(ends) {
+				end = ends[i]
+				hasEnd = true
+			}
+			g.buildMarker(execID, sessNode, name, occ, start, end, hasEnd)
 		}
 	}
 }
 
-func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, occ int, start markerBound, ends []markerBound, idx int) {
+func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, occ int, start, end markerBound, hasEnd bool) {
 	id := model.PhaseMarkerID(execID, name, occ)
 	runID := sessNode.RunID
 
@@ -162,8 +175,8 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 	}
 
 	var tEnd *time.Time
-	if idx < len(ends) {
-		t := ends[idx].ts
+	if hasEnd {
+		t := end.ts
 		tEnd = &t
 	} else {
 		attrs["open"] = true
