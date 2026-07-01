@@ -399,6 +399,23 @@ func TestUpsertRunRoundTrip(t *testing.T) {
 	assert.Equal(t, uint64(9), runs[0].LastSeq)
 }
 
+func TestUpsertRunLabelsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "labels.db")
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	labels := map[string]string{"basket": "checkout", "rep": "1"}
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusOK, Labels: labels}))
+	require.NoError(t, s.Close())
+
+	reopened, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	runs, err := reopened.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, labels, runs[0].Labels)
+}
+
 func TestListOpenRunsFiltersByStatus(t *testing.T) {
 	s := fileStore(t)
 	require.NoError(t, s.UpsertRun(model.Run{ID: "open", Status: model.StatusRunning}))

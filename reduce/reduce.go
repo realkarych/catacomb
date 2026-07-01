@@ -599,6 +599,9 @@ func (g *Graph) ensureRun(o model.Observation) {
 			r.Repro.Cwd = v
 		}
 	}
+	if raw, ok := o.Attrs["catacomb.labels"].(string); ok && raw != "" {
+		r.Labels = model.MergeLabels(r.Labels, model.ParseLabels(raw))
+	}
 }
 
 func (g *Graph) applyRunEnded(o model.Observation) {
