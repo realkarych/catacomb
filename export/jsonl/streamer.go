@@ -11,6 +11,7 @@ import (
 	"github.com/realkarych/catacomb/cdc"
 	exportiface "github.com/realkarych/catacomb/export"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
 var ErrClosed = errors.New("jsonl: streamer closed")
@@ -39,6 +40,9 @@ func (s *Streamer) ApplyDelta(_ context.Context, d cdc.GraphDelta) error {
 	if s.f == nil {
 		return fmt.Errorf("jsonl.Streamer.ApplyDelta: %w", ErrClosed)
 	}
+	if d.Node != nil {
+		d.Node = redact.Node(d.Node)
+	}
 	if err := s.enc.Encode(d); err != nil {
 		return fmt.Errorf("jsonl.Streamer.ApplyDelta: %w", err)
 	}
@@ -52,7 +56,7 @@ func (s *Streamer) SnapshotState(_ context.Context, nodes []*model.Node, edges [
 		return fmt.Errorf("jsonl.Streamer.SnapshotState: %w", ErrClosed)
 	}
 	for _, n := range nodes {
-		if err := s.enc.Encode(n); err != nil {
+		if err := s.enc.Encode(redact.Node(n)); err != nil {
 			return fmt.Errorf("jsonl.Streamer.SnapshotState node: %w", err)
 		}
 	}

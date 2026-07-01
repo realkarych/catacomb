@@ -69,6 +69,63 @@ func TestStreamerSnapshotStateWritesNodesEdges(t *testing.T) {
 	assert.Contains(t, string(data), "e1")
 }
 
+func TestStreamerApplyDeltaRedactsNodePayload(t *testing.T) {
+	secret := "Authorization: Bearer sk-live_ABC123DEF456GHI789JKL"
+	original := json.RawMessage(`{"cmd":"` + secret + `"}`)
+	path := filepath.Join(t.TempDir(), "out.jsonl")
+	s, err := jsonl.NewStreamer(path)
+	require.NoError(t, err)
+	node := &model.Node{
+		ID:      "n1",
+		RunID:   "r1",
+		Type:    model.NodeToolCall,
+		Payload: &model.Payload{Input: append(json.RawMessage(nil), original...)},
+	}
+	d := cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Node: node}
+	require.NoError(t, s.ApplyDelta(context.Background(), d))
+	require.NoError(t, s.Shutdown(context.Background()))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), secret, "raw secret must not appear in streamed delta")
+	assert.Contains(t, string(data), "‹redacted:", "redaction marker must appear in streamed delta")
+	assert.Equal(t, string(original), string(node.Payload.Input), "live delta node payload must be unchanged")
+}
+
+func TestStreamerApplyDeltaNilNode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.jsonl")
+	s, err := jsonl.NewStreamer(path)
+	require.NoError(t, err)
+	d := cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Edge: &model.Edge{ID: "e1", RunID: "r1", Src: "n1", Dst: "n2"}}
+	require.NoError(t, s.ApplyDelta(context.Background(), d))
+	require.NoError(t, s.Shutdown(context.Background()))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "e1")
+}
+
+func TestStreamerSnapshotStateRedactsNodePayload(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	original := json.RawMessage(`{"result":"` + secret + `"}`)
+	path := filepath.Join(t.TempDir(), "out.jsonl")
+	s, err := jsonl.NewStreamer(path)
+	require.NoError(t, err)
+	node := &model.Node{
+		ID:      "n1",
+		RunID:   "r1",
+		Type:    model.NodeToolCall,
+		Payload: &model.Payload{Output: append(json.RawMessage(nil), original...)},
+	}
+	require.NoError(t, s.SnapshotState(context.Background(), []*model.Node{node}, nil))
+	require.NoError(t, s.Shutdown(context.Background()))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), secret, "raw secret must not appear in streamed snapshot node")
+	assert.Contains(t, string(data), "‹redacted:", "redaction marker must appear in streamed snapshot node")
+	assert.Equal(t, string(original), string(node.Payload.Output), "live snapshot node payload must be unchanged")
+}
+
 func TestStreamerFlushRunIsNoop(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.jsonl")
 	s, err := jsonl.NewStreamer(path)
