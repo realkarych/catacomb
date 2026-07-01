@@ -68,6 +68,12 @@ func TestParseUserPromptSubmit(t *testing.T) {
 	assert.Equal(t, "list files", o.Attrs["prompt"])
 }
 
+func TestParseUserPromptCanonicalUUID(t *testing.T) {
+	obs := parseFixture(t, "UserPromptSubmit", "userpromptsubmit.json")
+	require.Len(t, obs, 1)
+	assert.Equal(t, model.PromptUUID("s1", "list files"), obs[0].Correlation.UUID)
+}
+
 func TestParseSessionStart(t *testing.T) {
 	obs := parseFixture(t, "SessionStart", "sessionstart.json")
 	require.Len(t, obs, 1)
