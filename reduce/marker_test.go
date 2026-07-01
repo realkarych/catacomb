@@ -761,6 +761,34 @@ func TestOverlappingSameNamePhasesNotRecoveredWithoutOccurrence(t *testing.T) {
 	assert.Equal(t, t3, *nodeMap[id1].TEnd, "without explicit occurrence LIFO reads bounds as nested; overlapping [t2,t4] is not recovered")
 }
 
+func TestExplicitPairingSurvivesStrayEndInCleanup(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	tStray := t0.Add(1 * time.Second)
+	tStart := t0.Add(2 * time.Second)
+	tEnd := t0.Add(3 * time.Second)
+	occ0 := 0
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("stray_end", "p", "end", "", nil, tStray, 2))
+	g.Apply(markerToolUse("s0", "p", "start", "", &occ0, tStart, 3))
+	g.Apply(markerToolUse("e0", "p", "end", "", &occ0, tEnd, 4))
+
+	nodes, _ := g.Snapshot()
+
+	id0 := model.PhaseMarkerID(execID, "p", 0)
+	var found *model.Node
+	for _, n := range nodes {
+		if n.ID == id0 {
+			found = n
+			break
+		}
+	}
+	require.NotNil(t, found)
+	require.NotNil(t, found.TEnd)
+	assert.Equal(t, tEnd, *found.TEnd, "explicit occurrence-0 pairing must survive; a stray occurrence-less end must not overwrite it in cleanup")
+}
+
 func TestMarkerSpanBoundaryHalfOpen(t *testing.T) {
 	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	tA := t0.Add(1 * time.Second)
