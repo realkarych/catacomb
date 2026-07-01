@@ -141,6 +141,8 @@ func TestSSEFilterDropsNonMatchingRun(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
 
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s-other"}`)))
+
 	httpLn := loopbackListener(t)
 	grpcLn := loopbackListener(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -158,6 +160,8 @@ func TestSSEFilterDropsNonMatchingRun(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	}, 30*time.Second, 10*time.Millisecond)
 
+	baseline := d.busConsumerCountForTest()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"http://"+addr+"/v1/subscribe?run=run-A", nil)
 	require.NoError(t, err)
@@ -168,9 +172,11 @@ func TestSSEFilterDropsNonMatchingRun(t *testing.T) {
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s-other"}`)))
+	require.Eventually(t, func() bool {
+		return d.busConsumerCountForTest() > baseline
+	}, 30*time.Second, 10*time.Millisecond)
 
-	received := make(chan map[string]any, 8)
+	received := make(chan map[string]any, 16)
 	go func() {
 		sc := bufio.NewScanner(resp.Body)
 		for sc.Scan() {
@@ -186,16 +192,24 @@ func TestSSEFilterDropsNonMatchingRun(t *testing.T) {
 		}
 	}()
 
-	timer := time.NewTimer(300 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case ev := <-received:
-		t.Fatalf("expected no events for filtered run, got: %v", ev)
-	case <-timer.C:
-	}
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"run-A"}`)))
 
-	cancel()
-	<-errc
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case ev := <-received:
+			runID, _ := ev["run_id"].(string)
+			require.NotEqual(t, "s-other", runID,
+				"filtered subscriber must never receive the non-matching run, got: %v", ev)
+			if runID == "run-A" && ev["kind"] == "node_upsert" {
+				cancel()
+				<-errc
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for run-A event on filtered subscriber")
+		}
+	}
 }
 
 func TestSSEClientDisconnectUnsubscribes(t *testing.T) {

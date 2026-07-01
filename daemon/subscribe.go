@@ -32,15 +32,19 @@ func matchNode(f SubFilter, n *model.Node) bool {
 	return true
 }
 
-func matchEdge(f SubFilter, e *model.Edge) bool {
+func matchRun(f SubFilter, runID string) bool {
 	if f.RunID == "" || f.RunID == "all" {
 		return true
 	}
-	return e.RunID == f.RunID
+	return runID == f.RunID
+}
+
+func matchEdge(f SubFilter, e *model.Edge) bool {
+	return matchRun(f, e.RunID)
 }
 
 func matchDelta(f SubFilter, d cdc.GraphDelta) bool {
-	if f.RunID != "" && f.RunID != "all" && d.RunID != f.RunID {
+	if !matchRun(f, d.RunID) {
 		return false
 	}
 	switch d.Kind {
@@ -75,7 +79,7 @@ func (d *Daemon) SubscribeFiltered(f SubFilter, bufSize int) *Subscription {
 		parents := parentEdgeSources(g)
 		rollups := subagentRollups(g, execID)
 		for _, n := range nodes {
-			if !matchNode(f, n) || topLevelExcluded(g, parents, execID, n) {
+			if !matchRun(f, n.RunID) || !matchNode(f, n) || topLevelExcluded(g, parents, execID, n) {
 				continue
 			}
 			nc := copyNode(n)
