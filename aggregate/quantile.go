@@ -26,6 +26,8 @@ func stats(values []float64) MetricStats {
 	return MetricStats{
 		N:      len(s),
 		Median: nearestRank(s, 0.5),
+		P25:    nearestRank(s, 0.25),
+		P75:    nearestRank(s, 0.75),
 		P90:    nearestRank(s, 0.9),
 	}
 }

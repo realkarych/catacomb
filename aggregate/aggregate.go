@@ -20,6 +20,8 @@ type Options struct {
 type MetricStats struct {
 	N      int     `json:"n"`
 	Median float64 `json:"median"`
+	P25    float64 `json:"p25"`
+	P75    float64 `json:"p75"`
 	P90    float64 `json:"p90"`
 }
 
@@ -82,12 +84,13 @@ type metricSums struct {
 }
 
 type runKey struct {
-	count       float64
-	sums        metricSums
-	annSums     map[string]float64
-	worst       model.Status
-	firstNodeID string
-	firstName   string
+	count            float64
+	sums             metricSums
+	annSums          map[string]float64
+	worst            model.Status
+	firstNodeID      string
+	firstName        string
+	durationMeasured bool
 }
 
 func included(n *model.Node) bool {
@@ -143,7 +146,10 @@ func foldRunSteps(rg RunGraph, allow map[string]struct{}) map[string]runKey {
 			continue
 		}
 		rk := accumulate(acc[n.StepKey], n)
-		rk.sums.duration += derefI(n.DurationMS)
+		if n.DurationMS != nil {
+			rk.sums.duration += float64(*n.DurationMS)
+			rk.durationMeasured = true
+		}
 		rk.sums.cost += derefF(n.CostUSD)
 		rk.sums.tokensIn += derefI(n.TokensIn)
 		rk.sums.tokensOut += derefI(n.TokensOut)
@@ -207,11 +213,14 @@ func foldRunPhases(rg RunGraph) map[string]runKey {
 	}
 	acc := map[string]runKey{}
 	for _, n := range rg.Nodes {
-		if n.Type != model.NodeMarker || n.PhaseKey == "" {
+		if n.Type != model.NodeMarker || n.PhaseKey == "" || !included(n) {
 			continue
 		}
 		rk := accumulate(acc[n.PhaseKey], n)
-		rk.sums.duration += markerDuration(n)
+		if d, ok := markerDuration(n); ok {
+			rk.sums.duration += d
+			rk.durationMeasured = true
+		}
 		for _, mid := range members[n.ID] {
 			m := byID[mid]
 			if m == nil || !included(m) {
@@ -242,11 +251,11 @@ func accumulate(rk runKey, n *model.Node) runKey {
 	return rk
 }
 
-func markerDuration(n *model.Node) float64 {
+func markerDuration(n *model.Node) (float64, bool) {
 	if n.TStart == nil || n.TEnd == nil {
-		return 0
+		return 0, false
 	}
-	return float64(n.TEnd.Sub(*n.TStart).Milliseconds())
+	return float64(n.TEnd.Sub(*n.TStart).Milliseconds()), true
 }
 
 type rowAcc struct {
@@ -267,7 +276,9 @@ type rowAcc struct {
 func (a *rowAcc) add(runID string, rk runKey) {
 	a.present++
 	a.counts = append(a.counts, rk.count)
-	a.duration = append(a.duration, rk.sums.duration)
+	if rk.durationMeasured {
+		a.duration = append(a.duration, rk.sums.duration)
+	}
 	a.cost = append(a.cost, rk.sums.cost)
 	a.tokensIn = append(a.tokensIn, rk.sums.tokensIn)
 	a.tokensOut = append(a.tokensOut, rk.sums.tokensOut)
@@ -358,7 +369,9 @@ func runTotals(group []RunGraph) RunTotals {
 				hasError = true
 			}
 		}
-		durations = append(durations, runDuration(rg.Run))
+		if d, ok := runDuration(rg.Run); ok {
+			durations = append(durations, d)
+		}
 		costs = append(costs, sums.cost)
 		tokensIn = append(tokensIn, sums.tokensIn)
 		tokensOut = append(tokensOut, sums.tokensOut)
@@ -377,9 +390,9 @@ func runTotals(group []RunGraph) RunTotals {
 	}
 }
 
-func runDuration(r model.Run) float64 {
+func runDuration(r model.Run) (float64, bool) {
 	if r.StartedAt == nil || r.EndedAt == nil {
-		return 0
+		return 0, false
 	}
-	return float64(r.EndedAt.Sub(*r.StartedAt).Milliseconds())
+	return float64(r.EndedAt.Sub(*r.StartedAt).Milliseconds()), true
 }
