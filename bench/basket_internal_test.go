@@ -1,0 +1,66 @@
+package bench
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func validBasket() Basket {
+	return Basket{
+		Name:     "checkout",
+		Reps:     1,
+		Tasks:    []Task{{ID: "t1", Cmd: []string{"echo"}}},
+		Variants: []Variant{{ID: "v1"}},
+	}
+}
+
+func TestValidateHappy(t *testing.T) {
+	require.NoError(t, validate(validBasket()))
+}
+
+func TestValidateErrors(t *testing.T) {
+	long := strings.Repeat("a", 257)
+	tests := []struct {
+		name    string
+		mutate  func(*Basket)
+		wantErr error
+		field   string
+	}{
+		{"empty name", func(b *Basket) { b.Name = "" }, ErrEmptyBasketName, "basket"},
+		{"name too long", func(b *Basket) { b.Name = long }, ErrBasketNameLen, "basket"},
+		{"reps zero", func(b *Basket) { b.Reps = 0 }, ErrReps, "reps"},
+		{"reps negative", func(b *Basket) { b.Reps = -3 }, ErrReps, "reps"},
+		{"no tasks", func(b *Basket) { b.Tasks = nil }, ErrNoTasks, "tasks"},
+		{"no variants", func(b *Basket) { b.Variants = nil }, ErrNoVariants, "variants"},
+		{"empty task id", func(b *Basket) { b.Tasks[0].ID = "" }, ErrEmptyID, "task"},
+		{"task id too long", func(b *Basket) { b.Tasks[0].ID = long }, ErrIDLen, "task"},
+		{
+			"duplicate task id",
+			func(b *Basket) {
+				b.Tasks = []Task{{ID: "dup", Cmd: []string{"a"}}, {ID: "dup", Cmd: []string{"b"}}}
+			},
+			ErrDuplicateID, "task",
+		},
+		{"empty cmd", func(b *Basket) { b.Tasks[0].Cmd = nil }, ErrEmptyCmd, "task"},
+		{"empty variant id", func(b *Basket) { b.Variants[0].ID = "" }, ErrEmptyID, "variant"},
+		{"variant id too long", func(b *Basket) { b.Variants[0].ID = long }, ErrIDLen, "variant"},
+		{
+			"duplicate variant id",
+			func(b *Basket) { b.Variants = []Variant{{ID: "dup"}, {ID: "dup"}} },
+			ErrDuplicateID, "variant",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := validBasket()
+			tt.mutate(&b)
+			err := validate(b)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.Contains(t, err.Error(), tt.field)
+		})
+	}
+}

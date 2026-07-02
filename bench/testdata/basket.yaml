@@ -1,0 +1,21 @@
+basket: checkout
+reps: 2
+tasks:
+  - id: add-item
+    cmd: ["make", "add"]
+    dir: services/cart
+    env:
+      MODE: fast
+  - id: remove-item
+    cmd: ["make", "remove"]
+    env:
+      MODE: slow
+variants:
+  - id: baseline
+    env:
+      MODEL: opus
+    setup: ["echo setup-baseline"]
+  - id: candidate
+    env:
+      MODEL: sonnet
+    setup: ["echo setup-candidate", "echo warmup"]
