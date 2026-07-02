@@ -236,6 +236,47 @@ insufficient. A CI gate is then just:
 catacomb regress --baseline name:golden --candidate label:variant=candidate || exit 1
 ```
 
+### Gate on external scores (optional)
+
+Catacomb compares deterministic observables (status, presence, duration, cost, tokens); it does
+not judge output *quality*. To fold a quality signal into the same gate, score the runs with an
+external evaluator and write the verdict back as a numeric annotation, then let `regress` treat it
+as one more metric.
+
+1. **Score the runs.** Export each session and run the DeepEval integration under
+   [`integrations/deepeval`](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval),
+   whose default `ToolCorrectnessMetric` path is deterministic and offline (no LLM judge, no API
+   key):
+
+   ```sh
+   catacomb export --to jsonl --run <run-id> --allow-payload-access --out session.jsonl
+   catacomb-deepeval session.jsonl --run <run-id> --expected expected.json
+   ```
+
+2. **Write the score back as an annotation.** With the daemon started `--allow-annotations` (see
+   [Annotations](#annotations)), POST the score onto a step node whose `step_key` is stable across
+   the basket — the terminal `assistant_turn` is a good anchor — so it aligns run-to-run:
+
+   ```sh
+   curl -H "Authorization: Bearer <token>" \
+     -X POST "http://127.0.0.1:<port>/v1/sessions/<hash>/nodes/<nodeId>/annotations" \
+     -H "Content-Type: application/json" \
+     -d '{"owner":"deepeval","key":"tool_correctness","value":0.92}'
+   ```
+
+3. **Gate on it.** Add `--annotation deepeval.tool_correctness` (higher-better by default; append
+   `:lower-better` for a penalty-style score). The score aggregates per `step_key` and flags with
+   the metric noise band, so a candidate whose median score drops out of the baseline band is a
+   `regression`:
+
+   ```sh
+   catacomb regress --baseline name:golden --candidate label:variant=candidate \
+     --annotation deepeval.tool_correctness
+   ```
+
+   Annotation gating is step-scoped only (per ADR-0022); a key sampled below `--min-support` runs,
+   or present on only one side, is reported `insufficient` rather than guessed.
+
 ### Practical notes
 
 - **Use `k` ≥ 5.** Minimum support is 3 (`--min-support`), but Wilson intervals over only three
