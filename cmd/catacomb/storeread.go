@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/pricing"
 	"github.com/realkarych/catacomb/reduce"
@@ -24,9 +25,14 @@ func openReadStore(open storeOpener, dbPath string) (store.Store, error) {
 }
 
 func storeGraphs(s store.Store, pricer reduce.Pricer) ([]*reduce.Graph, error) {
+	graphs, _, err := storeGraphsWithIDs(s, pricer)
+	return graphs, err
+}
+
+func storeGraphsWithIDs(s store.Store, pricer reduce.Pricer) ([]*reduce.Graph, []string, error) {
 	obs, err := s.ObservationsSince(0)
 	if err != nil {
-		return nil, fmt.Errorf("store read: %w", err)
+		return nil, nil, fmt.Errorf("store read: %w", err)
 	}
 
 	var order []string
@@ -44,7 +50,30 @@ func storeGraphs(s store.Store, pricer reduce.Pricer) ([]*reduce.Graph, error) {
 		g.ApplyAll(groups[id])
 		graphs = append(graphs, g)
 	}
-	return graphs, nil
+	return graphs, order, nil
+}
+
+func loadRunGroup(s store.Store, pricer reduce.Pricer, selector map[string]string) ([]aggregate.RunGraph, error) {
+	graphs, ids, err := storeGraphsWithIDs(s, pricer)
+	if err != nil {
+		return nil, err
+	}
+	for i, g := range graphs {
+		anns, err := s.AnnotationsForExecution(ids[i])
+		if err != nil {
+			return nil, fmt.Errorf("store annotations: %w", err)
+		}
+		g.ApplyAnnotations(anns)
+	}
+	var out []aggregate.RunGraph
+	for _, r := range collectRuns(graphs) {
+		if !model.MatchLabels(r.Labels, selector) {
+			continue
+		}
+		nodes, edges := collectSnapshot(graphs, r.ID)
+		out = append(out, aggregate.RunGraph{Run: r, Nodes: nodes, Edges: edges})
+	}
+	return out, nil
 }
 
 func collectRuns(graphs []*reduce.Graph) []model.Run {
