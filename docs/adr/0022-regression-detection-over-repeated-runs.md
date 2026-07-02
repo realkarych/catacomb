@@ -4,6 +4,7 @@
 - **Date:** 2026-07-02
 - **Deciders:** @realkarych
 - **Related:** spec §2 (non-goals), §5.4, §5.6, §14, §15; ADR-0005, ADR-0011, ADR-0016, ADR-0017; review `docs/reviews/2026-07-02-eval-readiness-and-competitive-review.md`
+- **Amended by:** ADR-0023 — one-sided rate bounds (z=1.645 default, `--z`), `--fail-on-notable` escalation, and per-invocation sensitivity disclosure replace the two-sided Wilson-95% gate of §4.
 
 ## Context
 
