@@ -11,7 +11,7 @@ ADR-0008 decided "apply redaction rules **before persistence**/export"; ADR-0020
 
 - `observations.body` and `nodes.body` persist **raw, unredacted** tool inputs/outputs and prompt text;
 - `PayloadHash` is computed over **pre-redaction** content and stored/exported, the exact brute-force channel ADR-0020 §3 closed on paper;
-- the `full+hash+redact` / `refs-only` / `all` **modes** and the **size cap** of ADR-0008 do not exist (the only cap anywhere is the OTLP exporter's 32 KiB).
+- the `full+hash+redact` / `refs-only` / `all` **modes** and the **size cap** of ADR-0008 do not exist (the only payload cap anywhere is the OTLP exporter's 32 KiB).
 
 A copied, synced, or exfiltrated `catacomb.db` therefore leaks everything redaction was designed to catch. For a tool whose README leads with privacy, the gap between accepted ADRs and disk reality is a design defect, not a backlog item.
 
