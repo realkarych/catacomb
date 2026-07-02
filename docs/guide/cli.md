@@ -516,7 +516,9 @@ rejected at load.
 For each cell the runner emits `task:<id>` start/end phase markers around the child, on a
 best-effort basis — it needs a `session_id` in the child's stream-json to place them, and each
 manifest entry records whether the markers landed (`marked: true|false`). These `task:<id>`
-phases give `regress` a stable checkpoint axis even when the agent forgets to mark its own.
+phases give `regress` a stable checkpoint axis even when the agent forgets to mark its own. Each
+marker POST is synchronous with a bounded 2s timeout, so a slow or down daemon adds up to ~4s
+per cell (start plus end) before the run moves on.
 
 The manifest is JSONL, written incrementally — one object per completed cell (run-id, task,
 variant, rep, exit code, session id, `marked`, basket hash, finish time, and an optional
@@ -659,7 +661,11 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
   a delta over the threshold with overlapping intervals is reported as `notable`.
 - **Metrics** (`duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `occurrences`; run totals
   also `nodes`) flag the candidate median when it falls outside the baseline median ±
-  `max(metric-rel-delta × |median|, iqr-factor × IQR)` band.
+  `max(metric-rel-delta × |median|, iqr-factor × IQR)` band. The `nodes` and `occurrences` count
+  metrics are one-sided (higher = flagged) per
+  [ADR-0022 Amendments](../adr/0022-regression-detection-over-repeated-runs.md#amendments), so a
+  pipeline that legitimately grew may need `--metric-rel-delta` raised to keep ordinary growth
+  inside the band.
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is always
   reported; below `--coverage-floor` step-level regressions are downgraded to `notable` and the
   checkpoint (phase) level carries the verdict.

@@ -10,12 +10,17 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/daemon"
 )
+
+func TestDemoHTTPClientHasTimeout(t *testing.T) {
+	assert.Equal(t, 5*time.Second, demoHTTPClient.Timeout)
+}
 
 func TestRunDemoSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

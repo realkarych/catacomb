@@ -894,3 +894,30 @@ func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
+
+func TestOpenSQLiteReadOnlyRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	s, err := OpenSQLite(filepath.Join(dir, "g.db"))
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	require.NoError(t, s.Close())
+
+	t.Chdir(dir)
+	ro, err := OpenSQLiteReadOnly("./g.db")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ro.Close() })
+	runs, err := ro.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "r1", runs[0].ID)
+}
+
+func TestOpenSQLiteReadOnlyAbsError(t *testing.T) {
+	orig := absFn
+	absFn = func(string) (string, error) { return "", errors.New("boom") }
+	t.Cleanup(func() { absFn = orig })
+	_, err := OpenSQLiteReadOnly("x.db")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "abs")
+}

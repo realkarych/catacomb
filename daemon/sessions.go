@@ -135,6 +135,32 @@ func graphSlice(m map[string]*reduce.Graph) []*reduce.Graph {
 	return out
 }
 
+type labelPick struct {
+	runID  string
+	labels map[string]string
+}
+
+func (p *labelPick) consider(runID string, r *model.Run) {
+	if len(r.Labels) == 0 {
+		return
+	}
+	if p.labels == nil || runID < p.runID {
+		p.runID = runID
+		p.labels = r.Labels
+	}
+}
+
+func (p *labelPick) result() map[string]string {
+	if p.labels == nil {
+		return nil
+	}
+	out := make(map[string]string, len(p.labels))
+	for k, v := range p.labels {
+		out[k] = v
+	}
+	return out
+}
+
 func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) bool) SessionSummary {
 	sum := SessionSummary{
 		Session:        key,
@@ -153,6 +179,7 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 		tokensOut int64
 	)
 	runSeen := map[string]bool{}
+	var labels labelPick
 	for _, g := range graphs {
 		for runID, r := range g.Runs {
 			if !match(r) {
@@ -165,11 +192,10 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 			if sum.ModelID == "" && r.ModelID != "" {
 				sum.ModelID = r.ModelID
 			}
-			if sum.Labels == nil && len(r.Labels) > 0 {
-				sum.Labels = r.Labels
-			}
+			labels.consider(runID, r)
 			if sum.Repro == nil && r.Repro != nil {
-				sum.Repro = r.Repro
+				repro := *r.Repro
+				sum.Repro = &repro
 			}
 			sum.Status = foldStatus(sum.Status, r.Status)
 			if r.StartedAt != nil {
@@ -247,6 +273,7 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 	}
 	sum.TokensIn = tokensIn
 	sum.TokensOut = tokensOut
+	sum.Labels = labels.result()
 	sort.Strings(sum.RunIDs)
 	return sum
 }
@@ -278,6 +305,7 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 		labelNode *model.Node
 	)
 	runSeen := map[string]bool{}
+	var labels labelPick
 	for _, execID := range d.executionsForSession(hash) {
 		g := d.graphs[execID]
 		for runID, r := range g.Runs {
@@ -291,8 +319,10 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 			if sum.ModelID == "" && r.ModelID != "" {
 				sum.ModelID = r.ModelID
 			}
+			labels.consider(runID, r)
 			if sum.Repro == nil && r.Repro != nil {
-				sum.Repro = r.Repro
+				repro := *r.Repro
+				sum.Repro = &repro
 			}
 			sum.Status = foldStatus(sum.Status, r.Status)
 			if r.StartedAt != nil {
@@ -373,6 +403,7 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 	}
 	sum.TokensIn = tokensIn
 	sum.TokensOut = tokensOut
+	sum.Labels = labels.result()
 	if labelNode != nil {
 		sum.Label = sessionLabelFromPayload(labelNode.Payload.Input)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -837,4 +839,20 @@ variants:
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errBuf.String(), "manifest basket hash hashaaa")
 	}
+}
+
+func TestBenchPreflightTimesOutOnBlockedDaemon(t *testing.T) {
+	srv := blockingServer(t)
+	origClient := statusHTTPClient
+	statusHTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
+	t.Cleanup(func() { statusHTTPClient = origClient })
+
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "tok",
+	}))
+	err := benchPreflight(context.Background(), discovery)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unreachable")
 }

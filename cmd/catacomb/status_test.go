@@ -598,3 +598,36 @@ func TestRunStatusJSONEncodeWriteError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, writeErr)
 }
+
+func blockingServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv
+}
+
+func TestStatusHTTPClientHasTimeout(t *testing.T) {
+	assert.Equal(t, 5*time.Second, statusHTTPClient.Timeout)
+}
+
+func TestRunStatusReturnsWhenDaemonBlocks(t *testing.T) {
+	srv := blockingServer(t)
+	disc := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:  strings.TrimPrefix(srv.URL, "http://"),
+		Token: "tok",
+	}))
+	var out bytes.Buffer
+	deps := statusDeps{
+		readDiscovery: daemon.ReadDiscovery,
+		discoveryPath: disc,
+		httpClient:    &http.Client{Timeout: 50 * time.Millisecond},
+		now:           time.Now,
+	}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.Contains(t, out.String(), "unavailable")
+}

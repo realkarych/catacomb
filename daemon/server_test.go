@@ -358,6 +358,26 @@ func TestHandlerStreamJSONLabelsHeader(t *testing.T) {
 	assert.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, r.Labels)
 }
 
+func TestHandlerSessionsCarriesLabels(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	rec := httptest.NewRecorder()
+	req := authedReq("/hook/SessionStart", "tok", strings.NewReader(`{"session_id":"s1"}`))
+	req.Header.Set("X-Catacomb-Labels", "basket=b1,rep=1")
+	d.Handler("tok").ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	rec2 := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/sessions?token=tok", nil)
+	d.Handler("tok").ServeHTTP(rec2, getReq)
+	require.Equal(t, http.StatusOK, rec2.Code)
+
+	var sums []SessionSummary
+	require.NoError(t, json.NewDecoder(rec2.Body).Decode(&sums))
+	require.Len(t, sums, 1)
+	assert.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, sums[0].Labels)
+}
+
 func TestHandlerHookUnauthorized(t *testing.T) {
 	d := New(tempStore(t))
 	rec := httptest.NewRecorder()

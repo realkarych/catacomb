@@ -287,6 +287,21 @@ func tableNames(t *testing.T, db *sql.DB) []string {
 	return names
 }
 
+func schemaDDL(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var ddl []string
+	for rows.Next() {
+		var name, sql string
+		require.NoError(t, rows.Scan(&name, &sql))
+		ddl = append(ddl, name+"\x00"+sql)
+	}
+	require.NoError(t, rows.Err())
+	return ddl
+}
+
 func TestFreshAndV1UpgradeConvergeOnSchema(t *testing.T) {
 	fresh := fileStore(t)
 
@@ -296,6 +311,6 @@ func TestFreshAndV1UpgradeConvergeOnSchema(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = upgraded.Close() })
 
-	assert.Equal(t, tableNames(t, fresh.db), tableNames(t, upgraded.(*sqliteStore).db))
+	assert.Equal(t, schemaDDL(t, fresh.db), schemaDDL(t, upgraded.(*sqliteStore).db))
 	assert.Contains(t, tableNames(t, fresh.db), "baselines")
 }

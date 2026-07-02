@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -82,21 +81,21 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 		return operational(fmt.Errorf("baseline set %q: at least one --label is required", name))
 	}
 	if err := validateLabelTerms(labels); err != nil {
-		return err
+		return operational(err)
 	}
 	s, err := openReadStore(open, dbPath)
 	if err != nil {
-		return err
+		return operational(err)
 	}
 	defer func() { _ = s.Close() }()
 
 	selector := model.ParseLabels(strings.Join(labels, ","))
 	group, err := loadRunGroup(s, mkPricer(), selector)
 	if err != nil {
-		return err
+		return operational(err)
 	}
 	if len(group) == 0 {
-		return fmt.Errorf("baseline set %q: %w", name, ErrEmptyGroup)
+		return operational(fmt.Errorf("baseline set %q: %w", name, ErrEmptyGroup))
 	}
 	ids := make([]string, 0, len(group))
 	repro := make(map[string]*model.ReproMeta, len(group))
@@ -109,7 +108,7 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 	sort.Strings(ids)
 	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn(), Repro: repro}
 	if err := s.UpsertBaseline(b); err != nil {
-		return fmt.Errorf("baseline set: %w", err)
+		return operational(fmt.Errorf("baseline set: %w", err))
 	}
 	fmt.Fprintf(out, "baseline %q set: %d runs\n", name, len(ids))
 	return nil
@@ -131,15 +130,12 @@ func validateBaselineName(name string) error {
 func runBaselineList(out io.Writer, open storeOpener, dbPath string, asJSON bool) error {
 	s, err := openReadStore(open, dbPath)
 	if err != nil {
-		return err
+		return operational(err)
 	}
 	defer func() { _ = s.Close() }()
 	baselines, err := s.ListBaselines()
 	if err != nil {
-		if errors.Is(err, store.ErrSchemaOutdated) {
-			return operational(store.ErrSchemaOutdated)
-		}
-		return fmt.Errorf("baseline list: %w", err)
+		return operational(fmt.Errorf("baseline list: %w", err))
 	}
 	sort.Slice(baselines, func(i, j int) bool { return baselines[i].Name < baselines[j].Name })
 	if asJSON {
@@ -158,11 +154,11 @@ func runBaselineList(out io.Writer, open storeOpener, dbPath string, asJSON bool
 func runBaselineRm(out io.Writer, open storeOpener, dbPath, name string) error {
 	s, err := openReadStore(open, dbPath)
 	if err != nil {
-		return err
+		return operational(err)
 	}
 	defer func() { _ = s.Close() }()
 	if err := s.DeleteBaseline(name); err != nil {
-		return fmt.Errorf("baseline rm: %w", err)
+		return operational(fmt.Errorf("baseline rm: %w", err))
 	}
 	fmt.Fprintf(out, "baseline %q removed\n", name)
 	return nil
