@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -59,7 +61,8 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 		printDryRun(stdout, cells)
 		return nil
 	}
-	if err = benchPreflight(ctx, discoveryPath); err != nil {
+	disc, err := benchPreflight(ctx, discoveryPath)
+	if err != nil {
 		return operational(err)
 	}
 	manifestPath := f.manifest
@@ -79,13 +82,14 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 		return operational(errBenchRerun)
 	}
 	ambient := model.ParseLabels(os.Getenv("CATACOMB_LABELS"))
+	stats := newCheckpointStats()
 	executed, marked := 0, 0
 	for _, cell := range cells {
 		if _, done := completed[cell.RunID]; f.resume && done {
 			fmt.Fprintf(stdout, "skip %s (already completed)\n", cell.RunID)
 			continue
 		}
-		entry, failed := runBenchCell(stdout, stderr, discoveryPath, cell, hash, ambient)
+		entry, failed, verified := runBenchCell(ctx, stdout, stderr, discoveryPath, disc, cell, hash, ambient)
 		if err := manifest.Append(entry); err != nil {
 			return operational(fmt.Errorf("bench: manifest: %w", err))
 		}
@@ -93,26 +97,30 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 		if entry.Marked {
 			marked++
 		}
+		if verified {
+			stats.record(cell.Task, entry.MissingCheckpoints)
+		}
 		if failed && f.failFast {
 			return errBenchFailFast
 		}
 	}
 	if executed > 0 {
 		fmt.Fprintf(stdout, "marked %d/%d cells\n", marked, executed)
+		printCheckpointSummary(stdout, basket, stats)
 	}
 	printEpilogue(stdout, basket)
 	return nil
 }
 
-func benchPreflight(ctx context.Context, discoveryPath string) error {
+func benchPreflight(ctx context.Context, discoveryPath string) (daemon.Discovery, error) {
 	disc, err := daemon.ReadDiscovery(discoveryPath)
 	if err != nil {
-		return fmt.Errorf("bench: daemon not running (start it: catacomb up): %w", err)
+		return daemon.Discovery{}, fmt.Errorf("bench: daemon not running (start it: catacomb up): %w", err)
 	}
 	if err := upPollHealthz(ctx, disc.Addr); err != nil {
-		return fmt.Errorf("bench: daemon unreachable at %s (restart it: catacomb up): %w", disc.Addr, err)
+		return daemon.Discovery{}, fmt.Errorf("bench: daemon unreachable at %s (restart it: catacomb up): %w", disc.Addr, err)
 	}
-	return nil
+	return disc, nil
 }
 
 func verifyResumeHash(completed map[string]bench.ManifestEntry, hash string) error {
@@ -129,7 +137,7 @@ func verifyResumeHash(completed map[string]bench.ManifestEntry, hash string) err
 	return nil
 }
 
-func runBenchCell(stdout, stderr io.Writer, discoveryPath string, cell bench.Cell, hash string, ambient map[string]string) (bench.ManifestEntry, bool) {
+func runBenchCell(ctx context.Context, stdout, stderr io.Writer, discoveryPath string, disc daemon.Discovery, cell bench.Cell, hash string, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
 	entry := bench.ManifestEntry{
 		RunID:      cell.RunID,
 		Task:       cell.Task.ID,
@@ -141,7 +149,7 @@ func runBenchCell(stdout, stderr io.Writer, discoveryPath string, cell bench.Cel
 		entry.ExitCode = code
 		entry.Note = "setup failed"
 		entry.FinishedAt = nowFn()
-		return entry, true
+		return entry, true, false
 	}
 	labels := model.FormatLabels(model.MergeLabels(cloneLabels(ambient), cell.Labels))
 	marks := &markState{discoveryPath: discoveryPath, name: "task:" + cell.Task.ID}
@@ -157,8 +165,123 @@ func runBenchCell(stdout, stderr io.Writer, discoveryPath string, cell bench.Cel
 	} else {
 		entry.Note = cellNote(marks)
 	}
+	verified := verifyCheckpoints(ctx, stderr, disc, cell, &entry)
 	entry.FinishedAt = nowFn()
-	return entry, !ok
+	return entry, !ok, verified
+}
+
+func verifyCheckpoints(ctx context.Context, stderr io.Writer, disc daemon.Discovery, cell bench.Cell, entry *bench.ManifestEntry) bool {
+	if len(cell.Task.Checkpoints) == 0 || entry.SessionID == "" {
+		return false
+	}
+	markers, err := fetchSessionMarkers(ctx, disc, entry.SessionID)
+	if err != nil {
+		entry.Note = appendNote(entry.Note, "checkpoint verification skipped: "+err.Error())
+		return false
+	}
+	var missing []string
+	for _, name := range cell.Task.Checkpoints {
+		if _, ok := markers[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		entry.MissingCheckpoints = missing
+		fmt.Fprintf(stderr, "cell %s: missing checkpoints: %s\n", cell.RunID, strings.Join(missing, ", "))
+	}
+	return true
+}
+
+func appendNote(existing, addition string) string {
+	if existing == "" {
+		return addition
+	}
+	return existing + "; " + addition
+}
+
+type graphEvent struct {
+	Kind string `json:"kind"`
+	Node *struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	} `json:"node"`
+}
+
+func fetchSessionMarkers(ctx context.Context, disc daemon.Discovery, sessionID string) (map[string]struct{}, error) {
+	endpoint := "http://" + disc.Addr + "/v1/sessions/" + url.PathEscape(sessionID) + "/graph"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+disc.Token)
+	resp, err := statusHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("graph unreachable: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("graph status %d", resp.StatusCode)
+	}
+	var evs []graphEvent
+	if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
+		return nil, fmt.Errorf("graph decode: %w", err)
+	}
+	markers := make(map[string]struct{}, len(evs))
+	for _, ev := range evs {
+		if ev.Kind == "node_upsert" && ev.Node != nil && ev.Node.Type == "marker" {
+			markers[ev.Node.Name] = struct{}{}
+		}
+	}
+	return markers, nil
+}
+
+type checkpointStats struct {
+	verified map[string]int
+	hits     map[string]map[string]int
+}
+
+func newCheckpointStats() checkpointStats {
+	return checkpointStats{
+		verified: map[string]int{},
+		hits:     map[string]map[string]int{},
+	}
+}
+
+func (s checkpointStats) record(t bench.Task, missing []string) {
+	s.verified[t.ID]++
+	if s.hits[t.ID] == nil {
+		s.hits[t.ID] = map[string]int{}
+	}
+	absent := make(map[string]struct{}, len(missing))
+	for _, m := range missing {
+		absent[m] = struct{}{}
+	}
+	for _, name := range t.Checkpoints {
+		if _, gone := absent[name]; !gone {
+			s.hits[t.ID][name]++
+		}
+	}
+}
+
+func printCheckpointSummary(out io.Writer, b bench.Basket, s checkpointStats) {
+	declared := false
+	for _, t := range b.Tasks {
+		if len(t.Checkpoints) > 0 {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return
+	}
+	for _, t := range b.Tasks {
+		if len(t.Checkpoints) == 0 {
+			continue
+		}
+		for _, name := range t.Checkpoints {
+			fmt.Fprintf(out, "checkpoints[%s]: %s %d/%d\n", t.ID, name, s.hits[t.ID][name], s.verified[t.ID])
+		}
+	}
 }
 
 func spawnFailure(err error) string {

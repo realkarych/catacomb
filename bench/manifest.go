@@ -10,16 +10,17 @@ import (
 )
 
 type ManifestEntry struct {
-	RunID      string    `json:"run_id"`
-	Task       string    `json:"task"`
-	Variant    string    `json:"variant"`
-	Rep        int       `json:"rep"`
-	ExitCode   int       `json:"exit_code"`
-	SessionID  string    `json:"session_id,omitempty"`
-	Marked     bool      `json:"marked"`
-	BasketHash string    `json:"basket_hash"`
-	FinishedAt time.Time `json:"finished_at"`
-	Note       string    `json:"note,omitempty"`
+	RunID              string    `json:"run_id"`
+	Task               string    `json:"task"`
+	Variant            string    `json:"variant"`
+	Rep                int       `json:"rep"`
+	ExitCode           int       `json:"exit_code"`
+	SessionID          string    `json:"session_id,omitempty"`
+	Marked             bool      `json:"marked"`
+	MissingCheckpoints []string  `json:"missing_checkpoints,omitempty"`
+	BasketHash         string    `json:"basket_hash"`
+	FinishedAt         time.Time `json:"finished_at"`
+	Note               string    `json:"note,omitempty"`
 }
 
 type Manifest struct {

@@ -143,6 +143,7 @@ reps: 5
 tasks:
   - id: work-task
     cmd: ["claude", "-p", "work the checkout task"]
+    checkpoints: [plan, tests.pass]   # phases you expect the agent to mark
 variants:
   - id: main
   - id: candidate
@@ -175,6 +176,14 @@ needs a `session_id` in the child's stream-json). These surface as **phase rows*
 comparison axis even when the agent never called `mcp__catacomb__mark`. See
 [bench](cli.md#bench) for the full basket schema, the manifest and `--resume` semantics, and the
 `setup` no-shell limitation.
+
+The `checkpoints:` list declares the in-run phases you expect the agent to mark for itself: by
+convention the agent calls `mcp__catacomb__mark` at each phase (wired through a CLAUDE.md
+instruction), and after each cell bench fetches the session graph and reports any declared
+checkpoint it did not find. A miss shows up immediately as a `cell <run-id>: missing checkpoints:
+...` warning on stderr and a `checkpoints[<task>]: <name> <hit>/<verified>` summary line, and
+then downstream as a presence-rate drop for that phase in `regress` — bench only reports the
+gap, `regress` decides whether it is a regression.
 
 ### Label two run groups by hand
 

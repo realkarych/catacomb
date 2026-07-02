@@ -1,0 +1,13 @@
+basket: cp
+reps: 1
+tasks:
+  - id: build
+    cmd: ["make", "build"]
+    checkpoints:
+      - compiled
+      - "task:link"
+      - tests.pass
+  - id: deploy
+    cmd: ["make", "deploy"]
+variants:
+  - id: baseline

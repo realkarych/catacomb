@@ -15,7 +15,12 @@ import (
 
 const maxLabelValueLen = 256
 
-var idCharset = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+const taskMarkerPrefix = "task:"
+
+var (
+	idCharset         = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	checkpointCharset = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+)
 
 var (
 	ErrEmptyBasketName = errors.New("bench: basket name is empty")
@@ -29,13 +34,15 @@ var (
 	ErrDuplicateID     = errors.New("bench: duplicate id")
 	ErrEmptyCmd        = errors.New("bench: task cmd is empty")
 	ErrRunIDCollision  = errors.New("bench: run-id collision")
+	ErrCheckpoint      = errors.New("bench: invalid checkpoint")
 )
 
 type Task struct {
-	ID  string            `yaml:"id" json:"id"`
-	Cmd []string          `yaml:"cmd" json:"cmd"`
-	Dir string            `yaml:"dir,omitempty" json:"dir,omitempty"`
-	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	ID          string            `yaml:"id" json:"id"`
+	Cmd         []string          `yaml:"cmd" json:"cmd"`
+	Dir         string            `yaml:"dir,omitempty" json:"dir,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Checkpoints []string          `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
 }
 
 type Variant struct {
@@ -136,6 +143,32 @@ func validateTasks(tasks []Task) error {
 		if len(t.Cmd) == 0 {
 			return fmt.Errorf("bench.Load: task[%d].cmd: %w", i, ErrEmptyCmd)
 		}
+		if err := validateCheckpoints(i, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCheckpoints(taskIdx int, t Task) error {
+	seen := make(map[string]struct{}, len(t.Checkpoints))
+	for j, name := range t.Checkpoints {
+		if name == "" {
+			return fmt.Errorf("bench.Load: task[%d].checkpoints[%d]: empty: %w", taskIdx, j, ErrCheckpoint)
+		}
+		if len(name) > maxLabelValueLen {
+			return fmt.Errorf("bench.Load: task[%d].checkpoints[%d]: exceeds 256 bytes: %w", taskIdx, j, ErrCheckpoint)
+		}
+		if !checkpointCharset.MatchString(name) {
+			return fmt.Errorf("bench.Load: task[%d].checkpoints[%d] %q: charset: %w", taskIdx, j, name, ErrCheckpoint)
+		}
+		if name == taskMarkerPrefix+t.ID {
+			return fmt.Errorf("bench.Load: task[%d].checkpoints[%d] %q: reserved marker: %w", taskIdx, j, name, ErrCheckpoint)
+		}
+		if _, dup := seen[name]; dup {
+			return fmt.Errorf("bench.Load: task[%d].checkpoints[%d] %q: duplicate: %w", taskIdx, j, name, ErrCheckpoint)
+		}
+		seen[name] = struct{}{}
 	}
 	return nil
 }
