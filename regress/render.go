@@ -16,7 +16,7 @@ func RenderHuman(r Report, w io.Writer) {
 	for _, f := range r.Findings {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			f.Verdict, f.Scope, keyOrDash(f.Key), f.Metric,
-			formatNum(f.Baseline), formatNum(f.Candidate), formatBand(f))
+			renderValue(f, f.Baseline), renderValue(f, f.Candidate), formatBand(f))
 	}
 	_ = tw.Flush()
 }
@@ -38,9 +38,20 @@ func formatNum(v float64) string {
 	return fmt.Sprintf("%.2f", v)
 }
 
+func renderValue(f Finding, v float64) string {
+	if f.Metric == "presence" {
+		return formatNum(1 - v)
+	}
+	return formatNum(v)
+}
+
 func formatBand(f Finding) string {
 	if f.BandLo == 0 && f.BandHi == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("[%s, %s]", formatNum(f.BandLo), formatNum(f.BandHi))
+	lo, hi := f.BandLo, f.BandHi
+	if f.Metric == "presence" {
+		lo, hi = 1-f.BandHi, 1-f.BandLo
+	}
+	return fmt.Sprintf("[%s, %s]", formatNum(lo), formatNum(hi))
 }

@@ -68,6 +68,31 @@ func TestRenderJSONGolden(t *testing.T) {
 	assert.Equal(t, string(golden), buf.String())
 }
 
+func TestRenderHumanPresenceNormalized(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictRegression,
+		Findings: []Finding{{
+			Scope:     "phase",
+			Key:       "pa",
+			Metric:    "presence",
+			Verdict:   VerdictRegression,
+			Baseline:  0.0,
+			Candidate: 0.667,
+			BandLo:    0,
+			BandHi:    0.20,
+		}},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "1.00")
+	assert.Contains(t, out, "0.33")
+	assert.Contains(t, out, "regression")
+	assert.NotContains(t, out, "0.67")
+	assert.Contains(t, out, "[0.80, 1.00]")
+}
+
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) {
