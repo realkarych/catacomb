@@ -3,8 +3,10 @@ package bench_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,6 +162,52 @@ variants:
 	require.Error(t, err)
 	assert.ErrorIs(t, err, bench.ErrRunIDCollision)
 	assert.Contains(t, err.Error(), `run-id collision: task "a-b"/variant "c" and task "a"/variant "b-c"`)
+}
+
+func TestLoadCheckpointsRoundTrip(t *testing.T) {
+	b, _, err := bench.Load("testdata/checkpoints.yaml")
+	require.NoError(t, err)
+
+	require.Len(t, b.Tasks, 2)
+	assert.Equal(t, "build", b.Tasks[0].ID)
+	assert.Equal(t, []string{"compiled", "task:link", "tests.pass"}, b.Tasks[0].Checkpoints)
+	assert.Equal(t, "deploy", b.Tasks[1].ID)
+	assert.Empty(t, b.Tasks[1].Checkpoints)
+}
+
+func TestLoadCheckpointValidation(t *testing.T) {
+	const template = "basket: cp\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\n    checkpoints: %s\nvariants:\n  - id: v\n"
+	long := strings.Repeat("a", 257)
+
+	tests := []struct {
+		name        string
+		checkpoints string
+		wantErr     bool
+	}{
+		{"empty name", `[""]`, true},
+		{"too long", fmt.Sprintf("[%q]", long), true},
+		{"space", `["a b"]`, true},
+		{"comma", `["a,b"]`, true},
+		{"duplicate within task", `["dup", "dup"]`, true},
+		{"reserved marker collision", `["task:t"]`, true},
+		{"colon and full charset accepted", `["task:other", "a.b_c-d"]`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cp.yaml")
+			body := fmt.Sprintf(template, tc.checkpoints)
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+			_, _, err := bench.Load(path)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, bench.ErrCheckpoint)
+				assert.Contains(t, err.Error(), "checkpoints[")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestLoadDashIDsNoCollision(t *testing.T) {

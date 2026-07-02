@@ -1,6 +1,7 @@
 package bench_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,21 @@ func TestManifestAppendCompletedRoundTrip(t *testing.T) {
 	assert.Equal(t, e1.Note, got1.Note)
 	assert.True(t, e1.FinishedAt.Equal(got1.FinishedAt))
 	assert.Equal(t, 1, done["bench-c-t-v-r2"].ExitCode)
+}
+
+func TestManifestEntryMissingCheckpointsJSON(t *testing.T) {
+	withField := bench.ManifestEntry{RunID: "r", MissingCheckpoints: []string{"compiled", "task:link"}}
+	data, err := json.Marshal(withField)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"missing_checkpoints":["compiled","task:link"]`)
+
+	var back bench.ManifestEntry
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.Equal(t, withField.MissingCheckpoints, back.MissingCheckpoints)
+
+	without, err := json.Marshal(bench.ManifestEntry{RunID: "r"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(without), "missing_checkpoints")
 }
 
 func TestManifestCompletedLastWins(t *testing.T) {
