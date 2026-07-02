@@ -19,7 +19,30 @@ func TestDefaultThresholds(t *testing.T) {
 		IQRFactor:      1.5,
 		MinSupport:     3,
 		CoverageFloor:  0.7,
+		Z:              1.645,
 	}, th)
+}
+
+func TestDefaultThresholdsZ(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	require.InDelta(t, 1.645, th.Z, 1e-9)
+	require.False(t, th.FailOnNotable)
+}
+
+func TestCompareRateFullFlipGatesAtK3WithDefaultZ(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	f := compareRate("phase", "k", "n", "presence", 0, 3, 3, 3, th.PresenceDelta, th)
+	require.Equal(t, VerdictRegression, f.Verdict)
+}
+
+func TestCompareRateFullFlipNotableAtK3WithZ196(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	th.Z = 1.96
+	f := compareRate("phase", "k", "n", "presence", 0, 3, 3, 3, th.PresenceDelta, th)
+	require.Equal(t, VerdictNotable, f.Verdict)
 }
 
 func TestCompareRate(t *testing.T) {
@@ -33,7 +56,7 @@ func TestCompareRate(t *testing.T) {
 		wantVerdict Verdict
 	}{
 		{"regression_disjoint", 0, 5, 5, 5, th.ErrorRateDelta, VerdictRegression},
-		{"notable_overlap", 0, 3, 3, 3, th.ErrorRateDelta, VerdictNotable},
+		{"notable_overlap", 1, 3, 3, 3, th.ErrorRateDelta, VerdictNotable},
 		{"improvement_disjoint", 5, 5, 0, 5, th.ErrorRateDelta, VerdictImprovement},
 		{"ok_equal", 2, 5, 2, 5, th.ErrorRateDelta, VerdictOK},
 		{"ok_delta_not_exceeded", 0, 3, 3, 3, 1.0, VerdictOK},
@@ -64,7 +87,7 @@ func TestCompareRateFields(t *testing.T) {
 	assert.InDelta(t, 0.0, reg.Baseline, 1e-9)
 	assert.InDelta(t, 1.0, reg.Candidate, 1e-9)
 	assert.InDelta(t, 0.0, reg.BandLo, 1e-3)
-	assert.InDelta(t, 0.4345, reg.BandHi, 1e-3)
+	assert.InDelta(t, 0.3512, reg.BandHi, 1e-3)
 	assert.Empty(t, reg.Detail)
 
 	ins := compareRate("step", "s2", "build", "error_rate", 0, 2, 3, 5, th.ErrorRateDelta, th)

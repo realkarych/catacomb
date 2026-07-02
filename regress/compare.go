@@ -14,6 +14,8 @@ type Thresholds struct {
 	IQRFactor      float64
 	MinSupport     int
 	CoverageFloor  float64
+	Z              float64
+	FailOnNotable  bool
 }
 
 func DefaultThresholds() Thresholds {
@@ -24,6 +26,7 @@ func DefaultThresholds() Thresholds {
 		IQRFactor:      1.5,
 		MinSupport:     3,
 		CoverageFloor:  0.7,
+		Z:              1.645,
 	}
 }
 
@@ -86,8 +89,8 @@ func compareRate(scope, key, name, metric string, bSucc, bN, cSucc, cN int, delt
 		f.Detail = insufficientDetail(bN, cN, th.MinSupport)
 		return f
 	}
-	bLo, bHi := wilson(bSucc, bN, wilsonZ)
-	cLo, cHi := wilson(cSucc, cN, wilsonZ)
+	bLo, bHi := wilson(bSucc, bN, th.Z)
+	cLo, cHi := wilson(cSucc, cN, th.Z)
 	f.BandLo = bLo
 	f.BandHi = bHi
 	switch {
