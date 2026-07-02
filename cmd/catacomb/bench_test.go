@@ -342,6 +342,29 @@ variants:
 	assert.Equal(t, "bench-bres-t1-v2-r1", entries[1].RunID)
 }
 
+func TestBenchResumeAllSkippedOmitsCheckpointSummary(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, _ := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeCheckpointBasket(t, "resall", "tasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n    checkpoints: [plan]\n")
+	_, hash, err := bench.Load(path)
+	require.NoError(t, err)
+
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	done := bench.ManifestEntry{RunID: "bench-resall-t1-v1-r1", Task: "t1", Variant: "v1", Rep: 1, BasketHash: hash}
+	raw, _ := json.Marshal(done)
+	require.NoError(t, os.WriteFile(manifest, append(raw, '\n'), 0o600))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest, "--resume"}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	assert.Contains(t, out.String(), "skip bench-resall-t1-v1-r1")
+	assert.NotContains(t, out.String(), "checkpoints[")
+	assert.NotContains(t, out.String(), "marked")
+}
+
 func TestBenchDefaultManifestPath(t *testing.T) {
 	fakeBenchExec(t)
 	discovery, _ := benchServer(t, http.StatusOK)

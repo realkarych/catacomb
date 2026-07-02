@@ -106,8 +106,8 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 	}
 	if executed > 0 {
 		fmt.Fprintf(stdout, "marked %d/%d cells\n", marked, executed)
+		printCheckpointSummary(stdout, basket, stats)
 	}
-	printCheckpointSummary(stdout, basket, stats)
 	printEpilogue(stdout, basket)
 	return nil
 }

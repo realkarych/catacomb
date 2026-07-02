@@ -111,8 +111,8 @@ func (c *HTTPClient) Graph(ctx context.Context, hash string) ([]SseEvent, error)
 }
 
 func (c *HTTPClient) doSubscribeRequest(ctx context.Context, hash string, sinceRev uint64) (*http.Response, error) {
-	url := c.addr + "/v1/subscribe?session=" + hash
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := c.addr + "/v1/subscribe?session=" + url.QueryEscape(hash)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if sinceRev > 0 {
 		req.Header.Set("Last-Event-ID", strconv.FormatUint(sinceRev, 10))
@@ -235,8 +235,8 @@ func waitOrDone(ctx context.Context, d time.Duration) bool {
 }
 
 func (c *HTTPClient) Payload(ctx context.Context, hash, nodeID string) (PayloadView, error) {
-	url := c.addr + "/v1/sessions/" + hash + "/nodes/" + nodeID + "/payload"
-	resp, err := c.authedGET(ctx, c.http, url)
+	endpoint := c.addr + "/v1/sessions/" + url.PathEscape(hash) + "/nodes/" + url.PathEscape(nodeID) + "/payload"
+	resp, err := c.authedGET(ctx, c.http, endpoint)
 	if err != nil {
 		return PayloadView{}, err
 	}

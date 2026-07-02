@@ -533,7 +533,10 @@ are recorded in the manifest's `missing_checkpoints` list, warned to stderr as
 `cell <run-id>: missing checkpoints: <names>`, and rolled up on success — just before the
 copy-pasteable epilogue below — into one `checkpoints[<task>]: <name> <hit>/<verified>` summary
 line per declared name, where `hit` counts the cells the marker was found in and `verified`
-counts the cells where verification actually ran. Missing phases are visibility only here; they
+counts the cells where verification actually ran. Because the marks ride the same stream tee as
+the child's events, a lossy or failed stream forward can surface as a FALSE miss — the
+`catacomb stream-json:` stderr warning is the correlating signal — while `regress` presence rates
+over reps absorb the occasional loss. Missing phases are visibility only here; they
 earn a verdict downstream as presence-rate drops in `regress`.
 
 The manifest is JSONL, written incrementally — one object per completed cell (run-id, task,
