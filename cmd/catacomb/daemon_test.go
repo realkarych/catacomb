@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -57,6 +58,9 @@ func (f *failSinceStore) GetBaseline(string) (model.Baseline, bool, error) {
 }
 func (f *failSinceStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
 func (f *failSinceStore) DeleteBaseline(string) error              { return nil }
+
+func (f *failSinceStore) AppendRegressResult(string, json.RawMessage) (int, error) { return 0, nil }
+func (f *failSinceStore) RegressResultsFor(string) ([]model.RegressResult, error)  { return nil, nil }
 
 func openFailSince(config.StoreConfig) (store.Store, error) {
 	return &failSinceStore{}, nil

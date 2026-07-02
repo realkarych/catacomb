@@ -2,6 +2,7 @@ package memory
 
 import (
 	"cmp"
+	"encoding/json"
 	"slices"
 	"sync"
 
@@ -25,6 +26,7 @@ type Store struct {
 	annotations map[annKey]model.Annotation
 	cursors     map[string]model.TailCursor
 	baselines   map[string]model.Baseline
+	regress     map[string][]model.RegressResult
 	quarantine  int64
 }
 
@@ -36,6 +38,7 @@ func New() *Store {
 		annotations: map[annKey]model.Annotation{},
 		cursors:     map[string]model.TailCursor{},
 		baselines:   map[string]model.Baseline{},
+		regress:     map[string][]model.RegressResult{},
 	}
 }
 
@@ -279,6 +282,26 @@ func (s *Store) DeleteBaseline(name string) error {
 	defer s.mu.Unlock()
 	delete(s.baselines, name)
 	return nil
+}
+
+func (s *Store) AppendRegressResult(baseline string, body json.RawMessage) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seq := len(s.regress[baseline]) + 1
+	s.regress[baseline] = append(s.regress[baseline], model.RegressResult{Baseline: baseline, Seq: seq, Body: body})
+	return seq, nil
+}
+
+func (s *Store) RegressResultsFor(baseline string) ([]model.RegressResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := s.regress[baseline]
+	if len(stored) == 0 {
+		return nil, nil
+	}
+	out := make([]model.RegressResult, len(stored))
+	copy(out, stored)
+	return out, nil
 }
 
 func (s *Store) Close() error { return nil }

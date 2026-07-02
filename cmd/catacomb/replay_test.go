@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -54,6 +55,9 @@ func (f *fakeStore) GetBaseline(string) (model.Baseline, bool, error) {
 
 func (f *fakeStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
 func (f *fakeStore) DeleteBaseline(string) error              { return nil }
+
+func (f *fakeStore) AppendRegressResult(string, json.RawMessage) (int, error) { return 0, nil }
+func (f *fakeStore) RegressResultsFor(string) ([]model.RegressResult, error)  { return nil, nil }
 
 func openFake(f *fakeStore) storeOpener {
 	return func(string) (store.Store, error) { return f, nil }

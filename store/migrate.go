@@ -6,9 +6,11 @@ import (
 	"fmt"
 )
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 const schemaBaselines = `CREATE TABLE IF NOT EXISTS baselines (name TEXT PRIMARY KEY, body TEXT NOT NULL);`
+
+const schemaRegressResults = `CREATE TABLE IF NOT EXISTS regress_results (baseline TEXT NOT NULL, seq INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (baseline, seq));`
 
 var (
 	ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
@@ -25,6 +27,7 @@ type migration struct {
 var schemaMigrations = []migration{
 	{from: 0, to: 1, apply: applySchemaV1},
 	{from: 1, to: 2, apply: applySchemaV2},
+	{from: 2, to: 3, apply: applySchemaV3},
 }
 
 func applySchemaV1(tx *sql.Tx) error {
@@ -37,6 +40,13 @@ func applySchemaV1(tx *sql.Tx) error {
 func applySchemaV2(tx *sql.Tx) error {
 	if _, err := tx.Exec(schemaBaselines); err != nil {
 		return fmt.Errorf("store.applySchemaV2: %w", err)
+	}
+	return nil
+}
+
+func applySchemaV3(tx *sql.Tx) error {
+	if _, err := tx.Exec(schemaRegressResults); err != nil {
+		return fmt.Errorf("store.applySchemaV3: %w", err)
 	}
 	return nil
 }

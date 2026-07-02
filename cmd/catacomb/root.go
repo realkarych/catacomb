@@ -72,6 +72,7 @@ Run 'catacomb <command> --help' for details on any command.`,
 	root.AddCommand(advanced(newBenchCmd()))
 	root.AddCommand(advanced(newBaselineCmd()))
 	root.AddCommand(advanced(newRegressCmd()))
+	root.AddCommand(advanced(newTrendsCmd()))
 	root.AddCommand(advanced(newSnapshotCmd()))
 	root.AddCommand(advanced(newInspectCmd()))
 	root.AddCommand(advanced(newVersionCmd()))

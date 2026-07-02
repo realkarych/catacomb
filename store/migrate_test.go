@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -313,4 +314,63 @@ func TestFreshAndV1UpgradeConvergeOnSchema(t *testing.T) {
 
 	assert.Equal(t, schemaDDL(t, fresh.db), schemaDDL(t, upgraded.(*sqliteStore).db))
 	assert.Contains(t, tableNames(t, fresh.db), "baselines")
+}
+
+func seedV2DB(t *testing.T, path string) {
+	t.Helper()
+	seed, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = seed.Exec(schema)
+	require.NoError(t, err)
+	_, err = seed.Exec(schemaBaselines)
+	require.NoError(t, err)
+	_, err = seed.Exec(`INSERT INTO runs(run_id, status, body) VALUES('r1','running','{"id":"r1","status":"running"}')`)
+	require.NoError(t, err)
+	_, err = seed.Exec("PRAGMA user_version = 2")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+}
+
+func TestOpenMigratesV2ToV3CreatingRegressResults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV2DB(t, path)
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
+
+	runs, err := migrated.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "r1", runs[0].ID)
+
+	seq, err := migrated.AppendRegressResult("base", json.RawMessage(`{"ok":true}`))
+	require.NoError(t, err)
+	assert.Equal(t, 1, seq)
+	got, err := migrated.RegressResultsFor("base")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1, got[0].Seq)
+}
+
+func TestFreshAndV2UpgradeConvergeOnSchema(t *testing.T) {
+	fresh := fileStore(t)
+
+	path := filepath.Join(t.TempDir(), "v2.db")
+	seedV2DB(t, path)
+	upgraded, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = upgraded.Close() })
+
+	assert.Equal(t, schemaDDL(t, fresh.db), schemaDDL(t, upgraded.(*sqliteStore).db))
+	assert.Contains(t, tableNames(t, fresh.db), "regress_results")
+}
+
+func TestApplySchemaV3Error(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	require.Error(t, applySchemaV3(tx))
 }

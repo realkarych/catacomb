@@ -895,6 +895,17 @@ func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
+func TestRegressResultsForOnV2StoreReportsOutdated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v2.db")
+	seedV2DB(t, path)
+	s, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, err = s.RegressResultsFor("golden")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}
+
 func TestOpenSQLiteReadOnlyRelativePath(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -920,4 +931,56 @@ func TestOpenSQLiteReadOnlyAbsError(t *testing.T) {
 	_, err := OpenSQLiteReadOnly("x.db")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "abs")
+}
+
+func TestAppendRegressResultBeginError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.AppendRegressResult("base", json.RawMessage(`{}`))
+	require.Error(t, err)
+}
+
+func TestAppendRegressResultMissingTableError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE regress_results")
+	require.NoError(t, err)
+	_, err = s.AppendRegressResult("base", json.RawMessage(`{}`))
+	require.Error(t, err)
+}
+
+func TestAppendRegressResultInsertError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`CREATE TRIGGER block_regress BEFORE INSERT ON regress_results BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
+	require.NoError(t, err)
+	_, err = s.AppendRegressResult("base", json.RawMessage(`{}`))
+	require.Error(t, err)
+}
+
+func TestRegressResultsForQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.RegressResultsFor("base")
+	require.Error(t, err)
+}
+
+func TestRegressResultsForScanError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec("DROP TABLE regress_results")
+	require.NoError(t, err)
+	_, err = s.db.Exec("CREATE TABLE regress_results (baseline TEXT NOT NULL, seq TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (baseline, seq))")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO regress_results VALUES('base','not-an-int','{}')`)
+	require.NoError(t, err)
+	_, err = s.RegressResultsFor("base")
+	require.Error(t, err)
+}
+
+func TestScanRegressResultsScanError(t *testing.T) {
+	_, err := scanRegressResults("base", &fakeRows{bodies: []string{"x"}, scanErr: errors.New("scan")})
+	require.Error(t, err)
+}
+
+func TestScanRegressResultsIterError(t *testing.T) {
+	_, err := scanRegressResults("base", &fakeRows{errErr: errors.New("iter")})
+	require.Error(t, err)
 }

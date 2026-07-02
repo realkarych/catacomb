@@ -410,6 +410,9 @@ func (e *errStore) GetBaseline(string) (model.Baseline, bool, error) {
 func (e *errStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
 func (e *errStore) DeleteBaseline(string) error              { return nil }
 
+func (e *errStore) AppendRegressResult(string, json.RawMessage) (int, error) { return 0, nil }
+func (e *errStore) RegressResultsFor(string) ([]model.RegressResult, error)  { return nil, nil }
+
 func TestEvictTerminalAfterCooldown(t *testing.T) {
 	s := tempStore(t)
 	d := New(s)

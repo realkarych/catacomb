@@ -643,6 +643,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
 | `--json` | false | Emit the full report as JSON |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit 1) |
+| `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
 | `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
@@ -705,11 +706,84 @@ group, or `--min-support` below 1). Resolving a `name:` baseline on a store crea
 binary (schema v1) also exits `2` with a hint to run a write-path command (`catacomb up` or
 `baseline set`) to migrate the schema.
 
+#### Recording history
+
+`--record` appends the full comparison — candidate selector, thresholds, annotation specs, and the
+complete report — to the named baseline's append-only history, replayable later with
+[`trends`](#trends). It requires `--baseline name:<baseline>` (a `label:` group has no stable
+identity to append under, so `--record` with a `label:` baseline is an operational error) and opens
+the store read-write, migrating an older schema in the process. The record is appended *after* the
+verdict is rendered to stdout, and a failed append is itself an operational error (exit `2`) that
+takes precedence over the verdict: a regression that could not be durably recorded exits `2`, not
+`1`, so a broken store never masquerades as a clean regression signal.
+
+Sequence numbers are assigned atomically in a single statement, so a record is never silently
+overwritten. But concurrent `--record` writers against one store file — a fan-out CI matrix whose
+shards all record into the same database — can still collide on SQLite's write lock: a losing writer
+fails loudly with `SQLITE_BUSY` and exits `2` without corrupting the history, rather than blocking or
+tearing a record. Serialize the recorders (record from one shard, or gate on a lock) or give each
+shard its own store file.
+
 ```sh
 catacomb regress --baseline name:golden --candidate label:basket=checkout,variant=candidate
 catacomb regress --baseline label:variant=main --candidate label:variant=candidate --json
 catacomb regress --baseline name:golden --candidate label:variant=candidate \
   --annotation deepeval.tool_correctness
+catacomb regress --baseline name:golden --candidate label:variant=candidate --record
+```
+
+---
+
+### trends
+
+Show the recorded regression history for a baseline — the append-only trail written by
+`regress --record`.
+
+```sh
+catacomb trends <baseline> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--metric` | (empty) | Narrow to one total-scope metric: `duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `nodes`, or `error_rate` |
+| `--json` | false | Emit the history as JSON |
+
+Records print oldest-first by sequence number. Without `--metric`, the wide table prints one row per
+recorded run — `SEQ CREATED CANDIDATE VERDICT REGRESSIONS INSUFFICIENT DURATION_MS COST_USD
+ERROR_RATE` — a per-run scoreboard of the overall verdict, the finding counts, and the candidate
+run-total values. `--metric <m>` swaps to a narrowed table — `SEQ CREATED CANDIDATE VERDICT
+BASELINE-VALUE CANDIDATE-VALUE BAND` — tracking one total-scope metric's baseline value, candidate
+value, and noise band across the history so drift on a single axis is legible; a run whose report
+carries no total-scope finding for that metric renders `-` in those columns. Value cells are
+formatted to two decimals. `CREATED` is each record's `created_at` timestamp, formatted RFC3339 in
+UTC.
+
+Each record also stamps the baseline's `created_at` at record time. If a row was recorded against a
+different definition of the baseline than the one that exists now — the baseline was deleted and
+recreated (or re-`set`) under the same name — its `SEQ` cell carries a trailing `*` and a footnote
+`* recorded against a previous definition of this baseline` prints after the table, so a spliced
+history is never read as a continuous one.
+
+`--json` emits the raw stored history verbatim as `[{"seq":N,"record":<stored bytes>}]`: each
+`record` is the exact JSON body that was written, byte-for-byte, not a re-encoding. A body carries a
+schema version field `v` (currently `1`), the candidate selector, thresholds, annotation specs, the
+report, its own `created_at` (RFC3339 UTC), and a `baseline_created_at` stamp mirroring the
+baseline's `created_at` at record time — ready for dashboards or diffing scripts. A record whose `v`
+is not understood by this binary is an exit-`2` error naming the sequence and version (upgrade
+catacomb).
+
+Exit codes: `0` success, `2` operational error. An unknown `--metric` (outside the set above), an
+unknown baseline (`baseline not found`), a known baseline with no recorded runs (`has no
+recorded regress runs`), and a record written by a newer schema version are distinct exit-`2`
+errors, as are a missing store and one created by an older binary whose schema needs migrating (run
+a write-path command such as `catacomb up` or `baseline set`). `trends` opens the store read-only
+and never migrates it.
+
+```sh
+catacomb trends golden
+catacomb trends golden --metric error_rate
+catacomb trends golden --json
 ```
 
 ---

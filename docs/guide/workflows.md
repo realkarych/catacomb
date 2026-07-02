@@ -233,8 +233,38 @@ baseline, missing store, empty group) is `2`. Add `--strict` to also fail with `
 insufficient. A CI gate is then just:
 
 ```sh
-catacomb regress --baseline name:golden --candidate label:variant=candidate || exit 1
+catacomb regress --baseline name:golden --candidate label:variant=candidate --record || exit 1
 ```
+
+`--record` appends each comparison to the `golden` baseline's history (the flag needs a `name:`
+baseline), so every CI run leaves a durable, replayable record without changing the gate's verdict
+or exit code. If the append itself fails the command exits `2` rather than the verdict's `1`, so a
+broken store trips the gate instead of passing silently.
+
+In a fan-out CI matrix, serialize the recording: have a single shard run `--record` (or gate it on a
+lock), or give each shard its own store file. Concurrent `--record` writers on one store can collide
+on SQLite's write lock and fail loudly with `SQLITE_BUSY` (exit `2`, no corruption) rather than
+queue.
+
+### Watching drift over time
+
+With `--record` in the gate, each run accumulates in the baseline's append-only history. `trends`
+replays it oldest-first — one row per recorded comparison — so slow drift is visible even when no
+single run tripped the gate:
+
+```sh
+catacomb trends golden
+```
+
+Narrow to one total-scope metric to watch a single axis across the history — its baseline value,
+candidate value, and noise band per run:
+
+```sh
+catacomb trends golden --metric error_rate
+```
+
+`trends` reads the store read-only; see [`trends`](cli.md#trends) for the full table shapes, the
+`--json` form, and exit codes.
 
 ### Gate on external scores (optional)
 
