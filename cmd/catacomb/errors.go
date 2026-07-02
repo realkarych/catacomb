@@ -20,7 +20,18 @@ var (
 	ErrDaemonStop           = errors.New("failed to stop the catacomb daemon")
 	ErrDaemonAlreadyRunning = errors.New("a catacomb daemon is already running for this discovery path. Stop it first: catacomb down")
 	ErrConfirmationRequired = errors.New("refusing a destructive teardown without --yes in a non-interactive shell")
+	ErrBaselineNotFound     = errors.New("baseline not found")
+	ErrEmptyGroup           = errors.New("selector matched no runs")
+	errRegressionDetected   = errors.New("regression detected")
 )
+
+type operationalError struct{ err error }
+
+func (e *operationalError) Error() string { return e.err.Error() }
+
+func (e *operationalError) Unwrap() error { return e.err }
+
+func operational(err error) error { return &operationalError{err: err} }
 
 func renderErr(err error) string {
 	if errors.Is(err, ErrDiffInput) {

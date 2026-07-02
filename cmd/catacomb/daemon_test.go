@@ -51,6 +51,12 @@ func (f *failSinceStore) Close() error                                          
 func (f *failSinceStore) UpsertAnnotation(model.Annotation) error                    { return nil }
 func (f *failSinceStore) AnnotationsForExecution(string) ([]model.Annotation, error) { return nil, nil }
 func (f *failSinceStore) MoveAnnotations(string, string, string) error               { return nil }
+func (f *failSinceStore) UpsertBaseline(model.Baseline) error                        { return nil }
+func (f *failSinceStore) GetBaseline(string) (model.Baseline, bool, error) {
+	return model.Baseline{}, false, nil
+}
+func (f *failSinceStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
+func (f *failSinceStore) DeleteBaseline(string) error              { return nil }
 
 func openFailSince(config.StoreConfig) (store.Store, error) {
 	return &failSinceStore{}, nil

@@ -122,6 +122,88 @@ The web UI diff view has per-side phase pickers. It derives available phase name
 reading `marker` nodes from `GET /v1/sessions/{hash}/graph`, then calls `/v1/diff` with
 `aPhase`/`bPhase`. There is no separate phases listing endpoint.
 
+## Regression-testing a change
+
+When you change a pipeline component — a skill, an MCP tool, a prompt — two runs of the same
+task are two samples from a distribution, so a single `catacomb diff` cannot separate a real
+regression from sampling noise. `catacomb regress` compares two *groups* of repeated runs
+statistically and returns a CI-consumable verdict and exit code. See
+[ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) for the method.
+
+### Label two run groups
+
+Run the same basket `k` times per variant, tagging each run with a `--label` variant and a
+unique `--run-id`:
+
+```sh
+# Baseline variant, k repetitions
+for i in 1 2 3 4 5; do
+  catacomb run --run-id checkout-main-$i --label basket=checkout,variant=main \
+    -- claude -p "work the checkout task"
+done
+
+# Candidate variant, same basket, k repetitions
+for i in 1 2 3 4 5; do
+  catacomb run --run-id checkout-cand-$i --label basket=checkout,variant=candidate \
+    -- claude -p "work the checkout task"
+done
+```
+
+`--label` accepts a comma-separated `k=v` list or repeated flags; labels ride the child's hook
+and stream-json events to the daemon. See [ingestion.md](ingestion.md#run-labels) for label
+rules and caps.
+
+### Pin a baseline (optional)
+
+Once a group is "golden," save it so it survives later label churn. `baseline set` resolves the
+selector against the store now and stores the matching run IDs under a name:
+
+```sh
+catacomb baseline set golden --label basket=checkout --label variant=main
+catacomb baseline list
+```
+
+### Compare and gate
+
+Compare two label selectors directly, or reference the saved baseline by name. Both selector
+forms — `label:k=v[,k=v...]` and `name:<baseline>` — are interchangeable on either side:
+
+```sh
+# Both sides by label selector
+catacomb regress \
+  --baseline label:basket=checkout,variant=main \
+  --candidate label:basket=checkout,variant=candidate
+
+# Baseline by name, candidate by label
+catacomb regress --baseline name:golden \
+  --candidate label:basket=checkout,variant=candidate --json
+```
+
+The summary line reports the baseline and candidate run counts, alignment coverage, and the
+overall verdict; the table lists per-scope findings (run totals, checkpoint phases, steps) with a
+verdict, the baseline and candidate values, and the noise band. The overall verdict maps to the
+exit code — `ok` is `0`, `regression` is `1`, an operational error (bad selector, unknown
+baseline, missing store, empty group) is `2`. Add `--strict` to also fail with `1` when data is
+insufficient. A CI gate is then just:
+
+```sh
+catacomb regress --baseline name:golden --candidate label:variant=candidate || exit 1
+```
+
+### Practical notes
+
+- **Use `k` ≥ 5.** Minimum support is 3 (`--min-support`), but Wilson intervals over only three
+  runs are wide, so presence and error-rate flips usually land as `notable` or `insufficient`
+  rather than a firm `regression`. Five or more repetitions per variant is the practical floor
+  for a presence flip to reach significance.
+- **Lean on checkpoints when the change rewrites prompts.** Changing the component under test
+  alters some prompt hashes, so `step_key` alignment degrades and step-level coverage drops.
+  Below `--coverage-floor` (default 0.7) step verdicts are downgraded to `notable`, and the
+  checkpoint (phase) level — robust to step drift by construction — carries the verdict. Mark
+  task phases with `catacomb mark` (or `mcp__catacomb__mark`) so there is always a stable,
+  noise-robust comparison axis; see
+  [Checkpoints and phase-scoped diff](#checkpoints-and-phase-scoped-diff).
+
 ## Annotations
 
 Attach structured metadata to any node. Annotations require the daemon to be started

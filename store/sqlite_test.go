@@ -814,3 +814,83 @@ func TestMoveAnnotationsInsertError(t *testing.T) {
 	err = s.MoveAnnotations("e1", "from", "to")
 	require.Error(t, err)
 }
+
+func TestUpsertBaselineMarshalError(t *testing.T) {
+	s := fileStore(t)
+	s.marshal = func(any) ([]byte, error) { return nil, errors.New("marshal") }
+	assert.Error(t, s.UpsertBaseline(model.Baseline{Name: "b"}))
+}
+
+func TestUpsertBaselineExecError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	assert.Error(t, s.UpsertBaseline(model.Baseline{Name: "b"}))
+}
+
+func TestGetBaselineQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, _, err := s.GetBaseline("b")
+	assert.Error(t, err)
+}
+
+func TestGetBaselineDecodeError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`INSERT INTO baselines(name, body) VALUES('b','{not json}')`)
+	require.NoError(t, err)
+	_, _, err = s.GetBaseline("b")
+	assert.Error(t, err)
+}
+
+func TestListBaselinesQueryError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	_, err := s.ListBaselines()
+	assert.Error(t, err)
+}
+
+func TestListBaselinesDecodeError(t *testing.T) {
+	s := fileStore(t)
+	_, err := s.db.Exec(`INSERT INTO baselines(name, body) VALUES('b','{not json}')`)
+	require.NoError(t, err)
+	_, err = s.ListBaselines()
+	assert.Error(t, err)
+}
+
+func TestScanBaselinesScanError(t *testing.T) {
+	_, err := scanBaselines(&fakeRows{bodies: []string{"x"}, scanErr: errors.New("scan")})
+	assert.Error(t, err)
+}
+
+func TestScanBaselinesIterError(t *testing.T) {
+	_, err := scanBaselines(&fakeRows{errErr: errors.New("iter")})
+	assert.Error(t, err)
+}
+
+func TestDeleteBaselineExecError(t *testing.T) {
+	s := fileStore(t)
+	require.NoError(t, s.db.Close())
+	assert.Error(t, s.DeleteBaseline("b"))
+}
+
+func TestGetBaselineOnV1StoreReportsOutdated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	seedV1DB(t, path)
+	s, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, _, err = s.GetBaseline("x")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}
+
+func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	seedV1DB(t, path)
+	s, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, err = s.ListBaselines()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}

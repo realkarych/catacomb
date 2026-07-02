@@ -54,6 +54,23 @@ func storeGraphsWithIDs(s store.Store, pricer reduce.Pricer) ([]*reduce.Graph, [
 }
 
 func loadRunGroup(s store.Store, pricer reduce.Pricer, selector map[string]string) ([]aggregate.RunGraph, error) {
+	return loadRunGroupBy(s, pricer, func(r model.Run) bool {
+		return model.MatchLabels(r.Labels, selector)
+	})
+}
+
+func loadRunGroupByIDs(s store.Store, pricer reduce.Pricer, ids []string) ([]aggregate.RunGraph, error) {
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	return loadRunGroupBy(s, pricer, func(r model.Run) bool {
+		_, ok := want[r.ID]
+		return ok
+	})
+}
+
+func loadRunGroupBy(s store.Store, pricer reduce.Pricer, keep func(model.Run) bool) ([]aggregate.RunGraph, error) {
 	graphs, ids, err := storeGraphsWithIDs(s, pricer)
 	if err != nil {
 		return nil, err
@@ -67,7 +84,7 @@ func loadRunGroup(s store.Store, pricer reduce.Pricer, selector map[string]strin
 	}
 	var out []aggregate.RunGraph
 	for _, r := range collectRuns(graphs) {
-		if !model.MatchLabels(r.Labels, selector) {
+		if !keep(r) {
 			continue
 		}
 		nodes, edges := collectSnapshot(graphs, r.ID)

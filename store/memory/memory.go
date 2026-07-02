@@ -24,6 +24,7 @@ type Store struct {
 	runs        map[string]model.Run
 	annotations map[annKey]model.Annotation
 	cursors     map[string]model.TailCursor
+	baselines   map[string]model.Baseline
 	quarantine  int64
 }
 
@@ -34,6 +35,7 @@ func New() *Store {
 		runs:        map[string]model.Run{},
 		annotations: map[annKey]model.Annotation{},
 		cursors:     map[string]model.TailCursor{},
+		baselines:   map[string]model.Baseline{},
 	}
 }
 
@@ -241,6 +243,41 @@ func (s *Store) MoveAnnotations(executionID, fromKey, toKey string) error {
 	for k, a := range moved {
 		s.annotations[k] = a
 	}
+	return nil
+}
+
+func (s *Store) UpsertBaseline(b model.Baseline) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.baselines[b.Name] = b
+	return nil
+}
+
+func (s *Store) GetBaseline(name string) (model.Baseline, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.baselines[name]
+	return b, ok, nil
+}
+
+func (s *Store) ListBaselines() ([]model.Baseline, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Baseline, 0, len(s.baselines))
+	for _, b := range s.baselines {
+		out = append(out, b)
+	}
+	slices.SortFunc(out, func(a, b model.Baseline) int { return cmp.Compare(a.Name, b.Name) })
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func (s *Store) DeleteBaseline(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.baselines, name)
 	return nil
 }
 

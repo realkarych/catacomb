@@ -403,6 +403,12 @@ func (e *errStore) Close() error                                                
 func (e *errStore) UpsertAnnotation(model.Annotation) error                      { return nil }
 func (e *errStore) AnnotationsForExecution(string) ([]model.Annotation, error)   { return nil, nil }
 func (e *errStore) MoveAnnotations(string, string, string) error                 { return nil }
+func (e *errStore) UpsertBaseline(model.Baseline) error                          { return nil }
+func (e *errStore) GetBaseline(string) (model.Baseline, bool, error) {
+	return model.Baseline{}, false, nil
+}
+func (e *errStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
+func (e *errStore) DeleteBaseline(string) error              { return nil }
 
 func TestEvictTerminalAfterCooldown(t *testing.T) {
 	s := tempStore(t)
