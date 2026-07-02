@@ -21,12 +21,13 @@ const (
 )
 
 type regressFlags struct {
-	baseline   string
-	candidate  string
-	dbPath     string
-	asJSON     bool
-	strict     bool
-	thresholds regress.Thresholds
+	baseline    string
+	candidate   string
+	dbPath      string
+	asJSON      bool
+	strict      bool
+	annotations []string
+	thresholds  regress.Thresholds
 }
 
 func newRegressCmd() *cobra.Command {
@@ -50,6 +51,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat insufficient data as failure (exit 1)")
+	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
 	cmd.Flags().IntVar(&f.thresholds.MinSupport, "min-support", def.MinSupport, "minimum runs per group for a trusted comparison")
 	cmd.Flags().Float64Var(&f.thresholds.PresenceDelta, "presence-delta", def.PresenceDelta, "presence rate delta threshold")
 	cmd.Flags().Float64Var(&f.thresholds.ErrorRateDelta, "error-delta", def.ErrorRateDelta, "error rate delta threshold")
@@ -61,6 +63,10 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.Pricer, f regressFlags) error {
 	if f.thresholds.MinSupport < 1 {
 		return operational(fmt.Errorf("regress: --min-support must be >= 1, got %d", f.thresholds.MinSupport))
+	}
+	specs, keys, err := parseAnnotationFlags(f.annotations)
+	if err != nil {
+		return operational(err)
 	}
 	s, err := openReadStore(open, f.dbPath)
 	if err != nil {
@@ -84,10 +90,15 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		return operational(fmt.Errorf("regress candidate %q: %w", f.candidate, ErrEmptyGroup))
 	}
 
+	opts := aggregate.Options{AnnotationKeys: keys}
+	baseAgg := aggregate.Aggregate(baseGroup, opts)
+	candAgg := aggregate.Aggregate(candGroup, opts)
 	rep := regress.Compare(regress.Input{
-		Baseline:  aggregate.Aggregate(baseGroup, aggregate.Options{}),
-		Candidate: aggregate.Aggregate(candGroup, aggregate.Options{}),
+		Baseline:    baseAgg,
+		Candidate:   candAgg,
+		Annotations: specs,
 	}, f.thresholds)
+	warnUnfiredAnnotations(errOut, specs, baseAgg, candAgg)
 
 	if f.asJSON {
 		if err := regress.RenderJSON(rep, out); err != nil {
@@ -97,6 +108,70 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		regress.RenderHuman(rep, out)
 	}
 	return verdictError(rep, f.strict)
+}
+
+func parseAnnotationFlags(raw []string) ([]regress.AnnotationSpec, []string, error) {
+	if len(raw) == 0 {
+		return nil, nil, nil
+	}
+	specs := make([]regress.AnnotationSpec, 0, len(raw))
+	keys := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, v := range raw {
+		spec, err := parseAnnotationSpec(v)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, dup := seen[spec.Key]; dup {
+			return nil, nil, fmt.Errorf("duplicate --annotation key %q", spec.Key)
+		}
+		seen[spec.Key] = struct{}{}
+		specs = append(specs, spec)
+		keys = append(keys, spec.Key)
+	}
+	return specs, keys, nil
+}
+
+func parseAnnotationSpec(v string) (regress.AnnotationSpec, error) {
+	key := v
+	higherBetter := true
+	if i := strings.LastIndex(v, ":"); i >= 0 {
+		switch v[i+1:] {
+		case "higher-better":
+			key = v[:i]
+		case "lower-better":
+			higherBetter = false
+			key = v[:i]
+		default:
+			return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: unknown direction %q (want higher-better or lower-better)", v, v[i+1:])
+		}
+	}
+	if key == "" {
+		return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: empty key", v)
+	}
+	owner, rest, found := strings.Cut(key, ".")
+	if !found || owner == "" || rest == "" || strings.Contains(rest, ".") {
+		return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: key %q must be owner.key", v, key)
+	}
+	return regress.AnnotationSpec{Key: key, HigherBetter: higherBetter}, nil
+}
+
+func warnUnfiredAnnotations(errOut io.Writer, specs []regress.AnnotationSpec, base, cand aggregate.Report) {
+	for _, spec := range specs {
+		if annotationFired(base, spec.Key) || annotationFired(cand, spec.Key) {
+			continue
+		}
+		fmt.Fprintf(errOut, "warning: annotation %q produced no findings (key never fired on any step; check the key and that scores landed on step-key-eligible nodes)\n", spec.Key)
+	}
+}
+
+func annotationFired(rep aggregate.Report, key string) bool {
+	for _, r := range rep.Steps {
+		if _, ok := r.Annotations[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func verdictError(rep regress.Report, strict bool) error {

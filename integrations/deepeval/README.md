@@ -16,18 +16,20 @@ both apply only to Go packages.
 
 ## Producing the input
 
-Export a session from catacomb with payload access enabled:
+Export a session from catacomb:
 
 ```bash
 catacomb export --to jsonl \
   --run <run-id> \
-  --allow-payload-access \
   --out session.jsonl
 ```
 
-Without `--allow-payload-access` the payload fields are absent; tool
-`input_parameters` and `output` will be `null` in that case, which limits
-evaluation to name-match mode.
+The export includes node payload content (tool inputs and outputs,
+secret-redacted) automatically whenever the ingest source captured it — no
+flag is needed. The daemon's `--allow-payload-access` flag gates only the
+live payload HTTP endpoint, not the export. When a payload was not captured,
+tool `input_parameters` and `output` will be `null`, which limits evaluation
+to name-match mode.
 
 ## Writing expected-tools JSON
 

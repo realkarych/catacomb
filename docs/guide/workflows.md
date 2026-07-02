@@ -236,6 +236,61 @@ insufficient. A CI gate is then just:
 catacomb regress --baseline name:golden --candidate label:variant=candidate || exit 1
 ```
 
+### Gate on external scores (optional)
+
+Catacomb compares deterministic observables (status, presence, duration, cost, tokens); it does
+not judge output *quality*. To fold a quality signal into the same gate, score the runs with an
+external evaluator and write the verdict back as a numeric annotation, then let `regress` treat it
+as one more metric.
+
+1. **Score the runs.** Export each session and run the DeepEval integration under
+   [`integrations/deepeval`](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval),
+   whose default `ToolCorrectnessMetric` path is deterministic and offline (no LLM judge, no API
+   key). The export carries node payload content (tool inputs and outputs, secret-redacted)
+   automatically whenever the ingest source captured it — no extra flag:
+
+   ```sh
+   catacomb export --to jsonl --run <run-id> --out session.jsonl
+   catacomb-deepeval session.jsonl --run <run-id> --expected expected.json
+   ```
+
+2. **Write the score back as an annotation.** Scores must land on step-key-eligible nodes —
+   `tool_call`, `mcp_call`, `skill`, or `subagent` — or they never reach a step row and the gate
+   silently passes. Fetch the session graph and pick the node that performs the step under test
+   (the same logical call recurs across the basket, so its `step_key` aligns run-to-run):
+
+   ```sh
+   curl -s -H "Authorization: Bearer <token>" \
+     "http://127.0.0.1:<port>/v1/sessions/<hash>/graph" |
+     jq -r '.[] | select(.kind == "node_upsert" and .node.step_key != null)
+            | [.node.id, .node.type, .node.name] | @tsv'
+   ```
+
+   With the daemon started `--allow-annotations` (see [Annotations](#annotations)), POST the
+   score onto the chosen node id:
+
+   ```sh
+   curl -H "Authorization: Bearer <token>" \
+     -X POST "http://127.0.0.1:<port>/v1/sessions/<hash>/nodes/<nodeId>/annotations" \
+     -H "Content-Type: application/json" \
+     -d '{"owner":"deepeval","key":"tool_correctness","value":0.92}'
+   ```
+
+3. **Gate on it.** Add `--annotation deepeval.tool_correctness` (higher-better by default; append
+   `:lower-better` for a penalty-style score). The score aggregates per `step_key` and flags with
+   the metric noise band, so a candidate whose median score drops out of the baseline band is a
+   `regression`:
+
+   ```sh
+   catacomb regress --baseline name:golden --candidate label:variant=candidate \
+     --annotation deepeval.tool_correctness --strict
+   ```
+
+   Annotation gating is step-scoped only (per ADR-0022); a key sampled below `--min-support` runs,
+   or present on only one side, is reported `insufficient` rather than guessed. In CI, add
+   `--strict` (as above) so an under-annotated group fails the gate with exit `1` instead of
+   passing silently.
+
 ### Practical notes
 
 - **Use `k` ≥ 5.** Minimum support is 3 (`--min-support`), but Wilson intervals over only three

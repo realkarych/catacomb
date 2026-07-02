@@ -9,9 +9,15 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
+type AnnotationSpec struct {
+	Key          string `json:"key"`
+	HigherBetter bool   `json:"higher_better"`
+}
+
 type Input struct {
-	Baseline  aggregate.Report
-	Candidate aggregate.Report
+	Baseline    aggregate.Report
+	Candidate   aggregate.Report
+	Annotations []AnnotationSpec
 }
 
 type Coverage struct {
@@ -45,8 +51,8 @@ func Compare(in Input, th Thresholds) Report {
 	rep.StepsTrusted = rep.Coverage.Steps >= th.CoverageFloor
 
 	findings := totalsFindings(b, c, th)
-	findings = append(findings, rowFindings("phase", b.Phases, c.Phases, b.Runs, c.Runs, th, false, 0)...)
-	findings = append(findings, rowFindings("step", b.Steps, c.Steps, b.Runs, c.Runs, th, !rep.StepsTrusted, rep.Coverage.Steps)...)
+	findings = append(findings, rowFindings("phase", b.Phases, c.Phases, b.Runs, c.Runs, th, false, 0, nil)...)
+	findings = append(findings, rowFindings("step", b.Steps, c.Steps, b.Runs, c.Runs, th, !rep.StepsTrusted, rep.Coverage.Steps, in.Annotations)...)
 
 	findings = filterFindings(findings)
 	sortFindings(findings)
@@ -89,7 +95,7 @@ func totalsFindings(b, c aggregate.Report, th Thresholds) []Finding {
 	return out
 }
 
-func rowFindings(scope string, bRows, cRows []aggregate.Row, bRuns, cRuns int, th Thresholds, active bool, cov float64) []Finding {
+func rowFindings(scope string, bRows, cRows []aggregate.Row, bRuns, cRuns int, th Thresholds, active bool, cov float64, specs []AnnotationSpec) []Finding {
 	bMap := rowMap(bRows)
 	cMap := rowMap(cRows)
 	var out []Finding
@@ -124,8 +130,45 @@ func rowFindings(scope string, bRows, cRows []aggregate.Row, bRuns, cRuns int, t
 			applyDowngrade(active, &f, cov, th.CoverageFloor)
 			out = append(out, f)
 		}
+
+		for _, spec := range specs {
+			f, ok := annotationFinding(scope, key, name, spec, br, cr, th)
+			if !ok {
+				continue
+			}
+			applyDowngrade(active, &f, cov, th.CoverageFloor)
+			out = append(out, f)
+		}
 	}
 	return out
+}
+
+func annotationFinding(scope, key, name string, spec AnnotationSpec, br, cr aggregate.Row, th Thresholds) (Finding, bool) {
+	b, bok := br.Annotations[spec.Key]
+	c, cok := cr.Annotations[spec.Key]
+	switch {
+	case bok && cok:
+		return compareAnnotation(scope, key, name, spec, b, c, th), true
+	case !bok && !cok:
+		return Finding{}, false
+	default:
+		return annotationAbsentFinding(scope, key, name, spec, bok), true
+	}
+}
+
+func annotationAbsentFinding(scope, key, name string, spec AnnotationSpec, bok bool) Finding {
+	detail := "annotation absent in candidate"
+	if !bok {
+		detail = "annotation absent in baseline"
+	}
+	return Finding{
+		Scope:   scope,
+		Key:     key,
+		Name:    name,
+		Metric:  "ann:" + spec.Key,
+		Verdict: VerdictInsufficient,
+		Detail:  detail,
+	}
 }
 
 func missingMetricsFinding(scope, key, name string, bok bool) Finding {

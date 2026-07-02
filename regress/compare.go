@@ -132,3 +132,17 @@ func compareMetric(scope, key, name, metric string, b, c aggregate.MetricStats, 
 	}
 	return f
 }
+
+func compareAnnotation(scope, key, name string, spec AnnotationSpec, b, c aggregate.MetricStats, th Thresholds) Finding {
+	f := compareMetric(scope, key, name, "ann:"+spec.Key, b, c, th)
+	if !spec.HigherBetter {
+		return f
+	}
+	switch f.Verdict {
+	case VerdictRegression:
+		f.Verdict = VerdictImprovement
+	case VerdictImprovement:
+		f.Verdict = VerdictRegression
+	}
+	return f
+}

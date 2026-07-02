@@ -292,6 +292,112 @@ func TestCompareOverallOKWithInsufficientAndNotable(t *testing.T) {
 	assert.Equal(t, VerdictOK, r.OverallVerdict)
 }
 
+func annStep(score aggregate.MetricStats) aggregate.Row {
+	r := presentRow("s1", "step-one", 5)
+	r.Annotations = map[string]aggregate.MetricStats{"eval.score": score}
+	return r
+}
+
+func TestCompareAnnotationRegressionTrusted(t *testing.T) {
+	t.Parallel()
+	in := Input{
+		Baseline:    aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.8, 0.75, 0.85))}},
+		Candidate:   aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.4, 0.35, 0.45))}},
+		Annotations: []AnnotationSpec{{Key: "eval.score", HigherBetter: true}},
+	}
+	r := Compare(in, DefaultThresholds())
+	require.True(t, r.StepsTrusted)
+	f := findFinding(r.Findings, "step", "s1", "ann:eval.score")
+	require.NotNil(t, f)
+	assert.Equal(t, VerdictRegression, f.Verdict)
+	assert.Empty(t, f.Detail)
+	assert.Equal(t, 1, r.Regressions)
+	assert.Equal(t, VerdictRegression, r.OverallVerdict)
+}
+
+func TestCompareAnnotationRegressionDowngraded(t *testing.T) {
+	t.Parallel()
+	in := Input{
+		Baseline:    aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.8, 0.75, 0.85)), presentRow("s2", "two", 5)}},
+		Candidate:   aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.4, 0.35, 0.45))}},
+		Annotations: []AnnotationSpec{{Key: "eval.score", HigherBetter: true}},
+	}
+	r := Compare(in, DefaultThresholds())
+	require.False(t, r.StepsTrusted)
+	f := findFinding(r.Findings, "step", "s1", "ann:eval.score")
+	require.NotNil(t, f)
+	assert.Equal(t, VerdictNotable, f.Verdict)
+	assert.Equal(t, "step alignment coverage 0.50 below floor 0.70", f.Detail)
+	assert.Equal(t, 0, r.Regressions)
+}
+
+func TestCompareAnnotationImprovementTrusted(t *testing.T) {
+	t.Parallel()
+	in := Input{
+		Baseline:    aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.8, 0.75, 0.85))}},
+		Candidate:   aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 1.5, 1.4, 1.6))}},
+		Annotations: []AnnotationSpec{{Key: "eval.score", HigherBetter: true}},
+	}
+	r := Compare(in, DefaultThresholds())
+	f := findFinding(r.Findings, "step", "s1", "ann:eval.score")
+	require.NotNil(t, f)
+	assert.Equal(t, VerdictImprovement, f.Verdict)
+}
+
+func TestCompareAnnotationAbsentOneSide(t *testing.T) {
+	t.Parallel()
+	spec := []AnnotationSpec{{Key: "eval.score", HigherBetter: true}}
+	withAnn := annStep(metric(5, 0.8, 0.75, 0.85))
+	plain := presentRow("s1", "step-one", 5)
+
+	cases := []struct {
+		name       string
+		base, cand aggregate.Row
+		wantDetail string
+	}{
+		{"candidate_absent", withAnn, plain, "annotation absent in candidate"},
+		{"baseline_absent", plain, withAnn, "annotation absent in baseline"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := Input{
+				Baseline:    aggregate.Report{Runs: 5, Steps: []aggregate.Row{tc.base}},
+				Candidate:   aggregate.Report{Runs: 5, Steps: []aggregate.Row{tc.cand}},
+				Annotations: spec,
+			}
+			r := Compare(in, DefaultThresholds())
+			f := findFinding(r.Findings, "step", "s1", "ann:eval.score")
+			require.NotNil(t, f)
+			assert.Equal(t, VerdictInsufficient, f.Verdict)
+			assert.Equal(t, tc.wantDetail, f.Detail)
+		})
+	}
+}
+
+func TestCompareAnnotationAbsentBoth(t *testing.T) {
+	t.Parallel()
+	in := Input{
+		Baseline:    aggregate.Report{Runs: 5, Steps: []aggregate.Row{presentRow("s1", "step-one", 5)}},
+		Candidate:   aggregate.Report{Runs: 5, Steps: []aggregate.Row{presentRow("s1", "step-one", 5)}},
+		Annotations: []AnnotationSpec{{Key: "eval.score", HigherBetter: true}},
+	}
+	r := Compare(in, DefaultThresholds())
+	assert.Nil(t, findFinding(r.Findings, "step", "s1", "ann:eval.score"))
+}
+
+func TestCompareAnnotationNoSpecsNoFindings(t *testing.T) {
+	t.Parallel()
+	in := Input{
+		Baseline:  aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.8, 0.75, 0.85))}},
+		Candidate: aggregate.Report{Runs: 5, Steps: []aggregate.Row{annStep(metric(5, 0.4, 0.35, 0.45))}},
+	}
+	r := Compare(in, DefaultThresholds())
+	for _, f := range r.Findings {
+		assert.NotEqual(t, "ann:eval.score", f.Metric)
+	}
+}
+
 func TestCompareDeterministicOrder(t *testing.T) {
 	t.Parallel()
 	build := func(phases []aggregate.Row) Input {

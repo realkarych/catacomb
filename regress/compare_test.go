@@ -151,3 +151,75 @@ func TestCompareMetricInsufficientDetail(t *testing.T) {
 		aggregate.MetricStats{N: 2}, aggregate.MetricStats{N: 5, Median: 100}, th)
 	assert.Equal(t, "baseline n=2 below min support 3", f.Detail)
 }
+
+func TestCompareAnnotation(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	base := aggregate.MetricStats{N: 5, Median: 0.8, P25: 0.75, P75: 0.85}
+	cases := []struct {
+		name        string
+		spec        AnnotationSpec
+		baseline    aggregate.MetricStats
+		candidate   aggregate.MetricStats
+		wantVerdict Verdict
+		wantBandLo  float64
+		wantBandHi  float64
+	}{
+		{
+			"higher_better_regression",
+			AnnotationSpec{Key: "eval.score", HigherBetter: true},
+			base,
+			aggregate.MetricStats{N: 5, Median: 0.4},
+			VerdictRegression, 0.6, 1.0,
+		},
+		{
+			"higher_better_improvement",
+			AnnotationSpec{Key: "eval.score", HigherBetter: true},
+			base,
+			aggregate.MetricStats{N: 5, Median: 1.5},
+			VerdictImprovement, 0.6, 1.0,
+		},
+		{
+			"higher_better_ok",
+			AnnotationSpec{Key: "eval.score", HigherBetter: true},
+			base,
+			aggregate.MetricStats{N: 5, Median: 0.9},
+			VerdictOK, 0.6, 1.0,
+		},
+		{
+			"lower_better_delegates_regression",
+			AnnotationSpec{Key: "eval.score", HigherBetter: false},
+			base,
+			aggregate.MetricStats{N: 5, Median: 1.5},
+			VerdictRegression, 0.6, 1.0,
+		},
+		{
+			"lower_better_delegates_improvement",
+			AnnotationSpec{Key: "eval.score", HigherBetter: false},
+			base,
+			aggregate.MetricStats{N: 5, Median: 0.4},
+			VerdictImprovement, 0.6, 1.0,
+		},
+		{
+			"insufficient_passthrough_higher_better",
+			AnnotationSpec{Key: "eval.score", HigherBetter: true},
+			aggregate.MetricStats{N: 2, Median: 0.8, P25: 0.75, P75: 0.85},
+			aggregate.MetricStats{N: 5, Median: 0.4},
+			VerdictInsufficient, 0, 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := compareAnnotation("step", "s1", "step-one", tc.spec, tc.baseline, tc.candidate, th)
+			assert.Equal(t, tc.wantVerdict, f.Verdict)
+			assert.Equal(t, "ann:eval.score", f.Metric)
+			assert.Equal(t, "step", f.Scope)
+			assert.Equal(t, "s1", f.Key)
+			assert.Equal(t, "step-one", f.Name)
+			assert.InDelta(t, tc.wantBandLo, f.BandLo, 1e-9)
+			assert.InDelta(t, tc.wantBandHi, f.BandHi, 1e-9)
+			assert.InDelta(t, tc.candidate.Median-tc.baseline.Median, f.Delta, 1e-9)
+		})
+	}
+}
