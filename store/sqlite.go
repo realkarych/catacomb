@@ -66,6 +66,9 @@ const (
 	selectBaseline               = `SELECT body FROM baselines WHERE name = ?`
 	selectBaselines              = `SELECT body FROM baselines ORDER BY name`
 	deleteBaseline               = `DELETE FROM baselines WHERE name = ?`
+	selectMaxRegressSeq          = `SELECT MAX(seq) FROM regress_results WHERE baseline = ?`
+	insertRegressResult          = `INSERT INTO regress_results(baseline, seq, body) VALUES(?,?,?)`
+	selectRegressResults         = `SELECT seq, body FROM regress_results WHERE baseline = ? ORDER BY seq`
 )
 
 func OpenSQLite(path string) (Store, error) {
@@ -561,6 +564,53 @@ func (s *sqliteStore) DeleteBaseline(name string) error {
 		return fmt.Errorf("store.DeleteBaseline: %w", err)
 	}
 	return nil
+}
+
+func (s *sqliteStore) AppendRegressResult(baseline string, body json.RawMessage) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("store.AppendRegressResult begin: %w", err)
+	}
+	var maxSeq sql.NullInt64
+	if err := tx.QueryRow(selectMaxRegressSeq, baseline).Scan(&maxSeq); err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("store.AppendRegressResult max: %w", err)
+	}
+	seq := int(maxSeq.Int64) + 1
+	if _, err := tx.Exec(insertRegressResult, baseline, seq, string(body)); err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("store.AppendRegressResult insert: %w", err)
+	}
+	return seq, tx.Commit()
+}
+
+func (s *sqliteStore) RegressResultsFor(baseline string) ([]model.RegressResult, error) {
+	rows, err := s.db.Query(selectRegressResults, baseline)
+	if err != nil {
+		return nil, fmt.Errorf("store.RegressResultsFor: %w", err)
+	}
+	out, err := scanRegressResults(baseline, rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func scanRegressResults(baseline string, rows rowScanner) ([]model.RegressResult, error) {
+	defer func() { _ = rows.Close() }()
+	var out []model.RegressResult
+	for rows.Next() {
+		var seq int
+		var body string
+		if err := rows.Scan(&seq, &body); err != nil {
+			return nil, fmt.Errorf("store.RegressResultsFor scan: %w", err)
+		}
+		out = append(out, model.RegressResult{Baseline: baseline, Seq: seq, Body: json.RawMessage(body)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.RegressResultsFor rows: %w", err)
+	}
+	return out, nil
 }
 
 func isMissingBaselinesTable(err error) bool {
