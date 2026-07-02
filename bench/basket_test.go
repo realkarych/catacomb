@@ -136,3 +136,47 @@ func TestCellsEmptyWhenNoReps(t *testing.T) {
 	b := bench.Basket{Name: "n", Reps: 0, Tasks: []bench.Task{{ID: "t"}}, Variants: []bench.Variant{{ID: "v"}}}
 	assert.Empty(t, b.Cells())
 }
+
+func TestCellsNilWhenNegativeReps(t *testing.T) {
+	b := bench.Basket{Name: "n", Reps: -1, Tasks: []bench.Task{{ID: "t"}}, Variants: []bench.Variant{{ID: "v"}}}
+	assert.Nil(t, b.Cells())
+}
+
+func TestLoadRunIDCollision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collide.yaml")
+	body := `basket: c
+reps: 1
+tasks:
+  - id: a-b
+    cmd: ["echo"]
+  - id: a
+    cmd: ["echo"]
+variants:
+  - id: c
+  - id: b-c
+`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	_, _, err := bench.Load(path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, bench.ErrRunIDCollision)
+	assert.Contains(t, err.Error(), `run-id collision: task "a-b"/variant "c" and task "a"/variant "b-c"`)
+}
+
+func TestLoadDashIDsNoCollision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dashy.yaml")
+	body := `basket: multi-word-basket
+reps: 1
+tasks:
+  - id: add-item
+    cmd: ["echo"]
+  - id: remove-item
+    cmd: ["echo"]
+variants:
+  - id: base-line
+  - id: cand-idate
+`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	b, _, err := bench.Load(path)
+	require.NoError(t, err)
+	assert.Len(t, b.Cells(), 4)
+}

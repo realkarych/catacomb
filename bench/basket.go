@@ -24,6 +24,7 @@ var (
 	ErrIDLen           = errors.New("bench: id exceeds 256 bytes")
 	ErrDuplicateID     = errors.New("bench: duplicate id")
 	ErrEmptyCmd        = errors.New("bench: task cmd is empty")
+	ErrRunIDCollision  = errors.New("bench: run-id collision")
 )
 
 type Task struct {
@@ -91,7 +92,32 @@ func validate(b Basket) error {
 	if err := validateTasks(b.Tasks); err != nil {
 		return err
 	}
-	return validateVariants(b.Variants)
+	if err := validateVariants(b.Variants); err != nil {
+		return err
+	}
+	return validateRunIDs(b)
+}
+
+func validateRunIDs(b Basket) error {
+	type pair struct{ task, variant string }
+	seen := make(map[string]pair, len(b.Tasks)*len(b.Variants))
+	for _, t := range b.Tasks {
+		for _, v := range b.Variants {
+			id := runID(b.Name, t.ID, v.ID, 1)
+			if prev, dup := seen[id]; dup {
+				return fmt.Errorf(
+					"bench.Load: %w: task %q/variant %q and task %q/variant %q",
+					ErrRunIDCollision, prev.task, prev.variant, t.ID, v.ID,
+				)
+			}
+			seen[id] = pair{task: t.ID, variant: v.ID}
+		}
+	}
+	return nil
+}
+
+func runID(basket, task, variant string, rep int) string {
+	return fmt.Sprintf("bench-%s-%s-%s-r%d", basket, task, variant, rep)
 }
 
 func validateTasks(tasks []Task) error {
@@ -132,6 +158,9 @@ func checkID(kind string, idx int, id string, seen map[string]struct{}) error {
 }
 
 func (b Basket) Cells() []Cell {
+	if b.Reps < 1 {
+		return nil
+	}
 	cells := make([]Cell, 0, len(b.Tasks)*len(b.Variants)*b.Reps)
 	for _, t := range b.Tasks {
 		for _, v := range b.Variants {
@@ -140,7 +169,7 @@ func (b Basket) Cells() []Cell {
 					Task:    t,
 					Variant: v,
 					Rep:     rep,
-					RunID:   fmt.Sprintf("bench-%s-%s-%s-r%d", b.Name, t.ID, v.ID, rep),
+					RunID:   runID(b.Name, t.ID, v.ID, rep),
 					Labels: map[string]string{
 						"basket":  b.Name,
 						"task":    t.ID,
