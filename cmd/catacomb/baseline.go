@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -74,6 +75,12 @@ func newBaselineRmCmd() *cobra.Command {
 }
 
 func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath, name string, labels []string) error {
+	if err := validateBaselineName(name); err != nil {
+		return operational(err)
+	}
+	if len(labels) == 0 {
+		return operational(fmt.Errorf("baseline set %q: at least one --label is required", name))
+	}
 	if err := validateLabelTerms(labels); err != nil {
 		return err
 	}
@@ -92,16 +99,33 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 		return fmt.Errorf("baseline set %q: %w", name, ErrEmptyGroup)
 	}
 	ids := make([]string, 0, len(group))
+	repro := make(map[string]*model.ReproMeta, len(group))
 	for _, rg := range group {
 		ids = append(ids, rg.Run.ID)
+		if rg.Run.Repro != nil {
+			repro[rg.Run.ID] = rg.Run.Repro
+		}
 	}
 	sort.Strings(ids)
-	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn()}
+	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn(), Repro: repro}
 	if err := s.UpsertBaseline(b); err != nil {
 		return fmt.Errorf("baseline set: %w", err)
 	}
 	fmt.Fprintf(out, "baseline %q set: %d runs\n", name, len(ids))
 	return nil
+}
+
+func validateBaselineName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("invalid baseline name: must not be empty")
+	case len(name) > 128:
+		return fmt.Errorf("invalid baseline name: must be <= 128 bytes")
+	case strings.TrimSpace(name) != name:
+		return fmt.Errorf("invalid baseline name %q: no leading or trailing whitespace", name)
+	default:
+		return nil
+	}
 }
 
 func runBaselineList(out io.Writer, open storeOpener, dbPath string, asJSON bool) error {
@@ -112,6 +136,9 @@ func runBaselineList(out io.Writer, open storeOpener, dbPath string, asJSON bool
 	defer func() { _ = s.Close() }()
 	baselines, err := s.ListBaselines()
 	if err != nil {
+		if errors.Is(err, store.ErrSchemaOutdated) {
+			return operational(store.ErrSchemaOutdated)
+		}
 		return fmt.Errorf("baseline list: %w", err)
 	}
 	sort.Slice(baselines, func(i, j int) bool { return baselines[i].Name < baselines[j].Name })

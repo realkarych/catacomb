@@ -872,3 +872,25 @@ func TestDeleteBaselineExecError(t *testing.T) {
 	require.NoError(t, s.db.Close())
 	assert.Error(t, s.DeleteBaseline("b"))
 }
+
+func TestGetBaselineOnV1StoreReportsOutdated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	seedV1DB(t, path)
+	s, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, _, err = s.GetBaseline("x")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}
+
+func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	seedV1DB(t, path)
+	s, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, err = s.ListBaselines()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}

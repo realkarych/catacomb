@@ -101,7 +101,12 @@ func rowFindings(scope string, bRows, cRows []aggregate.Row, bRuns, cRuns int, t
 		cPresent := rowPresent(cr, cok)
 
 		presence := compareRate(scope, key, name, "presence", bRuns-bPresent, bRuns, cRuns-cPresent, cRuns, th.PresenceDelta, th)
-		presence.Detail = fmt.Sprintf("present %d/%d -> %d/%d", bPresent, bRuns, cPresent, cRuns)
+		presenceNote := fmt.Sprintf("present %d/%d -> %d/%d", bPresent, bRuns, cPresent, cRuns)
+		if presence.Detail == "" {
+			presence.Detail = presenceNote
+		} else {
+			presence.Detail = presence.Detail + "; " + presenceNote
+		}
 		applyDowngrade(active, &presence, cov, th.CoverageFloor)
 		out = append(out, presence)
 

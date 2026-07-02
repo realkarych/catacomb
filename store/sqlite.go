@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
@@ -502,6 +503,9 @@ func (s *sqliteStore) GetBaseline(name string) (model.Baseline, bool, error) {
 		return model.Baseline{}, false, nil
 	}
 	if err != nil {
+		if isMissingBaselinesTable(err) {
+			return model.Baseline{}, false, fmt.Errorf("store.GetBaseline: %w", ErrSchemaOutdated)
+		}
 		return model.Baseline{}, false, fmt.Errorf("store.GetBaseline: %w", err)
 	}
 	var b model.Baseline
@@ -514,6 +518,9 @@ func (s *sqliteStore) GetBaseline(name string) (model.Baseline, bool, error) {
 func (s *sqliteStore) ListBaselines() ([]model.Baseline, error) {
 	rows, err := s.db.Query(selectBaselines)
 	if err != nil {
+		if isMissingBaselinesTable(err) {
+			return nil, fmt.Errorf("store.ListBaselines: %w", ErrSchemaOutdated)
+		}
 		return nil, fmt.Errorf("store.ListBaselines: %w", err)
 	}
 	out, err := scanBaselines(rows)
@@ -548,6 +555,10 @@ func (s *sqliteStore) DeleteBaseline(name string) error {
 		return fmt.Errorf("store.DeleteBaseline: %w", err)
 	}
 	return nil
+}
+
+func isMissingBaselinesTable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table: baselines")
 }
 
 func (s *sqliteStore) Close() error { return s.db.Close() }

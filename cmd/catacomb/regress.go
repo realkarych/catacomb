@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -30,15 +31,20 @@ type regressFlags struct {
 
 func newRegressCmd() *cobra.Command {
 	f := regressFlags{}
-	def := regress.DefaultThresholds()
 	cmd := &cobra.Command{
 		Use:   "regress",
 		Short: "Compare a candidate run group against a baseline",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRegress(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, f)
+			return runRegress(cmd.OutOrStdout(), cmd.ErrOrStderr(), store.OpenSQLiteReadOnly, newPricer, f)
 		},
 	}
+	bindRegressFlags(cmd, &f)
+	return cmd
+}
+
+func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
+	def := regress.DefaultThresholds()
 	cmd.Flags().StringVar(&f.baseline, "baseline", "", "baseline selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.candidate, "candidate", "", "candidate selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
@@ -50,10 +56,12 @@ func newRegressCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&f.thresholds.MetricRelDelta, "metric-rel-delta", def.MetricRelDelta, "relative metric delta threshold")
 	cmd.Flags().Float64Var(&f.thresholds.IQRFactor, "iqr-factor", def.IQRFactor, "IQR band factor")
 	cmd.Flags().Float64Var(&f.thresholds.CoverageFloor, "coverage-floor", def.CoverageFloor, "step alignment coverage floor")
-	return cmd
 }
 
-func runRegress(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, f regressFlags) error {
+func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.Pricer, f regressFlags) error {
+	if f.thresholds.MinSupport < 1 {
+		return operational(fmt.Errorf("regress: --min-support must be >= 1, got %d", f.thresholds.MinSupport))
+	}
 	s, err := openReadStore(open, f.dbPath)
 	if err != nil {
 		return operational(err)
@@ -61,14 +69,14 @@ func runRegress(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, 
 	defer func() { _ = s.Close() }()
 
 	pricer := mkPricer()
-	baseGroup, err := resolveSelector(s, pricer, f.baseline)
+	baseGroup, err := resolveSelector(errOut, s, pricer, f.baseline)
 	if err != nil {
 		return err
 	}
 	if len(baseGroup) == 0 {
 		return operational(fmt.Errorf("regress baseline %q: %w", f.baseline, ErrEmptyGroup))
 	}
-	candGroup, err := resolveSelector(s, pricer, f.candidate)
+	candGroup, err := resolveSelector(errOut, s, pricer, f.candidate)
 	if err != nil {
 		return err
 	}
@@ -83,7 +91,7 @@ func runRegress(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, 
 
 	if f.asJSON {
 		if err := regress.RenderJSON(rep, out); err != nil {
-			return err
+			return operational(err)
 		}
 	} else {
 		regress.RenderHuman(rep, out)
@@ -101,13 +109,13 @@ func verdictError(rep regress.Report, strict bool) error {
 	return nil
 }
 
-func resolveSelector(s store.Store, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, error) {
+func resolveSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, error) {
 	kind, val, err := parseSelector(sel)
 	if err != nil {
 		return nil, operational(err)
 	}
 	if kind == selectorName {
-		return resolveNameSelector(s, pricer, val)
+		return resolveNameSelector(errOut, s, pricer, val)
 	}
 	return resolveLabelSelector(s, pricer, val)
 }
@@ -127,16 +135,30 @@ func resolveLabelSelector(s store.Store, pricer reduce.Pricer, val string) ([]ag
 	if err := validateLabelTerms(strings.Split(val, ",")); err != nil {
 		return nil, operational(err)
 	}
-	return loadRunGroup(s, pricer, model.ParseLabels(val))
+	group, err := loadRunGroup(s, pricer, model.ParseLabels(val))
+	if err != nil {
+		return nil, operational(err)
+	}
+	return group, nil
 }
 
-func resolveNameSelector(s store.Store, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, error) {
+func resolveNameSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, error) {
 	b, ok, err := s.GetBaseline(name)
 	if err != nil {
-		return nil, fmt.Errorf("regress get baseline %q: %w", name, err)
+		if errors.Is(err, store.ErrSchemaOutdated) {
+			return nil, operational(store.ErrSchemaOutdated)
+		}
+		return nil, operational(fmt.Errorf("regress get baseline %q: %w", name, err))
 	}
 	if !ok {
 		return nil, operational(fmt.Errorf("%w: %q", ErrBaselineNotFound, name))
 	}
-	return loadRunGroupByIDs(s, pricer, b.RunIDs)
+	group, err := loadRunGroupByIDs(s, pricer, b.RunIDs)
+	if err != nil {
+		return nil, operational(err)
+	}
+	if len(group) < len(b.RunIDs) {
+		fmt.Fprintf(errOut, "warning: baseline %q resolved %d < stored %d runs\n", name, len(group), len(b.RunIDs))
+	}
+	return group, nil
 }

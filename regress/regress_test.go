@@ -109,6 +109,20 @@ func TestComparePhasePresenceRegression(t *testing.T) {
 	assert.Equal(t, VerdictRegression, r.OverallVerdict)
 }
 
+func TestComparePhasePresenceInsufficientKeepsDetail(t *testing.T) {
+	t.Parallel()
+	in := Input{
+		Baseline:  aggregate.Report{Runs: 2, Phases: []aggregate.Row{presentRow("p1", "one", 2)}},
+		Candidate: aggregate.Report{Runs: 2, Phases: []aggregate.Row{presentRow("p1", "one", 1)}},
+	}
+	r := Compare(in, DefaultThresholds())
+	pf := findFinding(r.Findings, "phase", "p1", "presence")
+	require.NotNil(t, pf)
+	assert.Equal(t, VerdictInsufficient, pf.Verdict)
+	assert.Contains(t, pf.Detail, "below min support")
+	assert.Contains(t, pf.Detail, "present 2/2 -> 1/2")
+}
+
 func TestComparePhaseAbsentInCandidate(t *testing.T) {
 	t.Parallel()
 	in := Input{
