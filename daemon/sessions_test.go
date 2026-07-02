@@ -944,6 +944,73 @@ func TestSummarizeRunOmitsLabelsWhenAbsent(t *testing.T) {
 	assert.False(t, ok, "labels must be omitted when empty")
 }
 
+func TestSummarizeSessionLiveCarriesLabels(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	run := d.graphs["exec1"].Runs["s1"]
+	run.Labels = map[string]string{"basket": "b1", "rep": "1"}
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	require.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, sum.Labels)
+
+	sum.Labels["basket"] = "mutated"
+	assert.Equal(t, "b1", run.Labels["basket"])
+}
+
+func TestSummarizeSessionLiveOmitsLabelsWhenAbsent(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	sum := d.summarizeSession("s1")
+	d.mu.Unlock()
+
+	assert.Nil(t, sum.Labels)
+}
+
+func TestSummarizeSessionLiveDeterministicLabelPick(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		d := New(tempStore(t))
+		fixedExecID(d)
+		require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+		d.mu.Lock()
+		g := d.graphs["exec1"]
+		g.Runs["run-a"] = &model.Run{ID: "run-a", Status: model.StatusOK, SessionIDs: []string{"s1"}, Labels: map[string]string{"pick": "a"}}
+		g.Runs["run-b"] = &model.Run{ID: "run-b", Status: model.StatusOK, SessionIDs: []string{"s1"}, Labels: map[string]string{"pick": "b"}}
+		sum := d.summarizeSession("s1")
+		d.mu.Unlock()
+
+		require.Equal(t, map[string]string{"pick": "a"}, sum.Labels)
+	}
+}
+
+func TestSummarizeGraphsDeterministicLabelPick(t *testing.T) {
+	build := func(order []string) *reduce.Graph {
+		g := reduce.NewGraph()
+		runs := map[string]*model.Run{
+			"run-a": {ID: "run-a", Status: model.StatusOK, SessionIDs: []string{"s1"}, Labels: map[string]string{"pick": "a"}},
+			"run-b": {ID: "run-b", Status: model.StatusOK, SessionIDs: []string{"s1"}, Labels: map[string]string{"pick": "b"}},
+		}
+		for _, id := range order {
+			g.Runs[id] = runs[id]
+		}
+		g.Nodes["n1"] = &model.Node{ID: "n1", RunID: "run-a", Type: model.NodeToolCall}
+		return g
+	}
+	for _, order := range [][]string{{"run-a", "run-b"}, {"run-b", "run-a"}} {
+		for i := 0; i < 32; i++ {
+			sum := SummarizeSession("s1", []*reduce.Graph{build(order)})
+			require.Equal(t, map[string]string{"pick": "a"}, sum.Labels)
+		}
+	}
+}
+
 func TestSummarizeSessionFreeFnMatchesMethod(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
