@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -87,8 +88,8 @@ func (c *HTTPClient) Sessions(ctx context.Context) ([]SessionSummary, error) {
 }
 
 func (c *HTTPClient) Graph(ctx context.Context, hash string) ([]SseEvent, error) {
-	url := c.addr + "/v1/sessions/" + hash + "/graph"
-	resp, err := c.authedGET(ctx, c.http, url)
+	endpoint := c.addr + "/v1/sessions/" + url.PathEscape(hash) + "/graph"
+	resp, err := c.authedGET(ctx, c.http, endpoint)
 	if err != nil {
 		return nil, err
 	}

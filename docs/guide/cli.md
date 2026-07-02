@@ -497,6 +497,7 @@ tasks:
     cmd: ["claude", "-p", "add an item to the cart"]
     dir: services/cart          # optional working directory
     env: { MODE: fast }         # optional per-task env
+    checkpoints: [plan, tests.pass]   # optional declared phases to verify
 variants:
   - id: baseline
     env: { MODEL: opus }        # optional per-variant env (wins over task env)
@@ -520,11 +521,26 @@ phases give `regress` a stable checkpoint axis even when the agent forgets to ma
 marker POST is synchronous with a bounded 2s timeout, so a slow or down daemon adds up to ~4s
 per cell (start plus end) before the run moves on.
 
+A task may also declare `checkpoints:` — phase names the agent is expected to mark *itself*
+(via `mcp__catacomb__mark`, per a CLAUDE.md convention) during the run. Each name must match
+`^[A-Za-z0-9._:-]+$` (the colon is allowed here, unlike task and variant `id`s), be at most 256
+bytes, be unique within the task, and may not equal the reserved runner marker `task:<id>`.
+After each cell — once it has observed a `session_id` — the runner fetches the finalized session
+graph and checks which declared checkpoints are present as markers. Verification is best-effort
+and **never gates**: it is skipped when the cell surfaced no session id or the graph fetch fails
+(the skip reason is recorded in the manifest `note`). Checkpoints that are absent from the graph
+are recorded in the manifest's `missing_checkpoints` list, warned to stderr as
+`cell <run-id>: missing checkpoints: <names>`, and rolled up on success — just before the
+copy-pasteable epilogue below — into one `checkpoints[<task>]: <name> <hit>/<verified>` summary
+line per declared name, where `hit` counts the cells the marker was found in and `verified`
+counts the cells where verification actually ran. Missing phases are visibility only here; they
+earn a verdict downstream as presence-rate drops in `regress`.
+
 The manifest is JSONL, written incrementally — one object per completed cell (run-id, task,
-variant, rep, exit code, session id, `marked`, basket hash, finish time, and an optional
-`note`). `--resume` reads it back and skips cells already present; if the basket file changed
-since the recorded run (its content hash no longer matches) resume errors out — delete the
-manifest or revert the basket.
+variant, rep, exit code, session id, `marked`, an optional `missing_checkpoints` list, basket
+hash, finish time, and an optional `note`). `--resume` reads it back and skips cells already
+present; if the basket file changed since the recorded run (its content hash no longer matches)
+resume errors out — delete the manifest or revert the basket.
 
 `setup` commands run before **every** cell, in the task's working directory, as **plain `exec`**:
 each line is split on whitespace and run directly, with **no shell** — pipes, redirects, `&&`,

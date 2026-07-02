@@ -1049,6 +1049,24 @@ func TestBenchCheckpointsMultipleTasks(t *testing.T) {
 	assert.Less(t, iBeta, iGamma)
 }
 
+func TestBenchCheckpointsAccumulateAcrossReps(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	graph.setMarkers("bench-cpreps-t1-v1-r1", "plan")
+
+	path := writeBasket(t, "basket: cpreps\nreps: 2\ntasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n    checkpoints: [plan]\nvariants:\n  - id: v1\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 2)
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 1/2")
+	assert.Contains(t, errBuf.String(), "cell bench-cpreps-t1-v1-r2: missing checkpoints: plan")
+}
+
 func TestBenchNoCheckpointsNoGraphFetch(t *testing.T) {
 	fakeBenchExec(t)
 	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)

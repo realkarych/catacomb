@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -207,8 +208,8 @@ type graphEvent struct {
 }
 
 func fetchSessionMarkers(ctx context.Context, disc daemon.Discovery, sessionID string) (map[string]struct{}, error) {
-	url := "http://" + disc.Addr + "/v1/sessions/" + sessionID + "/graph"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := "http://" + disc.Addr + "/v1/sessions/" + url.PathEscape(sessionID) + "/graph"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
