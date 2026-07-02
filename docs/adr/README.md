@@ -25,6 +25,7 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0019](0019-operability-fault-isolation-self-observation.md) | Operability, fault isolation, and self-observation | Accepted |
 | [0020](0020-redaction-surface-and-secrets-at-rest.md) | Redaction surface and secrets-at-rest hardening | Accepted |
 | [0021](0021-graph-invariants-and-validation.md) | Graph invariants and validation (acyclic forest, lean contraction) | Accepted |
+| [0022](0022-regression-detection-over-repeated-runs.md) | Regression detection over repeated runs (baskets, baselines, aggregation) | Accepted |
 
 Design spec: [`../specs/2026-06-20-catacomb-design.md`](../specs/2026-06-20-catacomb-design.md).
 
