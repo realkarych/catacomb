@@ -1,0 +1,179 @@
+{
+  "baseline_runs": 5,
+  "candidate_runs": 5,
+  "coverage": {
+    "steps": 0.5,
+    "phases": 0.5
+  },
+  "steps_trusted": false,
+  "findings": [
+    {
+      "scope": "total",
+      "metric": "cost_usd",
+      "verdict": "regression",
+      "baseline": 0.1,
+      "candidate": 0.2,
+      "delta": 0.1,
+      "band_lo": 0.07,
+      "band_hi": 0.13
+    },
+    {
+      "scope": "total",
+      "metric": "duration_ms",
+      "verdict": "ok",
+      "baseline": 1000,
+      "candidate": 1000,
+      "delta": 0,
+      "band_lo": 700,
+      "band_hi": 1300
+    },
+    {
+      "scope": "total",
+      "metric": "error_rate",
+      "verdict": "ok",
+      "baseline": 0,
+      "candidate": 0,
+      "delta": 0,
+      "band_hi": 0.43449149475208104
+    },
+    {
+      "scope": "total",
+      "metric": "nodes",
+      "verdict": "ok",
+      "baseline": 12,
+      "candidate": 12,
+      "delta": 0,
+      "band_lo": 9,
+      "band_hi": 15
+    },
+    {
+      "scope": "total",
+      "metric": "tokens_in",
+      "verdict": "ok",
+      "baseline": 2000,
+      "candidate": 2000,
+      "delta": 0,
+      "band_lo": 1500,
+      "band_hi": 2500
+    },
+    {
+      "scope": "total",
+      "metric": "tokens_out",
+      "verdict": "ok",
+      "baseline": 800,
+      "candidate": 800,
+      "delta": 0,
+      "band_lo": 600,
+      "band_hi": 1000
+    },
+    {
+      "scope": "phase",
+      "key": "pa",
+      "name": "alpha",
+      "metric": "duration_ms",
+      "verdict": "improvement",
+      "baseline": 1000,
+      "candidate": 600,
+      "delta": -400,
+      "band_lo": 700,
+      "band_hi": 1300
+    },
+    {
+      "scope": "phase",
+      "key": "pa",
+      "name": "alpha",
+      "metric": "error_rate",
+      "verdict": "notable",
+      "baseline": 0,
+      "candidate": 0.6,
+      "delta": 0.6,
+      "band_hi": 0.43449149475208104
+    },
+    {
+      "scope": "phase",
+      "key": "pb",
+      "name": "beta",
+      "metric": "metrics",
+      "verdict": "insufficient",
+      "baseline": 0,
+      "candidate": 0,
+      "delta": 0,
+      "detail": "absent in candidate"
+    },
+    {
+      "scope": "phase",
+      "key": "pb",
+      "name": "beta",
+      "metric": "presence",
+      "verdict": "regression",
+      "baseline": 0,
+      "candidate": 1,
+      "delta": 1,
+      "band_hi": 0.43449149475208104,
+      "detail": "present 5/5 -\u003e 0/5"
+    },
+    {
+      "scope": "phase",
+      "key": "pd",
+      "name": "delta",
+      "metric": "metrics",
+      "verdict": "insufficient",
+      "baseline": 0,
+      "candidate": 0,
+      "delta": 0,
+      "detail": "absent in baseline"
+    },
+    {
+      "scope": "phase",
+      "key": "pd",
+      "name": "delta",
+      "metric": "presence",
+      "verdict": "improvement",
+      "baseline": 1,
+      "candidate": 0,
+      "delta": -1,
+      "band_lo": 0.5655085052479191,
+      "band_hi": 1,
+      "detail": "present 0/5 -\u003e 5/5"
+    },
+    {
+      "scope": "step",
+      "key": "s1",
+      "name": "step-one",
+      "metric": "duration_ms",
+      "verdict": "notable",
+      "baseline": 1000,
+      "candidate": 1600,
+      "delta": 600,
+      "band_lo": 700,
+      "band_hi": 1300,
+      "detail": "step alignment coverage 0.50 below floor 0.70"
+    },
+    {
+      "scope": "step",
+      "key": "s2",
+      "name": "step-two",
+      "metric": "metrics",
+      "verdict": "insufficient",
+      "baseline": 0,
+      "candidate": 0,
+      "delta": 0,
+      "detail": "absent in candidate"
+    },
+    {
+      "scope": "step",
+      "key": "s2",
+      "name": "step-two",
+      "metric": "presence",
+      "verdict": "notable",
+      "baseline": 0,
+      "candidate": 1,
+      "delta": 1,
+      "band_hi": 0.43449149475208104,
+      "detail": "present 5/5 -\u003e 0/5; step alignment coverage 0.50 below floor 0.70"
+    }
+  ],
+  "regressions": 2,
+  "insufficient": 3,
+  "overall_verdict": "regression"
+}
