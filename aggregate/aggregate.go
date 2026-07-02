@@ -1,6 +1,7 @@
 package aggregate
 
 import (
+	"encoding/json"
 	"sort"
 
 	"github.com/realkarych/catacomb/model"
@@ -52,13 +53,25 @@ type Report struct {
 	Totals RunTotals `json:"totals"`
 }
 
-func Aggregate(group []RunGraph, _ Options) Report {
+func Aggregate(group []RunGraph, opts Options) Report {
+	allow := annotationAllowlist(opts.AnnotationKeys)
 	return Report{
 		Runs:   len(group),
-		Steps:  buildRows(group, foldRunSteps),
+		Steps:  buildRows(group, func(rg RunGraph) map[string]runKey { return foldRunSteps(rg, allow) }),
 		Phases: buildRows(group, foldRunPhases),
 		Totals: runTotals(group),
 	}
+}
+
+func annotationAllowlist(keys []string) map[string]struct{} {
+	if len(keys) == 0 {
+		return nil
+	}
+	allow := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		allow[k] = struct{}{}
+	}
+	return allow
 }
 
 type metricSums struct {
@@ -71,6 +84,7 @@ type metricSums struct {
 type runKey struct {
 	count       float64
 	sums        metricSums
+	annSums     map[string]float64
 	worst       model.Status
 	firstNodeID string
 	firstName   string
@@ -122,7 +136,7 @@ func derefF(p *float64) float64 {
 	return *p
 }
 
-func foldRunSteps(rg RunGraph) map[string]runKey {
+func foldRunSteps(rg RunGraph, allow map[string]struct{}) map[string]runKey {
 	acc := map[string]runKey{}
 	for _, n := range rg.Nodes {
 		if n.StepKey == "" || !included(n) {
@@ -133,9 +147,51 @@ func foldRunSteps(rg RunGraph) map[string]runKey {
 		rk.sums.cost += derefF(n.CostUSD)
 		rk.sums.tokensIn += derefI(n.TokensIn)
 		rk.sums.tokensOut += derefI(n.TokensOut)
+		rk = addAnnotations(rk, n, allow)
 		acc[n.StepKey] = rk
 	}
 	return acc
+}
+
+func addAnnotations(rk runKey, n *model.Node, allow map[string]struct{}) runKey {
+	if len(allow) == 0 || len(n.Annotations) == 0 {
+		return rk
+	}
+	for key, v := range n.Annotations {
+		if _, ok := allow[key]; !ok {
+			continue
+		}
+		f, ok := numericAnnotation(v)
+		if !ok {
+			continue
+		}
+		if rk.annSums == nil {
+			rk.annSums = map[string]float64{}
+		}
+		rk.annSums[key] += f
+	}
+	return rk
+}
+
+func numericAnnotation(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case json.RawMessage:
+		return unmarshalNumber(t)
+	case []byte:
+		return unmarshalNumber(t)
+	default:
+		return 0, false
+	}
+}
+
+func unmarshalNumber(b []byte) (float64, bool) {
+	var f float64
+	if json.Unmarshal(b, &f) != nil {
+		return 0, false
+	}
+	return f, true
 }
 
 func foldRunPhases(rg RunGraph) map[string]runKey {
@@ -202,6 +258,7 @@ type rowAcc struct {
 	tokensIn    []float64
 	tokensOut   []float64
 	statusCount map[model.Status]int
+	annotations map[string][]float64
 	name        string
 	nameRunID   string
 	nameSet     bool
@@ -215,6 +272,12 @@ func (a *rowAcc) add(runID string, rk runKey) {
 	a.tokensIn = append(a.tokensIn, rk.sums.tokensIn)
 	a.tokensOut = append(a.tokensOut, rk.sums.tokensOut)
 	a.statusCount[rk.worst]++
+	for key, sum := range rk.annSums {
+		if a.annotations == nil {
+			a.annotations = map[string][]float64{}
+		}
+		a.annotations[key] = append(a.annotations[key], sum)
+	}
 	if !a.nameSet || runID < a.nameRunID {
 		a.nameSet = true
 		a.nameRunID = runID
@@ -238,7 +301,19 @@ func (a *rowAcc) row(runs int) Row {
 		CostUSD:      stats(a.cost),
 		TokensIn:     stats(a.tokensIn),
 		TokensOut:    stats(a.tokensOut),
+		Annotations:  a.annotationStats(),
 	}
+}
+
+func (a *rowAcc) annotationStats() map[string]MetricStats {
+	if len(a.annotations) == 0 {
+		return nil
+	}
+	out := make(map[string]MetricStats, len(a.annotations))
+	for key, vals := range a.annotations {
+		out[key] = stats(vals)
+	}
+	return out
 }
 
 func buildRows(group []RunGraph, fold func(RunGraph) map[string]runKey) []Row {

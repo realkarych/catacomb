@@ -25,8 +25,8 @@ func fixtureGroup() []RunGraph {
 		Run: model.Run{ID: "r1", Status: model.StatusOK, StartedAt: tp(t0), EndedAt: tp(t0.Add(10 * time.Second))},
 		Nodes: []*model.Node{
 			{ID: "r1-sess", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK},
-			{ID: "r1-s1b", RunID: "r1", Type: model.NodeToolCall, Name: "search2", Status: model.StatusOK, StepKey: "s1", CostUSD: f64(2), TokensIn: i64(20), TokensOut: i64(10), DurationMS: i64(200)},
-			{ID: "r1-s1a", RunID: "r1", Type: model.NodeToolCall, Name: "search", Status: model.StatusOK, StepKey: "s1", CostUSD: f64(1), TokensIn: i64(10), TokensOut: i64(5), DurationMS: i64(100)},
+			{ID: "r1-s1b", RunID: "r1", Type: model.NodeToolCall, Name: "search2", Status: model.StatusOK, StepKey: "s1", CostUSD: f64(2), TokensIn: i64(20), TokensOut: i64(10), DurationMS: i64(200), Annotations: map[string]any{"eval.score": float64(0.25), "eval.latency": []byte("0.125")}},
+			{ID: "r1-s1a", RunID: "r1", Type: model.NodeToolCall, Name: "search", Status: model.StatusOK, StepKey: "s1", CostUSD: f64(1), TokensIn: i64(10), TokensOut: i64(5), DurationMS: i64(100), Annotations: map[string]any{"eval.score": json.RawMessage("0.5"), "eval.note": json.RawMessage(`"good"`), "misc.ignored": json.RawMessage("1")}},
 			{ID: "r1-sup", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusSuperseded, StepKey: "s1", CostUSD: f64(100), TokensIn: i64(1000), TokensOut: i64(1000), DurationMS: i64(9999)},
 			{ID: "r1-s2", RunID: "r1", Type: model.NodeToolCall, Name: "build", Status: model.StatusBlocked, StepKey: "s2", CostUSD: f64(5), TokensIn: i64(50), TokensOut: i64(25), DurationMS: i64(500)},
 			{ID: "r1-m1", RunID: "r1", Type: model.NodeMarker, Name: "phase-one", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(2000 * time.Millisecond))},
@@ -45,7 +45,7 @@ func fixtureGroup() []RunGraph {
 		Run: model.Run{ID: "r2", Status: model.StatusOK, StartedAt: tp(t0), EndedAt: tp(t0.Add(20 * time.Second))},
 		Nodes: []*model.Node{
 			{ID: "r2-sess", RunID: "r2", Type: model.NodeSession, Status: model.StatusOK},
-			{ID: "r2-s1", RunID: "r2", Type: model.NodeToolCall, Name: "search", Status: model.StatusError, StepKey: "s1", CostUSD: f64(4), TokensIn: i64(40), TokensOut: i64(20), DurationMS: i64(400)},
+			{ID: "r2-s1", RunID: "r2", Type: model.NodeToolCall, Name: "search", Status: model.StatusError, StepKey: "s1", CostUSD: f64(4), TokensIn: i64(40), TokensOut: i64(20), DurationMS: i64(400), Annotations: map[string]any{"eval.score": json.RawMessage("0.5"), "eval.bad": true}},
 			{ID: "r2-m1", RunID: "r2", Type: model.NodeMarker, Name: "phase-one-r2", Status: model.StatusError, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(4000 * time.Millisecond))},
 			{ID: "r2-m2", RunID: "r2", Type: model.NodeMarker, Name: "phase-one-r2b", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0)},
 			{ID: "r2-mem1", RunID: "r2", Type: model.NodeToolCall, Status: model.StatusOK, CostUSD: f64(30), TokensIn: i64(300), TokensOut: i64(150)},
@@ -58,7 +58,7 @@ func fixtureGroup() []RunGraph {
 		Run: model.Run{ID: "r3", Status: model.StatusError, StartedAt: tp(t0)},
 		Nodes: []*model.Node{
 			{ID: "r3-sess", RunID: "r3", Type: model.NodeSession, Status: model.StatusOK},
-			{ID: "r3-s1", RunID: "r3", Type: model.NodeToolCall, Name: "search", Status: model.StatusOK, StepKey: "s1", TokensIn: i64(60)},
+			{ID: "r3-s1", RunID: "r3", Type: model.NodeToolCall, Name: "search", Status: model.StatusOK, StepKey: "s1", TokensIn: i64(60), Annotations: map[string]any{"eval.score": json.RawMessage(`"n/a"`)}},
 		},
 	}
 	return []RunGraph{r1, r2, r3}
@@ -124,14 +124,62 @@ func permute3[T any](s []T) [][]T {
 }
 
 func TestAggregatePermutationInvariant(t *testing.T) {
+	opts := Options{AnnotationKeys: []string{"eval.score", "eval.latency"}}
 	perms := permute3(fixtureGroup())
-	first, err := json.Marshal(Aggregate(perms[0], Options{}))
+	first, err := json.Marshal(Aggregate(perms[0], opts))
 	require.NoError(t, err)
 	for i := 1; i < len(perms); i++ {
-		got, err := json.Marshal(Aggregate(perms[i], Options{}))
+		got, err := json.Marshal(Aggregate(perms[i], opts))
 		require.NoError(t, err)
 		assert.Equal(t, string(first), string(got), "permutation %d differs", i)
 	}
+}
+
+func TestAggregateAnnotations(t *testing.T) {
+	got := Aggregate(fixtureGroup(), Options{AnnotationKeys: []string{"eval.score", "eval.note", "eval.latency", "eval.bad"}})
+	require.Len(t, got.Steps, 2)
+	s1 := got.Steps[0]
+	require.Equal(t, "s1", s1.Key)
+	require.Equal(t, 3, s1.Present)
+	require.NotNil(t, s1.Annotations)
+	assert.Len(t, s1.Annotations, 2)
+	assert.Equal(t, MetricStats{N: 2, Median: 0.5, P90: 0.75}, s1.Annotations["eval.score"])
+	assert.Equal(t, MetricStats{N: 1, Median: 0.125, P90: 0.125}, s1.Annotations["eval.latency"])
+	_, hasNote := s1.Annotations["eval.note"]
+	assert.False(t, hasNote)
+	_, hasBad := s1.Annotations["eval.bad"]
+	assert.False(t, hasBad)
+	_, hasIgnored := s1.Annotations["misc.ignored"]
+	assert.False(t, hasIgnored)
+	s2 := got.Steps[1]
+	require.Equal(t, "s2", s2.Key)
+	assert.Nil(t, s2.Annotations)
+	for _, p := range got.Phases {
+		assert.Nil(t, p.Annotations)
+	}
+}
+
+func TestAggregateAnnotationsDisabled(t *testing.T) {
+	for _, keys := range [][]string{nil, {}} {
+		got := Aggregate(fixtureGroup(), Options{AnnotationKeys: keys})
+		for _, s := range got.Steps {
+			assert.Nil(t, s.Annotations)
+		}
+	}
+}
+
+func TestAggregatePhaseDurationSumsMarkers(t *testing.T) {
+	t0 := fixtureBase
+	rg := RunGraph{
+		Run: model.Run{ID: "r1", Status: model.StatusOK, StartedAt: tp(t0), EndedAt: tp(t0.Add(time.Second))},
+		Nodes: []*model.Node{
+			{ID: "m-a", RunID: "r1", Type: model.NodeMarker, Name: "phase", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(3000 * time.Millisecond))},
+			{ID: "m-b", RunID: "r1", Type: model.NodeMarker, Name: "phase2", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(5000 * time.Millisecond))},
+		},
+	}
+	got := Aggregate([]RunGraph{rg}, Options{})
+	require.Len(t, got.Phases, 1)
+	assert.Equal(t, MetricStats{N: 1, Median: 8000, P90: 8000}, got.Phases[0].DurationMS)
 }
 
 func TestAggregateSingleRun(t *testing.T) {
