@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
@@ -12,6 +13,14 @@ import (
 type AnnotationSpec struct {
 	Key          string `json:"key"`
 	HigherBetter bool   `json:"higher_better"`
+}
+
+type Record struct {
+	CandidateSelector string           `json:"candidate_selector"`
+	Thresholds        Thresholds       `json:"thresholds"`
+	Annotations       []AnnotationSpec `json:"annotations,omitempty"`
+	Report            Report           `json:"report"`
+	CreatedAt         time.Time        `json:"created_at"`
 }
 
 type Input struct {

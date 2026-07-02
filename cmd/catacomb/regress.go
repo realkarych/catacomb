@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,12 +21,15 @@ const (
 	selectorName  = "name"
 )
 
+var marshalRecord = json.Marshal
+
 type regressFlags struct {
 	baseline    string
 	candidate   string
 	dbPath      string
 	asJSON      bool
 	strict      bool
+	record      bool
 	annotations []string
 	thresholds  regress.Thresholds
 }
@@ -37,7 +41,11 @@ func newRegressCmd() *cobra.Command {
 		Short: "Compare a candidate run group against a baseline",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRegress(cmd.OutOrStdout(), cmd.ErrOrStderr(), store.OpenSQLiteReadOnly, newPricer, f)
+			open := store.OpenSQLiteReadOnly
+			if f.record {
+				open = store.OpenSQLite
+			}
+			return runRegress(cmd.OutOrStdout(), cmd.ErrOrStderr(), open, newPricer, f)
 		},
 	}
 	bindRegressFlags(cmd, &f)
@@ -51,6 +59,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat insufficient data as failure (exit 1)")
+	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
 	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
 	cmd.Flags().IntVar(&f.thresholds.MinSupport, "min-support", def.MinSupport, "minimum runs per group for a trusted comparison")
 	cmd.Flags().Float64Var(&f.thresholds.PresenceDelta, "presence-delta", def.PresenceDelta, "presence rate delta threshold")
@@ -65,6 +74,10 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		return operational(fmt.Errorf("regress: --min-support must be >= 1, got %d", f.thresholds.MinSupport))
 	}
 	specs, keys, err := parseAnnotationFlags(f.annotations)
+	if err != nil {
+		return operational(err)
+	}
+	baselineName, err := recordBaselineName(f)
 	if err != nil {
 		return operational(err)
 	}
@@ -107,7 +120,43 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	} else {
 		regress.RenderHuman(rep, out)
 	}
+	if f.record {
+		if err := appendRecord(s, baselineName, f, specs, rep); err != nil {
+			return operational(err)
+		}
+	}
 	return verdictError(rep, f.strict)
+}
+
+func recordBaselineName(f regressFlags) (string, error) {
+	if !f.record {
+		return "", nil
+	}
+	kind, val, err := parseSelector(f.baseline)
+	if err != nil {
+		return "", err
+	}
+	if kind != selectorName {
+		return "", fmt.Errorf("regress --record requires --baseline in name:<baseline> form, got %q", f.baseline)
+	}
+	return val, nil
+}
+
+func appendRecord(s store.Store, baselineName string, f regressFlags, specs []regress.AnnotationSpec, rep regress.Report) error {
+	body, err := marshalRecord(regress.Record{
+		CandidateSelector: f.candidate,
+		Thresholds:        f.thresholds,
+		Annotations:       specs,
+		Report:            rep,
+		CreatedAt:         nowFn(),
+	})
+	if err != nil {
+		return fmt.Errorf("regress --record marshal: %w", err)
+	}
+	if _, err := s.AppendRegressResult(baselineName, body); err != nil {
+		return fmt.Errorf("regress --record: %w", err)
+	}
+	return nil
 }
 
 func parseAnnotationFlags(raw []string) ([]regress.AnnotationSpec, []string, error) {

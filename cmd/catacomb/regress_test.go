@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -594,4 +595,99 @@ func TestRegressCmdWiredAndGrouped(t *testing.T) {
 		groups[sub.Name()] = sub.GroupID
 	}
 	assert.Equal(t, "advanced", groups["regress"])
+}
+
+type appendErrStore struct {
+	store.Store
+}
+
+func (a *appendErrStore) AppendRegressResult(string, json.RawMessage) (int, error) {
+	return 0, errors.New("boom-append")
+}
+
+func TestRegressRecordRequiresNameSelector(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "name:")
+}
+
+func TestRegressRecordBadBaselineSelector(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "bogus", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "invalid selector")
+}
+
+func TestRegressRecordPreservesRegressionExit(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
+	pinBaselineNow(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out.String(), "overall regression")
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	res, err := s.RegressResultsFor("golden")
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	var rec regress.Record
+	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
+	assert.Equal(t, regress.VerdictRegression, rec.Report.OverallVerdict)
+	assert.Equal(t, "label:variant=cand", rec.CandidateSelector)
+}
+
+func TestRegressRecordDoesNotAlterOutput(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	pinBaselineNow(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+
+	var withRec, withRecErr bytes.Buffer
+	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &withRec, &withRecErr))
+
+	var plain, plainErr bytes.Buffer
+	require.Equal(t, 0, run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &plain, &plainErr))
+
+	assert.Equal(t, plain.String(), withRec.String())
+}
+
+func TestRegressRecordMarshalError(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	orig := marshalRecord
+	marshalRecord = func(any) ([]byte, error) { return nil, errors.New("boom-marshal") }
+	t.Cleanup(func() { marshalRecord = orig })
+
+	f := regressFlags{baseline: "name:golden", candidate: "label:variant=cand", dbPath: dbPath, thresholds: regress.DefaultThresholds(), record: true}
+	err := runRegress(io.Discard, io.Discard, store.OpenSQLite, newPricer, f)
+	require.Error(t, err)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Contains(t, err.Error(), "boom-marshal")
+}
+
+func TestRegressRecordAppendErrorOverridesVerdict(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	opener := func(path string) (store.Store, error) {
+		s, err := store.OpenSQLite(path)
+		if err != nil {
+			return nil, err
+		}
+		return &appendErrStore{Store: s}, nil
+	}
+
+	f := regressFlags{baseline: "name:golden", candidate: "label:variant=cand", dbPath: dbPath, thresholds: regress.DefaultThresholds(), record: true}
+	err := runRegress(io.Discard, io.Discard, opener, newPricer, f)
+	require.Error(t, err)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.NotErrorIs(t, err, errRegressionDetected)
+	assert.Contains(t, err.Error(), "boom-append")
 }
