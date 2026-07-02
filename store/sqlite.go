@@ -76,8 +76,14 @@ func OpenSQLiteReadOnly(path string) (Store, error) {
 	return openSQLiteReadOnly(sql.Open, path)
 }
 
+var absFn = filepath.Abs
+
 func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
-	db, err := open("sqlite", readOnlyDSN(path))
+	abs, err := absFn(path)
+	if err != nil {
+		return nil, fmt.Errorf("store.OpenSQLiteReadOnly abs: %w", err)
+	}
+	db, err := open("sqlite", readOnlyDSN(abs))
 	if err != nil {
 		return nil, fmt.Errorf("store.OpenSQLiteReadOnly: %w", err)
 	}

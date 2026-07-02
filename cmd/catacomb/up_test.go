@@ -1239,3 +1239,15 @@ func TestUpCmdRunE(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Contains(t, buf.String(), "127.0.0.1:12345")
 }
+
+func TestUpPollHealthzTimesOutOnBlockedDaemon(t *testing.T) {
+	srv := blockingServer(t)
+	origClient := statusHTTPClient
+	statusHTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
+	t.Cleanup(func() { statusHTTPClient = origClient })
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	err := upPollHealthz(context.Background(), addr)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrDaemonUnreachable))
+}

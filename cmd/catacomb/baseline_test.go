@@ -284,3 +284,25 @@ func TestBaselineCmdWiredAndGrouped(t *testing.T) {
 	}
 	assert.Equal(t, "advanced", groups["baseline"])
 }
+
+func TestBaselineExitCodesOperational(t *testing.T) {
+	dbPath := seedRegressDB(t, labeledRuns())
+	missing := filepath.Join(t.TempDir(), "nope.db")
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"set missing store", []string{"baseline", "set", "x", "--db", missing, "--label", "variant=base"}},
+		{"set zero match", []string{"baseline", "set", "x", "--db", dbPath, "--label", "variant=ghost"}},
+		{"set invalid label", []string{"baseline", "set", "x", "--db", dbPath, "--label", "BAD=x"}},
+		{"list missing store", []string{"baseline", "list", "--db", missing}},
+		{"rm missing store", []string{"baseline", "rm", "x", "--db", missing}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errBuf bytes.Buffer
+			code := run(tc.args, &out, &errBuf)
+			assert.Equal(t, 2, code, errBuf.String())
+		})
+	}
+}

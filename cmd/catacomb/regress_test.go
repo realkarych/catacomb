@@ -387,7 +387,7 @@ func TestRegressNameSelectorFewerRunsWarns(t *testing.T) {
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.NotEqual(t, 2, code)
+	assert.Equal(t, 0, code)
 	assert.Contains(t, errBuf.String(), "resolved 1 < stored 2")
 }
 

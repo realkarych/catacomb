@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	statusHTTPClient = &http.Client{}
+	statusHTTPClient = &http.Client{Timeout: 5 * time.Second}
 	statusNowFn      = time.Now
 )
 
