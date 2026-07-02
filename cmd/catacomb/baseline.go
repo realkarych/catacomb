@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -136,9 +135,6 @@ func runBaselineList(out io.Writer, open storeOpener, dbPath string, asJSON bool
 	defer func() { _ = s.Close() }()
 	baselines, err := s.ListBaselines()
 	if err != nil {
-		if errors.Is(err, store.ErrSchemaOutdated) {
-			return operational(store.ErrSchemaOutdated)
-		}
 		return operational(fmt.Errorf("baseline list: %w", err))
 	}
 	sort.Slice(baselines, func(i, j int) bool { return baselines[i].Name < baselines[j].Name })

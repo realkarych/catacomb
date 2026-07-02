@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -17,7 +18,7 @@ import (
 
 const demoSessionID = "demo-0001"
 
-var demoHTTPClient = &http.Client{}
+var demoHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
 type demoDeps struct {
 	readDiscovery func(string) (daemon.Discovery, error)

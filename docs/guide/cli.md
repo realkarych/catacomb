@@ -661,7 +661,11 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
   a delta over the threshold with overlapping intervals is reported as `notable`.
 - **Metrics** (`duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `occurrences`; run totals
   also `nodes`) flag the candidate median when it falls outside the baseline median ±
-  `max(metric-rel-delta × |median|, iqr-factor × IQR)` band.
+  `max(metric-rel-delta × |median|, iqr-factor × IQR)` band. The `nodes` and `occurrences` count
+  metrics are one-sided (higher = flagged) per
+  [ADR-0022 Amendments](../adr/0022-regression-detection-over-repeated-runs.md#amendments), so a
+  pipeline that legitimately grew may need `--metric-rel-delta` raised to keep ordinary growth
+  inside the band.
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is always
   reported; below `--coverage-floor` step-level regressions are downgraded to `notable` and the
   checkpoint (phase) level carries the verdict.
