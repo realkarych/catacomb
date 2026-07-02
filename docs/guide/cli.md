@@ -480,14 +480,15 @@ catacomb baseline set <name> --label k=v [--label ...] [flags]
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--label` | (repeatable) | `k=v` selector; the baseline captures every run matching all terms (AND) |
+| `--label` | **required** (repeatable) | `k=v` selector; the baseline captures every run matching all terms (AND) |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
 
 Resolves the label selector immediately, sorts the matching run IDs, and persists them with the
-selector and a created-at timestamp under `<name>`. Requires read-write store access; errors if
-the store does not exist or the selector matches no runs. Re-running with the same name replaces
-the stored baseline. A saved baseline is referenced by `regress` as `name:<baseline>`, so a golden
-group survives later label churn.
+selector, per-run repro fingerprints, and a created-at timestamp under `<name>`. The name must be
+non-empty, at most 128 bytes, and free of leading or trailing whitespace; at least one `--label`
+is required. Requires read-write store access; errors if the store does not exist or the selector
+matches no runs. Re-running with the same name replaces the stored baseline. A saved baseline is
+referenced by `regress` as `name:<baseline>`, so a golden group survives later label churn.
 
 ```sh
 catacomb baseline set golden --label basket=checkout --label variant=main
@@ -510,7 +511,10 @@ catacomb baseline list [flags]
 
 Prints a table with columns `NAME`, `RUNS`, `SELECTOR`, `CREATED`, sorted by name; `SELECTOR`
 shows the sorted `k=v` terms and `CREATED` is a UTC RFC3339 timestamp. `--json` emits the stored
-records including each baseline's resolved run IDs.
+records including each baseline's resolved run IDs and a `repro` field mapping run IDs to the
+repro fingerprints captured at `baseline set` time. On a store created by an older binary
+(schema v1) this command fails with a hint to run a write-path command (`catacomb up` or
+`baseline set`) to migrate the schema.
 
 ```sh
 catacomb baseline list --json
@@ -553,7 +557,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
 | `--json` | false | Emit the full report as JSON |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit 1) |
-| `--min-support` | 3 | Minimum runs per group for a trusted comparison |
+| `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
 | `--error-delta` | 0.1 | Error-rate delta threshold |
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
@@ -561,8 +565,10 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
 
 Both selectors must be supplied. `label:k=v[,k=v...]` resolves runs by label (all terms ANDed);
-`name:<baseline>` resolves a baseline saved with `baseline set`. Groups are aggregated and
-compared per [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
+`name:<baseline>` resolves a baseline saved with `baseline set`. When a `name:` baseline resolves
+fewer runs than it stored (some runs were pruned since `set`), a warning is printed to stderr —
+stdout and `--json` output stay clean. Groups are aggregated and compared per
+[ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
 
 - **Rates** (presence, error) use Wilson 95% intervals and are flagged as a `regression` only
   when the baseline and candidate intervals are disjoint *and* the delta exceeds the threshold;
@@ -579,8 +585,10 @@ Comparison runs at three scopes — run totals, checkpoint phases, and steps. Th
 prints `VERDICT SCOPE KEY METRIC BASELINE CANDIDATE BAND` with presence-normalized values
 (presence rate, not absence); `--json` emits the full report (presence rows carry absence rates
 plus a clarifying `detail` field). Exit codes: `0` pass, `1` regression (or `insufficient` with
-`--strict`), `2` operational error (invalid selector, unknown baseline, missing store, or empty
-group).
+`--strict`), `2` operational error (invalid selector, unknown baseline, missing store, empty
+group, or `--min-support` below 1). Resolving a `name:` baseline on a store created by an older
+binary (schema v1) also exits `2` with a hint to run a write-path command (`catacomb up` or
+`baseline set`) to migrate the schema.
 
 ```sh
 catacomb regress --baseline name:golden --candidate label:basket=checkout,variant=candidate
