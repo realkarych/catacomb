@@ -347,6 +347,20 @@ func seedV1RegressDB(t *testing.T) string {
 	return dbPath
 }
 
+func seedV2RegressDB(t *testing.T) string {
+	t.Helper()
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("DROP TABLE regress_results")
+	require.NoError(t, err)
+	_, err = db.Exec("PRAGMA user_version = 2")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return dbPath
+}
+
 func TestRegressNameSelectorLoadError(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
 	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))

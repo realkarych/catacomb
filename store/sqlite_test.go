@@ -895,6 +895,17 @@ func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
+func TestRegressResultsForOnV2StoreReportsOutdated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v2.db")
+	seedV2DB(t, path)
+	s, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, err = s.RegressResultsFor("golden")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}
+
 func TestOpenSQLiteReadOnlyRelativePath(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(dir, 0o755))

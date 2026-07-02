@@ -69,6 +69,9 @@ func runTrends(out io.Writer, open storeOpener, dbPath, name, metric string, asJ
 
 	results, err := s.RegressResultsFor(name)
 	if err != nil {
+		if errors.Is(err, store.ErrSchemaOutdated) {
+			return operational(store.ErrSchemaOutdated)
+		}
 		return operational(fmt.Errorf("trends: %w", err))
 	}
 	if len(results) == 0 {

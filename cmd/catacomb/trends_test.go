@@ -86,7 +86,7 @@ func TestTrendsRecordFlowEndToEnd(t *testing.T) {
 }
 
 func TestTrendsRecordAnnotationsRoundTrip(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.9)
 	pinBaselineNow(t)
 	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
 
@@ -94,7 +94,7 @@ func TestTrendsRecordAnnotationsRoundTrip(t *testing.T) {
 	code := run([]string{
 		"regress", "--record", "--db", dbPath,
 		"--baseline", "name:golden", "--candidate", "label:variant=cand",
-		"--annotation", "deepeval.tool_correctness:lower-better",
+		"--annotation", "deepeval.tool_correctness:higher-better",
 	}, &out, &errBuf)
 	require.Equal(t, 0, code, errBuf.String())
 
@@ -105,7 +105,7 @@ func TestTrendsRecordAnnotationsRoundTrip(t *testing.T) {
 	var entries []trendsEntry
 	require.NoError(t, json.Unmarshal(out.Bytes(), &entries))
 	require.Len(t, entries, 1)
-	assert.Equal(t, []regress.AnnotationSpec{{Key: "deepeval.tool_correctness", HigherBetter: false}}, entries[0].Record.Annotations)
+	assert.Equal(t, []regress.AnnotationSpec{{Key: "deepeval.tool_correctness", HigherBetter: true}}, entries[0].Record.Annotations)
 }
 
 func TestTrendsNarrowedTable(t *testing.T) {
@@ -197,12 +197,16 @@ func TestTrendsV1SchemaOutdated(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "older than this binary")
 }
 
-func TestTrendsResultsQueryError(t *testing.T) {
+func TestTrendsResultsScanError(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
 	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE regress_results")
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE regress_results (baseline TEXT NOT NULL, seq TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (baseline, seq))")
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO regress_results VALUES('golden','not-an-int','{}')`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -210,6 +214,14 @@ func TestTrendsResultsQueryError(t *testing.T) {
 	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "RegressResultsFor")
+}
+
+func TestTrendsV2StoreReportsOutdated(t *testing.T) {
+	dbPath := seedV2RegressDB(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "older than this binary")
 }
 
 func TestTrendsCmdWiredAndGrouped(t *testing.T) {

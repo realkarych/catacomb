@@ -512,7 +512,7 @@ func (s *sqliteStore) GetBaseline(name string) (model.Baseline, bool, error) {
 		return model.Baseline{}, false, nil
 	}
 	if err != nil {
-		if isMissingBaselinesTable(err) {
+		if isMissingTable(err, "baselines") {
 			return model.Baseline{}, false, fmt.Errorf("store.GetBaseline: %w", ErrSchemaOutdated)
 		}
 		return model.Baseline{}, false, fmt.Errorf("store.GetBaseline: %w", err)
@@ -527,7 +527,7 @@ func (s *sqliteStore) GetBaseline(name string) (model.Baseline, bool, error) {
 func (s *sqliteStore) ListBaselines() ([]model.Baseline, error) {
 	rows, err := s.db.Query(selectBaselines)
 	if err != nil {
-		if isMissingBaselinesTable(err) {
+		if isMissingTable(err, "baselines") {
 			return nil, fmt.Errorf("store.ListBaselines: %w", ErrSchemaOutdated)
 		}
 		return nil, fmt.Errorf("store.ListBaselines: %w", err)
@@ -587,6 +587,9 @@ func (s *sqliteStore) AppendRegressResult(baseline string, body json.RawMessage)
 func (s *sqliteStore) RegressResultsFor(baseline string) ([]model.RegressResult, error) {
 	rows, err := s.db.Query(selectRegressResults, baseline)
 	if err != nil {
+		if isMissingTable(err, "regress_results") {
+			return nil, fmt.Errorf("store.RegressResultsFor: %w", ErrSchemaOutdated)
+		}
 		return nil, fmt.Errorf("store.RegressResultsFor: %w", err)
 	}
 	out, err := scanRegressResults(baseline, rows)
@@ -613,8 +616,8 @@ func scanRegressResults(baseline string, rows rowScanner) ([]model.RegressResult
 	return out, nil
 }
 
-func isMissingBaselinesTable(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no such table: baselines")
+func isMissingTable(err error, table string) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table: "+table)
 }
 
 func (s *sqliteStore) Close() error { return s.db.Close() }
