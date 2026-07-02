@@ -23,11 +23,13 @@
 ### Task 1: `model` label primitives + `Run.Labels`
 
 **Files:**
+
 - Create: `model/labels.go`
 - Create: `model/labels_test.go`
 - Modify: `model/model.go` (Run struct, after `Meta`)
 
 **Interfaces:**
+
 - Produces: `model.ParseLabels(s string) map[string]string`, `model.FormatLabels(l map[string]string) string`, `model.MergeLabels(dst, src map[string]string) map[string]string`, `model.MatchLabels(labels, want map[string]string) bool`, field `Run.Labels map[string]string`.
 
 - [ ] **Step 1: Write failing tests** in `model/labels_test.go`:
@@ -190,11 +192,13 @@ Add to `Run` in `model/model.go` after the `Meta` field:
 ### Task 2: reducer merges label attrs into `Run.Labels`; deep copy
 
 **Files:**
+
 - Modify: `reduce/reduce.go` (`ensureRun`, ~line 564)
 - Modify: `daemon/copy.go` (`copyRun`, ~line 51)
 - Test: `reduce/reduce_labels_test.go` (new), extend `daemon/copy_test.go`
 
 **Interfaces:**
+
 - Consumes: `model.ParseLabels`, `model.MergeLabels` (Task 1).
 - Produces: any observation with `Attrs["catacomb.labels"]` (canonical string) unions those labels into its run's `Labels`.
 
@@ -230,11 +234,13 @@ And in `daemon/copy.go` `copyRun`, after the `Meta` copy block:
 ### Task 3: daemon ingress accepts `X-Catacomb-Labels`
 
 **Files:**
+
 - Modify: `daemon/daemon.go` (`Ingest` ~181, `ingestLocked` ~196, `IngestStreamJSON`)
 - Modify: `daemon/server.go` (`handleHook` ~155, `handleStreamJSON` ~95)
 - Test: extend `daemon/server_test.go` / `daemon/daemon_test.go` (follow existing handler-test style)
 
 **Interfaces:**
+
 - Produces: `(d *Daemon) IngestWithLabels(hookType string, payload []byte, labels string) error` and `(d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels string) error`; existing `Ingest`/`IngestStreamJSON` delegate with `labels = ""`. The `labels` argument is the RAW header value; it is canonicalized via `model.FormatLabels(model.ParseLabels(raw))` before attaching, and attached as `Attrs["catacomb.labels"]` on every observation parsed from that request iff non-empty.
 
 - [ ] **Step 1: Write failing tests**: POST `/hook/PostToolUse` with header `X-Catacomb-Labels: basket=b1,rep=1` (reuse an existing hook-payload fixture from server tests) → after ingest, the daemon's run for that session has `Labels == {"basket":"b1","rep":"1"}`; malformed header (`X-Catacomb-Labels: !!!`) → empty labels, ingest still 204; stream-json POST with the header labels the run likewise.
@@ -246,11 +252,13 @@ And in `daemon/copy.go` `copyRun`, after the `Meta` copy block:
 ### Task 4: forwarders carry `CATACOMB_LABELS` env as the header
 
 **Files:**
+
 - Modify: `cmd/catacomb/hook.go` (`forward`, ~line 28)
 - Modify: `cmd/catacomb/streamjson.go` (`streamForward` ~46, `newIngestCmd` ~70, `runChild` ~101)
 - Test: extend `cmd/catacomb/hook_test.go`, `cmd/catacomb/streamjson_test.go`
 
 **Interfaces:**
+
 - Consumes: daemon header contract from Task 3.
 - Produces: `forward(warn, discoveryPath, hookType string, stdin io.Reader, labels string)` and `streamForward(warn, discoveryPath string, body io.Reader, labels string)` — both set `X-Catacomb-Labels: <labels>` iff labels non-empty. Call sites read `os.Getenv("CATACOMB_LABELS")` in the cobra `RunE` and pass it down (keeps the funcs testable without env).
 
@@ -272,10 +280,12 @@ Update all call sites (`newHookCmd`, `newIngestCmd`, `newRunCmd`→`runChild`'s 
 ### Task 5: `catacomb run --label`
 
 **Files:**
+
 - Modify: `cmd/catacomb/streamjson.go` (`newRunCmd` ~87, `runChild` ~101)
 - Test: extend `cmd/catacomb/streamjson_test.go` (uses the `execCommand` seam, var at line 21)
 
 **Interfaces:**
+
 - Consumes: `model.ParseLabels`/`FormatLabels`/`MergeLabels`.
 - Produces: `runChild(stdout, stderr io.Writer, discoveryPath, runID string, labels []string, args []string) error` — merges env `CATACOMB_LABELS` (base) with `--label k=v` flags (flags win, in flag order) and sets the canonical merged value as `CATACOMB_LABELS` in the child env; also passes the merged canonical string to its own `streamForward` (so the teed stream is labeled even if hooks are not installed).
 
@@ -299,19 +309,21 @@ Update all call sites (`newHookCmd`, `newIngestCmd`, `newRunCmd`→`runChild`'s 
 ### Task 6: `catacomb runs --label` filter + labels in output; docs
 
 **Files:**
+
 - Modify: `cmd/catacomb/runs.go` (flag + filter, ~line 16)
 - Modify: `daemon/sessions.go` (`SessionSummary` + `summarizeGraphs` populate `Labels`, ~line 19/250)
 - Modify: `docs/guide/cli.md`, `docs/guide/ingestion.md` (a "Run labels" subsection: env var, `--label`, header, selector)
 - Test: extend `cmd/catacomb/runs_test.go`, `daemon/sessions_test.go`
 
 **Interfaces:**
+
 - Consumes: `model.MatchLabels`, `Run.Labels`.
 - Produces: `SessionSummary.Labels map[string]string \`json:"labels,omitempty"\`` populated from the run; `runs --label k=v` (repeatable, AND) filters the listing.
 
 - [ ] **Step 1: Write failing tests**: `daemon/sessions_test.go` — a graph whose run has labels yields a summary carrying them; `cmd/catacomb/runs_test.go` — with two stored runs (labels `basket=b1` vs `basket=b2`), `runs --label basket=b1 --json` lists exactly the matching run and its `labels` object.
 - [ ] **Step 2: Run** → FAIL.
 - [ ] **Step 3: Implement**: add the field; populate where `summarizeGraphs` reads the matched `model.Run` (deep-copy not needed — summaries are serialized immediately; follow how `ModelID`/`Status` are read there). In `runs.go`: parse repeated `--label` terms via `model.ParseLabels(strings.Join(terms, ","))` into the selector and skip runs failing `model.MatchLabels(r.Labels, selector)` before summarizing.
-- [ ] **Step 4: Run** `go test ./... ` → PASS; `make cover` → 100%; `make lint` + `npx -y markdownlint-cli@0.49.0 docs/guide/cli.md docs/guide/ingestion.md`.
+- [ ] **Step 4: Run** `go test ./...` → PASS; `make cover` → 100%; `make lint` + `npx -y markdownlint-cli@0.49.0 docs/guide/cli.md docs/guide/ingestion.md`.
 - [ ] **Step 5: Commit** — `git commit -m "feat(cmd,daemon): runs --label selector + labels in summaries; docs"`
 
 ### Task 7: live-verify + PR
