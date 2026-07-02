@@ -125,6 +125,9 @@ func TestBenchHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "CWD":
 		wd, _ := os.Getwd()
+		if resolved, err := filepath.EvalSymlinks(wd); err == nil {
+			wd = resolved
+		}
 		fmt.Fprintln(os.Stdout, "CWD="+wd)
 		os.Exit(0)
 	case "CHILD_ENV":
