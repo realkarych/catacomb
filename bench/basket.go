@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
 
 const maxLabelValueLen = 256
+
+var idCharset = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 var (
 	ErrEmptyBasketName = errors.New("bench: basket name is empty")
@@ -22,6 +25,7 @@ var (
 	ErrNoVariants      = errors.New("bench: at least one variant is required")
 	ErrEmptyID         = errors.New("bench: id is empty")
 	ErrIDLen           = errors.New("bench: id exceeds 256 bytes")
+	ErrCharset         = errors.New("bench: value has characters outside [A-Za-z0-9._-]")
 	ErrDuplicateID     = errors.New("bench: duplicate id")
 	ErrEmptyCmd        = errors.New("bench: task cmd is empty")
 	ErrRunIDCollision  = errors.New("bench: run-id collision")
@@ -79,6 +83,9 @@ func validate(b Basket) error {
 	}
 	if len(b.Name) > maxLabelValueLen {
 		return fmt.Errorf("bench.Load: basket: %w", ErrBasketNameLen)
+	}
+	if !idCharset.MatchString(b.Name) {
+		return fmt.Errorf("bench.Load: basket %q: %w", b.Name, ErrCharset)
 	}
 	if b.Reps < 1 {
 		return fmt.Errorf("bench.Load: reps: %w", ErrReps)
@@ -149,6 +156,9 @@ func checkID(kind string, idx int, id string, seen map[string]struct{}) error {
 	}
 	if len(id) > maxLabelValueLen {
 		return fmt.Errorf("bench.Load: %s[%d].id: %w", kind, idx, ErrIDLen)
+	}
+	if !idCharset.MatchString(id) {
+		return fmt.Errorf("bench.Load: %s[%d].id %q: %w", kind, idx, id, ErrCharset)
 	}
 	if _, dup := seen[id]; dup {
 		return fmt.Errorf("bench.Load: %s[%d].id %q: %w", kind, idx, id, ErrDuplicateID)

@@ -31,12 +31,18 @@ func TestValidateErrors(t *testing.T) {
 	}{
 		{"empty name", func(b *Basket) { b.Name = "" }, ErrEmptyBasketName, "basket"},
 		{"name too long", func(b *Basket) { b.Name = long }, ErrBasketNameLen, "basket"},
+		{"name comma", func(b *Basket) { b.Name = "a,b" }, ErrCharset, "basket"},
+		{"name space", func(b *Basket) { b.Name = "a b" }, ErrCharset, "basket"},
+		{"name equals", func(b *Basket) { b.Name = "a=b" }, ErrCharset, "basket"},
 		{"reps zero", func(b *Basket) { b.Reps = 0 }, ErrReps, "reps"},
 		{"reps negative", func(b *Basket) { b.Reps = -3 }, ErrReps, "reps"},
 		{"no tasks", func(b *Basket) { b.Tasks = nil }, ErrNoTasks, "tasks"},
 		{"no variants", func(b *Basket) { b.Variants = nil }, ErrNoVariants, "variants"},
 		{"empty task id", func(b *Basket) { b.Tasks[0].ID = "" }, ErrEmptyID, "task"},
 		{"task id too long", func(b *Basket) { b.Tasks[0].ID = long }, ErrIDLen, "task"},
+		{"task id comma", func(b *Basket) { b.Tasks[0].ID = "a,b" }, ErrCharset, "task"},
+		{"task id space", func(b *Basket) { b.Tasks[0].ID = "a b" }, ErrCharset, "task"},
+		{"task id equals", func(b *Basket) { b.Tasks[0].ID = "a=b" }, ErrCharset, "task"},
 		{
 			"duplicate task id",
 			func(b *Basket) {
@@ -47,6 +53,8 @@ func TestValidateErrors(t *testing.T) {
 		{"empty cmd", func(b *Basket) { b.Tasks[0].Cmd = nil }, ErrEmptyCmd, "task"},
 		{"empty variant id", func(b *Basket) { b.Variants[0].ID = "" }, ErrEmptyID, "variant"},
 		{"variant id too long", func(b *Basket) { b.Variants[0].ID = long }, ErrIDLen, "variant"},
+		{"variant id comma", func(b *Basket) { b.Variants[0].ID = "x,y" }, ErrCharset, "variant"},
+		{"variant id equals", func(b *Basket) { b.Variants[0].ID = "x=y" }, ErrCharset, "variant"},
 		{
 			"duplicate variant id",
 			func(b *Basket) { b.Variants = []Variant{{ID: "dup"}, {ID: "dup"}} },

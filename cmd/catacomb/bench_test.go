@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -206,6 +207,7 @@ variants:
 	for i, id := range order {
 		assert.Equal(t, id, entries[i].RunID)
 	}
+	assert.Contains(t, out.String(), "marked 4/4 cells")
 }
 
 func TestBenchChildReceivesEnvLabelsRunID(t *testing.T) {
@@ -373,7 +375,7 @@ variants:
 
 func TestBenchNonZeroCellExitDoesNotFailRun(t *testing.T) {
 	fakeBenchExec(t)
-	discovery, _ := benchServer(t, http.StatusOK)
+	discovery, rec := benchServer(t, http.StatusOK)
 	t.Setenv("CATACOMB_DISCOVERY", discovery)
 
 	path := writeBasket(t, `basket: bnz
@@ -392,7 +394,20 @@ variants:
 	entries := readManifest(t, manifest)
 	require.Len(t, entries, 1)
 	assert.Equal(t, 5, entries[0].ExitCode)
+	assert.True(t, entries[0].Marked)
+	assert.Equal(t, "bench-bnz-t1-v1-r1", entries[0].SessionID)
 	assert.Contains(t, out.String(), "catacomb baseline set")
+
+	bodies := rec.snapshot()
+	require.Len(t, bodies, 2)
+	var start, end map[string]any
+	require.NoError(t, json.Unmarshal(bodies[0], &start))
+	require.NoError(t, json.Unmarshal(bodies[1], &end))
+	assert.Equal(t, "start", start["boundary"])
+	assert.Equal(t, "task:t1", start["name"])
+	assert.Equal(t, "bench-bnz-t1-v1-r1", start["session_id"])
+	assert.Equal(t, "end", end["boundary"])
+	assert.Equal(t, "task:t1", end["name"])
 }
 
 func TestBenchSetupFailureRecordedAndContinues(t *testing.T) {
@@ -611,11 +626,10 @@ tasks:
 variants:
   - id: v1
 `)
-	manifestDir := filepath.Join(t.TempDir(), "manifest-is-a-dir")
-	require.NoError(t, os.Mkdir(manifestDir, 0o755))
+	manifest := filepath.Join(t.TempDir(), "no-such-dir", "m.jsonl")
 
 	var out, errBuf bytes.Buffer
-	code := run([]string{"bench", path, "--manifest", manifestDir}, &out, &errBuf)
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 }
 
@@ -642,4 +656,182 @@ variants:
 	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
 	require.Equal(t, 0, code, errBuf.String())
 	assert.Contains(t, out.String(), "CWD="+resolved)
+}
+
+func TestBenchChildSpawnFailureRecorded(t *testing.T) {
+	orig := execCommand
+	execCommand = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command(filepath.Join(t.TempDir(), "nope-binary"))
+	}
+	t.Cleanup(func() { execCommand = orig })
+	discovery, _ := benchServer(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeBasket(t, `basket: bspawn
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Equal(t, -1, entries[0].ExitCode)
+	assert.Contains(t, entries[0].Note, "spawn failed:")
+	assert.False(t, entries[0].Marked)
+	assert.Contains(t, errBuf.String(), "spawn failed:")
+	assert.Contains(t, errBuf.String(), "bench-bspawn-t1-v1-r1")
+}
+
+func TestBenchNoDaemonIsOperational(t *testing.T) {
+	t.Setenv("CATACOMB_DISCOVERY", filepath.Join(t.TempDir(), "nope.json"))
+	path := writeBasket(t, `basket: bnodaemon
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "catacomb up")
+
+	_, statErr := os.Stat(path + ".manifest.jsonl")
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestBenchDaemonUnreachableIsOperational(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: addr, Token: "tok"}))
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeBasket(t, `basket: bunreach
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+}
+
+func TestBenchDryRunSkipsPreflight(t *testing.T) {
+	t.Setenv("CATACOMB_DISCOVERY", filepath.Join(t.TempDir(), "nope.json"))
+	path := writeBasket(t, `basket: bdrypre
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--dry-run"}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, out.String(), "bench-bdrypre-t1-v1-r1")
+}
+
+func TestBenchRerunWithoutResumeRefused(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _ := benchServer(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeBasket(t, `basket: brerun
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	var out1, err1 bytes.Buffer
+	require.Equal(t, 0, run([]string{"bench", path}, &out1, &err1), err1.String())
+
+	var out2, err2 bytes.Buffer
+	code2 := run([]string{"bench", path}, &out2, &err2)
+	assert.Equal(t, 2, code2)
+	assert.Contains(t, err2.String(), "manifest already has entries")
+
+	var out3, err3 bytes.Buffer
+	require.Equal(t, 0, run([]string{"bench", path, "--resume"}, &out3, &err3), err3.String())
+	assert.Contains(t, out3.String(), "skip bench-brerun-t1-v1-r1")
+
+	fresh := filepath.Join(t.TempDir(), "fresh.jsonl")
+	var out4, err4 bytes.Buffer
+	require.Equal(t, 0, run([]string{"bench", path, "--manifest", fresh}, &out4, &err4), err4.String())
+	require.Len(t, readManifest(t, fresh), 1)
+}
+
+func TestBenchEpilogueTruncatesLongBaselineName(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _ := benchServer(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	longVariant := strings.Repeat("v", 130)
+	path := writeBasket(t, `basket: bt
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: `+longVariant+`
+`)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	full := "bt-" + longVariant
+	truncated := full[:128]
+	assert.Contains(t, out.String(), "catacomb baseline set "+truncated+" --label basket=bt")
+	assert.NotContains(t, out.String(), "catacomb baseline set "+full+" --label")
+}
+
+func TestBenchResumeHashMismatchDeterministic(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _ := benchServer(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeBasket(t, `basket: bdet
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var buf bytes.Buffer
+	for _, e := range []bench.ManifestEntry{
+		{RunID: "aaa", Task: "t1", Variant: "v1", Rep: 1, BasketHash: "hashaaa"},
+		{RunID: "zzz", Task: "t1", Variant: "v1", Rep: 1, BasketHash: "hashzzz"},
+	} {
+		raw, _ := json.Marshal(e)
+		buf.Write(raw)
+		buf.WriteByte('\n')
+	}
+	require.NoError(t, os.WriteFile(manifest, buf.Bytes(), 0o600))
+
+	for i := 0; i < 3; i++ {
+		var out, errBuf bytes.Buffer
+		code := run([]string{"bench", path, "--manifest", manifest, "--resume"}, &out, &errBuf)
+		assert.Equal(t, 2, code)
+		assert.Contains(t, errBuf.String(), "manifest basket hash hashaaa")
+	}
 }
