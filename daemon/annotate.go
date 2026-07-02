@@ -89,12 +89,7 @@ func validateAnnotation(owner, key string, value json.RawMessage) error {
 }
 
 func nodeBySourceKey(g *reduce.Graph, sourceKey string) *model.Node {
-	for _, n := range g.Nodes {
-		if model.NodeSourceKey(n.ID) == sourceKey {
-			return n
-		}
-	}
-	return nil
+	return g.NodeBySourceKey(sourceKey)
 }
 
 func reattachAnnotations(d *Daemon) error {
@@ -109,19 +104,7 @@ func reattachAnnotations(d *Daemon) error {
 }
 
 func applyAnnotations(g *reduce.Graph, anns []model.Annotation) {
-	byKey := map[string][]model.Annotation{}
-	for _, a := range anns {
-		byKey[a.SourceKey] = append(byKey[a.SourceKey], a)
-	}
-	for sourceKey, group := range byKey {
-		n := nodeBySourceKey(g, sourceKey)
-		if n == nil {
-			continue
-		}
-		for _, a := range group {
-			n.Annotations = model.SetAnnotation(n.Annotations, a.Owner, a.Key, a.Value)
-		}
-	}
+	g.ApplyAnnotations(anns)
 }
 
 func (d *Daemon) carryOverMergeLocked(execID, oldID, newID string) {

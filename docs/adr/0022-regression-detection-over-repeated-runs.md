@@ -54,3 +54,11 @@ Minimum-support rule everywhere: no verdict is issued for k below a configured f
 - **−** New surface: a basket format, two CLI verbs, an aggregation package, a baselines table — all perpetual maintenance.
 - **−** The statistics are deliberately simple (Wilson intervals, IQR bands); they suppress noise but are not hypothesis tests, and the ADR must be amended if they prove miscalibrated.
 - **−** Step-level comparison degrades exactly when the tested change rewrites prompts (alignment drift); the design mitigates by reporting coverage and privileging phase-level verdicts, but users must place checkpoints for the guarantee to bite.
+
+## Amendments
+
+Adjudications from the PR-B (aggregation package) review that refine §4 without changing the decision:
+
+- **Annotation scope is step-level only for now.** Numeric annotation metrics (`annotations.<owner>.<key>`) aggregate at the `step_key` level exclusively. Phase markers are synthesized at snapshot time and marker-keyed annotations are not persisted or reattachable to a marker yet, so phase-level annotation metrics are deferred until marker-annotation persistence lands. Phase rows therefore carry no `annotations` block.
+- **Duration distributions exclude unmeasured values.** Step, phase, and run-total `duration_ms` distributions sample only measured durations: a step run with all-nil occurrence durations, a phase run whose markers are all open (nil start or end), and a run missing either `started_at` or `ended_at` contribute no duration sample. Consequently a duration stat's `N` may be below `Present` (step/phase) or below `Runs` (totals). Zero-filling was rejected because a crashed run's 0 ms masks latency regressions by dragging the candidate median down.
+- **Cost and token distributions keep zero-fill.** `cost_usd` and `tokens_in`/`tokens_out` are additive resources: an absent value is genuinely 0 spent, so those stats zero-fill and their `N` tracks `Present`/`Runs`. This asymmetry with duration is deliberate, per the PR-B review adjudication.
