@@ -246,16 +246,28 @@ as one more metric.
 1. **Score the runs.** Export each session and run the DeepEval integration under
    [`integrations/deepeval`](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval),
    whose default `ToolCorrectnessMetric` path is deterministic and offline (no LLM judge, no API
-   key):
+   key). The export carries node payload content (tool inputs and outputs, secret-redacted)
+   automatically whenever the ingest source captured it — no extra flag:
 
    ```sh
-   catacomb export --to jsonl --run <run-id> --allow-payload-access --out session.jsonl
+   catacomb export --to jsonl --run <run-id> --out session.jsonl
    catacomb-deepeval session.jsonl --run <run-id> --expected expected.json
    ```
 
-2. **Write the score back as an annotation.** With the daemon started `--allow-annotations` (see
-   [Annotations](#annotations)), POST the score onto a step node whose `step_key` is stable across
-   the basket — the terminal `assistant_turn` is a good anchor — so it aligns run-to-run:
+2. **Write the score back as an annotation.** Scores must land on step-key-eligible nodes —
+   `tool_call`, `mcp_call`, `skill`, or `subagent` — or they never reach a step row and the gate
+   silently passes. Fetch the session graph and pick the node that performs the step under test
+   (the same logical call recurs across the basket, so its `step_key` aligns run-to-run):
+
+   ```sh
+   curl -s -H "Authorization: Bearer <token>" \
+     "http://127.0.0.1:<port>/v1/sessions/<hash>/graph" |
+     jq -r '.[] | select(.kind == "node_upsert" and .node.step_key != null)
+            | [.node.id, .node.type, .node.name] | @tsv'
+   ```
+
+   With the daemon started `--allow-annotations` (see [Annotations](#annotations)), POST the
+   score onto the chosen node id:
 
    ```sh
    curl -H "Authorization: Bearer <token>" \

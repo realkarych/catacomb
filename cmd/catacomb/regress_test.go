@@ -420,6 +420,7 @@ func TestParseAnnotationFlagsErrors(t *testing.T) {
 		want string
 	}{
 		{"bad suffix", []string{"a.b:sideways"}, "sideways"},
+		{"trailing colon", []string{"owner.key:"}, `unknown direction ""`},
 		{"empty key", []string{":higher-better"}, "empty key"},
 		{"no dot", []string{"nodot:lower-better"}, "owner.key"},
 		{"no dot default", []string{"nodot"}, "owner.key"},
