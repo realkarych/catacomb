@@ -91,11 +91,14 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	}
 
 	opts := aggregate.Options{AnnotationKeys: keys}
+	baseAgg := aggregate.Aggregate(baseGroup, opts)
+	candAgg := aggregate.Aggregate(candGroup, opts)
 	rep := regress.Compare(regress.Input{
-		Baseline:    aggregate.Aggregate(baseGroup, opts),
-		Candidate:   aggregate.Aggregate(candGroup, opts),
+		Baseline:    baseAgg,
+		Candidate:   candAgg,
 		Annotations: specs,
 	}, f.thresholds)
+	warnUnfiredAnnotations(errOut, specs, baseAgg, candAgg)
 
 	if f.asJSON {
 		if err := regress.RenderJSON(rep, out); err != nil {
@@ -146,10 +149,29 @@ func parseAnnotationSpec(v string) (regress.AnnotationSpec, error) {
 	if key == "" {
 		return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: empty key", v)
 	}
-	if !strings.Contains(key, ".") {
+	owner, rest, found := strings.Cut(key, ".")
+	if !found || owner == "" || rest == "" || strings.Contains(rest, ".") {
 		return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: key %q must be owner.key", v, key)
 	}
 	return regress.AnnotationSpec{Key: key, HigherBetter: higherBetter}, nil
+}
+
+func warnUnfiredAnnotations(errOut io.Writer, specs []regress.AnnotationSpec, base, cand aggregate.Report) {
+	for _, spec := range specs {
+		if annotationFired(base, spec.Key) || annotationFired(cand, spec.Key) {
+			continue
+		}
+		fmt.Fprintf(errOut, "warning: annotation %q produced no findings (key never fired on any step; check the key and that scores landed on step-key-eligible nodes)\n", spec.Key)
+	}
+}
+
+func annotationFired(rep aggregate.Report, key string) bool {
+	for _, r := range rep.Steps {
+		if _, ok := r.Annotations[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func verdictError(rep regress.Report, strict bool) error {

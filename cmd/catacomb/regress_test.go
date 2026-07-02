@@ -424,6 +424,10 @@ func TestParseAnnotationFlagsErrors(t *testing.T) {
 		{"empty key", []string{":higher-better"}, "empty key"},
 		{"no dot", []string{"nodot:lower-better"}, "owner.key"},
 		{"no dot default", []string{"nodot"}, "owner.key"},
+		{"empty owner segment", []string{".b"}, "owner.key"},
+		{"empty key segment", []string{"a."}, "owner.key"},
+		{"double dot", []string{"a..b"}, "owner.key"},
+		{"two dots", []string{"a.b.c"}, "owner.key"},
 		{"duplicate", []string{"a.b", "a.b"}, "duplicate --annotation key"},
 		{"duplicate mixed direction", []string{"a.b:higher-better", "a.b:lower-better"}, "duplicate --annotation key"},
 	}
@@ -436,9 +440,9 @@ func TestParseAnnotationFlagsErrors(t *testing.T) {
 	}
 }
 
-func seedRegressAnnDB(t *testing.T, key string) string {
+func seedRegressAnnDB(t *testing.T, key string, candScore float64) string {
 	t.Helper()
-	const baseScore, candScore = 0.9, 0.4
+	const baseScore = 0.9
 	runs := baseCandRuns(5, false, 100)
 	dbPath := seedRegressDB(t, runs)
 	s, err := store.OpenSQLite(dbPath)
@@ -464,7 +468,7 @@ func seedRegressAnnDB(t *testing.T, key string) string {
 }
 
 func TestRegressAnnotationHigherBetterRegression(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness")
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
 	f := defaultRegressFlags(dbPath)
 	f.annotations = []string{"deepeval.tool_correctness"}
 	f.asJSON = true
@@ -487,7 +491,7 @@ func TestRegressAnnotationHigherBetterRegression(t *testing.T) {
 }
 
 func TestRegressAnnotationExitOneViaRun(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness")
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
 	var out, errBuf bytes.Buffer
 	code := run([]string{
 		"regress", "--db", dbPath,
@@ -501,7 +505,7 @@ func TestRegressAnnotationExitOneViaRun(t *testing.T) {
 }
 
 func TestRegressAnnotationLowerBetterInverts(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "latency_penalty")
+	dbPath := seedRegressAnnDB(t, "latency_penalty", 0.4)
 	f := defaultRegressFlags(dbPath)
 	f.annotations = []string{"deepeval.latency_penalty:lower-better"}
 	f.asJSON = true
@@ -520,7 +524,7 @@ func TestRegressAnnotationLowerBetterInverts(t *testing.T) {
 }
 
 func TestRegressAnnotationBadSuffixExitTwo(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness")
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
 	var out, errBuf bytes.Buffer
 	code := run([]string{
 		"regress", "--db", dbPath,
@@ -532,7 +536,7 @@ func TestRegressAnnotationBadSuffixExitTwo(t *testing.T) {
 }
 
 func TestRegressAnnotationDuplicateExitTwo(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness")
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
 	var out, errBuf bytes.Buffer
 	code := run([]string{
 		"regress", "--db", dbPath,
@@ -545,7 +549,7 @@ func TestRegressAnnotationDuplicateExitTwo(t *testing.T) {
 }
 
 func TestRegressAnnotationNoFlagByteIdentical(t *testing.T) {
-	annDB := seedRegressAnnDB(t, "tool_correctness")
+	annDB := seedRegressAnnDB(t, "tool_correctness", 0.4)
 	plainDB := seedRegressDB(t, baseCandRuns(5, false, 100))
 
 	render := func(dbPath string) string {
@@ -554,6 +558,33 @@ func TestRegressAnnotationNoFlagByteIdentical(t *testing.T) {
 		return buf.String()
 	}
 	assert.Equal(t, render(plainDB), render(annDB))
+}
+
+func TestRegressAnnotationUnknownKeyWarns(t *testing.T) {
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--db", dbPath,
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--annotation", "deepeval.typo",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code)
+	assert.NotContains(t, out.String(), "ann:")
+	assert.Contains(t, errBuf.String(), `annotation "deepeval.typo" produced no findings`)
+	assert.Contains(t, errBuf.String(), "step-key-eligible")
+}
+
+func TestRegressAnnotationHealthyOKNoWarning(t *testing.T) {
+	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.9)
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--db", dbPath,
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--annotation", "deepeval.tool_correctness", "--json",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code)
+	assert.NotContains(t, out.String(), "ann:")
+	assert.Empty(t, errBuf.String())
 }
 
 func TestRegressCmdWiredAndGrouped(t *testing.T) {

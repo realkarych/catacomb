@@ -283,11 +283,13 @@ as one more metric.
 
    ```sh
    catacomb regress --baseline name:golden --candidate label:variant=candidate \
-     --annotation deepeval.tool_correctness
+     --annotation deepeval.tool_correctness --strict
    ```
 
    Annotation gating is step-scoped only (per ADR-0022); a key sampled below `--min-support` runs,
-   or present on only one side, is reported `insufficient` rather than guessed.
+   or present on only one side, is reported `insufficient` rather than guessed. In CI, add
+   `--strict` (as above) so an under-annotated group fails the gate with exit `1` instead of
+   passing silently.
 
 ### Practical notes
 

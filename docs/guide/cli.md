@@ -678,7 +678,9 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
 onto the graph (see [Annotations](workflows.md#annotations)) — into the comparison as if it were a
 built-in metric. The annotation values aggregate per `step_key` and are flagged with the same
 median ± `max(metric-rel-delta × |median|, iqr-factor × IQR)` band as other metrics, but with a
-declared direction:
+declared direction. When the same `step_key` occurs more than once within a single run, that
+run's annotation values for the key are **summed** (like cost and tokens), and the compared
+medians are taken across the per-run sums:
 
 - `owner.key` or `owner.key:higher-better` (default): a higher score is better, so a candidate
   median that drops below the band is the `regression` and a rise is an `improvement`.
@@ -691,7 +693,8 @@ directions) is an operational error (exit `2`). Annotation gating is **step-scop
 rows carry no annotation block. Because a score is only sampled on the runs that actually carry
 it, an annotation's `N` can be below the step's `Present` (a step reached in every run but scored
 in only some); an annotation whose `N` falls below `--min-support`, or one present on only one
-side, is reported `insufficient` rather than guessed.
+side, is reported `insufficient` rather than guessed. A configured key that never fires on any
+step in either group prints a warning to stderr (stdout and `--json` stay clean).
 
 Comparison runs at three scopes — run totals, checkpoint phases, and steps. The human table
 prints `VERDICT SCOPE KEY METRIC BASELINE CANDIDATE BAND` with presence-normalized values
