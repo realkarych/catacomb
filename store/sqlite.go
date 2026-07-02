@@ -66,8 +66,7 @@ const (
 	selectBaseline               = `SELECT body FROM baselines WHERE name = ?`
 	selectBaselines              = `SELECT body FROM baselines ORDER BY name`
 	deleteBaseline               = `DELETE FROM baselines WHERE name = ?`
-	selectMaxRegressSeq          = `SELECT MAX(seq) FROM regress_results WHERE baseline = ?`
-	insertRegressResult          = `INSERT INTO regress_results(baseline, seq, body) VALUES(?,?,?)`
+	insertRegressResult          = `INSERT INTO regress_results(baseline, seq, body) SELECT ?, COALESCE(MAX(seq),0)+1, ? FROM regress_results WHERE baseline = ? RETURNING seq`
 	selectRegressResults         = `SELECT seq, body FROM regress_results WHERE baseline = ? ORDER BY seq`
 )
 
@@ -571,13 +570,8 @@ func (s *sqliteStore) AppendRegressResult(baseline string, body json.RawMessage)
 	if err != nil {
 		return 0, fmt.Errorf("store.AppendRegressResult begin: %w", err)
 	}
-	var maxSeq sql.NullInt64
-	if err := tx.QueryRow(selectMaxRegressSeq, baseline).Scan(&maxSeq); err != nil {
-		_ = tx.Rollback()
-		return 0, fmt.Errorf("store.AppendRegressResult max: %w", err)
-	}
-	seq := int(maxSeq.Int64) + 1
-	if _, err := tx.Exec(insertRegressResult, baseline, seq, string(body)); err != nil {
+	var seq int
+	if err := tx.QueryRow(insertRegressResult, baseline, string(body), baseline).Scan(&seq); err != nil {
 		_ = tx.Rollback()
 		return 0, fmt.Errorf("store.AppendRegressResult insert: %w", err)
 	}

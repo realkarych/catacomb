@@ -241,6 +241,11 @@ baseline), so every CI run leaves a durable, replayable record without changing 
 or exit code. If the append itself fails the command exits `2` rather than the verdict's `1`, so a
 broken store trips the gate instead of passing silently.
 
+In a fan-out CI matrix, serialize the recording: have a single shard run `--record` (or gate it on a
+lock), or give each shard its own store file. Concurrent `--record` writers on one store can collide
+on SQLite's write lock and fail loudly with `SQLITE_BUSY` (exit `2`, no corruption) rather than
+queue.
+
 ### Watching drift over time
 
 With `--record` in the gate, each run accumulates in the baseline's append-only history. `trends`

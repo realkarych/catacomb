@@ -940,7 +940,7 @@ func TestAppendRegressResultBeginError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAppendRegressResultMaxError(t *testing.T) {
+func TestAppendRegressResultMissingTableError(t *testing.T) {
 	s := fileStore(t)
 	_, err := s.db.Exec("DROP TABLE regress_results")
 	require.NoError(t, err)

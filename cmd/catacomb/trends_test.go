@@ -167,6 +167,61 @@ func TestTrendsMalformedBodyNamesSeq(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "malformed")
 }
 
+func TestTrendsUnsupportedVersionEndToEnd(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	_, err = s.AppendRegressResult("golden", json.RawMessage(`{"v":2,"created_at":"2026-01-01T00:00:00Z"}`))
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "version 2")
+	assert.Contains(t, errBuf.String(), "upgrade catacomb")
+}
+
+func TestTrendsMarksSplicedBaseline(t *testing.T) {
+	dbPath := seedRegressDB(t, trendsSeedRuns())
+	orig := nowFn
+	t.Cleanup(func() { nowFn = orig })
+
+	ts1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	nowFn = func() time.Time { return ts1 }
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	var out, errBuf bytes.Buffer
+	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf))
+
+	ts2 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	nowFn = func() time.Time { return ts2 }
+	require.NoError(t, runBaselineRm(io.Discard, store.OpenSQLite, dbPath, "golden"))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	out.Reset()
+	errBuf.Reset()
+	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf))
+
+	out.Reset()
+	errBuf.Reset()
+	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 4)
+	assert.Contains(t, lines[1], "1 *")
+	assert.NotContains(t, lines[2], "*")
+	assert.Equal(t, spliceFootnote, lines[len(lines)-1])
+
+	out.Reset()
+	errBuf.Reset()
+	code = run([]string{"trends", "golden", "--db", dbPath, "--metric", "tokens_in"}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+	mlines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, mlines, 4)
+	assert.Contains(t, mlines[1], "1 *")
+	assert.Equal(t, spliceFootnote, mlines[len(mlines)-1])
+}
+
 func TestTrendsStoreMissing(t *testing.T) {
 	missing := "/nonexistent/dir/nope.db"
 	var out, errBuf bytes.Buffer
@@ -242,22 +297,25 @@ func TestTotalFindingAndMetricCandidate(t *testing.T) {
 	f, ok := totalFinding(rep, "duration_ms")
 	require.True(t, ok)
 	assert.InDelta(t, 1234, f.Candidate, 0.001)
-	assert.Equal(t, "1234", totalMetricCandidate(rep, "duration_ms"))
+	assert.Equal(t, "1234.00", totalMetricCandidate(rep, "duration_ms"))
 }
 
 func TestFormatTrendBand(t *testing.T) {
 	assert.Equal(t, "-", formatTrendBand(regress.Finding{}))
-	assert.Equal(t, "[1, 3.5]", formatTrendBand(regress.Finding{BandLo: 1, BandHi: 3.5}))
+	assert.Equal(t, "[1.00, 3.50]", formatTrendBand(regress.Finding{BandLo: 1, BandHi: 3.5}))
 }
 
 func TestRenderTrendsMetricAbsentFinding(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	recs := []seqRecord{{seq: 1, rec: regress.Record{
+		V:                 regress.RecordVersion,
 		CandidateSelector: "label:variant=cand",
-		CreatedAt:         time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		CreatedAt:         created,
+		BaselineCreatedAt: created,
 		Report:            regress.Report{OverallVerdict: regress.VerdictOK},
 	}}}
 	var buf bytes.Buffer
-	require.NoError(t, renderTrendsMetric(&buf, recs, "duration_ms"))
+	require.NoError(t, renderTrendsMetric(&buf, recs, "duration_ms", created))
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	require.Len(t, lines, 2)
 	fields := strings.Fields(lines[1])
@@ -265,7 +323,7 @@ func TestRenderTrendsMetricAbsentFinding(t *testing.T) {
 }
 
 func TestDecodeRecordsRoundTrip(t *testing.T) {
-	rec := regress.Record{CandidateSelector: "label:x=y", CreatedAt: time.Unix(0, 0).UTC()}
+	rec := regress.Record{V: regress.RecordVersion, CandidateSelector: "label:x=y", CreatedAt: time.Unix(0, 0).UTC()}
 	body, err := json.Marshal(rec)
 	require.NoError(t, err)
 	out, err := decodeRecords([]model.RegressResult{{Baseline: "g", Seq: 7, Body: body}})
@@ -273,4 +331,14 @@ func TestDecodeRecordsRoundTrip(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, 7, out[0].seq)
 	assert.Equal(t, "label:x=y", out[0].rec.CandidateSelector)
+	assert.JSONEq(t, string(body), string(out[0].body))
+}
+
+func TestDecodeRecordsRejectsUnsupportedVersion(t *testing.T) {
+	body := json.RawMessage(`{"v":2,"candidate_selector":"label:x=y"}`)
+	_, err := decodeRecords([]model.RegressResult{{Baseline: "g", Seq: 4, Body: body}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "seq 4")
+	assert.Contains(t, err.Error(), "version 2")
+	assert.Contains(t, err.Error(), "upgrade catacomb")
 }

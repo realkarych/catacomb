@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -19,14 +18,17 @@ import (
 
 var totalMetrics = []string{"duration_ms", "cost_usd", "tokens_in", "tokens_out", "nodes", "error_rate"}
 
+const spliceFootnote = "* recorded against a previous definition of this baseline"
+
 type seqRecord struct {
-	seq int
-	rec regress.Record
+	seq  int
+	rec  regress.Record
+	body json.RawMessage
 }
 
 type trendsJSONEntry struct {
-	Seq    int            `json:"seq"`
-	Record regress.Record `json:"record"`
+	Seq    int             `json:"seq"`
+	Record json.RawMessage `json:"record"`
 }
 
 func newTrendsCmd() *cobra.Command {
@@ -56,7 +58,7 @@ func runTrends(out io.Writer, open storeOpener, dbPath, name, metric string, asJ
 	}
 	defer func() { _ = s.Close() }()
 
-	_, ok, err := s.GetBaseline(name)
+	baseline, ok, err := s.GetBaseline(name)
 	if err != nil {
 		if errors.Is(err, store.ErrSchemaOutdated) {
 			return operational(store.ErrSchemaOutdated)
@@ -86,9 +88,9 @@ func runTrends(out io.Writer, open storeOpener, dbPath, name, metric string, asJ
 		return renderTrendsJSON(out, records)
 	}
 	if metric != "" {
-		return renderTrendsMetric(out, records, metric)
+		return renderTrendsMetric(out, records, metric, baseline.CreatedAt)
 	}
-	return renderTrendsDefault(out, records)
+	return renderTrendsDefault(out, records, baseline.CreatedAt)
 }
 
 func isTotalMetric(metric string) bool {
@@ -107,7 +109,10 @@ func decodeRecords(results []model.RegressResult) ([]seqRecord, error) {
 		if err := json.Unmarshal(r.Body, &rec); err != nil {
 			return nil, fmt.Errorf("trends: malformed record body at seq %d: %w", r.Seq, err)
 		}
-		out = append(out, seqRecord{seq: r.Seq, rec: rec})
+		if rec.V != regress.RecordVersion {
+			return nil, fmt.Errorf("trends: record at seq %d has version %d, but this binary understands version %d (upgrade catacomb)", r.Seq, rec.V, regress.RecordVersion)
+		}
+		out = append(out, seqRecord{seq: r.Seq, rec: rec, body: r.Body})
 	}
 	return out, nil
 }
@@ -115,43 +120,62 @@ func decodeRecords(results []model.RegressResult) ([]seqRecord, error) {
 func renderTrendsJSON(out io.Writer, records []seqRecord) error {
 	entries := make([]trendsJSONEntry, 0, len(records))
 	for _, sr := range records {
-		entries = append(entries, trendsJSONEntry{Seq: sr.seq, Record: sr.rec})
+		entries = append(entries, trendsJSONEntry{Seq: sr.seq, Record: sr.body})
 	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(entries)
 }
 
-func renderTrendsDefault(out io.Writer, records []seqRecord) error {
+func renderTrendsDefault(out io.Writer, records []seqRecord, current time.Time) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SEQ\tCREATED\tCANDIDATE\tVERDICT\tREGRESSIONS\tINSUFFICIENT\tDURATION_MS\tCOST_USD\tERROR_RATE")
+	spliced := false
 	for _, sr := range records {
+		seq, marked := seqCell(sr, current)
+		spliced = spliced || marked
 		rep := sr.rec.Report
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
-			sr.seq, sr.rec.CreatedAt.UTC().Format(time.RFC3339), sr.rec.CandidateSelector,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+			seq, sr.rec.CreatedAt.UTC().Format(time.RFC3339), sr.rec.CandidateSelector,
 			rep.OverallVerdict, rep.Regressions, rep.Insufficient,
 			totalMetricCandidate(rep, "duration_ms"),
 			totalMetricCandidate(rep, "cost_usd"),
 			totalMetricCandidate(rep, "error_rate"))
 	}
+	if spliced {
+		fmt.Fprintln(w, spliceFootnote)
+	}
 	return w.Flush()
 }
 
-func renderTrendsMetric(out io.Writer, records []seqRecord, metric string) error {
+func renderTrendsMetric(out io.Writer, records []seqRecord, metric string, current time.Time) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SEQ\tCREATED\tCANDIDATE\tVERDICT\tBASELINE-VALUE\tCANDIDATE-VALUE\tBAND")
+	spliced := false
 	for _, sr := range records {
+		seq, marked := seqCell(sr, current)
+		spliced = spliced || marked
 		baseVal, candVal, band := "-", "-", "-"
 		if f, ok := totalFinding(sr.rec.Report, metric); ok {
 			baseVal = formatTrendValue(f.Baseline)
 			candVal = formatTrendValue(f.Candidate)
 			band = formatTrendBand(f)
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			sr.seq, sr.rec.CreatedAt.UTC().Format(time.RFC3339), sr.rec.CandidateSelector,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			seq, sr.rec.CreatedAt.UTC().Format(time.RFC3339), sr.rec.CandidateSelector,
 			sr.rec.Report.OverallVerdict, baseVal, candVal, band)
 	}
+	if spliced {
+		fmt.Fprintln(w, spliceFootnote)
+	}
 	return w.Flush()
+}
+
+func seqCell(sr seqRecord, current time.Time) (string, bool) {
+	if !sr.rec.BaselineCreatedAt.Equal(current) {
+		return fmt.Sprintf("%d *", sr.seq), true
+	}
+	return fmt.Sprintf("%d", sr.seq), false
 }
 
 func totalFinding(rep regress.Report, metric string) (regress.Finding, bool) {
@@ -178,5 +202,5 @@ func formatTrendBand(f regress.Finding) string {
 }
 
 func formatTrendValue(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
+	return fmt.Sprintf("%.2f", v)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -88,14 +89,14 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	defer func() { _ = s.Close() }()
 
 	pricer := mkPricer()
-	baseGroup, err := resolveSelector(errOut, s, pricer, f.baseline)
+	baseGroup, baseline, err := resolveSelector(errOut, s, pricer, f.baseline)
 	if err != nil {
 		return err
 	}
 	if len(baseGroup) == 0 {
 		return operational(fmt.Errorf("regress baseline %q: %w", f.baseline, ErrEmptyGroup))
 	}
-	candGroup, err := resolveSelector(errOut, s, pricer, f.candidate)
+	candGroup, _, err := resolveSelector(errOut, s, pricer, f.candidate)
 	if err != nil {
 		return err
 	}
@@ -121,7 +122,7 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		regress.RenderHuman(rep, out)
 	}
 	if f.record {
-		if err := appendRecord(s, baselineName, f, specs, rep); err != nil {
+		if err := appendRecord(s, baselineName, baseline.CreatedAt, f, specs, rep); err != nil {
 			return operational(err)
 		}
 	}
@@ -142,13 +143,15 @@ func recordBaselineName(f regressFlags) (string, error) {
 	return val, nil
 }
 
-func appendRecord(s store.Store, baselineName string, f regressFlags, specs []regress.AnnotationSpec, rep regress.Report) error {
+func appendRecord(s store.Store, baselineName string, baselineCreatedAt time.Time, f regressFlags, specs []regress.AnnotationSpec, rep regress.Report) error {
 	body, err := marshalRecord(regress.Record{
+		V:                 regress.RecordVersion,
 		CandidateSelector: f.candidate,
 		Thresholds:        f.thresholds,
 		Annotations:       specs,
 		Report:            rep,
-		CreatedAt:         nowFn(),
+		CreatedAt:         nowFn().UTC(),
+		BaselineCreatedAt: baselineCreatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("regress --record marshal: %w", err)
@@ -233,15 +236,16 @@ func verdictError(rep regress.Report, strict bool) error {
 	return nil
 }
 
-func resolveSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, error) {
+func resolveSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, model.Baseline, error) {
 	kind, val, err := parseSelector(sel)
 	if err != nil {
-		return nil, operational(err)
+		return nil, model.Baseline{}, operational(err)
 	}
 	if kind == selectorName {
 		return resolveNameSelector(errOut, s, pricer, val)
 	}
-	return resolveLabelSelector(s, pricer, val)
+	group, err := resolveLabelSelector(s, pricer, val)
+	return group, model.Baseline{}, err
 }
 
 func parseSelector(sel string) (string, string, error) {
@@ -266,23 +270,23 @@ func resolveLabelSelector(s store.Store, pricer reduce.Pricer, val string) ([]ag
 	return group, nil
 }
 
-func resolveNameSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, error) {
+func resolveNameSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, model.Baseline, error) {
 	b, ok, err := s.GetBaseline(name)
 	if err != nil {
 		if errors.Is(err, store.ErrSchemaOutdated) {
-			return nil, operational(store.ErrSchemaOutdated)
+			return nil, model.Baseline{}, operational(store.ErrSchemaOutdated)
 		}
-		return nil, operational(fmt.Errorf("regress get baseline %q: %w", name, err))
+		return nil, model.Baseline{}, operational(fmt.Errorf("regress get baseline %q: %w", name, err))
 	}
 	if !ok {
-		return nil, operational(fmt.Errorf("%w: %q", ErrBaselineNotFound, name))
+		return nil, model.Baseline{}, operational(fmt.Errorf("%w: %q", ErrBaselineNotFound, name))
 	}
 	group, err := loadRunGroupByIDs(s, pricer, b.RunIDs)
 	if err != nil {
-		return nil, operational(err)
+		return nil, model.Baseline{}, operational(err)
 	}
 	if len(group) < len(b.RunIDs) {
 		fmt.Fprintf(errOut, "warning: baseline %q resolved %d < stored %d runs\n", name, len(group), len(b.RunIDs))
 	}
-	return group, nil
+	return group, b, nil
 }

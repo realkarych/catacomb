@@ -15,12 +15,16 @@ type AnnotationSpec struct {
 	HigherBetter bool   `json:"higher_better"`
 }
 
+const RecordVersion = 1
+
 type Record struct {
+	V                 int              `json:"v"`
 	CandidateSelector string           `json:"candidate_selector"`
 	Thresholds        Thresholds       `json:"thresholds"`
 	Annotations       []AnnotationSpec `json:"annotations,omitempty"`
 	Report            Report           `json:"report"`
 	CreatedAt         time.Time        `json:"created_at"`
+	BaselineCreatedAt time.Time        `json:"baseline_created_at"`
 }
 
 type Input struct {

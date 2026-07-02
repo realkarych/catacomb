@@ -246,7 +246,7 @@ func TestRegressBadCandidateSelectorOperational(t *testing.T) {
 
 func TestRegressUnknownPrefixOperational(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	_, err := resolveSelector(io.Discard, nil, newPricer(), "phase:x=y")
+	_, _, err := resolveSelector(io.Discard, nil, newPricer(), "phase:x=y")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown prefix")
 	_ = dbPath
@@ -655,6 +655,27 @@ func TestRegressRecordPreservesRegressionExit(t *testing.T) {
 	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
 	assert.Equal(t, regress.VerdictRegression, rec.Report.OverallVerdict)
 	assert.Equal(t, "label:variant=cand", rec.CandidateSelector)
+}
+
+func TestRegressRecordStampsVersionAndBaseline(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	ts := pinBaselineNow(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+
+	var out, errBuf bytes.Buffer
+	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf))
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	res, err := s.RegressResultsFor("golden")
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	var rec regress.Record
+	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
+	assert.Equal(t, regress.RecordVersion, rec.V)
+	assert.True(t, rec.BaselineCreatedAt.Equal(ts))
+	assert.Equal(t, ts.UTC(), rec.CreatedAt.UTC())
 }
 
 func TestRegressRecordDoesNotAlterOutput(t *testing.T) {
