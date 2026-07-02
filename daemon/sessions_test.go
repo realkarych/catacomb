@@ -1084,3 +1084,38 @@ func TestSummarizeGraphsCoverage(t *testing.T) {
 	assert.Equal(t, []string{"run1"}, sum.RunIDs)
 	assert.InDelta(t, 0.5, sum.ErrorRate, 0.001)
 }
+
+func TestSummarizeGraphsReproDeepCopied(t *testing.T) {
+	g := reduce.NewGraph()
+	src := &model.ReproMeta{Cwd: "/orig", CatacombVersion: "v1"}
+	g.Runs["r1"] = &model.Run{ID: "r1", SessionIDs: []string{"s1"}, Repro: src}
+
+	sum := SummarizeSession("s1", []*reduce.Graph{g})
+	require.NotNil(t, sum.Repro)
+	require.Equal(t, "/orig", sum.Repro.Cwd)
+
+	src.Cwd = "/mutated"
+	src.CatacombVersion = "v2"
+	assert.Equal(t, "/orig", sum.Repro.Cwd)
+	assert.Equal(t, "v1", sum.Repro.CatacombVersion)
+}
+
+func TestSummarizeSessionReproDeepCopied(t *testing.T) {
+	dir := t.TempDir()
+	d := New(tempStore(t))
+	fixedExecID(d)
+	p, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})
+	require.NoError(t, d.Ingest("SessionStart", p))
+
+	d.mu.Lock()
+	sum := d.summarizeSession("s1")
+	r := d.graphs["exec1"].Runs["s1"]
+	d.mu.Unlock()
+
+	require.NotNil(t, sum.Repro)
+	require.NotNil(t, r.Repro)
+	require.Equal(t, dir, sum.Repro.Cwd)
+
+	r.Repro.Cwd = "/mutated"
+	assert.Equal(t, dir, sum.Repro.Cwd)
+}

@@ -238,3 +238,39 @@ func TestLoadRunGroupAnnotationsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store annotations")
 }
+
+func TestLoadRunGroupMultiRunBucketsAndOrders(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	d := daemon.New(s)
+	for _, rid := range []string{"r3", "r1", "r2"} {
+		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+rid+`"}`), "basket=b1"))
+		require.NoError(t, d.IngestWithLabels("PreToolUse", []byte(`{"session_id":"`+rid+`","tool_name":"Bash","tool_use_id":"`+rid+`-t2","tool_input":{}}`), "basket=b1"))
+		require.NoError(t, d.IngestWithLabels("PreToolUse", []byte(`{"session_id":"`+rid+`","tool_name":"Bash","tool_use_id":"`+rid+`-t1","tool_input":{}}`), "basket=b1"))
+	}
+	require.NoError(t, s.Close())
+
+	ro, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	defer func() { _ = ro.Close() }()
+
+	group, err := loadRunGroup(ro, newPricer(), map[string]string{"basket": "b1"})
+	require.NoError(t, err)
+	require.Len(t, group, 3)
+	assert.Equal(t, []string{"r1", "r2", "r3"},
+		[]string{group[0].Run.ID, group[1].Run.ID, group[2].Run.ID})
+
+	for _, rg := range group {
+		require.NotEmpty(t, rg.Nodes)
+		for _, n := range rg.Nodes {
+			assert.Equal(t, rg.Run.ID, n.RunID)
+		}
+		for i := 1; i < len(rg.Nodes); i++ {
+			assert.LessOrEqual(t, rg.Nodes[i-1].ID, rg.Nodes[i].ID)
+		}
+		for i := 1; i < len(rg.Edges); i++ {
+			assert.LessOrEqual(t, rg.Edges[i-1].ID, rg.Edges[i].ID)
+		}
+	}
+}

@@ -194,7 +194,8 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 			}
 			labels.consider(runID, r)
 			if sum.Repro == nil && r.Repro != nil {
-				sum.Repro = r.Repro
+				repro := *r.Repro
+				sum.Repro = &repro
 			}
 			sum.Status = foldStatus(sum.Status, r.Status)
 			if r.StartedAt != nil {
@@ -320,7 +321,8 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 			}
 			labels.consider(runID, r)
 			if sum.Repro == nil && r.Repro != nil {
-				sum.Repro = r.Repro
+				repro := *r.Repro
+				sum.Repro = &repro
 			}
 			sum.Status = foldStatus(sum.Status, r.Status)
 			if r.StartedAt != nil {

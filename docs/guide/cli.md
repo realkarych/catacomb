@@ -516,7 +516,9 @@ rejected at load.
 For each cell the runner emits `task:<id>` start/end phase markers around the child, on a
 best-effort basis — it needs a `session_id` in the child's stream-json to place them, and each
 manifest entry records whether the markers landed (`marked: true|false`). These `task:<id>`
-phases give `regress` a stable checkpoint axis even when the agent forgets to mark its own.
+phases give `regress` a stable checkpoint axis even when the agent forgets to mark its own. Each
+marker POST is synchronous with a bounded 2s timeout, so a slow or down daemon adds up to ~4s
+per cell (start plus end) before the run moves on.
 
 The manifest is JSONL, written incrementally — one object per completed cell (run-id, task,
 variant, rep, exit code, session id, `marked`, basket hash, finish time, and an optional

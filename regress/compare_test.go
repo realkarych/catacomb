@@ -101,6 +101,24 @@ func TestCompareMetric(t *testing.T) {
 			VerdictRegression, 750, 1250,
 		},
 		{
+			"neg_median_regression",
+			aggregate.MetricStats{N: 5, Median: -100, P25: -110, P75: -90},
+			aggregate.MetricStats{N: 5, Median: -60},
+			VerdictRegression, -130, -70,
+		},
+		{
+			"neg_median_ok",
+			aggregate.MetricStats{N: 5, Median: -100, P25: -110, P75: -90},
+			aggregate.MetricStats{N: 5, Median: -100},
+			VerdictOK, -130, -70,
+		},
+		{
+			"neg_median_abs_rel_band_dominates",
+			aggregate.MetricStats{N: 5, Median: -100, P25: -102, P75: -98},
+			aggregate.MetricStats{N: 5, Median: -80},
+			VerdictOK, -125, -75,
+		},
+		{
 			"insufficient_baseline",
 			aggregate.MetricStats{N: 2, Median: 1000, P25: 900, P75: 1100},
 			aggregate.MetricStats{N: 5, Median: 1400},

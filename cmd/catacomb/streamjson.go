@@ -111,12 +111,18 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
+const maxObserverBuffer = 1 << 20
+
 type lineObserver struct {
 	buf     []byte
+	stopped bool
 	observe func(line []byte)
 }
 
 func (w *lineObserver) Write(p []byte) (int, error) {
+	if w.stopped {
+		return len(p), nil
+	}
 	w.buf = append(w.buf, p...)
 	for {
 		i := bytes.IndexByte(w.buf, '\n')
@@ -126,7 +132,19 @@ func (w *lineObserver) Write(p []byte) (int, error) {
 		w.observe(w.buf[:i])
 		w.buf = w.buf[i+1:]
 	}
+	if len(w.buf) > maxObserverBuffer {
+		w.buf = nil
+		w.stopped = true
+	}
 	return len(p), nil
+}
+
+func (w *lineObserver) flush() {
+	if w.stopped || len(w.buf) == 0 {
+		return
+	}
+	w.observe(w.buf)
+	w.buf = nil
 }
 
 func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []string, labels string) error {
@@ -148,8 +166,10 @@ func runChildObserved(stdout, stderr io.Writer, discoveryPath, runID string, arg
 	pr, pw := io.Pipe()
 	lossy := &lossyWriter{ch: make(chan []byte, streamTeeBuffer)}
 	writers := []io.Writer{stdout, lossy}
+	var obs *lineObserver
 	if observe != nil {
-		writers = append(writers, &lineObserver{observe: observe})
+		obs = &lineObserver{observe: observe}
+		writers = append(writers, obs)
 	}
 	child.Stdout = io.MultiWriter(writers...)
 	child.Stderr = stderr
@@ -169,6 +189,9 @@ func runChildObserved(stdout, stderr io.Writer, discoveryPath, runID string, arg
 		_, _ = io.Copy(io.Discard, pr)
 	}()
 	teardown := func() {
+		if obs != nil {
+			obs.flush()
+		}
 		close(lossy.ch)
 		<-pumpDone
 		_ = pw.Close()

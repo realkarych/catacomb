@@ -116,6 +116,9 @@ func TestHelperProcess(t *testing.T) {
 			}
 		}
 		os.Exit(0)
+	case len(args) > 0 && args[0] == "NONL":
+		fmt.Fprint(os.Stdout, `{"session_id":"nonl"}`)
+		os.Exit(0)
 	default:
 		fmt.Fprintln(os.Stdout, `{"type":"system","subtype":"init","session_id":"s1"}`)
 		os.Exit(0)
@@ -401,4 +404,57 @@ func TestRunChildShutdownNoHang(t *testing.T) {
 			return false
 		}
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestLineObserverFlushesUnterminatedLine(t *testing.T) {
+	var got []string
+	w := &lineObserver{observe: func(line []byte) { got = append(got, string(line)) }}
+	n, err := w.Write([]byte("no newline here"))
+	require.NoError(t, err)
+	assert.Equal(t, len("no newline here"), n)
+	assert.Empty(t, got)
+
+	w.flush()
+	require.Len(t, got, 1)
+	assert.Equal(t, "no newline here", got[0])
+
+	w.flush()
+	assert.Len(t, got, 1)
+}
+
+func TestLineObserverOverflowStopsObserving(t *testing.T) {
+	var calls int
+	w := &lineObserver{observe: func([]byte) { calls++ }}
+	big := bytes.Repeat([]byte("a"), maxObserverBuffer+1)
+
+	n, err := w.Write(big)
+	require.NoError(t, err)
+	assert.Equal(t, len(big), n)
+	assert.Zero(t, calls)
+
+	n, err = w.Write([]byte(`{"session_id":"s1"}` + "\n"))
+	require.NoError(t, err)
+	assert.Equal(t, len(`{"session_id":"s1"}`)+1, n)
+	assert.Zero(t, calls)
+
+	w.flush()
+	assert.Zero(t, calls)
+}
+
+func TestRunChildObservedFlushesUnterminatedLine(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "NONL", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	var lines []string
+	err := runChildObserved(io.Discard, io.Discard, discovery, "", []string{"claude"}, "", "", nil, func(line []byte) {
+		lines = append(lines, string(line))
+	})
+	require.NoError(t, err)
+	require.Contains(t, lines, `{"session_id":"nonl"}`)
 }
