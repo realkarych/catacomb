@@ -84,3 +84,9 @@ func TestMatchLabels(t *testing.T) {
 	assert.False(t, model.MatchLabels(labels, map[string]string{"missing": "x"}))
 	assert.False(t, model.MatchLabels(nil, map[string]string{"a": "1"}))
 }
+
+func TestMatchLabelsEmptyValueVsMissingKey(t *testing.T) {
+	assert.False(t, model.MatchLabels(nil, map[string]string{"a": ""}))
+	assert.False(t, model.MatchLabels(map[string]string{"b": "1"}, map[string]string{"a": ""}))
+	assert.True(t, model.MatchLabels(map[string]string{"a": ""}, map[string]string{"a": ""}))
+}

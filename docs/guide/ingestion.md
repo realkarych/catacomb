@@ -104,8 +104,9 @@ catacomb daemon --transcript-dir ~/.claude/projects
 ## Run labels
 
 Labels are arbitrary `k=v` metadata attached to a run so you can group and filter later — for
-example `basket=checkout` or `rep=1`. They ride along every ingestion path and are stored on
-the run record.
+example `basket=checkout` or `rep=1`. They ride the hook and stream-json ingestion paths and
+are stored on the run record. OpenTelemetry spans and transcript backfill (`up --history`,
+`replay`) are not labeled.
 
 Set them with the `CATACOMB_LABELS` environment variable, a comma-separated list of `k=v`
 pairs. Child processes inherit the variable, so every session launched under it is tagged:

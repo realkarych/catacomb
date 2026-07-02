@@ -307,8 +307,9 @@ func TestRunLabelFlagMergesWithEnv(t *testing.T) {
 	assert.Equal(t, "CATACOMB_LABELS=basket=b1,rep=3,variant=v2", got[0])
 }
 
-func TestRunNoLabelsLeavesChildEnvUnset(t *testing.T) {
+func TestRunChildDoesNotAppendLabelsWhenEmpty(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("CATACOMB_LABELS", "sentinel=1")
 	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 	orig := execCommand
 	execCommand = func(name string, args ...string) *exec.Cmd {
@@ -319,7 +320,53 @@ func TestRunNoLabelsLeavesChildEnvUnset(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}, ""))
-	assert.NotContains(t, out.String(), "CATACOMB_LABELS=")
+
+	got := make([]string, 0, 1)
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if strings.HasPrefix(l, "CATACOMB_LABELS=") {
+			got = append(got, l)
+		}
+	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "CATACOMB_LABELS=sentinel=1", got[0])
+}
+
+func TestRunLabelFlagInvalidErrorsBeforeSpawn(t *testing.T) {
+	spawned := false
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		spawned = true
+		return exec.Command(os.Args[0])
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	root := newRootCmd()
+	root.SetArgs([]string{"run", "--label", "Bad=x", "--", "claude"})
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --label")
+	assert.False(t, spawned)
+}
+
+func TestRunLabelFlagMultiPairTerm(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	t.Setenv("CATACOMB_LABELS", "")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "ENV", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"run", "--label", "a=1,b=2", "--", "claude"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "CATACOMB_LABELS=a=1,b=2")
 }
 
 func TestRunChildShutdownNoHang(t *testing.T) {

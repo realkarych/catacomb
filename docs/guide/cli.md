@@ -343,7 +343,8 @@ catacomb run [flags] -- <cmd...>
 
 Exits with the child's exit code. The child inherits `CATACOMB_DISCOVERY` from the
 environment so hooks also fire. Labels passed with `--label` merge over any inherited from
-`CATACOMB_LABELS` and are carried to the daemon on every event from that child. See
+`CATACOMB_LABELS` and ride the child's hook and stream-json events to the daemon; OpenTelemetry
+spans and transcript backfill are not labeled. See
 [ingestion.md](ingestion.md#run-labels) for label rules and caps.
 
 ```sh

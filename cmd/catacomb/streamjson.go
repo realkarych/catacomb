@@ -97,6 +97,9 @@ func newRunCmd() *cobra.Command {
 		Short: "Run a Claude Code command, tee its stream-json to the terminal and the daemon",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateLabelTerms(labels); err != nil {
+				return err
+			}
 			merged := model.MergeLabels(model.ParseLabels(os.Getenv("CATACOMB_LABELS")), model.ParseLabels(strings.Join(labels, ",")))
 			canonical := model.FormatLabels(merged)
 			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args, canonical)

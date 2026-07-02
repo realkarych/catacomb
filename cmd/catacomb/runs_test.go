@@ -101,7 +101,11 @@ func TestRunsLabelSelectorFiltersJSON(t *testing.T) {
 }
 
 func TestRunsLabelSelectorANDsTerms(t *testing.T) {
-	dbPath := seedRunsWithLabels(t, map[string]string{"r1": "basket=b1,rep=1", "r2": "basket=b1,rep=2"})
+	dbPath := seedRunsWithLabels(t, map[string]string{
+		"r1": "basket=b1,rep=1",
+		"r2": "basket=b1,rep=2",
+		"r3": "rep=1",
+	})
 
 	var buf strings.Builder
 	err := runRuns(&buf, store.OpenSQLiteReadOnly, newPricer, dbPath, true, []string{"basket=b1", "rep=1"})
@@ -112,6 +116,35 @@ func TestRunsLabelSelectorANDsTerms(t *testing.T) {
 	require.Len(t, summaries, 1)
 	assert.Equal(t, "r1", summaries[0].Session)
 	assert.Equal(t, map[string]string{"basket": "b1", "rep": "1"}, summaries[0].Labels)
+}
+
+func TestRunsLabelFlagInvalidErrors(t *testing.T) {
+	dbPath := seedRunsWithLabels(t, map[string]string{"r1": "basket=b1"})
+
+	root := newRootCmd()
+	root.SetArgs([]string{"runs", "--db", dbPath, "--json", "--label", "Bad=x"})
+	var buf strings.Builder
+	root.SetOut(&buf)
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --label")
+	assert.NotContains(t, buf.String(), "r1")
+}
+
+func TestRunsLabelFlagMultiPairTermViaRoot(t *testing.T) {
+	dbPath := seedRunsWithLabels(t, map[string]string{"r1": "a=1,b=2", "r2": "a=1"})
+
+	root := newRootCmd()
+	root.SetArgs([]string{"runs", "--db", dbPath, "--json", "--label", "a=1,b=2"})
+	var buf strings.Builder
+	root.SetOut(&buf)
+	require.NoError(t, root.Execute())
+
+	var summaries []daemon.SessionSummary
+	require.NoError(t, json.Unmarshal([]byte(buf.String()), &summaries))
+	require.Len(t, summaries, 1)
+	assert.Equal(t, "r1", summaries[0].Session)
 }
 
 func TestRunsLabelFlagViaRoot(t *testing.T) {
