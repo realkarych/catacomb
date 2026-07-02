@@ -470,6 +470,125 @@ catacomb runs --label basket=checkout --label rep=1 --json
 
 ---
 
+### baseline set
+
+Create or replace a named baseline from a label selector, resolved against the store now.
+
+```sh
+catacomb baseline set <name> --label k=v [--label ...] [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--label` | (repeatable) | `k=v` selector; the baseline captures every run matching all terms (AND) |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+
+Resolves the label selector immediately, sorts the matching run IDs, and persists them with the
+selector and a created-at timestamp under `<name>`. Requires read-write store access; errors if
+the store does not exist or the selector matches no runs. Re-running with the same name replaces
+the stored baseline. A saved baseline is referenced by `regress` as `name:<baseline>`, so a golden
+group survives later label churn.
+
+```sh
+catacomb baseline set golden --label basket=checkout --label variant=main
+```
+
+---
+
+### baseline list
+
+List stored baselines.
+
+```sh
+catacomb baseline list [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--json` | false | Emit JSON output |
+
+Prints a table with columns `NAME`, `RUNS`, `SELECTOR`, `CREATED`, sorted by name; `SELECTOR`
+shows the sorted `k=v` terms and `CREATED` is a UTC RFC3339 timestamp. `--json` emits the stored
+records including each baseline's resolved run IDs.
+
+```sh
+catacomb baseline list --json
+```
+
+---
+
+### baseline rm
+
+Remove a stored baseline.
+
+```sh
+catacomb baseline rm <name> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+
+Deletes the named baseline. Requires read-write store access.
+
+```sh
+catacomb baseline rm golden
+```
+
+---
+
+### regress
+
+Compare a candidate run group against a baseline and gate on the verdict.
+
+```sh
+catacomb regress --baseline <selector> --candidate <selector> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--baseline` | (empty) | Baseline selector: `label:k=v[,k=v...]` or `name:<baseline>` |
+| `--candidate` | (empty) | Candidate selector (same grammar) |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--json` | false | Emit the full report as JSON |
+| `--strict` | false | Treat an insufficient-data verdict as a failure (exit 1) |
+| `--min-support` | 3 | Minimum runs per group for a trusted comparison |
+| `--presence-delta` | 0.2 | Presence-rate delta threshold |
+| `--error-delta` | 0.1 | Error-rate delta threshold |
+| `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
+| `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
+| `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
+
+Both selectors must be supplied. `label:k=v[,k=v...]` resolves runs by label (all terms ANDed);
+`name:<baseline>` resolves a baseline saved with `baseline set`. Groups are aggregated and
+compared per [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
+
+- **Rates** (presence, error) use Wilson 95% intervals and are flagged as a `regression` only
+  when the baseline and candidate intervals are disjoint *and* the delta exceeds the threshold;
+  a delta over the threshold with overlapping intervals is reported as `notable`.
+- **Metrics** (`duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `occurrences`; run totals
+  also `nodes`) flag the candidate median when it falls outside the baseline median ±
+  `max(metric-rel-delta × |median|, iqr-factor × IQR)` band.
+- **Alignment coverage** (fraction of baseline steps matched in the candidate) is always
+  reported; below `--coverage-floor` step-level regressions are downgraded to `notable` and the
+  checkpoint (phase) level carries the verdict.
+- Groups below `--min-support` yield an `insufficient` verdict instead of a guess.
+
+Comparison runs at three scopes — run totals, checkpoint phases, and steps. The human table
+prints `VERDICT SCOPE KEY METRIC BASELINE CANDIDATE BAND` with presence-normalized values
+(presence rate, not absence); `--json` emits the full report (presence rows carry absence rates
+plus a clarifying `detail` field). Exit codes: `0` pass, `1` regression (or `insufficient` with
+`--strict`), `2` operational error (invalid selector, unknown baseline, missing store, or empty
+group).
+
+```sh
+catacomb regress --baseline name:golden --candidate label:basket=checkout,variant=candidate
+catacomb regress --baseline label:variant=main --candidate label:variant=candidate --json
+```
+
+---
+
 ### snapshot
 
 Dump the current graph state as JSONL.
