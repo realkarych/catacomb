@@ -145,6 +145,16 @@ func TestCopyRunIsolatesSessionIDs(t *testing.T) {
 	assert.Equal(t, "s1", src.SessionIDs[0])
 }
 
+func TestCopyRunIsolatesLabels(t *testing.T) {
+	src := &model.Run{
+		ID:     "r1",
+		Labels: map[string]string{"basket": "checkout", "rep": "1"},
+	}
+	cp := copyRun(src)
+	cp.Labels["basket"] = "mutated"
+	assert.Equal(t, "checkout", src.Labels["basket"])
+}
+
 func TestCopyRunIsolatesRepro(t *testing.T) {
 	repro := &model.ReproMeta{Cwd: "/some/cwd"}
 	src := &model.Run{ID: "r1", Repro: repro}
@@ -160,6 +170,7 @@ func TestCopyRunNilFields(t *testing.T) {
 	assert.Equal(t, "r2", cp.ID)
 	assert.Nil(t, cp.Meta)
 	assert.Nil(t, cp.SessionIDs)
+	assert.Nil(t, cp.Labels)
 	assert.Nil(t, cp.Repro)
 }
 

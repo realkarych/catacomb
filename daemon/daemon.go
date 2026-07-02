@@ -178,7 +178,11 @@ func (d *Daemon) Recover() error {
 	return nil
 }
 
-func (d *Daemon) Ingest(hookType string, payload []byte) (err error) {
+func (d *Daemon) Ingest(hookType string, payload []byte) error {
+	return d.IngestWithLabels(hookType, payload, "")
+}
+
+func (d *Daemon) IngestWithLabels(hookType string, payload []byte, labels string) (err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	defer func() {
@@ -187,13 +191,13 @@ func (d *Daemon) Ingest(hookType string, payload []byte) (err error) {
 			err = nil
 		}
 	}()
-	if e := d.ingestLocked(hookType, payload); e != nil {
+	if e := d.ingestLocked(hookType, payload, canonicalLabels(labels)); e != nil {
 		d.quarantine(hookType, payload, e.Error())
 	}
 	return nil
 }
 
-func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
+func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) error {
 	sessionID := sessionIDOf(payload)
 	execID, known := d.execBySession[sessionID]
 	if !known {
@@ -204,6 +208,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte) error {
 	if err != nil {
 		return err
 	}
+	attachLabels(obs, labels)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -282,7 +287,11 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 	return nil
 }
 
-func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) (err error) {
+func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) error {
+	return d.IngestStreamJSONWithLabels(line, sessionID, "")
+}
+
+func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels string) (err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	defer func() {
@@ -301,6 +310,7 @@ func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) (err error) {
 		d.quarantine("stream-json", line, err.Error())
 		return nil
 	}
+	attachLabels(obs, canonicalLabels(labels))
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -617,6 +627,22 @@ func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {
 func (d *Daemon) next() uint64 {
 	d.seq++
 	return d.seq
+}
+
+func canonicalLabels(raw string) string {
+	return model.FormatLabels(model.ParseLabels(raw))
+}
+
+func attachLabels(obs []model.Observation, labels string) {
+	if labels == "" {
+		return
+	}
+	for i := range obs {
+		if obs[i].Attrs == nil {
+			obs[i].Attrs = map[string]any{}
+		}
+		obs[i].Attrs["catacomb.labels"] = labels
+	}
 }
 
 func sessionIDOf(payload []byte) string {

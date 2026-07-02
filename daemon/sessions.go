@@ -17,26 +17,27 @@ import (
 var ErrSessionNotFound = errors.New("daemon: session not found")
 
 type SessionSummary struct {
-	Session        string           `json:"session"`
-	Label          string           `json:"label,omitempty"`
-	Status         string           `json:"status"`
-	StartedAt      string           `json:"started_at,omitempty"`
-	EndedAt        string           `json:"ended_at,omitempty"`
-	LastActivity   string           `json:"last_activity,omitempty"`
-	DurationMS     *int64           `json:"duration_ms,omitempty"`
-	TokensIn       int64            `json:"tokens_in"`
-	TokensOut      int64            `json:"tokens_out"`
-	CostUSD        *float64         `json:"cost_usd,omitempty"`
-	CostSource     string           `json:"cost_source"`
-	NodeCount      int              `json:"node_count"`
-	ToolCount      int              `json:"tool_count"`
-	ErrorCount     int              `json:"error_count"`
-	ModelID        string           `json:"model_id,omitempty"`
-	RunIDs         []string         `json:"run_ids"`
-	CountsByType   map[string]int   `json:"counts_by_type"`
-	CountsByStatus map[string]int   `json:"counts_by_status"`
-	ErrorRate      float64          `json:"error_rate"`
-	Repro          *model.ReproMeta `json:"repro,omitempty"`
+	Session        string            `json:"session"`
+	Label          string            `json:"label,omitempty"`
+	Status         string            `json:"status"`
+	StartedAt      string            `json:"started_at,omitempty"`
+	EndedAt        string            `json:"ended_at,omitempty"`
+	LastActivity   string            `json:"last_activity,omitempty"`
+	DurationMS     *int64            `json:"duration_ms,omitempty"`
+	TokensIn       int64             `json:"tokens_in"`
+	TokensOut      int64             `json:"tokens_out"`
+	CostUSD        *float64          `json:"cost_usd,omitempty"`
+	CostSource     string            `json:"cost_source"`
+	NodeCount      int               `json:"node_count"`
+	ToolCount      int               `json:"tool_count"`
+	ErrorCount     int               `json:"error_count"`
+	ModelID        string            `json:"model_id,omitempty"`
+	RunIDs         []string          `json:"run_ids"`
+	CountsByType   map[string]int    `json:"counts_by_type"`
+	CountsByStatus map[string]int    `json:"counts_by_status"`
+	ErrorRate      float64           `json:"error_rate"`
+	Repro          *model.ReproMeta  `json:"repro,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
 }
 
 func (d *Daemon) sessionGraphDeltas(hash string) ([]sseEvent, error) {
@@ -163,6 +164,9 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 			}
 			if sum.ModelID == "" && r.ModelID != "" {
 				sum.ModelID = r.ModelID
+			}
+			if sum.Labels == nil && len(r.Labels) > 0 {
+				sum.Labels = r.Labels
 			}
 			if sum.Repro == nil && r.Repro != nil {
 				sum.Repro = r.Repro

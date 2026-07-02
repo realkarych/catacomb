@@ -60,6 +60,12 @@ func copyRun(r *model.Run) *model.Run {
 			rc.Meta[k] = v
 		}
 	}
+	if r.Labels != nil {
+		rc.Labels = make(map[string]string, len(r.Labels))
+		for k, v := range r.Labels {
+			rc.Labels[k] = v
+		}
+	}
 	if r.Repro != nil {
 		repro := *r.Repro
 		rc.Repro = &repro

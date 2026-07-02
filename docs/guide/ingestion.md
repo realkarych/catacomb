@@ -101,6 +101,41 @@ catacomb daemon --transcript-dir ~/.claude/projects
 
 `up --history` is the recommended way to backfill sessions that ran before the daemon started. Paths matching globs in `sources.jsonl.exclude` (or the `--transcript-exclude` flag) are never tailed; the active database file and the current working directory are always excluded automatically.
 
+## Run labels
+
+Labels are arbitrary `k=v` metadata attached to a run so you can group and filter later — for
+example `basket=checkout` or `rep=1`. They ride the hook and stream-json ingestion paths and
+are stored on the run record. OpenTelemetry spans and transcript backfill (`up --history`,
+`replay`) are not labeled.
+
+Set them with the `CATACOMB_LABELS` environment variable, a comma-separated list of `k=v`
+pairs. Child processes inherit the variable, so every session launched under it is tagged:
+
+```sh
+CATACOMB_LABELS=basket=checkout,rep=1 claude --output-format stream-json <prompt>
+```
+
+`catacomb run --label` adds labels without exporting the variable yourself; repeat the flag
+for multiple pairs. Flag values win per key over anything inherited from `CATACOMB_LABELS`:
+
+```sh
+catacomb run --label basket=checkout --label rep=1 -- claude --output-format stream-json <prompt>
+```
+
+Both the hook and stream-json forwarders send the resolved labels to the daemon in the
+`X-Catacomb-Labels` header. When POSTing to the daemon directly, set that header yourself to
+attach labels to the ingested events.
+
+Labels are normalized before storage:
+
+- At most 32 pairs are kept; extra pairs are dropped.
+- Each key must match `[a-z0-9_.-]{1,64}`; invalid keys are dropped.
+- Each value may be at most 256 bytes; longer pairs are dropped.
+
+List and filter stored runs by label with `catacomb runs --label` (see
+[cli.md](cli.md#runs)). Repeat the flag to require multiple labels — the terms are ANDed, so a
+run must carry every `k=v` to match.
+
 ## Reconciliation
 
 All four sources are merged by canonical entity precedence into one graph. Hooks provide broad event coverage; OpenTelemetry adds cost and token data with the real span tree; stream-json adds structural parent links; transcript JSONL provides the authoritative subagent tree. No source duplicates another's authoritative fields — they complement each other.

@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/daemon"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
@@ -16,20 +18,36 @@ import (
 func newRunsCmd() *cobra.Command {
 	var dbPath string
 	var asJSON bool
+	var labels []string
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "List all runs in the stored catacomb database",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRuns(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, dbPath, asJSON)
+			if err := validateLabelTerms(labels); err != nil {
+				return err
+			}
+			return runRuns(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, dbPath, asJSON, labels)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label selector; keep only runs matching all terms (repeatable, AND)")
 	return cmd
 }
 
-func runRuns(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath string, asJSON bool) error {
+func validateLabelTerms(terms []string) error {
+	for _, term := range terms {
+		for _, seg := range strings.Split(term, ",") {
+			if len(model.ParseLabels(seg)) != 1 {
+				return fmt.Errorf("invalid --label %q: expected k=v (key [a-z0-9_.-]{1,64}, value ≤256 bytes)", term)
+			}
+		}
+	}
+	return nil
+}
+
+func runRuns(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath string, asJSON bool, labels []string) error {
 	s, err := openReadStore(open, dbPath)
 	if err != nil {
 		return err
@@ -39,9 +57,13 @@ func runRuns(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbP
 	if err != nil {
 		return err
 	}
+	selector := model.ParseLabels(strings.Join(labels, ","))
 	runs := collectRuns(graphs)
 	summaries := make([]daemon.SessionSummary, 0, len(runs))
 	for _, r := range runs {
+		if !model.MatchLabels(r.Labels, selector) {
+			continue
+		}
 		summaries = append(summaries, daemon.SummarizeRun(r.ID, graphs))
 	}
 	if asJSON {

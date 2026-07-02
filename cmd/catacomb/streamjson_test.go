@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,14 +23,14 @@ func TestStreamForwardDelivers(t *testing.T) {
 	d, discovery := runTestDaemon(t)
 	var warn bytes.Buffer
 	body := bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}` + "\n"))
-	streamForward(&warn, discovery, body)
+	streamForward(&warn, discovery, body, "")
 	assert.Empty(t, warn.String())
 	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 30*time.Second, 10*time.Millisecond)
 }
 
 func TestStreamForwardMissingDiscovery(t *testing.T) {
 	var warn bytes.Buffer
-	streamForward(&warn, filepath.Join(t.TempDir(), "nope.json"), bytes.NewReader([]byte(`{}`)))
+	streamForward(&warn, filepath.Join(t.TempDir(), "nope.json"), bytes.NewReader([]byte(`{}`)), "")
 	assert.Contains(t, warn.String(), "discovery")
 }
 
@@ -41,7 +42,7 @@ func TestStreamForwardDaemonDown(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: addr, Token: "t"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)))
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)), "")
 	assert.Contains(t, warn.String(), "forward")
 }
 
@@ -73,7 +74,7 @@ func TestRunExitCodePropagates(t *testing.T) {
 		return exec.Command(os.Args[0], cs...)
 	}
 	t.Cleanup(func() { execCommand = orig })
-	err := runChild(io.Discard, io.Discard, discovery, "", []string{"claude"})
+	err := runChild(io.Discard, io.Discard, discovery, "", []string{"claude"}, "")
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 7, ee.ExitCode())
@@ -89,7 +90,7 @@ func TestRunSetsRunID(t *testing.T) {
 	}
 	t.Cleanup(func() { execCommand = orig })
 	var out bytes.Buffer
-	_ = runChild(&out, io.Discard, discovery, "run-42", []string{"claude"})
+	_ = runChild(&out, io.Discard, discovery, "run-42", []string{"claude"}, "")
 	assert.Contains(t, out.String(), "CATACOMB_RUN_ID=run-42")
 }
 
@@ -110,7 +111,7 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(7)
 	case len(args) > 0 && args[0] == "ENV":
 		for _, e := range os.Environ() {
-			if len(e) >= 16 && e[:15] == "CATACOMB_RUN_ID" {
+			if strings.HasPrefix(e, "CATACOMB_RUN_ID=") || strings.HasPrefix(e, "CATACOMB_LABELS=") {
 				fmt.Fprintln(os.Stdout, e)
 			}
 		}
@@ -125,7 +126,7 @@ func TestStreamForwardBadAddr(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: "\x7f", Token: "t"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)))
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)), "")
 	assert.NotEmpty(t, warn.String())
 }
 
@@ -135,8 +136,39 @@ func TestStreamForwardNon2xx(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: d.Addr, Token: "wrong"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`+"\n")))
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`+"\n")), "")
 	assert.Contains(t, warn.String(), "status 401")
+}
+
+func TestStreamForwardSetsLabelsHeader(t *testing.T) {
+	gotHeader := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader <- r.Header.Get("X-Catacomb-Labels")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	var warn bytes.Buffer
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "team=alpha,env=prod")
+	assert.Empty(t, warn.String())
+	assert.Equal(t, "team=alpha,env=prod", <-gotHeader)
+}
+
+func TestStreamForwardOmitsLabelsHeaderWhenEmpty(t *testing.T) {
+	present := make(chan bool, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, ok := r.Header["X-Catacomb-Labels"]
+		present <- ok
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	var warn bytes.Buffer
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "")
+	assert.Empty(t, warn.String())
+	assert.False(t, <-present)
 }
 
 func TestIngestStreamJSONCommandWiring(t *testing.T) {
@@ -156,7 +188,7 @@ func TestRunChildStartError(t *testing.T) {
 		return exec.Command(filepath.Join(t.TempDir(), "does-not-exist-binary"))
 	}
 	t.Cleanup(func() { execCommand = orig })
-	err := runChild(io.Discard, io.Discard, filepath.Join(t.TempDir(), "d.json"), "", []string{"nope"})
+	err := runChild(io.Discard, io.Discard, filepath.Join(t.TempDir(), "d.json"), "", []string{"nope"}, "")
 	require.Error(t, err)
 }
 
@@ -206,7 +238,7 @@ func TestRunChildPumpForwardsToDiscovery(t *testing.T) {
 	t.Cleanup(func() { execCommand = orig })
 
 	var out bytes.Buffer
-	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}))
+	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}, ""))
 
 	select {
 	case body := <-received:
@@ -214,6 +246,127 @@ func TestRunChildPumpForwardsToDiscovery(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("daemon never received forwarded data")
 	}
+}
+
+func TestRunChildForwardsLabelsHeader(t *testing.T) {
+	gotHeader := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		gotHeader <- r.Header.Get("X-Catacomb-Labels")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	var out bytes.Buffer
+	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}, "team=alpha"))
+
+	select {
+	case h := <-gotHeader:
+		assert.Equal(t, "team=alpha", h)
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon never received forwarded data")
+	}
+}
+
+func TestRunLabelFlagMergesWithEnv(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	t.Setenv("CATACOMB_LABELS", "basket=b1,variant=v1")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "ENV", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"run", "--label", "variant=v2", "--label", "rep=3", "--", "claude"})
+	require.NoError(t, root.Execute())
+
+	got := make([]string, 0, 1)
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if strings.HasPrefix(l, "CATACOMB_LABELS=") {
+			got = append(got, l)
+		}
+	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "CATACOMB_LABELS=basket=b1,rep=3,variant=v2", got[0])
+}
+
+func TestRunChildDoesNotAppendLabelsWhenEmpty(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("CATACOMB_LABELS", "sentinel=1")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "ENV", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	var out bytes.Buffer
+	require.NoError(t, runChild(&out, io.Discard, discovery, "", []string{"claude"}, ""))
+
+	got := make([]string, 0, 1)
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if strings.HasPrefix(l, "CATACOMB_LABELS=") {
+			got = append(got, l)
+		}
+	}
+	require.Len(t, got, 1)
+	assert.Equal(t, "CATACOMB_LABELS=sentinel=1", got[0])
+}
+
+func TestRunLabelFlagInvalidErrorsBeforeSpawn(t *testing.T) {
+	spawned := false
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		spawned = true
+		return exec.Command(os.Args[0])
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	root := newRootCmd()
+	root.SetArgs([]string{"run", "--label", "Bad=x", "--", "claude"})
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --label")
+	assert.False(t, spawned)
+}
+
+func TestRunLabelFlagMultiPairTerm(t *testing.T) {
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	t.Setenv("CATACOMB_LABELS", "")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", "ENV", name}, args...)
+		return exec.Command(os.Args[0], cs...)
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"run", "--label", "a=1,b=2", "--", "claude"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "CATACOMB_LABELS=a=1,b=2")
 }
 
 func TestRunChildShutdownNoHang(t *testing.T) {
@@ -237,7 +390,7 @@ func TestRunChildShutdownNoHang(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runChild(io.Discard, io.Discard, discovery, "", []string{"claude"})
+		done <- runChild(io.Discard, io.Discard, discovery, "", []string{"claude"}, "")
 	}()
 
 	require.Eventually(t, func() bool {

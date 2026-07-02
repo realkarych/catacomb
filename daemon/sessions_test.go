@@ -917,6 +917,33 @@ func TestSummarizeRunAggregatesByRunID(t *testing.T) {
 	assert.Equal(t, []string{"r1"}, sum.RunIDs)
 }
 
+func TestSummarizeRunCarriesLabels(t *testing.T) {
+	g := reduce.NewGraph()
+	g.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusOK, Labels: map[string]string{"basket": "b1"}}
+	g.Nodes["n1"] = &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall}
+
+	sum := SummarizeRun("r1", []*reduce.Graph{g})
+
+	assert.Equal(t, map[string]string{"basket": "b1"}, sum.Labels)
+}
+
+func TestSummarizeRunOmitsLabelsWhenAbsent(t *testing.T) {
+	g := reduce.NewGraph()
+	g.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusOK}
+	g.Nodes["n1"] = &model.Node{ID: "n1", RunID: "r1", Type: model.NodeToolCall}
+
+	sum := SummarizeRun("r1", []*reduce.Graph{g})
+
+	assert.Nil(t, sum.Labels)
+
+	b, err := json.Marshal(sum)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+	_, ok := m["labels"]
+	assert.False(t, ok, "labels must be omitted when empty")
+}
+
 func TestSummarizeSessionFreeFnMatchesMethod(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
