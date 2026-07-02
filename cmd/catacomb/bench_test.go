@@ -43,14 +43,66 @@ func (m *markRecorder) snapshot() [][]byte {
 	return out
 }
 
-func benchServer(t *testing.T, status int) (string, *markRecorder) {
+type graphRecorder struct {
+	mu    sync.Mutex
+	count int
+	fail  bool
+	byID  map[string][]string
+}
+
+func (g *graphRecorder) requests() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.count
+}
+
+func (g *graphRecorder) setMarkers(id string, names ...string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.byID[id] = names
+}
+
+func (g *graphRecorder) setFail(v bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.fail = v
+}
+
+func graphMarkerEvents(names []string) []map[string]any {
+	evs := make([]map[string]any, 0, len(names))
+	for _, n := range names {
+		evs = append(evs, map[string]any{
+			"kind": "node_upsert",
+			"node": map[string]any{"type": "marker", "name": n},
+		})
+	}
+	return evs
+}
+
+func benchServerWithGraph(t *testing.T, markStatus int) (string, *markRecorder, *graphRecorder) {
 	t.Helper()
 	rec := &markRecorder{}
+	g := &graphRecorder{byID: map[string][]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if r.URL.Path == "/v1/mark" {
 			rec.add(body)
-			w.WriteHeader(status)
+			w.WriteHeader(markStatus)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/sessions/") && strings.HasSuffix(r.URL.Path, "/graph") {
+			g.mu.Lock()
+			g.count++
+			fail := g.fail
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/graph")
+			names := g.byID[id]
+			g.mu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(graphMarkerEvents(names))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -58,6 +110,12 @@ func benchServer(t *testing.T, status int) (string, *markRecorder) {
 	t.Cleanup(srv.Close)
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	return discovery, rec, g
+}
+
+func benchServer(t *testing.T, status int) (string, *markRecorder) {
+	t.Helper()
+	discovery, rec, _ := benchServerWithGraph(t, status)
 	return discovery, rec
 }
 
@@ -852,7 +910,205 @@ func TestBenchPreflightTimesOutOnBlockedDaemon(t *testing.T) {
 		Addr:  strings.TrimPrefix(srv.URL, "http://"),
 		Token: "tok",
 	}))
-	err := benchPreflight(context.Background(), discovery)
+	_, err := benchPreflight(context.Background(), discovery)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unreachable")
+}
+
+func writeCheckpointBasket(t *testing.T, name, tasks string) string {
+	t.Helper()
+	return writeBasket(t, fmt.Sprintf("basket: %s\nreps: 1\n%svariants:\n  - id: v1\n", name, tasks))
+}
+
+func TestBenchCheckpointsAllPresent(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	graph.setMarkers("bench-cpall-t1-v1-r1", "plan", "tests.pass")
+
+	path := writeCheckpointBasket(t, "cpall", "tasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n    checkpoints: [plan, tests.pass]\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Empty(t, entries[0].MissingCheckpoints)
+	assert.NotContains(t, errBuf.String(), "missing checkpoints")
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 1/1")
+	assert.Contains(t, out.String(), "checkpoints[t1]: tests.pass 1/1")
+	assert.Equal(t, 1, graph.requests())
+}
+
+func TestBenchCheckpointsSomeMissing(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	graph.setMarkers("bench-cpmiss-t1-v1-r1", "plan")
+
+	path := writeCheckpointBasket(t, "cpmiss", "tasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n    checkpoints: [plan, tests.pass, deploy]\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Equal(t, []string{"tests.pass", "deploy"}, entries[0].MissingCheckpoints)
+	assert.Contains(t, errBuf.String(), "cell bench-cpmiss-t1-v1-r1: missing checkpoints: tests.pass, deploy")
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 1/1")
+	assert.Contains(t, out.String(), "checkpoints[t1]: tests.pass 0/1")
+	assert.Contains(t, out.String(), "checkpoints[t1]: deploy 0/1")
+}
+
+func TestBenchCheckpointsFetchErrorSkips(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	graph.setFail(true)
+
+	path := writeCheckpointBasket(t, "cperr", "tasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n    checkpoints: [plan]\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Empty(t, entries[0].MissingCheckpoints)
+	assert.Equal(t, "checkpoint verification skipped: graph status 500", entries[0].Note)
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 0/0")
+}
+
+func TestBenchCheckpointsMarkerFailedAppendsSkip(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusInternalServerError)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	graph.setFail(true)
+
+	path := writeCheckpointBasket(t, "cpboth", "tasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n    checkpoints: [plan]\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "marker failed; checkpoint verification skipped: graph status 500", entries[0].Note)
+	assert.Empty(t, entries[0].MissingCheckpoints)
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 0/0")
+}
+
+func TestBenchCheckpointsNoSessionSkips(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeCheckpointBasket(t, "cpnos", "tasks:\n  - id: t1\n    cmd: [\"NOSESSION\"]\n    checkpoints: [plan]\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "no session id observed", entries[0].Note)
+	assert.Empty(t, entries[0].SessionID)
+	assert.Empty(t, entries[0].MissingCheckpoints)
+	assert.Equal(t, 0, graph.requests())
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 0/0")
+}
+
+func TestBenchCheckpointsMultipleTasks(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+	graph.setMarkers("bench-cpmulti-t2-v1-r1", "alpha")
+	graph.setMarkers("bench-cpmulti-t3-v1-r1", "beta")
+
+	tasks := "tasks:\n" +
+		"  - id: t1\n    cmd: [\"CHILD\"]\n" +
+		"  - id: t2\n    cmd: [\"CHILD\"]\n    checkpoints: [alpha]\n" +
+		"  - id: t3\n    cmd: [\"CHILD\"]\n    checkpoints: [beta, gamma]\n"
+	path := writeCheckpointBasket(t, "cpmulti", tasks)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	s := out.String()
+	assert.NotContains(t, s, "checkpoints[t1]")
+	iAlpha := strings.Index(s, "checkpoints[t2]: alpha 1/1")
+	iBeta := strings.Index(s, "checkpoints[t3]: beta 1/1")
+	iGamma := strings.Index(s, "checkpoints[t3]: gamma 0/1")
+	require.GreaterOrEqual(t, iAlpha, 0)
+	require.GreaterOrEqual(t, iBeta, 0)
+	require.GreaterOrEqual(t, iGamma, 0)
+	assert.Less(t, iAlpha, iBeta)
+	assert.Less(t, iBeta, iGamma)
+}
+
+func TestBenchNoCheckpointsNoGraphFetch(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _, graph := benchServerWithGraph(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeCheckpointBasket(t, "cpnone", "tasks:\n  - id: t1\n    cmd: [\"CHILD\"]\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	assert.NotContains(t, out.String(), "checkpoints[")
+	assert.Equal(t, 0, graph.requests())
+}
+
+func TestFetchSessionMarkersFiltersNonMarkers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `[
+			{"kind":"run_started"},
+			{"kind":"node_upsert"},
+			{"kind":"node_upsert","node":{"type":"tool_call","name":"Bash"}},
+			{"kind":"node_upsert","node":{"type":"marker","name":"plan"}},
+			{"kind":"node_upsert","node":{"type":"marker","name":"task:t1"}}
+		]`)
+	}))
+	t.Cleanup(srv.Close)
+	disc := daemon.Discovery{Addr: strings.TrimPrefix(srv.URL, "http://"), Token: "tok"}
+
+	got, err := fetchSessionMarkers(context.Background(), disc, "s1")
+	require.NoError(t, err)
+	_, hasPlan := got["plan"]
+	_, hasTask := got["task:t1"]
+	_, hasBash := got["Bash"]
+	assert.True(t, hasPlan)
+	assert.True(t, hasTask)
+	assert.False(t, hasBash)
+}
+
+func TestFetchSessionMarkersBadAddr(t *testing.T) {
+	_, err := fetchSessionMarkers(context.Background(), daemon.Discovery{Addr: "\x7f", Token: "t"}, "s1")
+	require.Error(t, err)
+}
+
+func TestFetchSessionMarkersUnreachable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	_, err = fetchSessionMarkers(context.Background(), daemon.Discovery{Addr: addr, Token: "t"}, "s1")
+	require.Error(t, err)
+}
+
+func TestFetchSessionMarkersDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "not json")
+	}))
+	t.Cleanup(srv.Close)
+	disc := daemon.Discovery{Addr: strings.TrimPrefix(srv.URL, "http://"), Token: "tok"}
+
+	_, err := fetchSessionMarkers(context.Background(), disc, "s1")
+	require.Error(t, err)
 }
