@@ -470,6 +470,90 @@ catacomb runs --label basket=checkout --label rep=1 --json
 
 ---
 
+### bench
+
+Run a benchmark basket: expand tasks × variants × reps into cells, execute each through
+`catacomb run`, mark task phases, and record a manifest.
+
+```sh
+catacomb bench <basket.yaml> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--manifest` | `<basket>.manifest.jsonl` | Manifest output path |
+| `--resume` | false | Skip cells already recorded in the manifest |
+| `--fail-fast` | false | Stop at the first failing cell |
+| `--dry-run` | false | Print the cell expansion table and exit without executing |
+
+A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
+combination, and cells run sequentially:
+
+```yaml
+basket: checkout
+reps: 5
+tasks:
+  - id: add-item
+    cmd: ["claude", "-p", "add an item to the cart"]
+    dir: services/cart          # optional working directory
+    env: { MODE: fast }         # optional per-task env
+variants:
+  - id: baseline
+    env: { MODEL: opus }        # optional per-variant env (wins over task env)
+  - id: candidate
+    env: { MODEL: sonnet }
+    setup: ["git checkout feature"]   # optional pre-cell commands
+```
+
+Each cell runs under run-id `bench-<basket>-<task>-<variant>-r<rep>` and carries the labels
+`basket`, `task`, `variant`, and `rep`, so `runs`, `baseline`, and `regress` selectors work
+unchanged. Cell labels win over any inherited from `CATACOMB_LABELS`. The basket name and each task and
+variant `id` must match `^[A-Za-z0-9._-]+$` (no spaces, commas, or `=`, which would corrupt
+`CATACOMB_LABELS` and the epilogue selectors) and be at most 256 bytes; task and variant `id`s
+must be unique, and baskets whose dash-joined ids would collide into the same run-id are
+rejected at load.
+
+For each cell the runner emits `task:<id>` start/end phase markers around the child, on a
+best-effort basis — it needs a `session_id` in the child's stream-json to place them, and each
+manifest entry records whether the markers landed (`marked: true|false`). These `task:<id>`
+phases give `regress` a stable checkpoint axis even when the agent forgets to mark its own.
+
+The manifest is JSONL, written incrementally — one object per completed cell (run-id, task,
+variant, rep, exit code, session id, `marked`, basket hash, finish time, and an optional
+`note`). `--resume` reads it back and skips cells already present; if the basket file changed
+since the recorded run (its content hash no longer matches) resume errors out — delete the
+manifest or revert the basket.
+
+`setup` commands run before **every** cell, in the task's working directory, as **plain `exec`**:
+each line is split on whitespace and run directly, with **no shell** — pipes, redirects, `&&`,
+quoting, variable expansion, and globbing are not interpreted. Wrap a script if you need shell
+features. Setup inherits **only the parent process environment** — not the task or variant
+`env`, and not `CATACOMB_RUN_ID`/`CATACOMB_LABELS` — and because it re-runs before each cell it
+must be **idempotent** (a `git checkout <branch>` is fine; an `echo >> file` that accumulates is
+not).
+
+`bench` requires a running daemon: at start (except for `--dry-run`) it reads the discovery file
+and pings `/healthz`, exiting `2` with a hint to `catacomb up` if the daemon is missing or
+unreachable. If the manifest already has entries and you pass neither `--resume` nor a fresh
+`--manifest`, `bench` refuses (exit `2`) rather than silently appending a second run's cells.
+
+A failing cell is recorded and the basket continues (deciding whether a change regressed is
+`catacomb regress`'s job, not the runner's). Exit codes: `0` every cell ran (even if some cells
+failed), `1` `--fail-fast` stopped at a failing cell, `2` operational error (bad basket,
+unreachable daemon, a non-fresh manifest, manifest I/O, or a resume hash mismatch). On success
+the runner prints a `marked <n>/<total> cells` summary and a copy-pasteable epilogue: a
+`baseline set` for the first variant and, with two or more variants, a `regress` comparing the
+first two. Append `,task=<id>` to the epilogue's `label:` selectors to narrow the comparison to
+a single task (e.g. `label:basket=checkout,variant=baseline,task=add-item`).
+
+```sh
+catacomb bench checkout.yaml
+catacomb bench checkout.yaml --dry-run
+catacomb bench checkout.yaml --resume --fail-fast
+```
+
+---
+
 ### baseline set
 
 Create or replace a named baseline from a label selector, resolved against the store now.

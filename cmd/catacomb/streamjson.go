@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -110,10 +111,34 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
+type lineObserver struct {
+	buf     []byte
+	observe func(line []byte)
+}
+
+func (w *lineObserver) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		w.observe(w.buf[:i])
+		w.buf = w.buf[i+1:]
+	}
+	return len(p), nil
+}
+
 func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []string, labels string) error {
+	return runChildObserved(stdout, stderr, discoveryPath, runID, args, labels, "", nil, nil)
+}
+
+func runChildObserved(stdout, stderr io.Writer, discoveryPath, runID string, args []string, labels, dir string, extraEnv []string, observe func(line []byte)) error {
 	child := execCommand(args[0], args[1:]...)
 	child.Stdin = os.Stdin
+	child.Dir = dir
 	child.Env = os.Environ()
+	child.Env = append(child.Env, extraEnv...)
 	if runID != "" {
 		child.Env = append(child.Env, "CATACOMB_RUN_ID="+runID)
 	}
@@ -122,7 +147,11 @@ func runChild(stdout, stderr io.Writer, discoveryPath, runID string, args []stri
 	}
 	pr, pw := io.Pipe()
 	lossy := &lossyWriter{ch: make(chan []byte, streamTeeBuffer)}
-	child.Stdout = io.MultiWriter(stdout, lossy)
+	writers := []io.Writer{stdout, lossy}
+	if observe != nil {
+		writers = append(writers, &lineObserver{observe: observe})
+	}
+	child.Stdout = io.MultiWriter(writers...)
 	child.Stderr = stderr
 	pumpDone := make(chan struct{})
 	go func() {

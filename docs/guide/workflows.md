@@ -130,10 +130,56 @@ regression from sampling noise. `catacomb regress` compares two *groups* of repe
 statistically and returns a CI-consumable verdict and exit code. See
 [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) for the method.
 
-### Label two run groups
+### Declare a basket
 
-Run the same basket `k` times per variant, tagging each run with a `--label` variant and a
-unique `--run-id`:
+Rather than hand-rolling the repetition loop, declare the matrix once as a basket and let
+`catacomb bench` expand and run it. A basket is `tasks × variants × reps`; each combination is
+one *cell*, run under a generated run-id and labeled `basket`/`task`/`variant`/`rep`:
+
+```yaml
+# checkout.yaml
+basket: checkout
+reps: 5
+tasks:
+  - id: work-task
+    cmd: ["claude", "-p", "work the checkout task"]
+variants:
+  - id: main
+  - id: candidate
+    setup: ["git checkout candidate-branch"]
+```
+
+### Run the basket
+
+```sh
+catacomb bench checkout.yaml
+```
+
+The runner executes every cell sequentially through `catacomb run` — ten cells here (two
+variants × five reps) — appending each result to `checkout.yaml.manifest.jsonl` as it goes. A
+failing cell is recorded and the run continues; re-invoke with `--resume` to pick up where an
+interrupted basket left off. Because bench applies the `basket`/`variant` labels for you, the
+selectors below need no change.
+
+On success it prints a copy-pasteable epilogue wiring up the next two steps:
+
+```text
+Next steps:
+  catacomb baseline set checkout-main --label basket=checkout,variant=main
+  catacomb regress --baseline label:basket=checkout,variant=main --candidate label:basket=checkout,variant=candidate
+```
+
+For each cell bench also emits `task:<id>` start/end markers around the child (best-effort — it
+needs a `session_id` in the child's stream-json). These surface as **phase rows** in the
+`regress` table under the checkpoint scope, so the task boundary is always a stable, noise-robust
+comparison axis even when the agent never called `mcp__catacomb__mark`. See
+[bench](cli.md#bench) for the full basket schema, the manifest and `--resume` semantics, and the
+`setup` no-shell limitation.
+
+### Label two run groups by hand
+
+`catacomb bench` is a thin loop over `catacomb run`; when you need one-off control you can drive
+the same two groups directly, tagging each run with a `--label` variant and a unique `--run-id`:
 
 ```sh
 # Baseline variant, k repetitions
