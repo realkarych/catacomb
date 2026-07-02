@@ -21,5 +21,9 @@ type Store interface {
 	UpsertAnnotation(a model.Annotation) error
 	AnnotationsForExecution(executionID string) ([]model.Annotation, error)
 	MoveAnnotations(executionID, fromKey, toKey string) error
+	UpsertBaseline(b model.Baseline) error
+	GetBaseline(name string) (model.Baseline, bool, error)
+	ListBaselines() ([]model.Baseline, error)
+	DeleteBaseline(name string) error
 	Close() error
 }

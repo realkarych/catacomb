@@ -229,3 +229,73 @@ func TestApplySchemaV1Error(t *testing.T) {
 	require.Error(t, applySchemaV1(tx))
 	_ = tx.Rollback()
 }
+
+func TestApplySchemaV2Error(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	require.Error(t, applySchemaV2(tx))
+}
+
+func seedV1DB(t *testing.T, path string) {
+	t.Helper()
+	seed, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = seed.Exec(schema)
+	require.NoError(t, err)
+	_, err = seed.Exec(`INSERT INTO runs(run_id, status, body) VALUES('r1','running','{"id":"r1","status":"running"}')`)
+	require.NoError(t, err)
+	_, err = seed.Exec("PRAGMA user_version = 1")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+}
+
+func TestOpenMigratesV1ToV2CreatingBaselines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV1DB(t, path)
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
+
+	runs, err := migrated.Runs()
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "r1", runs[0].ID)
+
+	require.NoError(t, migrated.UpsertBaseline(model.Baseline{Name: "base", RunIDs: []string{"r1"}}))
+	got, ok, err := migrated.GetBaseline("base")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"r1"}, got.RunIDs)
+}
+
+func tableNames(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var names []string
+	for rows.Next() {
+		var n string
+		require.NoError(t, rows.Scan(&n))
+		names = append(names, n)
+	}
+	require.NoError(t, rows.Err())
+	return names
+}
+
+func TestFreshAndV1UpgradeConvergeOnSchema(t *testing.T) {
+	fresh := fileStore(t)
+
+	path := filepath.Join(t.TempDir(), "v1.db")
+	seedV1DB(t, path)
+	upgraded, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = upgraded.Close() })
+
+	assert.Equal(t, tableNames(t, fresh.db), tableNames(t, upgraded.(*sqliteStore).db))
+	assert.Contains(t, tableNames(t, fresh.db), "baselines")
+}

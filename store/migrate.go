@@ -6,7 +6,9 @@ import (
 	"fmt"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
+
+const schemaBaselines = `CREATE TABLE IF NOT EXISTS baselines (name TEXT PRIMARY KEY, body TEXT NOT NULL);`
 
 var (
 	ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
@@ -21,11 +23,19 @@ type migration struct {
 
 var schemaMigrations = []migration{
 	{from: 0, to: 1, apply: applySchemaV1},
+	{from: 1, to: 2, apply: applySchemaV2},
 }
 
 func applySchemaV1(tx *sql.Tx) error {
 	if _, err := tx.Exec(schema); err != nil {
 		return fmt.Errorf("store.applySchemaV1: %w", err)
+	}
+	return nil
+}
+
+func applySchemaV2(tx *sql.Tx) error {
+	if _, err := tx.Exec(schemaBaselines); err != nil {
+		return fmt.Errorf("store.applySchemaV2: %w", err)
 	}
 	return nil
 }

@@ -33,18 +33,27 @@ func (f *fakeStore) AppendDeltas(model.Observation, []cdc.GraphDelta) error {
 
 func (f *fakeStore) MaxSeq() (uint64, error) { return 0, nil }
 
-func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error)        { return nil, nil }
+func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error) { return nil, nil }
+
 func (f *fakeStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
 func (f *fakeStore) UpsertRun(model.Run) error                                    { return nil }
 func (f *fakeStore) ListOpenRuns() ([]model.Run, error)                           { return nil, nil }
-func (f *fakeStore) Runs() ([]model.Run, error)                                   { return nil, nil }
-func (f *fakeStore) Quarantine(model.QuarantineRecord) error                      { return nil }
-func (f *fakeStore) QuarantineCount() (int64, error)                              { return 0, nil }
-func (f *fakeStore) UpsertTailCursor(model.TailCursor) error                      { return nil }
-func (f *fakeStore) LoadTailCursors() ([]model.TailCursor, error)                 { return nil, nil }
-func (f *fakeStore) UpsertAnnotation(model.Annotation) error                      { return nil }
-func (f *fakeStore) AnnotationsForExecution(string) ([]model.Annotation, error)   { return nil, nil }
-func (f *fakeStore) MoveAnnotations(string, string, string) error                 { return nil }
+
+func (f *fakeStore) Runs() ([]model.Run, error)                                 { return nil, nil }
+func (f *fakeStore) Quarantine(model.QuarantineRecord) error                    { return nil }
+func (f *fakeStore) QuarantineCount() (int64, error)                            { return 0, nil }
+func (f *fakeStore) UpsertTailCursor(model.TailCursor) error                    { return nil }
+func (f *fakeStore) LoadTailCursors() ([]model.TailCursor, error)               { return nil, nil }
+func (f *fakeStore) UpsertAnnotation(model.Annotation) error                    { return nil }
+func (f *fakeStore) AnnotationsForExecution(string) ([]model.Annotation, error) { return nil, nil }
+func (f *fakeStore) MoveAnnotations(string, string, string) error               { return nil }
+func (f *fakeStore) UpsertBaseline(model.Baseline) error                        { return nil }
+func (f *fakeStore) GetBaseline(string) (model.Baseline, bool, error) {
+	return model.Baseline{}, false, nil
+}
+
+func (f *fakeStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
+func (f *fakeStore) DeleteBaseline(string) error              { return nil }
 
 func openFake(f *fakeStore) storeOpener {
 	return func(string) (store.Store, error) { return f, nil }

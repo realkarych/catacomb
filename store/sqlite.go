@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -60,6 +61,10 @@ const (
 	selectAnnotationsBySourceKey = `SELECT execution_id,source_key,step_key,owner,key,value,write_seq FROM annotations WHERE execution_id=? AND source_key=?`
 	deleteAnnotationsBySourceKey = `DELETE FROM annotations WHERE execution_id=? AND source_key=?`
 	insertAnnotation             = `INSERT INTO annotations(execution_id,source_key,step_key,owner,key,value,write_seq) VALUES(?,?,?,?,?,?,?)`
+	upsertBaseline               = `INSERT INTO baselines(name, body) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET body=excluded.body`
+	selectBaseline               = `SELECT body FROM baselines WHERE name = ?`
+	selectBaselines              = `SELECT body FROM baselines ORDER BY name`
+	deleteBaseline               = `DELETE FROM baselines WHERE name = ?`
 )
 
 func OpenSQLite(path string) (Store, error) {
@@ -477,6 +482,72 @@ func (s *sqliteStore) MoveAnnotations(executionID, fromKey, toKey string) error 
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *sqliteStore) UpsertBaseline(b model.Baseline) error {
+	body, err := s.marshal(b)
+	if err != nil {
+		return fmt.Errorf("store.UpsertBaseline marshal: %w", err)
+	}
+	if _, err := s.db.Exec(upsertBaseline, b.Name, string(body)); err != nil {
+		return fmt.Errorf("store.UpsertBaseline: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteStore) GetBaseline(name string) (model.Baseline, bool, error) {
+	var body string
+	err := s.db.QueryRow(selectBaseline, name).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Baseline{}, false, nil
+	}
+	if err != nil {
+		return model.Baseline{}, false, fmt.Errorf("store.GetBaseline: %w", err)
+	}
+	var b model.Baseline
+	if err := json.Unmarshal([]byte(body), &b); err != nil {
+		return model.Baseline{}, false, fmt.Errorf("store.GetBaseline decode: %w", err)
+	}
+	return b, true, nil
+}
+
+func (s *sqliteStore) ListBaselines() ([]model.Baseline, error) {
+	rows, err := s.db.Query(selectBaselines)
+	if err != nil {
+		return nil, fmt.Errorf("store.ListBaselines: %w", err)
+	}
+	out, err := scanBaselines(rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+func scanBaselines(rows rowScanner) ([]model.Baseline, error) {
+	defer func() { _ = rows.Close() }()
+	var out []model.Baseline
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return nil, fmt.Errorf("store.ListBaselines scan: %w", err)
+		}
+		var b model.Baseline
+		if err := json.Unmarshal([]byte(body), &b); err != nil {
+			return nil, fmt.Errorf("store.ListBaselines decode: %w", err)
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.ListBaselines rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *sqliteStore) DeleteBaseline(name string) error {
+	if _, err := s.db.Exec(deleteBaseline, name); err != nil {
+		return fmt.Errorf("store.DeleteBaseline: %w", err)
+	}
+	return nil
 }
 
 func (s *sqliteStore) Close() error { return s.db.Close() }
