@@ -26,6 +26,9 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0020](0020-redaction-surface-and-secrets-at-rest.md) | Redaction surface and secrets-at-rest hardening | Accepted |
 | [0021](0021-graph-invariants-and-validation.md) | Graph invariants and validation (acyclic forest, lean contraction) | Accepted |
 | [0022](0022-regression-detection-over-repeated-runs.md) | Regression detection over repeated runs (baskets, baselines, aggregation) | Accepted |
+| [0023](0023-regression-gate-sensitivity-at-small-k.md) | Regression gate sensitivity at small run counts | Accepted |
+| [0024](0024-secrets-at-rest-write-path-redaction.md) | Secrets at rest: enforcing redaction on the write path | Accepted |
+| [0025](0025-capture-format-drift-detection.md) | Capture format drift detection | Accepted |
 
 Design spec: [`../specs/2026-06-20-catacomb-design.md`](../specs/2026-06-20-catacomb-design.md).
 
