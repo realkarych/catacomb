@@ -10,6 +10,7 @@ import (
 	xjsonl "github.com/realkarych/catacomb/export/jsonl"
 	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
@@ -65,6 +66,11 @@ func loadGraph(path, executionID string) (*reduce.Graph, []model.Observation, er
 		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
+	policy := redact.DefaultPolicy()
+	for i := range obs {
+		obs[i] = policy.Observation(obs[i])
+	}
+
 	g := reduce.NewGraph()
 	g.ApplyAll(obs)
 	return g, obs, nil
@@ -97,6 +103,10 @@ func persist(open storeOpener, dbPath string, obs []model.Observation, g *reduce
 	defer func() { _ = s.Close() }()
 
 	nodes, edges := g.Snapshot()
+	policy := redact.DefaultPolicy()
+	for i := range nodes {
+		nodes[i] = policy.Node(nodes[i])
+	}
 	return s.Persist(obs, nodes, edges)
 }
 
