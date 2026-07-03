@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -28,7 +29,7 @@ func TestParseSystemInit(t *testing.T) {
 	fixedNow(now)
 	line := []byte(`{"type":"system","subtype":"init","session_id":"sess_1","model":"claude-opus-4-8"}`)
 
-	obs, err := Parse(line, "exec1", seq())
+	obs, _, err := Parse(line, "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -49,7 +50,7 @@ func TestParseAssistantCacheTokens(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"assistant","session_id":"s","message":{"id":"m1","model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":1234,"cache_creation_input_tokens":567}}}`)
 
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -63,7 +64,7 @@ func TestParseResultCacheTokens(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"result","session_id":"s","usage":{"input_tokens":7,"output_tokens":9,"cache_read_input_tokens":11,"cache_creation_input_tokens":13}}`)
 
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -76,7 +77,7 @@ func TestParseAssistantTurnAndToolUse(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"assistant","session_id":"sess_2","message":{"id":"msg_a","model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}`)
 
-	obs, err := Parse(line, "exec2", seq())
+	obs, _, err := Parse(line, "exec2", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 2)
 
@@ -99,7 +100,7 @@ func TestParseAssistantTurnAndToolUse(t *testing.T) {
 func TestParseUserToolResult(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"sess_3","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"done","is_error":false}]}}`)
-	obs, err := Parse(line, "exec3", seq())
+	obs, _, err := Parse(line, "exec3", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	o := obs[0]
@@ -112,7 +113,7 @@ func TestParseUserToolResult(t *testing.T) {
 func TestParseUserToolResultError(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"boom","is_error":true}]}}`)
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "error", obs[0].Attrs["status"])
@@ -121,7 +122,7 @@ func TestParseUserToolResultError(t *testing.T) {
 func TestParseUserPromptText(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s","message":{"content":"hello there"}}`)
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "user_prompt", obs[0].Kind)
@@ -131,7 +132,7 @@ func TestParseUserPromptText(t *testing.T) {
 func TestParseUserPromptSyntheticKind(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s","message":{"content":"<system-reminder>reminder text"}}`)
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "system", obs[0].Attrs["prompt_kind"])
@@ -140,7 +141,7 @@ func TestParseUserPromptSyntheticKind(t *testing.T) {
 func TestParseUserPromptHumanKind(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s","message":{"content":"hello there"}}`)
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "human", obs[0].Attrs["prompt_kind"])
@@ -149,7 +150,7 @@ func TestParseUserPromptHumanKind(t *testing.T) {
 func TestParseStreamEventYieldsNoObs(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"stream_event","session_id":"s","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
@@ -157,7 +158,7 @@ func TestParseStreamEventYieldsNoObs(t *testing.T) {
 func TestParseResultEnrichment(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"result","session_id":"s","usage":{"input_tokens":7,"output_tokens":9},"total_cost_usd":0.0123}`)
-	obs, err := Parse(line, "e", seq())
+	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	o := obs[0]
@@ -169,39 +170,39 @@ func TestParseResultEnrichment(t *testing.T) {
 
 func TestParseUnknownTypeSkipped(t *testing.T) {
 	fixedNow(time.Now())
-	obs, err := Parse([]byte(`{"type":"mystery","session_id":"s"}`), "e", seq())
+	obs, _, err := Parse([]byte(`{"type":"mystery","session_id":"s"}`), "e", seq())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestParseSystemNonInitSkipped(t *testing.T) {
 	fixedNow(time.Now())
-	obs, err := Parse([]byte(`{"type":"system","subtype":"other","session_id":"s"}`), "e", seq())
+	obs, _, err := Parse([]byte(`{"type":"system","subtype":"other","session_id":"s"}`), "e", seq())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestParseBadJSON(t *testing.T) {
 	fixedNow(time.Now())
-	_, err := Parse([]byte(`{not json`), "e", seq())
+	_, _, err := Parse([]byte(`{not json`), "e", seq())
 	require.Error(t, err)
 }
 
 func TestParseBadMessage(t *testing.T) {
 	fixedNow(time.Now())
-	_, err := Parse([]byte(`{"type":"assistant","session_id":"s","message":123}`), "e", seq())
+	_, _, err := Parse([]byte(`{"type":"assistant","session_id":"s","message":123}`), "e", seq())
 	require.Error(t, err)
 }
 
 func TestParseBadContent(t *testing.T) {
 	fixedNow(time.Now())
-	_, err := Parse([]byte(`{"type":"user","session_id":"s","message":{"content":123}}`), "e", seq())
+	_, _, err := Parse([]byte(`{"type":"user","session_id":"s","message":{"content":123}}`), "e", seq())
 	require.Error(t, err)
 }
 
 func TestParseAssistantNoMessageNoTokens(t *testing.T) {
 	fixedNow(time.Now())
-	obs, err := Parse([]byte(`{"type":"assistant","session_id":"s"}`), "e", seq())
+	obs, _, err := Parse([]byte(`{"type":"assistant","session_id":"s"}`), "e", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	_, ok := obs[0].Attrs["tokens_in"]
@@ -210,7 +211,7 @@ func TestParseAssistantNoMessageNoTokens(t *testing.T) {
 
 func TestParseResultNoUsageNoCost(t *testing.T) {
 	fixedNow(time.Now())
-	obs, err := Parse([]byte(`{"type":"result","session_id":"s"}`), "e2", seq())
+	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s"}`), "e2", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
@@ -222,20 +223,20 @@ func TestParseResultNoUsageNoCost(t *testing.T) {
 
 func TestParseUserBadMessageField(t *testing.T) {
 	fixedNow(time.Now())
-	_, err := Parse([]byte(`{"type":"user","session_id":"s","message":123}`), "e3", seq())
+	_, _, err := Parse([]byte(`{"type":"user","session_id":"s","message":123}`), "e3", seq())
 	require.Error(t, err)
 }
 
 func TestParseAssistantBadContent(t *testing.T) {
 	fixedNow(time.Now())
-	_, err := Parse([]byte(`{"type":"assistant","session_id":"s","message":{"id":"m","content":123}}`), "e4", seq())
+	_, _, err := Parse([]byte(`{"type":"assistant","session_id":"s","message":{"id":"m","content":123}}`), "e4", seq())
 	require.Error(t, err)
 }
 
 func TestParseUserNonToolResultBlockSkipped(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s","message":{"content":[{"type":"text","text":"hi"},{"type":"tool_result","tool_use_id":"t2","content":"ok","is_error":false}]}}`)
-	obs, err := Parse(line, "e5", seq())
+	obs, _, err := Parse(line, "e5", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "tool_result", obs[0].Kind)
@@ -245,7 +246,7 @@ func TestParseUserNonToolResultBlockSkipped(t *testing.T) {
 func TestParseUserPromptTextPayload(t *testing.T) {
 	var seq uint64
 	next := func() uint64 { s := seq; seq++; return s }
-	obs, err := Parse([]byte(`{"type":"user","session_id":"s1","message":{"content":"hello there"}}`), "e", next)
+	obs, _, err := Parse([]byte(`{"type":"user","session_id":"s1","message":{"content":"hello there"}}`), "e", next)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "user_prompt", obs[0].Kind)
@@ -258,7 +259,7 @@ func TestParseUserPromptTextPayload(t *testing.T) {
 func TestParseAssistantTextPayload(t *testing.T) {
 	var seq uint64
 	next := func() uint64 { s := seq; seq++; return s }
-	obs, err := Parse([]byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"text","text":"the reply"}]}}`), "e", next)
+	obs, _, err := Parse([]byte(`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"text","text":"the reply"}]}}`), "e", next)
 	require.NoError(t, err)
 	turn := obs[0]
 	assert.Equal(t, "assistant_turn", turn.Kind)
@@ -270,7 +271,7 @@ func TestParseAssistantTextPayload(t *testing.T) {
 func TestParseResultTurnNoPayload(t *testing.T) {
 	var seq uint64
 	next := func() uint64 { s := seq; seq++; return s }
-	obs, err := Parse([]byte(`{"type":"result","session_id":"s1","usage":{"input_tokens":3,"output_tokens":4}}`), "e", next)
+	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s1","usage":{"input_tokens":3,"output_tokens":4}}`), "e", next)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
@@ -281,7 +282,7 @@ func TestParseSystemInitWithCwd(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"system","subtype":"init","session_id":"sess_1","model":"claude-opus-4-8","cwd":"/project/root"}`)
 
-	obs, err := Parse(line, "exec1", seq())
+	obs, _, err := Parse(line, "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "/project/root", obs[0].Attrs["cwd"])
@@ -291,7 +292,7 @@ func TestParseAssistantMultiTextBlocksConcatenated(t *testing.T) {
 	var seq uint64
 	next := func() uint64 { s := seq; seq++; return s }
 	line := []byte(`{"type":"assistant","session_id":"s1","message":{"id":"m2","content":[{"type":"text","text":"hello"},{"type":"text","text":" world"}]}}`)
-	obs, err := Parse(line, "e", next)
+	obs, _, err := Parse(line, "e", next)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	turn := obs[0]
@@ -305,11 +306,59 @@ func TestParseAssistantMultiTextBlocksConcatenated(t *testing.T) {
 func TestParseUserPromptCanonicalUUID(t *testing.T) {
 	fixedNow(time.Now())
 	line := []byte(`{"type":"user","session_id":"s1","uuid":"u-123","message":{"content":"hello"}}`)
-	obs, err := Parse(line, "exec1", seq())
+	obs, _, err := Parse(line, "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "user_prompt", obs[0].Kind)
 	assert.Equal(t, model.PromptUUID("s1", "hello"), obs[0].Correlation.UUID)
+}
+
+func TestParseUnknownRecordTypeCountsDrift(t *testing.T) {
+	obs, dc, err := Parse([]byte(`{"type":"telemetry_v2","session_id":"s1"}`), "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, obs)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownRecordType: 1}, dc)
+}
+
+func TestParseUnknownSystemSubtypeCountsDrift(t *testing.T) {
+	_, dc, err := Parse([]byte(`{"type":"system","subtype":"warmup","session_id":"s1"}`), "exec-1", seq())
+	require.NoError(t, err)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownSubtype: 1}, dc)
+}
+
+func TestParseCompactBoundarySubtypeNoDrift(t *testing.T) {
+	obs, dc, err := Parse([]byte(`{"type":"system","subtype":"compact_boundary","session_id":"s1"}`), "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, obs)
+	assert.Empty(t, dc)
+}
+
+func TestParseUnknownContentBlockCountsDrift(t *testing.T) {
+	line := `{"type":"assistant","session_id":"s1","message":{"id":"m1","model":"m","content":[{"type":"hologram"},{"type":"text","text":"hi"}]}}`
+	obs, dc, err := Parse([]byte(line), "exec-1", seq())
+	require.NoError(t, err)
+	require.NotEmpty(t, obs)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownContentBlock: 1}, dc)
+}
+
+func TestParseUnknownUserContentBlockCountsDrift(t *testing.T) {
+	line := `{"type":"user","session_id":"s1","message":{"content":[{"type":"quantum"},{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}`
+	obs, dc, err := Parse([]byte(line), "exec-1", seq())
+	require.NoError(t, err)
+	require.NotEmpty(t, obs)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownContentBlock: 1}, dc)
+}
+
+func TestParseKnownIgnoredShapesNoDrift(t *testing.T) {
+	_, dc, err := Parse([]byte(`{"type":"stream_event","session_id":"s1"}`), "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, dc)
+	_, dc, err = Parse([]byte(`{"type":"assistant","session_id":"s1","message":{"content":[{"type":"thinking"}]}}`), "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, dc)
+	_, dc, err = Parse([]byte(`{"type":"user","session_id":"s1","message":{"content":[{"type":"image"}]}}`), "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, dc)
 }
 
 func TestParseUserPromptDistinctContentDistinctUUID(t *testing.T) {
@@ -317,9 +366,9 @@ func TestParseUserPromptDistinctContentDistinctUUID(t *testing.T) {
 	sq := seq()
 	line1 := []byte(`{"type":"user","session_id":"s1","uuid":"uuid-A","message":{"content":"first"}}`)
 	line2 := []byte(`{"type":"user","session_id":"s1","uuid":"uuid-B","message":{"content":"second"}}`)
-	obs1, err := Parse(line1, "exec1", sq)
+	obs1, _, err := Parse(line1, "exec1", sq)
 	require.NoError(t, err)
-	obs2, err := Parse(line2, "exec1", sq)
+	obs2, _, err := Parse(line2, "exec1", sq)
 	require.NoError(t, err)
 	require.Len(t, obs1, 1)
 	require.Len(t, obs2, 1)

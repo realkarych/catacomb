@@ -1710,9 +1710,9 @@ func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
 	childLine := []byte(`{"type":"assistant","session_id":"s1","parent_tool_use_id":"toolu_parent","message":{"id":"msg_child","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}`)
 
 	sq := seq()
-	parentObs, err := streamjson.Parse(parentLine, "exec_i1", sq)
+	parentObs, _, err := streamjson.Parse(parentLine, "exec_i1", sq)
 	require.NoError(t, err)
-	childObs, err := streamjson.Parse(childLine, "exec_i1", sq)
+	childObs, _, err := streamjson.Parse(childLine, "exec_i1", sq)
 	require.NoError(t, err)
 
 	g := NewGraph()
@@ -1733,7 +1733,7 @@ func TestStreamEventCreatesNoJunkEmptyToolNode(t *testing.T) {
 	line := []byte(`{"type":"stream_event","session_id":"s1","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
 
 	sq := seq()
-	obs, err := streamjson.Parse(line, "exec_i2", sq)
+	obs, _, err := streamjson.Parse(line, "exec_i2", sq)
 	require.NoError(t, err)
 	require.Empty(t, obs, "stream_event must yield zero observations")
 
@@ -2125,9 +2125,9 @@ func TestCumulativeCostNoDoubleCount(t *testing.T) {
 	sq := seq()
 	line1 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.10}`)
 	line2 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.30}`)
-	obs1, err := streamjson.Parse(line1, execID, sq)
+	obs1, _, err := streamjson.Parse(line1, execID, sq)
 	require.NoError(t, err)
-	obs2, err := streamjson.Parse(line2, execID, sq)
+	obs2, _, err := streamjson.Parse(line2, execID, sq)
 	require.NoError(t, err)
 
 	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {

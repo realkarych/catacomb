@@ -67,7 +67,7 @@ func seedRegressDB(t *testing.T, runs []seedRun) string {
 		execID := fmt.Sprintf("exec-%03d", i)
 		end := t0.Add(time.Duration(r.durationMS) * time.Millisecond)
 
-		ss, err := hook.Parse("SessionStart", []byte(fmt.Sprintf(`{"session_id":%q}`, r.session)), execID, next)
+		ss, _, err := hook.Parse("SessionStart", []byte(fmt.Sprintf(`{"session_id":%q}`, r.session)), execID, next)
 		require.NoError(t, err)
 		all = append(all, stampObs(ss, t0, r.labels, r.cwd)...)
 
@@ -81,16 +81,16 @@ func seedRegressDB(t *testing.T, runs []seedRun) string {
 			results += fmt.Sprintf(`{"type":"tool_result","tool_use_id":"tu-%s-%d","is_error":%t,"content":"x"}`, r.session, j, r.isError)
 		}
 		asst := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"id":"m-%s","model":"claude-3","content":[%s],"usage":{"input_tokens":%d,"output_tokens":%d}}}`, r.session, r.session, blocks, r.tokens, r.tokens)
-		ao, err := streamjson.Parse([]byte(asst), execID, next)
+		ao, _, err := streamjson.Parse([]byte(asst), execID, next)
 		require.NoError(t, err)
 		all = append(all, stampObs(ao, t0, r.labels, r.cwd)...)
 
 		usr := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[%s]}}`, r.session, results)
-		uo, err := streamjson.Parse([]byte(usr), execID, next)
+		uo, _, err := streamjson.Parse([]byte(usr), execID, next)
 		require.NoError(t, err)
 		all = append(all, stampObs(uo, t0, r.labels, r.cwd)...)
 
-		se, err := hook.Parse("SessionEnd", []byte(fmt.Sprintf(`{"session_id":%q,"reason":"clear"}`, r.session)), execID, next)
+		se, _, err := hook.Parse("SessionEnd", []byte(fmt.Sprintf(`{"session_id":%q,"reason":"clear"}`, r.session)), execID, next)
 		require.NoError(t, err)
 		all = append(all, stampObs(se, end, r.labels, r.cwd)...)
 	}

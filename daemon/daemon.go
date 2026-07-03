@@ -211,10 +211,11 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) er
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := hook.Parse(hookType, payload, execID, d.next)
+	obs, dc, err := hook.Parse(hookType, payload, execID, d.next)
 	if err != nil {
 		return err
 	}
+	d.recordDrift(model.SourceHook, dc)
 	attachLabels(obs, labels)
 	g, inMem := d.graphs[execID]
 	if !inMem {
@@ -312,11 +313,12 @@ func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels strin
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := streamParseFn(line, execID, d.next)
+	obs, dc, err := streamParseFn(line, execID, d.next)
 	if err != nil {
 		d.quarantine("stream-json", line, err.Error())
 		return nil
 	}
+	d.recordDrift(model.SourceStreamJSON, dc)
 	attachLabels(obs, canonicalLabels(labels))
 	g, inMem := d.graphs[execID]
 	if !inMem {

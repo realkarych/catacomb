@@ -960,8 +960,8 @@ func TestIngestStreamJSONMergesByToolUseIDWithHook(t *testing.T) {
 
 func TestIngestStreamJSONParseErrorViaSeam(t *testing.T) {
 	orig := streamParseFn
-	streamParseFn = func(_ []byte, _ string, _ func() uint64) ([]model.Observation, error) {
-		return nil, errors.New("parse fail")
+	streamParseFn = func(_ []byte, _ string, _ func() uint64) ([]model.Observation, drift.Counts, error) {
+		return nil, nil, errors.New("parse fail")
 	}
 	t.Cleanup(func() { streamParseFn = orig })
 	s := tempStore(t)
@@ -1622,4 +1622,17 @@ func TestSetLoggerNilIsIgnored(t *testing.T) {
 	d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
 	d.mu.Unlock()
 	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["hook/unknown_hook_event"])
+}
+
+func TestIngestUnknownHookEventRecordsDriftNotQuarantine(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.Ingest("BrandNewHook", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["hook/unknown_hook_event"])
+	assert.Equal(t, int64(0), d.metricsSnapshot().Quarantined)
+}
+
+func TestIngestStreamJSONUnknownTypeRecordsDrift(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"telemetry_v2","session_id":"s1"}`), "s1"))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["stream_json/unknown_record_type"])
 }

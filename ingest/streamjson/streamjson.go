@@ -8,6 +8,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -58,17 +59,17 @@ type partial struct {
 	payload     *model.Payload
 }
 
-func Parse(line []byte, executionID string, nextSeq func() uint64) ([]model.Observation, error) {
+func Parse(line []byte, executionID string, nextSeq func() uint64) ([]model.Observation, drift.Counts, error) {
 	var e envelope
 	if err := json.Unmarshal(line, &e); err != nil {
-		return nil, fmt.Errorf("streamjson.Parse: %w", err)
+		return nil, nil, fmt.Errorf("streamjson.Parse: %w", err)
 	}
-	parts, err := build(e)
+	parts, dc, err := build(e)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(parts) == 0 {
-		return []model.Observation{}, nil
+		return []model.Observation{}, dc, nil
 	}
 	ts := nowFn().UTC()
 	out := make([]model.Observation, 0, len(parts))
@@ -87,47 +88,50 @@ func Parse(line []byte, executionID string, nextSeq func() uint64) ([]model.Obse
 			Seq:         nextSeq(),
 		})
 	}
-	return out, nil
+	return out, dc, nil
 }
 
-func build(e envelope) ([]partial, error) {
+func build(e envelope) ([]partial, drift.Counts, error) {
 	base := model.Correlation{SessionID: e.SessionID, ParentToolUseID: e.ParentToolUseID, UUID: e.UUID}
 	switch e.Type {
 	case "system":
-		if e.Subtype != "init" {
-			return nil, nil
+		if e.Subtype == "init" {
+			attrs := map[string]any{"model": e.Model}
+			if e.Cwd != "" {
+				attrs["cwd"] = e.Cwd
+			}
+			return []partial{{kind: "session_start", correlation: base, attrs: attrs}}, nil, nil
 		}
-		attrs := map[string]any{"model": e.Model}
-		if e.Cwd != "" {
-			attrs["cwd"] = e.Cwd
+		if e.Subtype == "compact_boundary" {
+			return nil, nil, nil
 		}
-		return []partial{{kind: "session_start", correlation: base, attrs: attrs}}, nil
+		return nil, drift.Counts{drift.ReasonUnknownSubtype: 1}, nil
 	case "assistant":
 		var msg message
 		if len(e.Message) > 0 {
 			if err := json.Unmarshal(e.Message, &msg); err != nil {
-				return nil, fmt.Errorf("streamjson.build.assistant: %w", err)
+				return nil, nil, fmt.Errorf("streamjson.build.assistant: %w", err)
 			}
 		}
 		text, blocks, err := decodeContent(msg.Content)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return assistantParts(base, msg, text, blocks), nil
+		return assistantParts(base, msg, text, blocks), unknownBlockCounts(blocks, knownAssistantBlock), nil
 	case "user":
 		var msg message
 		if len(e.Message) > 0 {
 			if err := json.Unmarshal(e.Message, &msg); err != nil {
-				return nil, fmt.Errorf("streamjson.build.user: %w", err)
+				return nil, nil, fmt.Errorf("streamjson.build.user: %w", err)
 			}
 		}
 		text, blocks, err := decodeContent(msg.Content)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return userParts(base, text, blocks), nil
+		return userParts(base, text, blocks), unknownBlockCounts(blocks, knownUserBlock), nil
 	case "stream_event":
-		return nil, nil
+		return nil, nil, nil
 	case "result":
 		attrs := map[string]any{}
 		if e.Usage != nil {
@@ -139,9 +143,9 @@ func build(e envelope) ([]partial, error) {
 		if e.TotalCostUSD != nil {
 			attrs["cost_usd"] = *e.TotalCostUSD
 		}
-		return []partial{{kind: "assistant_turn", correlation: base, attrs: attrs}}, nil
+		return []partial{{kind: "assistant_turn", correlation: base, attrs: attrs}}, nil, nil
 	default:
-		return nil, nil
+		return nil, drift.Counts{drift.ReasonUnknownRecordType: 1}, nil
 	}
 }
 
@@ -247,4 +251,32 @@ func userParts(base model.Correlation, text string, blocks []block) []partial {
 		})
 	}
 	return parts
+}
+
+func unknownBlockCounts(blocks []block, known func(string) bool) drift.Counts {
+	var dc drift.Counts
+	for _, b := range blocks {
+		if !known(b.Type) {
+			dc = dc.Bump(drift.ReasonUnknownContentBlock)
+		}
+	}
+	return dc
+}
+
+func knownAssistantBlock(t string) bool {
+	switch t {
+	case "text", "tool_use", "thinking", "redacted_thinking":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownUserBlock(t string) bool {
+	switch t {
+	case "text", "tool_result", "image":
+		return true
+	default:
+		return false
+	}
 }
