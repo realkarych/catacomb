@@ -20,17 +20,25 @@ const (
 
 	DefaultSQLitePath = "~/.catacomb/catacomb.db"
 	DefaultConfigPath = "~/.catacomb/config.yaml"
+
+	PayloadModeRedact = "redact"
+	PayloadModeRefs   = "refs"
+	PayloadModeAll    = "all"
+
+	DefaultPayloadMaxBytes = 262144
 )
 
 var (
-	ErrNoStoreBackend        = errors.New("config: no store backend")
-	ErrUnknownStoreBackend   = errors.New("config: unknown store backend")
-	ErrMissingSQLitePath     = errors.New("config: sqlite backend requires store.sqlite.path")
-	ErrBackendNotImplemented = errors.New("config: store backend not implemented")
-	ErrUnknownSink           = errors.New("config: unknown sink type")
-	ErrMissingSinkField      = errors.New("config: sink missing required field")
-	ErrDuplicateSink         = errors.New("config: duplicate sink")
-	ErrEmptyTranscriptDir    = errors.New("config: jsonl source enabled with empty transcript_dir")
+	ErrNoStoreBackend         = errors.New("config: no store backend")
+	ErrUnknownStoreBackend    = errors.New("config: unknown store backend")
+	ErrMissingSQLitePath      = errors.New("config: sqlite backend requires store.sqlite.path")
+	ErrBackendNotImplemented  = errors.New("config: store backend not implemented")
+	ErrUnknownSink            = errors.New("config: unknown sink type")
+	ErrMissingSinkField       = errors.New("config: sink missing required field")
+	ErrDuplicateSink          = errors.New("config: duplicate sink")
+	ErrEmptyTranscriptDir     = errors.New("config: jsonl source enabled with empty transcript_dir")
+	ErrUnknownPayloadMode     = errors.New("config: unknown payloads.mode")
+	ErrInvalidPayloadMaxBytes = errors.New("config: payloads.max_bytes must not be negative")
 )
 
 type Duration time.Duration
@@ -49,10 +57,16 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Config struct {
-	Daemon  DaemonConfig  `yaml:"daemon"`
-	Store   StoreConfig   `yaml:"store"`
-	Sources SourcesConfig `yaml:"sources"`
-	Sinks   []Sink        `yaml:"sinks"`
+	Daemon   DaemonConfig   `yaml:"daemon"`
+	Store    StoreConfig    `yaml:"store"`
+	Sources  SourcesConfig  `yaml:"sources"`
+	Sinks    []Sink         `yaml:"sinks"`
+	Payloads PayloadsConfig `yaml:"payloads"`
+}
+
+type PayloadsConfig struct {
+	Mode     string `yaml:"mode,omitempty"`
+	MaxBytes int    `yaml:"max_bytes,omitempty"`
 }
 
 type DaemonConfig struct {
@@ -123,5 +137,6 @@ func Defaults() Config {
 			StreamJSON: SourceToggle{Enabled: boolPtr(true)},
 			JSONL:      JSONLSource{Enabled: boolPtr(false)},
 		},
+		Payloads: PayloadsConfig{Mode: PayloadModeRedact, MaxBytes: DefaultPayloadMaxBytes},
 	}
 }

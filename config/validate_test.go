@@ -45,6 +45,27 @@ func TestValidateSources(t *testing.T) {
 	require.NoError(t, Validate(nilEnabled))
 }
 
+func TestValidatePayloadsModeAndMaxBytes(t *testing.T) {
+	valid := Defaults()
+	require.NoError(t, Validate(valid))
+
+	bad := Defaults()
+	bad.Payloads.Mode = "everything"
+	err := Validate(bad)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownPayloadMode)
+
+	neg := Defaults()
+	neg.Payloads.MaxBytes = -1
+	err = Validate(neg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidPayloadMaxBytes)
+
+	unset := Defaults()
+	unset.Payloads = PayloadsConfig{}
+	assert.NoError(t, Validate(unset))
+}
+
 func TestSinkKey(t *testing.T) {
 	tests := []struct {
 		name string
