@@ -673,7 +673,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
-| `--z` | 1.645 | One-sided Wilson z for the rate gates (`1.645` = 95% one-sided); higher is stricter |
+| `--z` | 1.645 | One-sided Wilson z for the rate gates (`1.645` = 95% one-sided); higher z requires stronger evidence to flag (flags less) |
 | `--fail-on-notable` | false | Count `notable` findings toward the gate (exit `1`) |
 
 Both selectors must be supplied. `label:k=v[,k=v...]` resolves runs by label (all terms ANDed);
@@ -698,7 +698,8 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
   inside the band.
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is always
   reported; below `--coverage-floor` step-level regressions are downgraded to `notable` and the
-  checkpoint (phase) level carries the verdict.
+  checkpoint (phase) level carries the verdict (under `--fail-on-notable` those downgraded
+  findings still gate).
 - Groups below `--min-support` yield an `insufficient` verdict instead of a guess.
 
 #### Gating on external scores

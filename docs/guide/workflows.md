@@ -352,10 +352,10 @@ as one more metric.
 
 ### Practical notes
 
-- **Use `k` ≥ 5.** Minimum support is 3 (`--min-support`), but Wilson intervals over only three
-  runs are wide, so presence and error-rate flips usually land as `notable` or `insufficient`
-  rather than a firm `regression`. Five or more repetitions per variant is the practical floor
-  for a presence flip to reach significance.
+- **Use `k` ≥ 5.** Minimum support is 3 (`--min-support`), and at the default thresholds a full
+  presence or error-rate flip hard-flags a `regression` from `k=3`; a partial drop needs `k` ≥ 5
+  to reach `regression` (see the [sensitivity table above](#gate-sensitivity-at-small-k)). Five or
+  more repetitions per variant keeps headroom for a real flip to gate.
 - **Lean on checkpoints when the change rewrites prompts.** Changing the component under test
   alters some prompt hashes, so `step_key` alignment degrades and step-level coverage drops.
   Below `--coverage-floor` (default 0.7) step verdicts are downgraded to `notable`, and the
