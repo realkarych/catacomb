@@ -39,15 +39,16 @@ type Coverage struct {
 }
 
 type Report struct {
-	BaselineRuns   int       `json:"baseline_runs"`
-	CandidateRuns  int       `json:"candidate_runs"`
-	Coverage       Coverage  `json:"coverage"`
-	StepsTrusted   bool      `json:"steps_trusted"`
-	Findings       []Finding `json:"findings"`
-	Regressions    int       `json:"regressions"`
-	Notables       int       `json:"notables"`
-	Insufficient   int       `json:"insufficient"`
-	OverallVerdict Verdict   `json:"overall_verdict"`
+	BaselineRuns   int          `json:"baseline_runs"`
+	CandidateRuns  int          `json:"candidate_runs"`
+	Coverage       Coverage     `json:"coverage"`
+	StepsTrusted   bool         `json:"steps_trusted"`
+	Findings       []Finding    `json:"findings"`
+	Regressions    int          `json:"regressions"`
+	Notables       int          `json:"notables"`
+	Insufficient   int          `json:"insufficient"`
+	OverallVerdict Verdict      `json:"overall_verdict"`
+	Sensitivity    *Sensitivity `json:"sensitivity,omitempty"`
 }
 
 var scopeOrder = map[string]int{"total": 0, "phase": 1, "step": 2}
@@ -63,6 +64,7 @@ func Compare(in Input, th Thresholds) Report {
 		},
 	}
 	rep.StepsTrusted = rep.Coverage.Steps >= th.CoverageFloor
+	rep.Sensitivity = computeSensitivity(b.Runs, c.Runs, th)
 
 	findings := totalsFindings(b, c, th)
 	findings = append(findings, rowFindings("phase", b.Phases, c.Phases, b.Runs, c.Runs, th, false, 0, nil)...)
