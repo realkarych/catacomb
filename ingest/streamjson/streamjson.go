@@ -274,7 +274,7 @@ func knownAssistantBlock(t string) bool {
 
 func knownUserBlock(t string) bool {
 	switch t {
-	case "text", "tool_result", "image":
+	case "text", "tool_result", "image", "document":
 		return true
 	default:
 		return false

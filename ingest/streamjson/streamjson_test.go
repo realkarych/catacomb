@@ -349,6 +349,14 @@ func TestParseUnknownUserContentBlockCountsDrift(t *testing.T) {
 	assert.Equal(t, drift.Counts{drift.ReasonUnknownContentBlock: 1}, dc)
 }
 
+func TestParseUserDocumentBlockNoDrift(t *testing.T) {
+	line := `{"type":"user","session_id":"s1","message":{"content":[{"type":"document"},{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`
+	obs, dc, err := Parse([]byte(line), "exec-1", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Empty(t, dc)
+}
+
 func TestParseKnownIgnoredShapesNoDrift(t *testing.T) {
 	_, dc, err := Parse([]byte(`{"type":"stream_event","session_id":"s1"}`), "exec-1", seq())
 	require.NoError(t, err)

@@ -92,9 +92,9 @@ least one counter is nonzero. The daemon logs a warning on the first occurrence
 per key and every 100th thereafter. Malformed input still goes to quarantine;
 drift covers the complementary healthy-but-unknown class.
 
-The binary also carries a tested Claude Code version ceiling. The first session
-observed with a newer `claude_code_version` logs one warning and sets
-`format_watch: true` in the run's meta; capture proceeds identically. Bump
+The binary also carries a tested Claude Code version ceiling. A newer `claude_code_version`
+logs one warning per daemon lifetime but sets `format_watch: true` in the meta
+of every run whose version exceeds the ceiling; capture proceeds identically. Bump
 `TestedClaudeCodeVersion` in `ingest/drift` after verifying a new Claude Code
 release (release-checklist item).
 
