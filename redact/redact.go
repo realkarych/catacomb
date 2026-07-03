@@ -110,6 +110,12 @@ func isKnownPlaceholder(s string) bool {
 	return knownPlaceholders[s]
 }
 
+var reTypedRefValue = regexp.MustCompile(`^‹(?:ref|binary):\d+,[0-9a-f]+›$`)
+
+func isTypedRefValue(s string) bool {
+	return reTypedRefValue.MatchString(s)
+}
+
 func matchValueRule(s string) string {
 	for _, rule := range valueRules {
 		if rule.re.MatchString(s) {
@@ -281,7 +287,7 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 		childPath := joinPath(path, k)
 		if isSensitiveKey(k) {
 			if sv, ok := v.(string); ok {
-				if isKnownPlaceholder(sv) {
+				if isKnownPlaceholder(sv) || isTypedRefValue(sv) {
 					result[k] = sv
 				} else {
 					reason := matchValueRule(sv)

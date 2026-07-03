@@ -819,6 +819,21 @@ func TestRedactMergesDuplicateFindingsAcrossPasses(t *testing.T) {
 	assert.Equal(t, "github-token", result.Findings[0].Reason)
 }
 
+func TestRedactPreservesTypedRefUnderSensitiveKey(t *testing.T) {
+	cases := []string{
+		`{"token":"‹ref:262144,fedcba9876543210›"}`,
+		`{"password":"‹binary:1048576,0123456789abcdef›"}`,
+	}
+	for _, in := range cases {
+		r := redact.Redact([]byte(in))
+		assert.False(t, r.Redacted, "typed ref under a sensitive key must not be re-wrapped: %q", in)
+		assert.Equal(t, in, string(r.Data), "typed ref under a sensitive key must stay byte-identical: %q", in)
+		assert.Empty(t, r.Findings, "%q", in)
+		twice := redact.Redact(r.Data)
+		assert.Equal(t, in, string(twice.Data), "re-redaction must stay byte-identical: %q", in)
+	}
+}
+
 func TestHasMarker(t *testing.T) {
 	assert.True(t, redact.HasMarker([]byte(`{"x":"‹redacted:aws-key›"}`)))
 	assert.True(t, redact.HasMarker([]byte(`"‹binary:3,0123456789abcdef›"`)))
