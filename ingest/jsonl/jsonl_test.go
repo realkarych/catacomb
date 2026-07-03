@@ -10,9 +10,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 )
+
+func seqFor(t *testing.T) func() uint64 {
+	t.Helper()
+	var n uint64
+	return func() uint64 {
+		s := n
+		n++
+		return s
+	}
+}
 
 type errReader struct{ read bool }
 
@@ -178,7 +189,7 @@ func TestParseUsesInjectedSeqAndObservedAt(t *testing.T) {
 	var n uint64 = 40
 	next := func() uint64 { n++; return n }
 	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	obs, err := Parse(strings.NewReader(
+	obs, _, err := Parse(strings.NewReader(
 		`{"type":"assistant","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"),
 		"exec-Z", next, func(time.Time) time.Time { return at })
 	require.NoError(t, err)
@@ -300,6 +311,63 @@ func TestDecodeLineVersionAndCwdInjected(t *testing.T) {
 	require.True(t, ok, "expected subagent_stop observation")
 	assert.Equal(t, "1.2.3", stop.Attrs["claude_code_version"])
 	assert.Equal(t, "/home", stop.Attrs["cwd"])
+}
+
+func TestParseUnknownRecordTypeCountsDrift(t *testing.T) {
+	in := `{"type":"checkpoint_v9","sessionId":"s1"}` + "\n" + `{"type":"summary","summary":"s"}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	assert.Empty(t, obs)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownRecordType: 1}, dc)
+}
+
+func TestParseUnknownContentBlockCountsDrift(t *testing.T) {
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"video_frame"}]}}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownContentBlock: 1}, dc)
+}
+
+func TestParseAssistantUnknownContentBlockCountsDrift(t *testing.T) {
+	in := `{"type":"assistant","sessionId":"s1","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"},{"type":"hologram"}]}}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownContentBlock: 1}, dc)
+}
+
+func TestParseKnownIgnoredRecordTypesNoDrift(t *testing.T) {
+	in := `{"type":"summary","summary":"s"}` + "\n" +
+		`{"type":"system","sessionId":"s1"}` + "\n" +
+		`{"type":"file-history-snapshot","sessionId":"s1"}` + "\n" +
+		`{"type":"attachment","sessionId":"s1"}` + "\n" +
+		`{"type":"last-prompt","sessionId":"s1"}` + "\n" +
+		`{"type":"mode","sessionId":"s1"}` + "\n" +
+		`{"type":"ai-title","sessionId":"s1"}` + "\n" +
+		`{"type":"permission-mode","sessionId":"s1"}` + "\n" +
+		`{"type":"pr-link","sessionId":"s1"}` + "\n" +
+		`{"type":"queue-operation","sessionId":"s1"}` + "\n" +
+		`{"type":"worktree-state","sessionId":"s1"}` + "\n" +
+		`{"type":"relocated","sessionId":"s1"}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	assert.Empty(t, obs)
+	assert.Empty(t, dc)
+}
+
+func TestParseUserDocumentBlockNoDrift(t *testing.T) {
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":[{"type":"document"},{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Empty(t, dc)
+}
+
+func TestParseReaderDiscardsDriftCounts(t *testing.T) {
+	obs, err := ParseReader(strings.NewReader(`{"type":"checkpoint_v9","sessionId":"s1"}`+"\n"), "exec-T")
+	require.NoError(t, err)
+	assert.Empty(t, obs)
 }
 
 func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {

@@ -262,13 +262,14 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := parseFn(req, execID, d.next)
+	obs, dc, err := parseFn(req, execID, d.next)
 	if err != nil {
 		var raw []byte
 		raw, _ = proto.Marshal(req)
 		d.quarantine("otel", raw, err.Error())
 		return nil
 	}
+	d.recordDrift(model.SourceOTel, dc)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -358,11 +359,12 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := tailParseFn(bytes.NewReader(line), execID, d.next, func(time.Time) time.Time { return nowFn().UTC() })
+	obs, dc, err := tailParseFn(bytes.NewReader(line), execID, d.next, func(time.Time) time.Time { return nowFn().UTC() })
 	if err != nil {
 		d.quarantine("jsonl", line, err.Error())
 		return nil
 	}
+	d.recordDrift(model.SourceJSONL, dc)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)

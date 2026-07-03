@@ -552,8 +552,8 @@ func TestIngestOTLPParseError(t *testing.T) {
 
 func TestIngestOTLPParseErrorViaSeam(t *testing.T) {
 	orig := parseFn
-	parseFn = func(_ *collectorv1.ExportTraceServiceRequest, _ string, _ func() uint64) ([]model.Observation, error) {
-		return nil, errors.New("parse fail")
+	parseFn = func(_ *collectorv1.ExportTraceServiceRequest, _ string, _ func() uint64) ([]model.Observation, drift.Counts, error) {
+		return nil, nil, errors.New("parse fail")
 	}
 	t.Cleanup(func() { parseFn = orig })
 	s := tempStore(t)
@@ -1088,8 +1088,8 @@ func TestIngestTranscriptPanicRecovers(t *testing.T) {
 
 func TestIngestTranscriptParseErrorViaSeam(t *testing.T) {
 	orig := tailParseFn
-	tailParseFn = func(_ io.Reader, _ string, _ func() uint64, _ func(time.Time) time.Time) ([]model.Observation, error) {
-		return nil, errors.New("parse fail")
+	tailParseFn = func(_ io.Reader, _ string, _ func() uint64, _ func(time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
+		return nil, nil, errors.New("parse fail")
 	}
 	t.Cleanup(func() { tailParseFn = orig })
 	s := tempStore(t)
@@ -1629,6 +1629,26 @@ func TestIngestUnknownHookEventRecordsDriftNotQuarantine(t *testing.T) {
 	require.NoError(t, d.Ingest("BrandNewHook", []byte(`{"session_id":"s1"}`)))
 	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["hook/unknown_hook_event"])
 	assert.Equal(t, int64(0), d.metricsSnapshot().Quarantined)
+}
+
+func otlpRequestWithSpanName(t *testing.T, name string) *collectorv1.ExportTraceServiceRequest {
+	t.Helper()
+	req := makeOTLPToolReq("s1", "t1", "Bash")
+	req.ResourceSpans[0].ScopeSpans[0].Spans[0].Name = name
+	return req
+}
+
+func TestIngestTranscriptUnknownTypeRecordsDrift(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestTranscript([]byte(`{"type":"checkpoint_v9","sessionId":"s1"}`), "s1"))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["jsonl/unknown_record_type"])
+}
+
+func TestIngestOTLPUnknownSpanRecordsDrift(t *testing.T) {
+	d := New(tempStore(t))
+	req := otlpRequestWithSpanName(t, "claude_code.quantum")
+	require.NoError(t, d.IngestOTLP(req))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["otel/unknown_span_name"])
 }
 
 func TestIngestStreamJSONUnknownTypeRecordsDrift(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -68,23 +69,26 @@ func ParseReader(r io.Reader, executionID string) ([]model.Observation, error) {
 		seq++
 		return s
 	}
-	return Parse(r, executionID, next, func(eventTime time.Time) time.Time { return eventTime })
+	obs, _, err := Parse(r, executionID, next, func(eventTime time.Time) time.Time { return eventTime })
+	return obs, err
 }
 
-func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, error) {
+func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 
 	var out []model.Observation
+	var dc drift.Counts
 	for sc.Scan() {
 		raw := strings.TrimSpace(sc.Text())
 		if raw == "" {
 			continue
 		}
-		ln, parts, err := decodeLine([]byte(raw))
+		ln, parts, lineCounts, err := decodeLine([]byte(raw))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		dc = dc.Merge(lineCounts)
 		ts, _ := time.Parse(time.RFC3339, ln.Timestamp)
 		for _, p := range parts {
 			out = append(out, model.Observation{
@@ -103,34 +107,40 @@ func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt fu
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("jsonl.ParseReader: %w", err)
+		return nil, nil, fmt.Errorf("jsonl.ParseReader: %w", err)
 	}
-	return out, nil
+	return out, dc, nil
 }
 
-func decodeLine(raw []byte) (line, []partial, error) {
+func decodeLine(raw []byte) (line, []partial, drift.Counts, error) {
 	var ln line
 	if err := json.Unmarshal(raw, &ln); err != nil {
-		return ln, nil, fmt.Errorf("jsonl.decodeLine: %w", err)
+		return ln, nil, nil, fmt.Errorf("jsonl.decodeLine: %w", err)
+	}
+	var dc drift.Counts
+	if !knownLineType(ln.Type) {
+		dc = dc.Bump(drift.ReasonUnknownRecordType)
 	}
 	if len(ln.Message) == 0 {
-		return ln, nil, nil
+		return ln, nil, dc, nil
 	}
 	var msg message
 	if err := json.Unmarshal(ln.Message, &msg); err != nil {
-		return ln, nil, fmt.Errorf("jsonl.decodeLine.message: %w", err)
+		return ln, nil, nil, fmt.Errorf("jsonl.decodeLine.message: %w", err)
 	}
 	text, blocks, err := decodeContent(msg.Content)
 	if err != nil {
-		return ln, nil, err
+		return ln, nil, nil, err
 	}
 	base := model.Correlation{SessionID: ln.SessionID, UUID: ln.UUID, ParentToolUseID: ln.ParentToolUseID, AgentID: ln.AgentID}
 	var parts []partial
 	switch ln.Type {
 	case "user":
 		parts = userParts(base, text, blocks)
+		dc = dc.Merge(unknownBlockCounts(blocks, knownUserBlock))
 	case "assistant":
 		parts = assistantParts(base, msg, text, blocks)
+		dc = dc.Merge(unknownBlockCounts(blocks, knownAssistantBlock))
 	}
 	if ln.IsSidechain || ln.AgentID != "" {
 		parts = append(parts, partial{
@@ -151,7 +161,46 @@ func decodeLine(raw []byte) (line, []partial, error) {
 			}
 		}
 	}
-	return ln, parts, nil
+	return ln, parts, dc, nil
+}
+
+func knownLineType(t string) bool {
+	switch t {
+	case "user", "assistant", "summary", "system", "file-history-snapshot",
+		"attachment", "last-prompt", "mode", "ai-title", "permission-mode",
+		"pr-link", "queue-operation", "worktree-state", "relocated":
+		return true
+	default:
+		return false
+	}
+}
+
+func unknownBlockCounts(blocks []block, known func(string) bool) drift.Counts {
+	var dc drift.Counts
+	for _, b := range blocks {
+		if !known(b.Type) {
+			dc = dc.Bump(drift.ReasonUnknownContentBlock)
+		}
+	}
+	return dc
+}
+
+func knownAssistantBlock(t string) bool {
+	switch t {
+	case "text", "tool_use", "thinking", "redacted_thinking":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownUserBlock(t string) bool {
+	switch t {
+	case "text", "tool_result", "image", "document":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeContent(raw json.RawMessage) (string, []block, error) {

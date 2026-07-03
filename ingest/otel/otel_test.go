@@ -11,6 +11,7 @@ import (
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 )
@@ -67,7 +68,7 @@ func fixedNow(t time.Time) {
 }
 
 func TestParseEmptyRequest(t *testing.T) {
-	obs, err := Parse(&collectorv1.ExportTraceServiceRequest{}, "exec1", seq())
+	obs, _, err := Parse(&collectorv1.ExportTraceServiceRequest{}, "exec1", seq())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
@@ -96,7 +97,7 @@ func TestParseLLMSpan(t *testing.T) {
 	}
 	req := makeReq(resource, span)
 
-	obs, err := Parse(req, "exec1", seq())
+	obs, _, err := Parse(req, "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -134,7 +135,7 @@ func TestParseAssistantTurnCacheTokens(t *testing.T) {
 	}
 	resource := &resourcev1.Resource{Attributes: []*commonv1.KeyValue{strAttr("session.id", "sess_c")}}
 
-	obs, err := Parse(makeReq(resource, span), "exec1", seq())
+	obs, _, err := Parse(makeReq(resource, span), "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -157,7 +158,7 @@ func TestParseAssistantTurnCacheTokensSpecSpelling(t *testing.T) {
 	}
 	resource := &resourcev1.Resource{Attributes: []*commonv1.KeyValue{strAttr("session.id", "sess_spec")}}
 
-	obs, err := Parse(makeReq(resource, span), "exec1", seq())
+	obs, _, err := Parse(makeReq(resource, span), "exec1", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -191,7 +192,7 @@ func TestParseToolSpan(t *testing.T) {
 	}
 	req := makeReq(resource, span)
 
-	obs, err := Parse(req, "exec2", seq())
+	obs, _, err := Parse(req, "exec2", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -215,7 +216,7 @@ func TestParseToolSpanGenAIToolCallID(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec3", seq())
+	obs, _, err := Parse(req, "exec3", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -238,7 +239,7 @@ func TestParseAgentSpan(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec4", seq())
+	obs, _, err := Parse(req, "exec4", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -259,7 +260,7 @@ func TestParseHookSpan(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec5", seq())
+	obs, _, err := Parse(req, "exec5", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 
@@ -276,7 +277,7 @@ func TestParseUnknownSpanSkipped(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec6", seq())
+	obs, _, err := Parse(req, "exec6", seq())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
@@ -303,7 +304,7 @@ func TestParseSessionIDPropagatedToAllSpans(t *testing.T) {
 	}
 	req := makeReq(resource, spans...)
 
-	obs, err := Parse(req, "exec7", seq())
+	obs, _, err := Parse(req, "exec7", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 2)
 
@@ -324,7 +325,7 @@ func TestParseOpenInferenceLLMKind(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec8", seq())
+	obs, _, err := Parse(req, "exec8", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
@@ -342,7 +343,7 @@ func TestParseOpenInferenceTOOLKind(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec9", seq())
+	obs, _, err := Parse(req, "exec9", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	o := obs[0]
@@ -362,7 +363,7 @@ func TestParseOpenInferenceAGENTKind(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec10", seq())
+	obs, _, err := Parse(req, "exec10", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	o := obs[0]
@@ -381,7 +382,7 @@ func TestParseOpenInferenceCHAINKind(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec11", seq())
+	obs, _, err := Parse(req, "exec11", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "marker", obs[0].Kind)
@@ -400,7 +401,7 @@ func TestParseSessionIDFallbackSessionIDUnderscore(t *testing.T) {
 	}
 	req := makeReq(resource, span)
 
-	obs, err := Parse(req, "exec12", seq())
+	obs, _, err := Parse(req, "exec12", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "sess_underscore", obs[0].RunID)
@@ -419,7 +420,7 @@ func TestParseSessionIDFallbackGenAIConversationID(t *testing.T) {
 	}
 	req := makeReq(resource, span)
 
-	obs, err := Parse(req, "exec13", seq())
+	obs, _, err := Parse(req, "exec13", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "sess_genai", obs[0].RunID)
@@ -434,7 +435,7 @@ func TestParseParentSpanIDHex(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec14", seq())
+	obs, _, err := Parse(req, "exec14", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "0000000000000001", obs[0].Correlation.SpanID)
@@ -452,7 +453,7 @@ func TestParseToolSpanStatusUnset(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec15", seq())
+	obs, _, err := Parse(req, "exec15", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "running", obs[0].Attrs["status"])
@@ -469,7 +470,7 @@ func TestParseLLMSpanChatModel(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec16", seq())
+	obs, _, err := Parse(req, "exec16", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
@@ -487,7 +488,7 @@ func TestParseLLMSpanInteraction(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec17", seq())
+	obs, _, err := Parse(req, "exec17", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	o := obs[0]
@@ -513,7 +514,7 @@ func TestParseMultipleResourceSpans(t *testing.T) {
 		},
 	}
 
-	obs, err := Parse(req, "exec18", seq())
+	obs, _, err := Parse(req, "exec18", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 2)
 	assert.Equal(t, "sess_multi_a", obs[0].RunID)
@@ -532,7 +533,7 @@ func TestParseToolSpanStatusUnsetCode(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec19", seq())
+	obs, _, err := Parse(req, "exec19", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "running", obs[0].Attrs["status"])
@@ -549,7 +550,7 @@ func TestParseLLMSpanTokensWrongType(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec20", seq())
+	obs, _, err := Parse(req, "exec20", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	_, ok := obs[0].Attrs["tokens_in"]
@@ -572,10 +573,29 @@ func TestParseLLMSpanClaudeCodeVersionFromResource(t *testing.T) {
 	}
 	req := makeReq(resource, span)
 
-	obs, err := Parse(req, "exec22", seq())
+	obs, _, err := Parse(req, "exec22", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "1.2.3", obs[0].Attrs["claude_code_version"])
+}
+
+func TestParseUnknownSpanNameCountsDrift(t *testing.T) {
+	fixedNow(time.Now())
+	req := makeReq(nil, &tracev1.Span{SpanId: spanID(30), Name: "claude_code.quantum"})
+
+	obs, dc, err := Parse(req, "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, obs)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownSpanName: 1}, dc)
+}
+
+func TestParseKnownSpanNoDrift(t *testing.T) {
+	fixedNow(time.Now())
+	req := makeReq(nil, &tracev1.Span{SpanId: spanID(31), Name: "claude_code.tool"})
+
+	_, dc, err := Parse(req, "exec-1", seq())
+	require.NoError(t, err)
+	assert.Empty(t, dc)
 }
 
 func TestParseLLMSpanResponseModelFallback(t *testing.T) {
@@ -589,7 +609,7 @@ func TestParseLLMSpanResponseModelFallback(t *testing.T) {
 	}
 	req := makeReq(nil, span)
 
-	obs, err := Parse(req, "exec21", seq())
+	obs, _, err := Parse(req, "exec21", seq())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "claude-opus-4-5-resp", obs[0].Attrs["model"])
