@@ -21,11 +21,13 @@
 ### Task 1: Thresholds gain Z and FailOnNotable; rate comparisons go one-sided by default
 
 **Files:**
+
 - Modify: `regress/compare.go` (Thresholds struct, DefaultThresholds, compareRate)
 - Modify: `regress/wilson.go` (delete `const wilsonZ = 1.96`)
 - Test: `regress/compare_test.go`
 
 **Interfaces:**
+
 - Produces: `Thresholds.Z float64` (default 1.645) and `Thresholds.FailOnNotable bool` (default false); `compareRate` uses `th.Z`. Task 2, 3, 5 rely on these exact field names.
 
 - [ ] **Step 1: Write failing tests**
@@ -110,10 +112,12 @@ git commit -m "feat(regress): one-sided rate gate z=1.645 default, Thresholds.Z 
 ### Task 2: FailOnNotable escalates the overall verdict; Report counts notables
 
 **Files:**
+
 - Modify: `regress/regress.go` (Report struct, Compare, overallVerdict)
 - Test: `regress/regress_test.go`
 
 **Interfaces:**
+
 - Consumes: `Thresholds.FailOnNotable` (Task 1).
 - Produces: `Report.Notables int` (json `"notables"`); `overallVerdict(fs, regressions, notables, insufficient, failOnNotable)`.
 
@@ -171,11 +175,13 @@ func overallVerdict(fs []Finding, regressions, notables, insufficient int, failO
 ### Task 3: Sensitivity computation attached to the Report
 
 **Files:**
+
 - Create: `regress/sensitivity.go`
 - Test: `regress/sensitivity_test.go`
 - Modify: `regress/regress.go` (Report field + attach in Compare)
 
 **Interfaces:**
+
 - Consumes: `compareRate`, `Thresholds` (Task 1).
 - Produces: `Report.Sensitivity *Sensitivity` (json `"sensitivity,omitempty"`); types below. Task 4 renders them.
 
@@ -266,10 +272,12 @@ In `Compare`, after the Coverage assignment: `rep.Sensitivity = computeSensitivi
 ### Task 4: Render the sensitivity note (human + JSON)
 
 **Files:**
+
 - Modify: `regress/render.go`
 - Test: `regress/render_test.go`
 
 **Interfaces:**
+
 - Consumes: `Report.Sensitivity` (Task 3).
 
 - [ ] **Step 1: Failing test**
@@ -319,10 +327,12 @@ func formatSensitivity(name string, rs RateSensitivity) string {
 ### Task 5: CLI flags `--z` and `--fail-on-notable`
 
 **Files:**
+
 - Modify: `cmd/catacomb/regress.go` (bindRegressFlags, runRegress validation)
 - Test: `cmd/catacomb/regress_test.go` (follow the file's existing harness for flag/exit-code tests)
 
 **Interfaces:**
+
 - Consumes: `Thresholds.Z`, `Thresholds.FailOnNotable` (Task 1), `Report.OverallVerdict` escalation (Task 2).
 
 - [ ] **Step 1: Failing tests** — three behaviors, using the existing cmd test harness (in-memory or tmp SQLite fixtures already used by regress cmd tests):
@@ -354,10 +364,11 @@ In `runRegress`, after the MinSupport validation:
 ### Task 6: Bench epilogue nudge at reps < 5
 
 **Files:**
+
 - Modify: `cmd/catacomb/bench.go` (printEpilogue)
 - Test: `cmd/catacomb/bench_test.go`
 
-- [ ] **Step 1: Failing test** — extend the existing epilogue test(s): basket with `Reps: 3` must render the line `  note: reps=3 limits rate-gate sensitivity; prefer reps: 5 or more`; basket with `Reps: 5` must not contain `limits rate-gate sensitivity`.
+- [ ] **Step 1: Failing test** — extend the existing epilogue test(s): basket with `Reps: 3` must render the indented line `note: reps=3 limits rate-gate sensitivity; prefer reps: 5 or more`; basket with `Reps: 5` must not contain `limits rate-gate sensitivity`.
 
 - [ ] **Step 2: Run, verify fail.**
 
@@ -376,6 +387,7 @@ In `runRegress`, after the MinSupport validation:
 ### Task 7: Docs, full gates, live verify
 
 **Files:**
+
 - Modify: `docs/guide/cli.md` (regress flag list: `--z`, `--fail-on-notable`; bench epilogue note)
 - Modify: `docs/guide/workflows.md` (sensitivity subsection under the regress workflow)
 

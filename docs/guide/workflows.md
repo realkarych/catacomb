@@ -255,6 +255,26 @@ lock), or give each shard its own store file. Concurrent `--record` writers on o
 on SQLite's write lock and fail loudly with `SQLITE_BUSY` (exit `2`, no corruption) rather than
 queue.
 
+### Gate sensitivity at small k
+
+The rate gate (presence, error rate) hard-flags a `regression` only when the baseline and
+candidate one-sided Wilson bounds are disjoint *and* the delta clears its threshold, so at small
+run counts a real flip can land as `notable` — which does not gate — instead of `regression`. At
+the default thresholds (`--z` 1.645, `--presence-delta` 0.2, `--error-delta` 0.1, `--min-support`
+3) the smallest presence drop that can hard-flag depends on the runs per side:
+
+| Runs per side (k) | Smallest presence drop that can hard-flag |
+| --- | --- |
+| 3–4 | 100% → 0% (full flip only) |
+| 5 | 100% → 20% |
+| 10 | 100% → 50% |
+
+`regress` computes this for the actual group sizes and, when even a full flip cannot reach
+`regression`, prints a `sensitivity:` line naming the smallest `k` at which the gate could fire,
+so a gate that cannot fire is never silent about it. Add `--fail-on-notable` to count `notable`
+findings toward the gate (exit `1`); it trades precision for recall at small k, since at `k=3`
+the delta threshold alone would also flag ordinary sampling noise such as 1/3 → 2/3.
+
 ### Watching drift over time
 
 With `--record` in the gate, each run accumulates in the baseline's append-only history. `trends`
