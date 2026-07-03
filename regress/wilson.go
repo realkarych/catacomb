@@ -2,8 +2,6 @@ package regress
 
 import "math"
 
-const wilsonZ = 1.96
-
 func wilson(successes, n int, z float64) (lo, hi float64) {
 	if n == 0 {
 		return 0, 1

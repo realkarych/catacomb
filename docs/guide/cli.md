@@ -565,7 +565,10 @@ unreachable daemon, a non-fresh manifest, manifest I/O, or a resume hash mismatc
 the runner prints a `marked <n>/<total> cells` summary and a copy-pasteable epilogue: a
 `baseline set` for the first variant and, with two or more variants, a `regress` comparing the
 first two. Append `,task=<id>` to the epilogue's `label:` selectors to narrow the comparison to
-a single task (e.g. `label:basket=checkout,variant=baseline,task=add-item`).
+a single task (e.g. `label:basket=checkout,variant=baseline,task=add-item`). When the basket
+declares `reps < 5`, the epilogue also appends a one-line note recommending `reps: 5` or more,
+because the rate gate cannot fire reliably below that (see
+[Gate sensitivity at small k](workflows.md#gate-sensitivity-at-small-k)).
 
 ```sh
 catacomb bench checkout.yaml
@@ -670,6 +673,8 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
+| `--z` | 1.645 | One-sided Wilson z for the rate gates (`1.645` = 95% one-sided); higher z requires stronger evidence to flag (flags less) |
+| `--fail-on-notable` | false | Count `notable` findings toward the gate (exit `1`) |
 
 Both selectors must be supplied. `label:k=v[,k=v...]` resolves runs by label (all terms ANDed);
 `name:<baseline>` resolves a baseline saved with `baseline set`. When a `name:` baseline resolves
@@ -677,9 +682,13 @@ fewer runs than it stored (some runs were pruned since `set`), a warning is prin
 stdout and `--json` output stay clean. Groups are aggregated and compared per
 [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
 
-- **Rates** (presence, error) use Wilson 95% intervals and are flagged as a `regression` only
-  when the baseline and candidate intervals are disjoint *and* the delta exceeds the threshold;
-  a delta over the threshold with overlapping intervals is reported as `notable`.
+- **Rates** (presence, error) use one-sided Wilson bounds (default z `1.645`, tunable with
+  `--z`) and are flagged as a `regression` only when the baseline and candidate bounds are
+  disjoint *and* the delta exceeds the threshold; a delta over the threshold with overlapping
+  bounds is reported as `notable`, which gates only under `--fail-on-notable`. When even a
+  maximal flip at the actual group sizes cannot reach `regression`, the report (human and
+  `--json`) carries a `sensitivity:` note naming the smallest `k` at which the gate could fire;
+  see [Gate sensitivity at small k](workflows.md#gate-sensitivity-at-small-k).
 - **Metrics** (`duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `occurrences`; run totals
   also `nodes`) flag the candidate median when it falls outside the baseline median ±
   `max(metric-rel-delta × |median|, iqr-factor × IQR)` band. The `nodes` and `occurrences` count
@@ -689,7 +698,8 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
   inside the band.
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is always
   reported; below `--coverage-floor` step-level regressions are downgraded to `notable` and the
-  checkpoint (phase) level carries the verdict.
+  checkpoint (phase) level carries the verdict (under `--fail-on-notable` those downgraded
+  findings still gate).
 - Groups below `--min-support` yield an `insufficient` verdict instead of a guess.
 
 #### Gating on external scores

@@ -11,6 +11,11 @@ func RenderHuman(r Report, w io.Writer) {
 	_, _ = fmt.Fprintf(w, "baseline runs %d  candidate runs %d\n", r.BaselineRuns, r.CandidateRuns)
 	_, _ = fmt.Fprintf(w, "coverage steps %.2f  phases %.2f  steps_trusted %t  overall %s\n",
 		r.Coverage.Steps, r.Coverage.Phases, r.StepsTrusted, r.OverallVerdict)
+	if r.Sensitivity != nil {
+		_, _ = fmt.Fprintf(w, "sensitivity: rate gate cannot fire at this support (%s, %s)\n",
+			formatSensitivity("presence", r.Sensitivity.Presence),
+			formatSensitivity("error_rate", r.Sensitivity.ErrorRate))
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "VERDICT\tSCOPE\tKEY\tMETRIC\tBASELINE\tCANDIDATE\tBAND")
 	for _, f := range r.Findings {
@@ -25,6 +30,13 @@ func RenderJSON(r Report, w io.Writer) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(r)
+}
+
+func formatSensitivity(name string, rs RateSensitivity) string {
+	if rs.MinFullFlipRuns == 0 {
+		return fmt.Sprintf("full flip unreachable %s", name)
+	}
+	return fmt.Sprintf("full flip needs k>=%d %s", rs.MinFullFlipRuns, name)
 }
 
 func keyOrDash(key string) string {

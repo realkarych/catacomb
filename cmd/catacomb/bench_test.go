@@ -693,6 +693,48 @@ variants:
 	assert.Contains(t, out.String(), "catacomb regress --baseline label:basket=bepi2,variant=v1 --candidate label:basket=bepi2,variant=v2")
 }
 
+func TestBenchEpilogueNudgesLowReps(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _ := benchServer(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeBasket(t, `basket: bnudge
+reps: 3
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	assert.Contains(t, out.String(), "  note: reps=3 limits rate-gate sensitivity; prefer reps: 5 or more")
+}
+
+func TestBenchEpilogueNoNudgeAtFiveReps(t *testing.T) {
+	fakeBenchExec(t)
+	discovery, _ := benchServer(t, http.StatusOK)
+	t.Setenv("CATACOMB_DISCOVERY", discovery)
+
+	path := writeBasket(t, `basket: bnonudge
+reps: 5
+tasks:
+  - id: t1
+    cmd: ["CHILD"]
+variants:
+  - id: v1
+`)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"bench", path, "--manifest", manifest}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	assert.NotContains(t, out.String(), "limits rate-gate sensitivity")
+}
+
 func TestBenchBadBasketIsOperational(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"bench", filepath.Join(t.TempDir(), "missing.yaml")}, &out, &errBuf)

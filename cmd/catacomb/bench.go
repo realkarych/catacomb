@@ -415,6 +415,9 @@ func printEpilogue(out io.Writer, b bench.Basket) {
 		second := b.Variants[1].ID
 		fmt.Fprintf(out, "  catacomb regress --baseline label:basket=%s,variant=%s --candidate label:basket=%s,variant=%s\n", b.Name, first, b.Name, second)
 	}
+	if b.Reps < 5 {
+		fmt.Fprintf(out, "  note: reps=%d limits rate-gate sensitivity; prefer reps: 5 or more\n", b.Reps)
+	}
 }
 
 func truncateBaselineName(name string) string {

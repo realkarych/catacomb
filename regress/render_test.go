@@ -2,6 +2,7 @@ package regress
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -91,6 +92,71 @@ func TestRenderHumanPresenceNormalized(t *testing.T) {
 	assert.Contains(t, out, "regression")
 	assert.NotContains(t, out, "0.67")
 	assert.Contains(t, out, "[0.80, 1.00]")
+}
+
+func TestRenderHumanSensitivityNote(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:  RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate: RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	require.Contains(t, buf.String(), "sensitivity: rate gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate)")
+}
+
+func TestRenderHumanSensitivityUnreachable(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:  RateSensitivity{Reachable: false, MinFullFlipRuns: 0},
+			ErrorRate: RateSensitivity{Reachable: false, MinFullFlipRuns: 5},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "full flip unreachable presence")
+	assert.NotContains(t, out, "k>=never")
+}
+
+func TestRenderHumanNoSensitivityNote(t *testing.T) {
+	t.Parallel()
+	rep := Report{BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	assert.NotContains(t, buf.String(), "sensitivity:")
+}
+
+func TestRenderJSONSensitivityOmitted(t *testing.T) {
+	t.Parallel()
+	rep := Report{BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK}
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(rep, &buf))
+	assert.NotContains(t, buf.String(), "sensitivity")
+}
+
+func TestRenderJSONSensitivityRoundTrip(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:  RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate: RateSensitivity{Reachable: true, MinFullFlipRuns: 2},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(rep, &buf))
+	require.Contains(t, buf.String(), "sensitivity")
+	var got Report
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.NotNil(t, got.Sensitivity)
+	assert.Equal(t, rep.Sensitivity.Presence, got.Sensitivity.Presence)
+	assert.Equal(t, rep.Sensitivity.ErrorRate, got.Sensitivity.ErrorRate)
 }
 
 type errWriter struct{}
