@@ -45,6 +45,7 @@ type Report struct {
 	StepsTrusted   bool      `json:"steps_trusted"`
 	Findings       []Finding `json:"findings"`
 	Regressions    int       `json:"regressions"`
+	Notables       int       `json:"notables"`
 	Insufficient   int       `json:"insufficient"`
 	OverallVerdict Verdict   `json:"overall_verdict"`
 }
@@ -72,8 +73,9 @@ func Compare(in Input, th Thresholds) Report {
 
 	rep.Findings = findings
 	rep.Regressions = countVerdict(findings, VerdictRegression)
+	rep.Notables = countVerdict(findings, VerdictNotable)
 	rep.Insufficient = countVerdict(findings, VerdictInsufficient)
-	rep.OverallVerdict = overallVerdict(findings, rep.Regressions, rep.Insufficient)
+	rep.OverallVerdict = overallVerdict(findings, rep.Regressions, rep.Notables, rep.Insufficient, th.FailOnNotable)
 	return rep
 }
 
@@ -307,9 +309,11 @@ func countVerdict(fs []Finding, v Verdict) int {
 	return n
 }
 
-func overallVerdict(fs []Finding, regressions, insufficient int) Verdict {
+func overallVerdict(fs []Finding, regressions, notables, insufficient int, failOnNotable bool) Verdict {
 	switch {
 	case regressions > 0:
+		return VerdictRegression
+	case failOnNotable && notables > 0:
 		return VerdictRegression
 	case insufficient > 0 && allNonInsufficientOK(fs):
 		return VerdictInsufficient

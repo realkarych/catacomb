@@ -292,6 +292,28 @@ func TestCompareOverallOKWithInsufficientAndNotable(t *testing.T) {
 	assert.Equal(t, VerdictOK, r.OverallVerdict)
 }
 
+func inputWithFullPresenceFlipK3(t *testing.T) Input {
+	t.Helper()
+	return Input{
+		Baseline:  aggregate.Report{Runs: 3, Phases: []aggregate.Row{presentRow("px", "x", 3)}},
+		Candidate: aggregate.Report{Runs: 3},
+	}
+}
+
+func TestFailOnNotableEscalatesOverallVerdict(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	th.Z = 1.96
+	in := inputWithFullPresenceFlipK3(t)
+	rep := Compare(in, th)
+	require.Equal(t, VerdictOK, rep.OverallVerdict)
+	require.Positive(t, rep.Notables)
+
+	th.FailOnNotable = true
+	rep = Compare(in, th)
+	require.Equal(t, VerdictRegression, rep.OverallVerdict)
+}
+
 func annStep(score aggregate.MetricStats) aggregate.Row {
 	r := presentRow("s1", "step-one", 5)
 	r.Annotations = map[string]aggregate.MetricStats{"eval.score": score}
