@@ -834,6 +834,27 @@ func TestRedactPreservesTypedRefUnderSensitiveKey(t *testing.T) {
 	}
 }
 
+func TestRedactAnchorsTypedRefLookalikesUnderSensitiveKey(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"trailing garbage after ref", "‹ref:1,ab›garbage"},
+		{"leading char before binary ref", "x‹binary:3,abc›"},
+		{"ref with trailing newline", "‹ref:1,ab›\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]string{"token": tc.value})
+			require.NoError(t, err)
+			result := redact.Redact(raw)
+			assert.True(t, result.Redacted, "typed-ref lookalike %q must still be redacted", tc.value)
+			assert.False(t, containsSecret(result.Data, tc.value), "lookalike %q must not survive byte-identical", tc.value)
+			assert.Contains(t, string(result.Data), "‹redacted:", "lookalike %q must be wrapped", tc.value)
+		})
+	}
+}
+
 func TestHasMarker(t *testing.T) {
 	assert.True(t, redact.HasMarker([]byte(`{"x":"‹redacted:aws-key›"}`)))
 	assert.True(t, redact.HasMarker([]byte(`"‹binary:3,0123456789abcdef›"`)))

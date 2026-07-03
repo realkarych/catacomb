@@ -65,7 +65,7 @@ func (p Policy) Node(n *model.Node) *model.Node {
 	return &nc
 }
 
-var reTypedRef = regexp.MustCompile(`^"‹(?:ref|binary):\d+,[0-9a-f]+›"$`)
+var reTypedRef = regexp.MustCompile(`^"` + typedRefCorePattern + `"$`)
 
 func (p Policy) payload(pl *model.Payload) *model.Payload {
 	if pl == nil {
@@ -78,7 +78,7 @@ func (p Policy) payload(pl *model.Payload) *model.Payload {
 		out = json.RawMessage(Redact(pl.Output).Data)
 	}
 	pc := model.Payload{Hash: pl.Hash}
-	if p.Mode != ModeAll && !reTypedRef.Match(pl.Input) && !reTypedRef.Match(pl.Output) {
+	if p.Mode != ModeAll && !preserveIncomingHash(pl.Input, pl.Output) {
 		hp := model.Payload{Input: in, Output: out}
 		pc.Hash = model.HashPayload(&hp)
 	}
@@ -87,8 +87,16 @@ func (p Policy) payload(pl *model.Payload) *model.Payload {
 	return &pc
 }
 
+func preserveIncomingHash(in, out json.RawMessage) bool {
+	return (len(in) > 0 || len(out) > 0) && sideIsRefOrEmpty(in) && sideIsRefOrEmpty(out)
+}
+
+func sideIsRefOrEmpty(data json.RawMessage) bool {
+	return len(data) == 0 || reTypedRef.Match(data)
+}
+
 func (p Policy) capSide(data json.RawMessage) json.RawMessage {
-	if len(data) == 0 || reTypedRef.Match(data) {
+	if sideIsRefOrEmpty(data) {
 		return data
 	}
 	if p.Mode == ModeRefs || len(data) > p.MaxBytes {

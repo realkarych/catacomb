@@ -110,7 +110,9 @@ func isKnownPlaceholder(s string) bool {
 	return knownPlaceholders[s]
 }
 
-var reTypedRefValue = regexp.MustCompile(`^‹(?:ref|binary):\d+,[0-9a-f]+›$`)
+const typedRefCorePattern = `‹(?:ref|binary):\d+,[0-9a-f]+›`
+
+var reTypedRefValue = regexp.MustCompile(`^` + typedRefCorePattern + `$`)
 
 func isTypedRefValue(s string) bool {
 	return reTypedRefValue.MatchString(s)

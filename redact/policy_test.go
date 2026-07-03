@@ -126,6 +126,63 @@ func TestPolicyNodeAllModeSkipsRedactionButCaps(t *testing.T) {
 	assert.Equal(t, rn, twice)
 }
 
+func TestPolicyWrapsRefLookalikeAsRefOfRedactedLength(t *testing.T) {
+	in := json.RawMessage(`"‹ref:1,ab›garbage-AKIAIOSFODNN7EXAMPLE"`)
+	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: 8}
+	r := p.Observation(model.Observation{Payload: &model.Payload{Input: in}})
+
+	redacted := redact.Redact(in).Data
+	assert.Equal(t, refFor(redacted), string(r.Payload.Input))
+	assert.NotContains(t, string(r.Payload.Input), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(r.Payload.Input), fmt.Sprintf("‹ref:%d,", len(redacted)))
+}
+
+func TestPolicyDropsPreRedactionHashWhenOneSideIsForgedRef(t *testing.T) {
+	rawInput := json.RawMessage(`{"command":"psql postgres://user:pw@host/db"}`)
+	forgedRef := json.RawMessage(`"‹ref:5,0123456789abcdef›"`)
+
+	incomingHash := model.HashPayload(&model.Payload{Input: rawInput, Output: forgedRef})
+	wantHash := model.HashPayload(&model.Payload{
+		Input:  json.RawMessage(redact.Redact(rawInput).Data),
+		Output: json.RawMessage(redact.Redact(forgedRef).Data),
+	})
+	require.NotEqual(t, incomingHash, wantHash)
+
+	mk := func() *model.Payload {
+		return &model.Payload{Input: rawInput, Output: forgedRef, Hash: incomingHash}
+	}
+	for _, mode := range []redact.Mode{redact.ModeRedact, redact.ModeRefs} {
+		t.Run(string(mode), func(t *testing.T) {
+			p := redact.Policy{Mode: mode, MaxBytes: redact.DefaultMaxBytes}
+
+			o := p.Observation(model.Observation{Payload: mk()})
+			assert.Equal(t, wantHash, o.Payload.Hash)
+			assert.NotEqual(t, incomingHash, o.Payload.Hash)
+
+			n := p.Node(&model.Node{Payload: mk(), PayloadHash: incomingHash})
+			assert.Equal(t, wantHash, n.Payload.Hash)
+			assert.Equal(t, n.Payload.Hash, n.PayloadHash)
+			assert.NotEqual(t, incomingHash, n.Payload.Hash)
+		})
+	}
+}
+
+func TestPolicyRecomputesHashWhenOtherSideIsRawSecret(t *testing.T) {
+	forgedRef := json.RawMessage(`"‹ref:5,0123456789abcdef›"`)
+	rawOut := json.RawMessage(`{"password":"hunter2"}`)
+	incomingHash := model.HashPayload(&model.Payload{Input: forgedRef, Output: rawOut})
+	wantHash := model.HashPayload(&model.Payload{
+		Input:  json.RawMessage(redact.Redact(forgedRef).Data),
+		Output: json.RawMessage(redact.Redact(rawOut).Data),
+	})
+	require.NotEqual(t, incomingHash, wantHash)
+
+	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: redact.DefaultMaxBytes}
+	o := p.Observation(model.Observation{Payload: &model.Payload{Input: forgedRef, Output: rawOut, Hash: incomingHash}})
+	assert.Equal(t, wantHash, o.Payload.Hash)
+	assert.NotEqual(t, incomingHash, o.Payload.Hash)
+}
+
 func TestPolicyBinaryPayloadBecomesBinaryRefNotDoubleWrapped(t *testing.T) {
 	p := redact.Policy{Mode: redact.ModeRefs, MaxBytes: redact.DefaultMaxBytes}
 	o := model.Observation{Payload: &model.Payload{Input: json.RawMessage{0xff, 0xfe, 0x01}}}
