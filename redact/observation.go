@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -19,13 +20,24 @@ func redactPayload(p *model.Payload) *model.Payload {
 	}
 	pc := *p
 	if len(p.Input) > 0 {
-		pc.Input = append(json.RawMessage(nil), Redact(p.Input).Data...)
+		pc.Input = canonicalizeJSON(Redact(p.Input).Data)
 	}
 	if len(p.Output) > 0 {
-		pc.Output = append(json.RawMessage(nil), Redact(p.Output).Data...)
+		pc.Output = canonicalizeJSON(Redact(p.Output).Data)
 	}
 	pc.Hash = model.HashPayload(&pc)
 	return &pc
+}
+
+func canonicalizeJSON(data []byte) json.RawMessage {
+	if len(data) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, data); err != nil {
+		return append(json.RawMessage(nil), data...)
+	}
+	return json.RawMessage(buf.Bytes())
 }
 
 func redactAttrs(attrs map[string]any) map[string]any {
@@ -48,18 +60,17 @@ func redactAttrs(attrs map[string]any) map[string]any {
 }
 
 func isChecksumKey(k string) bool {
-	return strings.HasSuffix(normalizeKey(k), "hash")
+	return k == "hash" || strings.HasSuffix(k, "_hash")
 }
 
 func isHexDigest(s string) bool {
-	if len(s) < 40 || len(s) > 128 {
+	switch len(s) {
+	case 40, 64, 96, 128:
+	default:
 		return false
 	}
 	for _, r := range s {
-		isDigit := r >= '0' && r <= '9'
-		isLower := r >= 'a' && r <= 'f'
-		isUpper := r >= 'A' && r <= 'F'
-		if !isDigit && !isLower && !isUpper {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return false
 		}
 	}

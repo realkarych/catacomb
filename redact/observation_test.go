@@ -77,3 +77,45 @@ func TestObservationPreservesChecksumAttrs(t *testing.T) {
 	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["tree_hash"])
 	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["entropy"])
 }
+
+func TestChecksumCarveoutExemptsBareHashKey(t *testing.T) {
+	digest := strings.Repeat("cd", 32)
+	r := redact.Observation(model.Observation{Attrs: map[string]any{"hash": digest}})
+	assert.Equal(t, digest, r.Attrs["hash"])
+}
+
+func TestChecksumCarveoutRejectsUppercaseHex(t *testing.T) {
+	r := redact.Observation(model.Observation{Attrs: map[string]any{"prompts_hash": strings.Repeat("AB", 32)}})
+	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["prompts_hash"])
+}
+
+func TestChecksumCarveoutRejectsMixedCaseHex(t *testing.T) {
+	r := redact.Observation(model.Observation{Attrs: map[string]any{"skills_hash": strings.Repeat("aB", 32)}})
+	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["skills_hash"])
+}
+
+func TestChecksumCarveoutRejectsNonDigestLengths(t *testing.T) {
+	r := redact.Observation(model.Observation{Attrs: map[string]any{
+		"prompts_hash": strings.Repeat("a", 50),
+		"skills_hash":  strings.Repeat("a", 129),
+	}})
+	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["prompts_hash"])
+	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["skills_hash"])
+}
+
+func TestChecksumCarveoutAppliesToAnyHashKeyByDesign(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	r := redact.Observation(model.Observation{Attrs: map[string]any{"password_hash": digest}})
+	assert.Equal(t, digest, r.Attrs["password_hash"])
+}
+
+func TestObservationCanonicalizesWhitespaceJSONBeforeHash(t *testing.T) {
+	o := model.Observation{Payload: &model.Payload{
+		Input: json.RawMessage(`{"file": "main.go"}`),
+		Hash:  "stale",
+	}}
+	r := redact.Observation(o)
+	require.NotNil(t, r.Payload)
+	assert.Equal(t, `{"file":"main.go"}`, string(r.Payload.Input))
+	assert.Equal(t, model.HashPayload(r.Payload), r.Payload.Hash)
+}

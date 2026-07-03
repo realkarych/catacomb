@@ -135,6 +135,47 @@ func TestRecoverRebuildsGraphsAndSeq(t *testing.T) {
 	assert.Equal(t, uint64(3), d2.seq)
 }
 
+func TestRecoverCanonicalizesWhitespacePayloadByteForByte(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command": "ls -la"}}`)))
+
+	nodeID := model.ToolCallID("exec1", "t1")
+	live := d.graphs["exec1"].Nodes[nodeID]
+	require.NotNil(t, live)
+	require.NotNil(t, live.Payload)
+	liveInput := append([]byte(nil), live.Payload.Input...)
+	liveHash := live.Payload.Hash
+
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	var stored *model.Payload
+	for i := range obs {
+		if obs[i].Payload != nil && len(obs[i].Payload.Input) > 0 {
+			stored = obs[i].Payload
+		}
+	}
+	require.NotNil(t, stored)
+	assert.Equal(t, string(liveInput), string(stored.Input))
+	assert.Equal(t, stored.Hash, model.HashPayload(stored))
+	require.NoError(t, s.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	rec := d2.graphs["exec1"].Nodes[nodeID]
+	require.NotNil(t, rec)
+	require.NotNil(t, rec.Payload)
+	assert.Equal(t, string(liveInput), string(rec.Payload.Input))
+	assert.Equal(t, liveHash, rec.Payload.Hash)
+}
+
 func TestRecoverError(t *testing.T) {
 	d := New(&errStore{failSince: true})
 	require.Error(t, d.Recover())

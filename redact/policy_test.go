@@ -183,6 +183,33 @@ func TestPolicyRecomputesHashWhenOtherSideIsRawSecret(t *testing.T) {
 	assert.NotEqual(t, incomingHash, o.Payload.Hash)
 }
 
+func TestPolicyCanonicalizesWhitespaceJSONBeforeHash(t *testing.T) {
+	spacey := json.RawMessage(`{"command": "ls -la"}`)
+	p := redact.DefaultPolicy()
+	r := p.Observation(model.Observation{Payload: &model.Payload{Input: spacey, Hash: "stale"}})
+	require.NotNil(t, r.Payload)
+	assert.Equal(t, `{"command":"ls -la"}`, string(r.Payload.Input))
+	assert.Equal(t, model.HashPayload(r.Payload), r.Payload.Hash)
+}
+
+func TestPolicyPassesThroughNonJSONPayloadUnchanged(t *testing.T) {
+	free := json.RawMessage("plain text, not json")
+	p := redact.DefaultPolicy()
+	r := p.Observation(model.Observation{Payload: &model.Payload{Input: free}})
+	require.NotNil(t, r.Payload)
+	assert.Equal(t, "plain text, not json", string(r.Payload.Input))
+	assert.Equal(t, model.HashPayload(r.Payload), r.Payload.Hash)
+}
+
+func TestPolicyAllModeCanonicalizesWhitespaceJSON(t *testing.T) {
+	spacey := json.RawMessage(`{"command": "ls -la"}`)
+	p := redact.Policy{Mode: redact.ModeAll, MaxBytes: redact.DefaultMaxBytes}
+	r := p.Observation(model.Observation{Payload: &model.Payload{Input: spacey, Hash: "stale"}})
+	require.NotNil(t, r.Payload)
+	assert.Equal(t, `{"command":"ls -la"}`, string(r.Payload.Input))
+	assert.Equal(t, "stale", r.Payload.Hash)
+}
+
 func TestPolicyBinaryPayloadBecomesBinaryRefNotDoubleWrapped(t *testing.T) {
 	p := redact.Policy{Mode: redact.ModeRefs, MaxBytes: redact.DefaultMaxBytes}
 	o := model.Observation{Payload: &model.Payload{Input: json.RawMessage{0xff, 0xfe, 0x01}}}

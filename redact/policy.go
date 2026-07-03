@@ -77,6 +77,8 @@ func (p Policy) payload(pl *model.Payload) *model.Payload {
 		in = json.RawMessage(Redact(pl.Input).Data)
 		out = json.RawMessage(Redact(pl.Output).Data)
 	}
+	in = canonicalizeJSON(in)
+	out = canonicalizeJSON(out)
 	pc := model.Payload{Hash: pl.Hash}
 	if p.Mode != ModeAll && !preserveIncomingHash(pl.Input, pl.Output) {
 		hp := model.Payload{Input: in, Output: out}
