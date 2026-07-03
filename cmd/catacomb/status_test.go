@@ -30,9 +30,13 @@ func TestRunStatusHealthy(t *testing.T) {
 	now := startedAt.Add(12*time.Minute + 4*time.Second)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/v1/sessions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"session":"s1","node_count":30},{"session":"s2","node_count":17}]`))
+		switch r.URL.Path {
+		case "/v1/sessions":
+			_, _ = w.Write([]byte(`[{"session":"s1","node_count":30},{"session":"s2","node_count":17}]`))
+		case "/metrics":
+			_, _ = w.Write([]byte(`{}`))
+		}
 	}))
 	t.Cleanup(srv.Close)
 
@@ -612,6 +616,91 @@ func blockingServer(t *testing.T) *httptest.Server {
 
 func TestStatusHTTPClientHasTimeout(t *testing.T) {
 	assert.Equal(t, 5*time.Second, statusHTTPClient.Timeout)
+}
+
+func writeStatusDiscovery(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	disc := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(disc, daemon.Discovery{
+		Addr:      strings.TrimPrefix(srv.URL, "http://"),
+		Token:     "tok",
+		Pid:       1,
+		StartedAt: time.Now().Format(time.RFC3339),
+	}))
+	return disc
+}
+
+func driftStatusServer(t *testing.T, metricsBody string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/sessions":
+			_, _ = w.Write([]byte(`[{"session":"s1","node_count":3}]`))
+		case "/metrics":
+			_, _ = w.Write([]byte(metricsBody))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRunStatusShowsDriftWhenNonzero(t *testing.T) {
+	srv := driftStatusServer(t, `{"uptime_seconds":1,"drift":{"stream_json/unknown_record_type":4,"hook/unknown_hook_event":1}}`)
+	disc := writeStatusDiscovery(t, srv)
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	output := out.String()
+	assert.Contains(t, output, "hook/unknown_hook_event=1")
+	assert.Contains(t, output, "stream_json/unknown_record_type=4")
+	assert.Less(t, strings.Index(output, "hook/"), strings.Index(output, "stream_json/"))
+}
+
+func TestRunStatusNoDriftSectionWhenHealthy(t *testing.T) {
+	srv := driftStatusServer(t, `{"uptime_seconds":1}`)
+	disc := writeStatusDiscovery(t, srv)
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.NotContains(t, out.String(), "drift")
+}
+
+func TestRunStatusJSONIncludesDrift(t *testing.T) {
+	srv := driftStatusServer(t, `{"drift":{"otel/unknown_span_name":2}}`)
+	disc := writeStatusDiscovery(t, srv)
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now, asJSON: true}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	var rep statusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, uint64(2), rep.Drift["otel/unknown_span_name"])
+}
+
+func TestRunStatusDriftFetchFailureIsSilent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	disc := writeStatusDiscovery(t, srv)
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.NotContains(t, out.String(), "drift")
+}
+
+func TestRunStatusDriftDecodeErrorIsSilent(t *testing.T) {
+	srv := driftStatusServer(t, `{"drift":`)
+	disc := writeStatusDiscovery(t, srv)
+	var out bytes.Buffer
+	deps := statusDeps{readDiscovery: daemon.ReadDiscovery, discoveryPath: disc, httpClient: srv.Client(), now: time.Now}
+	require.NoError(t, runStatus(context.Background(), &out, deps))
+	assert.NotContains(t, out.String(), "drift")
 }
 
 func TestRunStatusReturnsWhenDaemonBlocks(t *testing.T) {

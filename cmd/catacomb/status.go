@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -32,20 +34,21 @@ type statusDeps struct {
 }
 
 type statusReport struct {
-	Addr           string   `json:"addr"`
-	Pid            int      `json:"pid"`
-	Uptime         string   `json:"uptime"`
-	TokenAge       string   `json:"token_age"`
-	ConfigPath     string   `json:"config_path,omitempty"`
-	ObservingDir   string   `json:"observing_dir,omitempty"`
-	StoreBackend   string   `json:"store_backend,omitempty"`
-	SinkTypes      []string `json:"sink_types,omitempty"`
-	SourcesEnabled []string `json:"sources_enabled,omitempty"`
-	ReaperWindow   string   `json:"reaper_window,omitempty"`
-	MaxShards      int      `json:"max_shards,omitempty"`
-	Sessions       int      `json:"sessions"`
-	Nodes          int      `json:"nodes"`
-	Healthy        bool     `json:"healthy"`
+	Addr           string            `json:"addr"`
+	Pid            int               `json:"pid"`
+	Uptime         string            `json:"uptime"`
+	TokenAge       string            `json:"token_age"`
+	ConfigPath     string            `json:"config_path,omitempty"`
+	ObservingDir   string            `json:"observing_dir,omitempty"`
+	StoreBackend   string            `json:"store_backend,omitempty"`
+	SinkTypes      []string          `json:"sink_types,omitempty"`
+	SourcesEnabled []string          `json:"sources_enabled,omitempty"`
+	ReaperWindow   string            `json:"reaper_window,omitempty"`
+	MaxShards      int               `json:"max_shards,omitempty"`
+	Sessions       int               `json:"sessions"`
+	Nodes          int               `json:"nodes"`
+	Drift          map[string]uint64 `json:"drift,omitempty"`
+	Healthy        bool              `json:"healthy"`
 }
 
 func newStatusCmd() *cobra.Command {
@@ -105,6 +108,7 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 		MaxShards:      disc.MaxShards,
 		Sessions:       sessions,
 		Nodes:          nodes,
+		Drift:          fetchDrift(ctx, disc, deps.httpClient),
 		Healthy:        healthy,
 	}
 
@@ -155,7 +159,31 @@ func runStatus(ctx context.Context, out io.Writer, deps statusDeps) error {
 	}
 	_, _ = fmt.Fprintf(w, "sessions\t%d\n", rep.Sessions)
 	_, _ = fmt.Fprintf(w, "nodes\t%d\n", rep.Nodes)
+	for _, k := range slices.Sorted(maps.Keys(rep.Drift)) {
+		_, _ = fmt.Fprintf(w, "drift\t%s=%d\n", k, rep.Drift[k])
+	}
 	return w.Flush()
+}
+
+func fetchDrift(ctx context.Context, disc daemon.Discovery, client *http.Client) map[string]uint64 {
+	u := &url.URL{Scheme: "http", Host: disc.Addr, Path: "/metrics"}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var m daemon.Metrics
+	if decErr := json.NewDecoder(resp.Body).Decode(&m); decErr != nil {
+		return nil
+	}
+	return m.Drift
 }
 
 func observingLabel(dir string) string {
