@@ -140,7 +140,46 @@ func isSensitiveKey(k string) bool {
 	return false
 }
 
+const maxRedactPasses = 8
+
 func Redact(raw []byte) Result {
+	cur := raw
+	var findings []Finding
+	redacted := false
+	for i := 0; i < maxRedactPasses; i++ {
+		pass := redactOnce(cur)
+		findings = mergeFindings(findings, pass.Findings)
+		redacted = redacted || pass.Redacted
+		if bytes.Equal(pass.Data, cur) {
+			break
+		}
+		cur = pass.Data
+	}
+	sort.SliceStable(findings, func(i, j int) bool {
+		return findings[i].Path < findings[j].Path
+	})
+	return Result{Data: cur, Findings: findings, Redacted: redacted}
+}
+
+func mergeFindings(dst, src []Finding) []Finding {
+	for _, f := range src {
+		if !containsFinding(dst, f) {
+			dst = append(dst, f)
+		}
+	}
+	return dst
+}
+
+func containsFinding(fs []Finding, target Finding) bool {
+	for _, f := range fs {
+		if f == target {
+			return true
+		}
+	}
+	return false
+}
+
+func redactOnce(raw []byte) Result {
 	if len(raw) == 0 {
 		return Result{Data: raw}
 	}

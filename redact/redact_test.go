@@ -785,6 +785,8 @@ func TestRedactFixedPoint(t *testing.T) {
 		string([]byte{0xff, 0xfe, 0x01}),
 		`{"text":"no secrets here"}`,
 		`plain prose without any secret`,
+		"{\"password\":\"foo -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY----- bar\"}",
+		"{\"password\":\"foo postgres://user:pa\x01ss@host/db bar\"}",
 	}
 	for _, in := range cases {
 		once := redact.Redact([]byte(in))
@@ -793,6 +795,28 @@ func TestRedactFixedPoint(t *testing.T) {
 		assert.False(t, twice.Redacted, "second pass must be a no-op for %q", in)
 		assert.Empty(t, twice.Findings, "input %q", in)
 	}
+}
+
+func TestRedactFixedPointFreeTextHealing(t *testing.T) {
+	cases := []string{
+		"{\"password\":\"foo -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY----- bar\"}",
+		"{\"password\":\"foo postgres://user:pa\x01ss@host/db bar\"}",
+	}
+	for _, in := range cases {
+		once := redact.Redact([]byte(in))
+		twice := redact.Redact(once.Data)
+		assert.Equal(t, string(once.Data), string(twice.Data), "redact(redact(x)) must equal redact(x) for %q", in)
+		assert.True(t, once.Redacted, "input %q must be redacted", in)
+		assert.False(t, containsSecret(once.Data, "postgres://user"), "connection string must not survive in %q", in)
+	}
+}
+
+func TestRedactMergesDuplicateFindingsAcrossPasses(t *testing.T) {
+	input := []byte("ghp_" + strings.Repeat("z", 36) + " and github_pat_" + strings.Repeat("A", 40))
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	require.Len(t, result.Findings, 1, "two github-token hits must dedupe to one finding")
+	assert.Equal(t, "github-token", result.Findings[0].Reason)
 }
 
 func TestHasMarker(t *testing.T) {
