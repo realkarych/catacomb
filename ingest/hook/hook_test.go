@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -23,9 +24,23 @@ func parseFixture(t *testing.T, hookType, file string) []model.Observation {
 	t.Helper()
 	payload, err := os.ReadFile(filepath.Join("testdata", file))
 	require.NoError(t, err)
-	obs, err := Parse(hookType, payload, "exec-T", seqGen())
+	obs, _, err := Parse(hookType, payload, "exec-T", seqGen())
 	require.NoError(t, err)
 	return obs
+}
+
+func TestParseUnknownHookEventCountsDrift(t *testing.T) {
+	obs, dc, err := Parse("BrandNewHook", []byte(`{"session_id":"s1"}`), "exec-1", seqGen())
+	require.NoError(t, err)
+	assert.Nil(t, obs)
+	assert.Equal(t, drift.Counts{drift.ReasonUnknownHookEvent: 1}, dc)
+}
+
+func TestParseKnownHookEventNoDrift(t *testing.T) {
+	obs, dc, err := Parse("Stop", []byte(`{"session_id":"s1"}`), "exec-1", seqGen())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Empty(t, dc)
 }
 
 func TestParsePreToolUse(t *testing.T) {
@@ -120,29 +135,29 @@ func TestParseNotificationIsMarker(t *testing.T) {
 }
 
 func TestParseUnknownType(t *testing.T) {
-	obs, err := Parse("Mystery", []byte(`{"hook_event_name":"Mystery","session_id":"s1"}`), "exec-T", seqGen())
+	obs, _, err := Parse("Mystery", []byte(`{"hook_event_name":"Mystery","session_id":"s1"}`), "exec-T", seqGen())
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestParseUnknownTypeDoesNotConsumeSeq(t *testing.T) {
 	next := seqGen()
-	_, err := Parse("Mystery", []byte(`{"session_id":"s1"}`), "e", next)
+	_, _, err := Parse("Mystery", []byte(`{"session_id":"s1"}`), "e", next)
 	require.NoError(t, err)
-	obs, err := Parse("SessionStart", []byte(`{"session_id":"s1"}`), "e", next)
+	obs, _, err := Parse("SessionStart", []byte(`{"session_id":"s1"}`), "e", next)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, uint64(1), obs[0].Seq)
 }
 
 func TestParseMalformed(t *testing.T) {
-	_, err := Parse("PreToolUse", []byte("{not json}"), "exec-T", seqGen())
+	_, _, err := Parse("PreToolUse", []byte("{not json}"), "exec-T", seqGen())
 	require.Error(t, err)
 }
 
 func TestParsePreToolUseBlocked(t *testing.T) {
 	payload := []byte(`{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash","tool_use_id":"t2","tool_input":{},"permission_decision":"deny"}`)
-	obs, err := Parse("PreToolUse", payload, "exec-T", seqGen())
+	obs, _, err := Parse("PreToolUse", payload, "exec-T", seqGen())
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, string(model.StatusBlocked), obs[0].Attrs["status"])
@@ -150,7 +165,7 @@ func TestParsePreToolUseBlocked(t *testing.T) {
 
 func TestParsePreCompactKeepsTrigger(t *testing.T) {
 	seq := func() uint64 { return 1 }
-	obs, err := Parse("PreCompact", []byte(`{"session_id":"s1","trigger":"manual"}`), "e1", seq)
+	obs, _, err := Parse("PreCompact", []byte(`{"session_id":"s1","trigger":"manual"}`), "e1", seq)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "marker", obs[0].Kind)
@@ -160,7 +175,7 @@ func TestParsePreCompactKeepsTrigger(t *testing.T) {
 
 func TestParseNotificationKeepsMessage(t *testing.T) {
 	seq := func() uint64 { return 1 }
-	obs, err := Parse("Notification", []byte(`{"session_id":"s1","message":"needs input"}`), "e1", seq)
+	obs, _, err := Parse("Notification", []byte(`{"session_id":"s1","message":"needs input"}`), "e1", seq)
 	require.NoError(t, err)
 	require.Len(t, obs, 1)
 	assert.Equal(t, "needs input", obs[0].Attrs["message"])

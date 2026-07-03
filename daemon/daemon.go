@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/config"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/ingest/hook"
 	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
@@ -82,6 +85,9 @@ type Daemon struct {
 	reproCapture       func(cwd string, cfg repro.Config) repro.Hashes
 	reproConfig        repro.Config
 	reproCaptured      map[string]bool
+	drift              map[driftKey]uint64
+	formatWatchWarned  bool
+	logger             *slog.Logger
 }
 
 func New(s store.Store) *Daemon {
@@ -97,6 +103,8 @@ func New(s store.Store) *Daemon {
 		maxShards:     defaultMaxShards,
 		startedAt:     nowFn(),
 		reproCaptured: map[string]bool{},
+		drift:         map[driftKey]uint64{},
+		logger:        slog.Default(),
 		reproCapture: func(cwd string, cfg repro.Config) repro.Hashes {
 			return repro.Capture(os.DirFS(cwd), cfg)
 		},
@@ -204,10 +212,11 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) er
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := hook.Parse(hookType, payload, execID, d.next)
+	obs, dc, err := hook.Parse(hookType, payload, execID, d.next)
 	if err != nil {
 		return err
 	}
+	d.recordDrift(model.SourceHook, dc)
 	attachLabels(obs, labels)
 	g, inMem := d.graphs[execID]
 	if !inMem {
@@ -254,13 +263,14 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := parseFn(req, execID, d.next)
+	obs, dc, err := parseFn(req, execID, d.next)
 	if err != nil {
 		var raw []byte
 		raw, _ = proto.Marshal(req)
 		d.quarantine("otel", raw, err.Error())
 		return nil
 	}
+	d.recordDrift(model.SourceOTel, dc)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -305,11 +315,12 @@ func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels strin
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := streamParseFn(line, execID, d.next)
+	obs, dc, err := streamParseFn(line, execID, d.next)
 	if err != nil {
 		d.quarantine("stream-json", line, err.Error())
 		return nil
 	}
+	d.recordDrift(model.SourceStreamJSON, dc)
 	attachLabels(obs, canonicalLabels(labels))
 	g, inMem := d.graphs[execID]
 	if !inMem {
@@ -349,11 +360,12 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 		execID = d.newExecID()
 		d.execBySession[sessionID] = execID
 	}
-	obs, err := tailParseFn(bytes.NewReader(line), execID, d.next, func(time.Time) time.Time { return nowFn().UTC() })
+	obs, dc, err := tailParseFn(bytes.NewReader(line), execID, d.next, func(time.Time) time.Time { return nowFn().UTC() })
 	if err != nil {
 		d.quarantine("jsonl", line, err.Error())
 		return nil
 	}
+	d.recordDrift(model.SourceJSONL, dc)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -500,6 +512,15 @@ func (d *Daemon) SetCatacombVersion(v string) {
 	d.catacombVersion = v
 }
 
+func (d *Daemon) SetLogger(l *slog.Logger) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if l == nil {
+		return
+	}
+	d.logger = l
+}
+
 func (d *Daemon) captureReproIfReady(runID string) {
 	if d.reproCaptured[runID] {
 		return
@@ -540,6 +561,7 @@ func (d *Daemon) captureReproIfReady(runID string) {
 
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
+	d.watchVersion(g, o)
 	deltas := drainFn(g)
 	if err := d.store.AppendDeltas(o, deltas); err != nil {
 		d.storeWriteErrors++
@@ -559,6 +581,24 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	return nil
 }
 
+func (d *Daemon) watchVersion(g *reduce.Graph, o model.Observation) {
+	v, ok := o.Attrs["claude_code_version"].(string)
+	if !ok || !drift.NewerThanTested(v) {
+		return
+	}
+	r := g.Runs[o.RunID]
+	if r.Meta == nil {
+		r.Meta = map[string]any{}
+	}
+	r.Meta["format_watch"] = true
+	if d.formatWatchWarned {
+		return
+	}
+	d.formatWatchWarned = true
+	d.logger.Warn("claude_code_version exceeds tested ceiling; capture continues unchanged",
+		"observed", v, "tested", drift.TestedClaudeCodeVersion, "run", o.RunID)
+}
+
 func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
 	if delta.Node != nil {
 		delta.Node = copyNode(delta.Node)
@@ -573,17 +613,18 @@ func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
 }
 
 type Metrics struct {
-	UptimeSeconds       int64  `json:"uptime_seconds"`
-	OpenRuns            int    `json:"open_runs"`
-	Shards              int    `json:"shards"`
-	MaxSeq              uint64 `json:"max_seq"`
-	Quarantined         int64  `json:"quarantined"`
-	Evicted             int64  `json:"evicted"`
-	StoreWriteErrors    int64  `json:"store_write_errors"`
-	DeltasDropped       int64  `json:"deltas_dropped"`
-	ExporterLag         int64  `json:"exporter_lag"`
-	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
-	LossyRuns           int64  `json:"lossy_runs"`
+	UptimeSeconds       int64             `json:"uptime_seconds"`
+	OpenRuns            int               `json:"open_runs"`
+	Shards              int               `json:"shards"`
+	MaxSeq              uint64            `json:"max_seq"`
+	Quarantined         int64             `json:"quarantined"`
+	Evicted             int64             `json:"evicted"`
+	StoreWriteErrors    int64             `json:"store_write_errors"`
+	DeltasDropped       int64             `json:"deltas_dropped"`
+	ExporterLag         int64             `json:"exporter_lag"`
+	ReaperWindowSeconds int64             `json:"reaper_window_seconds"`
+	LossyRuns           int64             `json:"lossy_runs"`
+	Drift               map[string]uint64 `json:"drift,omitempty"`
 }
 
 func (d *Daemon) metricsSnapshot() Metrics {
@@ -601,6 +642,13 @@ func (d *Daemon) metricsSnapshot() Metrics {
 	for _, c := range d.exporterConsumers {
 		lag += c.Dropped()
 	}
+	var driftCounts map[string]uint64
+	if len(d.drift) > 0 {
+		driftCounts = make(map[string]uint64, len(d.drift))
+		for k, v := range d.drift {
+			driftCounts[k.source+"/"+k.reason] = v
+		}
+	}
 	return Metrics{
 		UptimeSeconds:       int64(nowFn().Sub(d.startedAt).Seconds()),
 		OpenRuns:            open,
@@ -613,6 +661,27 @@ func (d *Daemon) metricsSnapshot() Metrics {
 		ExporterLag:         lag,
 		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
 		LossyRuns:           d.lossyRuns,
+		Drift:               driftCounts,
+	}
+}
+
+type driftKey struct {
+	source string
+	reason string
+}
+
+const driftWarnEvery uint64 = 100
+
+func (d *Daemon) recordDrift(source model.Source, dc drift.Counts) {
+	for _, reason := range slices.Sorted(maps.Keys(dc)) {
+		k := driftKey{source: string(source), reason: reason}
+		before := d.drift[k]
+		after := before + dc[reason]
+		d.drift[k] = after
+		if before == 0 || after/driftWarnEvery > before/driftWarnEvery {
+			d.logger.Warn("format drift: well-formed input matched no known shape",
+				"source", k.source, "reason", reason, "count", after)
+		}
 	}
 }
 

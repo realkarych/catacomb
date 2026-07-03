@@ -1,12 +1,16 @@
 package daemon
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +25,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/config"
+	"github.com/realkarych/catacomb/ingest/drift"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
@@ -548,8 +553,8 @@ func TestIngestOTLPParseError(t *testing.T) {
 
 func TestIngestOTLPParseErrorViaSeam(t *testing.T) {
 	orig := parseFn
-	parseFn = func(_ *collectorv1.ExportTraceServiceRequest, _ string, _ func() uint64) ([]model.Observation, error) {
-		return nil, errors.New("parse fail")
+	parseFn = func(_ *collectorv1.ExportTraceServiceRequest, _ string, _ func() uint64) ([]model.Observation, drift.Counts, error) {
+		return nil, nil, errors.New("parse fail")
 	}
 	t.Cleanup(func() { parseFn = orig })
 	s := tempStore(t)
@@ -956,8 +961,8 @@ func TestIngestStreamJSONMergesByToolUseIDWithHook(t *testing.T) {
 
 func TestIngestStreamJSONParseErrorViaSeam(t *testing.T) {
 	orig := streamParseFn
-	streamParseFn = func(_ []byte, _ string, _ func() uint64) ([]model.Observation, error) {
-		return nil, errors.New("parse fail")
+	streamParseFn = func(_ []byte, _ string, _ func() uint64) ([]model.Observation, drift.Counts, error) {
+		return nil, nil, errors.New("parse fail")
 	}
 	t.Cleanup(func() { streamParseFn = orig })
 	s := tempStore(t)
@@ -1084,8 +1089,8 @@ func TestIngestTranscriptPanicRecovers(t *testing.T) {
 
 func TestIngestTranscriptParseErrorViaSeam(t *testing.T) {
 	orig := tailParseFn
-	tailParseFn = func(_ io.Reader, _ string, _ func() uint64, _ func(time.Time) time.Time) ([]model.Observation, error) {
-		return nil, errors.New("parse fail")
+	tailParseFn = func(_ io.Reader, _ string, _ func() uint64, _ func(time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
+		return nil, nil, errors.New("parse fail")
 	}
 	t.Cleanup(func() { tailParseFn = orig })
 	s := tempStore(t)
@@ -1557,4 +1562,130 @@ func TestSetSources(t *testing.T) {
 	require.NotNil(t, got.Hooks.Enabled)
 	assert.True(t, *got.Hooks.Enabled)
 	assert.Equal(t, "/t", got.JSONL.TranscriptDir)
+}
+
+func driftLogBuffer(d *Daemon) *bytes.Buffer {
+	var buf bytes.Buffer
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	return &buf
+}
+
+func TestRecordDriftAggregatesAndExposesMetrics(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.mu.Lock()
+	d.recordDrift(model.SourceStreamJSON, drift.Counts{drift.ReasonUnknownRecordType: 2})
+	d.recordDrift(model.SourceStreamJSON, drift.Counts{drift.ReasonUnknownRecordType: 1})
+	d.recordDrift(model.SourceStreamJSON, nil)
+	d.mu.Unlock()
+	m := d.metricsSnapshot()
+	require.Equal(t, uint64(3), m.Drift["stream_json/unknown_record_type"])
+	assert.Equal(t, 1, strings.Count(buf.String(), "format drift"))
+}
+
+func TestRecordDriftWarnsFirstThenEveryNth(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.mu.Lock()
+	for range 99 {
+		d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
+	}
+	d.mu.Unlock()
+	assert.Equal(t, 1, strings.Count(buf.String(), "format drift"))
+	d.mu.Lock()
+	d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
+	d.mu.Unlock()
+	assert.Equal(t, 2, strings.Count(buf.String(), "format drift"))
+}
+
+func TestRecordDriftBatchCrossingWarnsOnce(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.mu.Lock()
+	d.recordDrift(model.SourceOTel, drift.Counts{drift.ReasonUnknownSpanName: 1})
+	d.recordDrift(model.SourceOTel, drift.Counts{drift.ReasonUnknownSpanName: 250})
+	d.mu.Unlock()
+	assert.Equal(t, 2, strings.Count(buf.String(), "format drift"))
+	assert.Equal(t, uint64(251), d.metricsSnapshot().Drift["otel/unknown_span_name"])
+}
+
+func TestMetricsJSONOmitsDriftWhenEmpty(t *testing.T) {
+	d := New(tempStore(t))
+	raw, err := json.Marshal(d.metricsSnapshot())
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"drift"`)
+}
+
+func TestSetLoggerNilIsIgnored(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetLogger(nil)
+	d.mu.Lock()
+	d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
+	d.mu.Unlock()
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["hook/unknown_hook_event"])
+}
+
+func TestIngestUnknownHookEventRecordsDriftNotQuarantine(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.Ingest("BrandNewHook", []byte(`{"session_id":"s1"}`)))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["hook/unknown_hook_event"])
+	assert.Equal(t, int64(0), d.metricsSnapshot().Quarantined)
+}
+
+func otlpRequestWithSpanName(t *testing.T, name string) *collectorv1.ExportTraceServiceRequest {
+	t.Helper()
+	req := makeOTLPToolReq("s1", "t1", "Bash")
+	req.ResourceSpans[0].ScopeSpans[0].Spans[0].Name = name
+	return req
+}
+
+func TestIngestTranscriptUnknownTypeRecordsDrift(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestTranscript([]byte(`{"type":"checkpoint_v9","sessionId":"s1"}`), "s1"))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["jsonl/unknown_record_type"])
+}
+
+func TestIngestOTLPUnknownSpanRecordsDrift(t *testing.T) {
+	d := New(tempStore(t))
+	req := otlpRequestWithSpanName(t, "claude_code.quantum")
+	require.NoError(t, d.IngestOTLP(req))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["otel/unknown_span_name"])
+}
+
+func TestIngestStreamJSONUnknownTypeRecordsDrift(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"telemetry_v2","session_id":"s1"}`), "s1"))
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["stream_json/unknown_record_type"])
+}
+
+func runForSession(t *testing.T, d *Daemon, sessionID string) *model.Run {
+	t.Helper()
+	for _, g := range d.GraphsForTest() {
+		if r, ok := g.Runs[sessionID]; ok {
+			return r
+		}
+	}
+	t.Fatalf("run %s not found", sessionID)
+	return nil
+}
+
+func TestWatchVersionFlagsRunAndWarnsOnce(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	line := `{"type":"assistant","sessionId":"s1","version":"9999.0.0","message":{"id":"%s","model":"m","role":"assistant","content":[{"type":"text","text":"a"}]}}`
+	require.NoError(t, d.IngestTranscript([]byte(fmt.Sprintf(line, "m1")), "s1"))
+	require.NoError(t, d.IngestTranscript([]byte(fmt.Sprintf(line, "m2")), "s1"))
+	r := runForSession(t, d, "s1")
+	assert.Equal(t, true, r.Meta["format_watch"])
+	assert.Equal(t, 1, strings.Count(buf.String(), "tested ceiling"))
+}
+
+func TestWatchVersionAtCeilingDoesNothing(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	line := `{"type":"assistant","sessionId":"s2","version":"` + drift.TestedClaudeCodeVersion + `","message":{"id":"m1","model":"m","role":"assistant","content":[{"type":"text","text":"a"}]}}`
+	require.NoError(t, d.IngestTranscript([]byte(line), "s2"))
+	r := runForSession(t, d, "s2")
+	assert.NotContains(t, r.Meta, "format_watch")
+	assert.NotContains(t, buf.String(), "tested ceiling")
 }

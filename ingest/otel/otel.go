@@ -10,13 +10,15 @@ import (
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
 var nowFn = time.Now
 
-func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextSeq func() uint64) ([]model.Observation, error) {
+func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextSeq func() uint64) ([]model.Observation, drift.Counts, error) {
 	var out []model.Observation
+	var dc drift.Counts
 	for _, rs := range req.GetResourceSpans() {
 		sessionID := sessionFromAttrs(rs.GetResource().GetAttributes())
 		resourceAttrs := rs.GetResource().GetAttributes()
@@ -24,6 +26,7 @@ func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextS
 			for _, span := range ss.GetSpans() {
 				obs, ok := spanToObservation(span, executionID, sessionID, resourceAttrs, nextSeq)
 				if !ok {
+					dc = dc.Bump(drift.ReasonUnknownSpanName)
 					continue
 				}
 				out = append(out, obs)
@@ -33,7 +36,7 @@ func Parse(req *collectorv1.ExportTraceServiceRequest, executionID string, nextS
 	if out == nil {
 		out = []model.Observation{}
 	}
-	return out, nil
+	return out, dc, nil
 }
 
 func sessionFromAttrs(attrs []*commonv1.KeyValue) string {

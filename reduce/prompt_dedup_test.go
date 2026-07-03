@@ -44,7 +44,7 @@ func countSessionPromptEdges(g *reduce.Graph, execID string) int {
 
 func TestHookAndJSONLPromptReconcileToOneNode(t *testing.T) {
 	const execID = "e1"
-	hookObs, err := hook.Parse("UserPromptSubmit", []byte(`{"session_id":"s1","prompt":"list files"}`), execID, promptSeq())
+	hookObs, _, err := hook.Parse("UserPromptSubmit", []byte(`{"session_id":"s1","prompt":"list files"}`), execID, promptSeq())
 	require.NoError(t, err)
 	jsonlLine := `{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"list files"}}` + "\n"
 	jsonlObs, err := jsonl.ParseReader(strings.NewReader(jsonlLine), execID)
@@ -60,7 +60,7 @@ func TestHookAndJSONLPromptReconcileToOneNode(t *testing.T) {
 
 func TestHookOnlyPromptCreatesExactlyOneNode(t *testing.T) {
 	const execID = "e1"
-	hookObs, err := hook.Parse("UserPromptSubmit", []byte(`{"session_id":"s1","prompt":"list files"}`), execID, promptSeq())
+	hookObs, _, err := hook.Parse("UserPromptSubmit", []byte(`{"session_id":"s1","prompt":"list files"}`), execID, promptSeq())
 	require.NoError(t, err)
 
 	g := reduce.NewGraph()

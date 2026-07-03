@@ -192,7 +192,7 @@ func TestBaselineSetUpsertError(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "*.db")
 	require.NoError(t, err)
 	_ = f.Close()
-	obs, err := hook.Parse("SessionStart", []byte(`{"session_id":"r1"}`), "e1", func() uint64 { return 1 })
+	obs, _, err := hook.Parse("SessionStart", []byte(`{"session_id":"r1"}`), "e1", func() uint64 { return 1 })
 	require.NoError(t, err)
 	for i := range obs {
 		if obs[i].Attrs == nil {

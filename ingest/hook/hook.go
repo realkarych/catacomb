@@ -7,6 +7,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -30,14 +31,14 @@ type envelope struct {
 
 var nowFn = time.Now
 
-func Parse(hookType string, payload []byte, executionID string, nextSeq func() uint64) ([]model.Observation, error) {
+func Parse(hookType string, payload []byte, executionID string, nextSeq func() uint64) ([]model.Observation, drift.Counts, error) {
 	var e envelope
 	if err := json.Unmarshal(payload, &e); err != nil {
-		return nil, fmt.Errorf("hook.Parse: %w", err)
+		return nil, nil, fmt.Errorf("hook.Parse: %w", err)
 	}
 	p := build(hookType, e)
 	if p == nil {
-		return nil, nil
+		return nil, drift.Counts{drift.ReasonUnknownHookEvent: 1}, nil
 	}
 	seq := nextSeq()
 	if p.kind == "user_prompt" {
@@ -56,7 +57,7 @@ func Parse(hookType string, payload []byte, executionID string, nextSeq func() u
 		EventTime:   ts,
 		ObservedAt:  ts,
 		Seq:         seq,
-	}}, nil
+	}}, nil, nil
 }
 
 type partial struct {
