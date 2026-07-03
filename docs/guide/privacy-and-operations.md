@@ -77,6 +77,26 @@ The `/metrics` response fields:
 | `exporter_lag` | Pending records waiting for the exporter |
 | `reaper_window_seconds` | Configured reaper window |
 | `lossy_runs` | Runs where memory pressure forced a node merge |
+| `drift` | Well-formed but unrecognized records per `source/reason` key (omitted when zero) |
+
+### Format drift
+
+Catacomb watches the upstream Claude Code formats it parses
+([ADR-0025](../adr/0025-capture-format-drift-detection.md)). Records that parse
+cleanly but match no known shape are counted per `(source, reason)`; reasons are
+coarse buckets (`unknown_record_type`, `unknown_subtype`, `unknown_span_name`,
+`unknown_hook_event`, `unknown_content_block`) and never contain payload
+content. Counters live in daemon memory (reset on restart), surface in
+`/metrics` under `drift`, and `catacomb status` prints `drift` rows only when at
+least one counter is nonzero. The daemon logs a warning on the first occurrence
+per key and every 100th thereafter. Malformed input still goes to quarantine;
+drift covers the complementary healthy-but-unknown class.
+
+The binary also carries a tested Claude Code version ceiling. The first session
+observed with a newer `claude_code_version` logs one warning and sets
+`format_watch: true` in the run's meta; capture proceeds identically. Bump
+`TestedClaudeCodeVersion` in `ingest/drift` after verifying a new Claude Code
+release (release-checklist item).
 
 ### Daemon status
 
@@ -86,7 +106,8 @@ catacomb status --json
 ```
 
 Prints address, PID, uptime, token age, observing/history directory, store backend,
-sinks, sources, reaper window, shard counts, session and node counts, and overall health.
+sinks, sources, reaper window, shard counts, session and node counts, drift counters
+(when nonzero), and overall health.
 
 ### Lifecycle
 
