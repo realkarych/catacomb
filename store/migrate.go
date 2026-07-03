@@ -2,11 +2,15 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 const schemaBaselines = `CREATE TABLE IF NOT EXISTS baselines (name TEXT PRIMARY KEY, body TEXT NOT NULL);`
 
@@ -28,6 +32,7 @@ var schemaMigrations = []migration{
 	{from: 0, to: 1, apply: applySchemaV1},
 	{from: 1, to: 2, apply: applySchemaV2},
 	{from: 2, to: 3, apply: applySchemaV3},
+	{from: 3, to: 4, apply: applySchemaV4},
 }
 
 func applySchemaV1(tx *sql.Tx) error {
@@ -49,6 +54,81 @@ func applySchemaV3(tx *sql.Tx) error {
 		return fmt.Errorf("store.applySchemaV3: %w", err)
 	}
 	return nil
+}
+
+type migrationConn interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func applySchemaV4(tx *sql.Tx) error {
+	if _, err := scrubTable(tx, "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody); err != nil {
+		return fmt.Errorf("store.applySchemaV4 observations: %w", err)
+	}
+	if _, err := scrubTable(tx, "SELECT id, body FROM nodes", "UPDATE nodes SET body = ? WHERE id = ?", scrubNodeBody); err != nil {
+		return fmt.Errorf("store.applySchemaV4 nodes: %w", err)
+	}
+	return nil
+}
+
+type scrubbedRow struct {
+	id   string
+	body string
+}
+
+func scrubTable(conn migrationConn, selectQ, updateQ string, rewrite func([]byte) ([]byte, error)) (int, error) {
+	rows, err := conn.Query(selectQ)
+	if err != nil {
+		return 0, fmt.Errorf("store.scrubTable select: %w", err)
+	}
+	changed, err := collectScrubbed(rows, rewrite)
+	if err != nil {
+		return 0, err
+	}
+	for _, r := range changed {
+		if _, err := conn.Exec(updateQ, r.body, r.id); err != nil {
+			return 0, fmt.Errorf("store.scrubTable update: %w", err)
+		}
+	}
+	return len(changed), rows.Err()
+}
+
+func collectScrubbed(rows rowScanner, rewrite func([]byte) ([]byte, error)) ([]scrubbedRow, error) {
+	defer func() { _ = rows.Close() }()
+	var out []scrubbedRow
+	for rows.Next() {
+		var id, body string
+		if err := rows.Scan(&id, &body); err != nil {
+			return nil, fmt.Errorf("store.collectScrubbed scan: %w", err)
+		}
+		next, err := rewrite([]byte(body))
+		if err != nil {
+			return nil, fmt.Errorf("store.collectScrubbed rewrite: %w", err)
+		}
+		if string(next) != body {
+			out = append(out, scrubbedRow{id: id, body: string(next)})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store.collectScrubbed rows: %w", err)
+	}
+	return out, nil
+}
+
+func scrubObservationBody(body []byte) ([]byte, error) {
+	var o model.Observation
+	if err := json.Unmarshal(body, &o); err != nil {
+		return nil, err
+	}
+	return marshalVerbatim(redact.Observation(o))
+}
+
+func scrubNodeBody(body []byte) ([]byte, error) {
+	var n model.Node
+	if err := json.Unmarshal(body, &n); err != nil {
+		return nil, err
+	}
+	return marshalVerbatim(redact.Node(&n))
 }
 
 func readSchemaVersion(db *sql.DB) (int, error) {

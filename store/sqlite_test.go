@@ -893,35 +893,40 @@ func TestDeleteBaselineExecError(t *testing.T) {
 	assert.Error(t, s.DeleteBaseline("b"))
 }
 
-func TestGetBaselineOnV1StoreReportsOutdated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v1.db")
-	seedV1DB(t, path)
-	s, err := openSQLiteReadOnly(sql.Open, path)
+func currentStoreMissingTable(t *testing.T, table string) Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	_, _, err = s.GetBaseline("x")
+	require.NoError(t, s.Close())
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = raw.Exec("DROP TABLE " + table)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	ro, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ro.Close() })
+	return ro
+}
+
+func TestGetBaselineMissingTableReportsOutdated(t *testing.T) {
+	s := currentStoreMissingTable(t, "baselines")
+	_, _, err := s.GetBaseline("x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
-func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v1.db")
-	seedV1DB(t, path)
-	s, err := openSQLiteReadOnly(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	_, err = s.ListBaselines()
+func TestListBaselinesMissingTableReportsOutdated(t *testing.T) {
+	s := currentStoreMissingTable(t, "baselines")
+	_, err := s.ListBaselines()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
-func TestRegressResultsForOnV2StoreReportsOutdated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v2.db")
-	seedV2DB(t, path)
-	s, err := openSQLiteReadOnly(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	_, err = s.RegressResultsFor("golden")
+func TestRegressResultsForMissingTableReportsOutdated(t *testing.T) {
+	s := currentStoreMissingTable(t, "regress_results")
+	_, err := s.RegressResultsFor("golden")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }

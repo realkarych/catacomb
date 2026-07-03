@@ -201,6 +201,21 @@ func TestNode_RecomputesPostRedactionHash(t *testing.T) {
 	assert.Equal(t, "stale", n.PayloadHash)
 }
 
+func TestNode_PreservesHashWhenAllNonEmptySidesAreTypedRefs(t *testing.T) {
+	n := &model.Node{
+		Payload: &model.Payload{
+			Input: json.RawMessage(`"‹binary:1048576,0123456789abcdef›"`),
+			Hash:  "content-hash-by-design",
+		},
+		PayloadHash: "content-hash-by-design",
+	}
+	rn := redact.Node(n)
+	require.NotNil(t, rn.Payload)
+	assert.Equal(t, "content-hash-by-design", rn.Payload.Hash)
+	assert.Equal(t, "content-hash-by-design", rn.PayloadHash)
+	assert.Equal(t, string(n.Payload.Input), string(rn.Payload.Input))
+}
+
 func TestNode_Idempotent(t *testing.T) {
 	n := &model.Node{
 		Name:         "run AKIAIOSFODNN7EXAMPLE",

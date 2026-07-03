@@ -41,6 +41,35 @@ func TestObservationRecomputesPostRedactionHash(t *testing.T) {
 	assert.NotEqual(t, "stale-pre-redaction", r.Payload.Hash)
 }
 
+func TestObservationPreservesHashWhenAllNonEmptySidesAreTypedRefs(t *testing.T) {
+	o := model.Observation{
+		ObsID: "o-ref",
+		Payload: &model.Payload{
+			Input: json.RawMessage(`"‹ref:64,00112233aabbccdd›"`),
+			Hash:  "content-hash-by-design",
+		},
+	}
+	r := redact.Observation(o)
+	require.NotNil(t, r.Payload)
+	assert.Equal(t, "content-hash-by-design", r.Payload.Hash)
+	assert.Equal(t, string(o.Payload.Input), string(r.Payload.Input))
+}
+
+func TestObservationRecomputesHashWhenOnlyOneSideIsTypedRef(t *testing.T) {
+	o := model.Observation{
+		ObsID: "o-mixed",
+		Payload: &model.Payload{
+			Input:  json.RawMessage(`"‹ref:64,00112233aabbccdd›"`),
+			Output: json.RawMessage(`{"result":"ok"}`),
+			Hash:   "content-hash-by-design",
+		},
+	}
+	r := redact.Observation(o)
+	require.NotNil(t, r.Payload)
+	assert.Equal(t, model.HashPayload(r.Payload), r.Payload.Hash)
+	assert.NotEqual(t, "content-hash-by-design", r.Payload.Hash)
+}
+
 func TestObservationDoesNotMutateInput(t *testing.T) {
 	o := secretObservation()
 	_ = redact.Observation(o)

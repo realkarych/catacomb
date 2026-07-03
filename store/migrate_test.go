@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -373,4 +374,319 @@ func TestApplySchemaV3Error(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 	require.Error(t, applySchemaV3(tx))
+}
+
+func seedV3Schema(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	seed, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	for _, stmt := range []string{schema, schemaBaselines, schemaRegressResults} {
+		_, err = seed.Exec(stmt)
+		require.NoError(t, err)
+	}
+	return seed
+}
+
+func stampAndClose(t *testing.T, seed *sql.DB) {
+	t.Helper()
+	_, err := seed.Exec("PRAGMA user_version = 3")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+}
+
+func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNodeBody string) {
+	t.Helper()
+	obs := model.Observation{
+		ObsID: "o1", RunID: "r1", ExecutionID: "e1", Source: model.SourceHook, Kind: "assistant_tool_use", Seq: 1,
+		Attrs: map[string]any{"prompt": "use AKIAIOSFODNN7EXAMPLE"},
+		Payload: &model.Payload{
+			Input: json.RawMessage(`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb"}`),
+			Hash:  "deadbeef",
+		},
+	}
+	clean := model.Observation{ObsID: "o2", RunID: "r1", ExecutionID: "e1", Source: model.SourceHook, Kind: "stop", Seq: 2}
+	node := model.Node{
+		ID: "n1", RunID: "r1", Type: model.NodeToolCall, Name: "Bash",
+		Payload: &model.Payload{
+			Input: json.RawMessage(`{"command":"export TOKEN=AKIAIOSFODNN7EXAMPLE"}`),
+			Hash:  "deadbeef",
+		},
+		PayloadHash: "deadbeef",
+	}
+	ob, err := json.Marshal(obs)
+	require.NoError(t, err)
+	cb, err := json.Marshal(clean)
+	require.NoError(t, err)
+	nb, err := json.Marshal(node)
+	require.NoError(t, err)
+
+	seed := seedV3Schema(t, path)
+	_, err = seed.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('o1','r1','e1',1,?),('o2','r1','e1',2,?)`, string(ob), string(cb))
+	require.NoError(t, err)
+	_, err = seed.Exec(`INSERT INTO nodes(id, run_id, body) VALUES('n1','r1',?)`, string(nb))
+	require.NoError(t, err)
+	stampAndClose(t, seed)
+	return string(ob), string(cb), string(nb)
+}
+
+func TestOpenMigratesV3ToV4ScrubbingBodies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	secretBody, cleanBody, nodeSeed := seedV3DB(t, path)
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	db := migrated.(*sqliteStore).db
+	assert.Equal(t, currentSchemaVersion, userVersion(t, db))
+
+	var obsBody string
+	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o1'").Scan(&obsBody))
+	assert.NotEqual(t, secretBody, obsBody)
+	assert.NotContains(t, obsBody, "kesha_dev_password")
+	assert.NotContains(t, obsBody, "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, obsBody, "‹redacted:connection-string›")
+	assert.Contains(t, obsBody, "‹redacted:aws-key›")
+	var o model.Observation
+	require.NoError(t, json.Unmarshal([]byte(obsBody), &o))
+	assert.Equal(t, model.HashPayload(o.Payload), o.Payload.Hash)
+	assert.NotEqual(t, "deadbeef", o.Payload.Hash)
+
+	var cleanGot string
+	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o2'").Scan(&cleanGot))
+	assert.Equal(t, cleanBody, cleanGot)
+
+	var nodeBody string
+	require.NoError(t, db.QueryRow("SELECT body FROM nodes WHERE id='n1'").Scan(&nodeBody))
+	assert.NotEqual(t, nodeSeed, nodeBody)
+	assert.NotContains(t, nodeBody, "AKIAIOSFODNN7EXAMPLE")
+	var n model.Node
+	require.NoError(t, json.Unmarshal([]byte(nodeBody), &n))
+	assert.Equal(t, model.HashPayload(n.Payload), n.PayloadHash)
+	assert.Equal(t, n.Payload.Hash, n.PayloadHash)
+}
+
+func TestApplySchemaV4IsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	db := migrated.(*sqliteStore).db
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	obsChanged, err := scrubTable(tx, "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody)
+	require.NoError(t, err)
+	nodesChanged, err := scrubTable(tx, "SELECT id, body FROM nodes", "UPDATE nodes SET body = ? WHERE id = ?", scrubNodeBody)
+	require.NoError(t, err)
+	assert.Zero(t, obsChanged)
+	assert.Zero(t, nodesChanged)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, migrated.Close())
+}
+
+func TestMigrationLeavesNoSecretBytesInFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	for _, f := range []string{path, path + "-wal"} {
+		blob, rerr := os.ReadFile(f)
+		if rerr != nil {
+			continue
+		}
+		assert.NotContains(t, string(blob), "kesha_dev_password", f)
+		assert.NotContains(t, string(blob), "AKIAIOSFODNN7EXAMPLE", f)
+	}
+}
+
+func TestOpenSQLiteReadOnlyRefusesOutdatedSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	_, err := openSQLiteReadOnly(sql.Open, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaOutdated)
+}
+
+func TestOpenSQLiteReadOnlyAcceptsCurrentSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	ro, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, ro.Close())
+}
+
+func TestScrubTableSelectError(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = scrubTable(tx, "SELECT obs_id, body FROM observations", "", scrubObservationBody)
+	require.Error(t, err)
+}
+
+func TestScrubTableRewriteError(t *testing.T) {
+	db := rawDB(t)
+	_, err := db.Exec(schema)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('bad','r','e',1,'not-json')`)
+	require.NoError(t, err)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = scrubTable(tx, "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody)
+	require.Error(t, err)
+}
+
+func TestScrubNodeBodyRejectsInvalidJSON(t *testing.T) {
+	_, err := scrubNodeBody([]byte("not-json"))
+	require.Error(t, err)
+}
+
+func TestScrubTableUpdateError(t *testing.T) {
+	db := rawDB(t)
+	_, err := db.Exec(schema)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TRIGGER obs_frozen BEFORE UPDATE ON observations BEGIN SELECT RAISE(ABORT, 'frozen'); END`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('o1','r','e',1,'{"obs_id":"o1","attrs":{"prompt":"AKIAIOSFODNN7EXAMPLE"},"event_time":"0001-01-01T00:00:00Z","observed_at":"0001-01-01T00:00:00Z","run_id":"r","execution_id":"e","source":"hook","kind":"k","correlation":{},"seq":1}')`)
+	require.NoError(t, err)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = scrubTable(tx, "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody)
+	require.Error(t, err)
+}
+
+func TestApplySchemaV4NodeErrorPropagates(t *testing.T) {
+	db := rawDB(t)
+	_, err := db.Exec(schema)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO nodes(id, run_id, body) VALUES('bad','r','not-json')`)
+	require.NoError(t, err)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	require.Error(t, applySchemaV4(tx))
+}
+
+type failingScanner struct {
+	next    int
+	scanErr error
+	rowsErr error
+}
+
+func (f *failingScanner) Next() bool        { f.next++; return f.next == 1 && f.scanErr != nil }
+func (f *failingScanner) Close() error      { return nil }
+func (f *failingScanner) Err() error        { return f.rowsErr }
+func (f *failingScanner) Scan(...any) error { return f.scanErr }
+
+func TestCollectScrubbedScanAndRowsErrors(t *testing.T) {
+	_, err := collectScrubbed(&failingScanner{scanErr: errors.New("scan boom")}, scrubObservationBody)
+	require.Error(t, err)
+	_, err = collectScrubbed(&failingScanner{rowsErr: errors.New("rows boom")}, scrubObservationBody)
+	require.Error(t, err)
+}
+
+func TestOpenMigratesV3FailureRollsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seed := seedV3Schema(t, path)
+	_, err := seed.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('bad','r','e',1,'not-json')`)
+	require.NoError(t, err)
+	stampAndClose(t, seed)
+
+	_, err = openSQLite(sql.Open, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
+
+	check, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	assert.Equal(t, 3, userVersion(t, check))
+	var body string
+	require.NoError(t, check.QueryRow("SELECT body FROM observations WHERE obs_id='bad'").Scan(&body))
+	assert.Equal(t, "not-json", body)
+}
+
+func TestFreshAndV3UpgradeConvergeOnSchema(t *testing.T) {
+	fresh := fileStore(t)
+	path := filepath.Join(t.TempDir(), "v3.db")
+	seedV3DB(t, path)
+	upgraded, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = upgraded.Close() })
+	assert.Equal(t, schemaDDL(t, fresh.db), schemaDDL(t, upgraded.(*sqliteStore).db))
+}
+
+func TestMigrationPreservesTypedRefPayloadHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	obs := model.Observation{
+		ObsID: "o3", RunID: "r1", ExecutionID: "e1", Source: model.SourceHook, Kind: "assistant_tool_use", Seq: 3,
+		Payload: &model.Payload{
+			Input: json.RawMessage(`"‹ref:64,00112233aabbccdd›"`),
+			Hash:  "content-hash-by-design",
+		},
+	}
+	node := model.Node{
+		ID: "n2", RunID: "r1", Type: model.NodeToolCall, Name: "Bash",
+		Payload: &model.Payload{
+			Input: json.RawMessage(`"‹binary:1048576,0123456789abcdef›"`),
+			Hash:  "content-hash-by-design",
+		},
+		PayloadHash: "content-hash-by-design",
+	}
+	ob, err := json.Marshal(obs)
+	require.NoError(t, err)
+	nb, err := json.Marshal(node)
+	require.NoError(t, err)
+	seed := seedV3Schema(t, path)
+	_, err = seed.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('o3','r1','e1',3,?)`, string(ob))
+	require.NoError(t, err)
+	_, err = seed.Exec(`INSERT INTO nodes(id, run_id, body) VALUES('n2','r1',?)`, string(nb))
+	require.NoError(t, err)
+	stampAndClose(t, seed)
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	db := migrated.(*sqliteStore).db
+
+	var gotObs, gotNode string
+	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o3'").Scan(&gotObs))
+	require.NoError(t, db.QueryRow("SELECT body FROM nodes WHERE id='n2'").Scan(&gotNode))
+	assert.Equal(t, string(ob), gotObs)
+	assert.Equal(t, string(nb), gotNode)
+}
+
+func TestMigrationKeepsVerbatimBytesOfCleanRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	input := json.RawMessage(`{"command":"go build && go test > out.log"}`)
+	obs := model.Observation{
+		ObsID: "o5", RunID: "r1", ExecutionID: "e1", Source: model.SourceHook, Kind: "assistant_tool_use", Seq: 5,
+		Payload: &model.Payload{
+			Input: input,
+			Hash:  model.HashPayload(&model.Payload{Input: input}),
+		},
+	}
+	ob, err := marshalVerbatim(obs)
+	require.NoError(t, err)
+	seed := seedV3Schema(t, path)
+	_, err = seed.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('o5','r1','e1',5,?)`, string(ob))
+	require.NoError(t, err)
+	stampAndClose(t, seed)
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	db := migrated.(*sqliteStore).db
+
+	var got string
+	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o5'").Scan(&got))
+	assert.Equal(t, string(ob), got)
+	var o model.Observation
+	require.NoError(t, json.Unmarshal([]byte(got), &o))
+	assert.Equal(t, model.HashPayload(o.Payload), o.Payload.Hash)
 }

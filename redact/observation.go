@@ -25,7 +25,9 @@ func redactPayload(p *model.Payload) *model.Payload {
 	if len(p.Output) > 0 {
 		pc.Output = canonicalizeJSON(Redact(p.Output).Data)
 	}
-	pc.Hash = model.HashPayload(&pc)
+	if !preserveIncomingHash(p.Input, p.Output) {
+		pc.Hash = model.HashPayload(&pc)
+	}
 	return &pc
 }
 

@@ -427,13 +427,12 @@ func TestRegressNameSelectorV1StoreHint(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "older than this binary")
 }
 
-func TestRegressLabelOnlyV1StoreWorks(t *testing.T) {
+func TestRegressLabelOnlyV1StoreHint(t *testing.T) {
 	dbPath := seedV1RegressDB(t)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.Contains(t, out.String(), "overall ok")
-	assert.Empty(t, errBuf.String())
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "older than this binary")
 }
 
 func TestRegressNameSelectorFewerRunsWarns(t *testing.T) {

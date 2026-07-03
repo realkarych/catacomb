@@ -100,13 +100,18 @@ func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path str
 	if err != nil {
 		return nil, fmt.Errorf("store.OpenSQLiteReadOnly: %w", err)
 	}
-	if err := db.Ping(); err != nil {
+	if pingErr := db.Ping(); pingErr != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("store.OpenSQLiteReadOnly ping: %w", err)
+		return nil, fmt.Errorf("store.OpenSQLiteReadOnly ping: %w", pingErr)
 	}
-	if _, err := schemaVersionGuard(db, currentSchemaVersion); err != nil {
+	version, err := schemaVersionGuard(db, currentSchemaVersion)
+	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLiteReadOnly schema: %w", err)
+	}
+	if version < currentSchemaVersion {
+		_ = db.Close()
+		return nil, fmt.Errorf("store.OpenSQLiteReadOnly schema: %w", ErrSchemaOutdated)
 	}
 	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }
@@ -139,6 +144,10 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 	if err := migrate(db, version, schemaMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", err)
+	}
+	if version < currentSchemaVersion {
+		_, _ = db.Exec("VACUUM")
+		_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	}
 	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }
