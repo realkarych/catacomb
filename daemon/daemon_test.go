@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -1655,4 +1656,36 @@ func TestIngestStreamJSONUnknownTypeRecordsDrift(t *testing.T) {
 	d := New(tempStore(t))
 	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"telemetry_v2","session_id":"s1"}`), "s1"))
 	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["stream_json/unknown_record_type"])
+}
+
+func runForSession(t *testing.T, d *Daemon, sessionID string) *model.Run {
+	t.Helper()
+	for _, g := range d.GraphsForTest() {
+		if r, ok := g.Runs[sessionID]; ok {
+			return r
+		}
+	}
+	t.Fatalf("run %s not found", sessionID)
+	return nil
+}
+
+func TestWatchVersionFlagsRunAndWarnsOnce(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	line := `{"type":"assistant","sessionId":"s1","version":"9999.0.0","message":{"id":"%s","model":"m","role":"assistant","content":[{"type":"text","text":"a"}]}}`
+	require.NoError(t, d.IngestTranscript([]byte(fmt.Sprintf(line, "m1")), "s1"))
+	require.NoError(t, d.IngestTranscript([]byte(fmt.Sprintf(line, "m2")), "s1"))
+	r := runForSession(t, d, "s1")
+	assert.Equal(t, true, r.Meta["format_watch"])
+	assert.Equal(t, 1, strings.Count(buf.String(), "tested ceiling"))
+}
+
+func TestWatchVersionAtCeilingDoesNothing(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	line := `{"type":"assistant","sessionId":"s2","version":"` + drift.TestedClaudeCodeVersion + `","message":{"id":"m1","model":"m","role":"assistant","content":[{"type":"text","text":"a"}]}}`
+	require.NoError(t, d.IngestTranscript([]byte(line), "s2"))
+	r := runForSession(t, d, "s2")
+	assert.NotContains(t, r.Meta, "format_watch")
+	assert.NotContains(t, buf.String(), "tested ceiling")
 }

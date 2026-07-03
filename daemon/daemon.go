@@ -86,6 +86,7 @@ type Daemon struct {
 	reproConfig        repro.Config
 	reproCaptured      map[string]bool
 	drift              map[driftKey]uint64
+	formatWatchWarned  bool
 	logger             *slog.Logger
 }
 
@@ -560,6 +561,7 @@ func (d *Daemon) captureReproIfReady(runID string) {
 
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	applyFn(g, o)
+	d.watchVersion(g, o)
 	deltas := drainFn(g)
 	if err := d.store.AppendDeltas(o, deltas); err != nil {
 		d.storeWriteErrors++
@@ -577,6 +579,24 @@ func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
 	}
 	d.captureReproIfReady(o.RunID)
 	return nil
+}
+
+func (d *Daemon) watchVersion(g *reduce.Graph, o model.Observation) {
+	v, ok := o.Attrs["claude_code_version"].(string)
+	if !ok || !drift.NewerThanTested(v) {
+		return
+	}
+	r := g.Runs[o.RunID]
+	if r.Meta == nil {
+		r.Meta = map[string]any{}
+	}
+	r.Meta["format_watch"] = true
+	if d.formatWatchWarned {
+		return
+	}
+	d.formatWatchWarned = true
+	d.logger.Warn("claude_code_version exceeds tested ceiling; capture continues unchanged",
+		"observed", v, "tested", drift.TestedClaudeCodeVersion, "run", o.RunID)
 }
 
 func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
