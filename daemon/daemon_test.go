@@ -1,12 +1,15 @@
 package daemon
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +24,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/config"
+	"github.com/realkarych/catacomb/ingest/drift"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
@@ -1557,4 +1561,65 @@ func TestSetSources(t *testing.T) {
 	require.NotNil(t, got.Hooks.Enabled)
 	assert.True(t, *got.Hooks.Enabled)
 	assert.Equal(t, "/t", got.JSONL.TranscriptDir)
+}
+
+func driftLogBuffer(d *Daemon) *bytes.Buffer {
+	var buf bytes.Buffer
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	return &buf
+}
+
+func TestRecordDriftAggregatesAndExposesMetrics(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.mu.Lock()
+	d.recordDrift(model.SourceStreamJSON, drift.Counts{drift.ReasonUnknownRecordType: 2})
+	d.recordDrift(model.SourceStreamJSON, drift.Counts{drift.ReasonUnknownRecordType: 1})
+	d.recordDrift(model.SourceStreamJSON, nil)
+	d.mu.Unlock()
+	m := d.metricsSnapshot()
+	require.Equal(t, uint64(3), m.Drift["stream_json/unknown_record_type"])
+	assert.Equal(t, 1, strings.Count(buf.String(), "format drift"))
+}
+
+func TestRecordDriftWarnsFirstThenEveryNth(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.mu.Lock()
+	for range 99 {
+		d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
+	}
+	d.mu.Unlock()
+	assert.Equal(t, 1, strings.Count(buf.String(), "format drift"))
+	d.mu.Lock()
+	d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
+	d.mu.Unlock()
+	assert.Equal(t, 2, strings.Count(buf.String(), "format drift"))
+}
+
+func TestRecordDriftBatchCrossingWarnsOnce(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.mu.Lock()
+	d.recordDrift(model.SourceOTel, drift.Counts{drift.ReasonUnknownSpanName: 1})
+	d.recordDrift(model.SourceOTel, drift.Counts{drift.ReasonUnknownSpanName: 250})
+	d.mu.Unlock()
+	assert.Equal(t, 2, strings.Count(buf.String(), "format drift"))
+	assert.Equal(t, uint64(251), d.metricsSnapshot().Drift["otel/unknown_span_name"])
+}
+
+func TestMetricsJSONOmitsDriftWhenEmpty(t *testing.T) {
+	d := New(tempStore(t))
+	raw, err := json.Marshal(d.metricsSnapshot())
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"drift"`)
+}
+
+func TestSetLoggerNilIsIgnored(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetLogger(nil)
+	d.mu.Lock()
+	d.recordDrift(model.SourceHook, drift.Counts{drift.ReasonUnknownHookEvent: 1})
+	d.mu.Unlock()
+	assert.Equal(t, uint64(1), d.metricsSnapshot().Drift["hook/unknown_hook_event"])
 }

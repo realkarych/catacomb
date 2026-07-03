@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/config"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/ingest/hook"
 	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
@@ -82,6 +85,8 @@ type Daemon struct {
 	reproCapture       func(cwd string, cfg repro.Config) repro.Hashes
 	reproConfig        repro.Config
 	reproCaptured      map[string]bool
+	drift              map[driftKey]uint64
+	logger             *slog.Logger
 }
 
 func New(s store.Store) *Daemon {
@@ -97,6 +102,8 @@ func New(s store.Store) *Daemon {
 		maxShards:     defaultMaxShards,
 		startedAt:     nowFn(),
 		reproCaptured: map[string]bool{},
+		drift:         map[driftKey]uint64{},
+		logger:        slog.Default(),
 		reproCapture: func(cwd string, cfg repro.Config) repro.Hashes {
 			return repro.Capture(os.DirFS(cwd), cfg)
 		},
@@ -500,6 +507,15 @@ func (d *Daemon) SetCatacombVersion(v string) {
 	d.catacombVersion = v
 }
 
+func (d *Daemon) SetLogger(l *slog.Logger) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if l == nil {
+		return
+	}
+	d.logger = l
+}
+
 func (d *Daemon) captureReproIfReady(runID string) {
 	if d.reproCaptured[runID] {
 		return
@@ -573,17 +589,18 @@ func (d *Daemon) publishDelta(delta cdc.GraphDelta) {
 }
 
 type Metrics struct {
-	UptimeSeconds       int64  `json:"uptime_seconds"`
-	OpenRuns            int    `json:"open_runs"`
-	Shards              int    `json:"shards"`
-	MaxSeq              uint64 `json:"max_seq"`
-	Quarantined         int64  `json:"quarantined"`
-	Evicted             int64  `json:"evicted"`
-	StoreWriteErrors    int64  `json:"store_write_errors"`
-	DeltasDropped       int64  `json:"deltas_dropped"`
-	ExporterLag         int64  `json:"exporter_lag"`
-	ReaperWindowSeconds int64  `json:"reaper_window_seconds"`
-	LossyRuns           int64  `json:"lossy_runs"`
+	UptimeSeconds       int64             `json:"uptime_seconds"`
+	OpenRuns            int               `json:"open_runs"`
+	Shards              int               `json:"shards"`
+	MaxSeq              uint64            `json:"max_seq"`
+	Quarantined         int64             `json:"quarantined"`
+	Evicted             int64             `json:"evicted"`
+	StoreWriteErrors    int64             `json:"store_write_errors"`
+	DeltasDropped       int64             `json:"deltas_dropped"`
+	ExporterLag         int64             `json:"exporter_lag"`
+	ReaperWindowSeconds int64             `json:"reaper_window_seconds"`
+	LossyRuns           int64             `json:"lossy_runs"`
+	Drift               map[string]uint64 `json:"drift,omitempty"`
 }
 
 func (d *Daemon) metricsSnapshot() Metrics {
@@ -601,6 +618,13 @@ func (d *Daemon) metricsSnapshot() Metrics {
 	for _, c := range d.exporterConsumers {
 		lag += c.Dropped()
 	}
+	var driftCounts map[string]uint64
+	if len(d.drift) > 0 {
+		driftCounts = make(map[string]uint64, len(d.drift))
+		for k, v := range d.drift {
+			driftCounts[k.source+"/"+k.reason] = v
+		}
+	}
 	return Metrics{
 		UptimeSeconds:       int64(nowFn().Sub(d.startedAt).Seconds()),
 		OpenRuns:            open,
@@ -613,6 +637,27 @@ func (d *Daemon) metricsSnapshot() Metrics {
 		ExporterLag:         lag,
 		ReaperWindowSeconds: int64(d.reaperWindow.Seconds()),
 		LossyRuns:           d.lossyRuns,
+		Drift:               driftCounts,
+	}
+}
+
+type driftKey struct {
+	source string
+	reason string
+}
+
+const driftWarnEvery uint64 = 100
+
+func (d *Daemon) recordDrift(source model.Source, dc drift.Counts) {
+	for _, reason := range slices.Sorted(maps.Keys(dc)) {
+		k := driftKey{source: string(source), reason: reason}
+		before := d.drift[k]
+		after := before + dc[reason]
+		d.drift[k] = after
+		if before == 0 || after/driftWarnEvery > before/driftWarnEvery {
+			d.logger.Warn("format drift: well-formed input matched no known shape",
+				"source", k.source, "reason", reason, "count", after)
+		}
 	}
 }
 
