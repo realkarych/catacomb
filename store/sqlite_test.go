@@ -160,6 +160,26 @@ func TestAppendDeltasInsertsObservation(t *testing.T) {
 	assert.Equal(t, 0, count(t, s, "edges"))
 }
 
+func TestMarshalVerbatimError(t *testing.T) {
+	_, err := marshalVerbatim(make(chan int))
+	require.Error(t, err)
+}
+
+func TestAppendDeltasPreservesPayloadBytesVerbatim(t *testing.T) {
+	s := fileStore(t)
+	input := json.RawMessage(`{"command":"ls && pwd <ok>"}`)
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1,
+		Payload: &model.Payload{Input: input, Hash: model.HashPayload(&model.Payload{Input: input})},
+	}
+	require.NoError(t, s.AppendDeltas(o, nil))
+	got, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Payload)
+	assert.Equal(t, []byte(input), []byte(got[0].Payload.Input))
+}
+
 func TestAppendDeltasUpsertsNode(t *testing.T) {
 	s := fileStore(t)
 	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}

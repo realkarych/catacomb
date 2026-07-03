@@ -2,6 +2,7 @@ package redact
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/realkarych/catacomb/model"
 )
@@ -33,11 +34,34 @@ func redactAttrs(attrs map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(attrs))
 	for k, v := range attrs {
-		if sv, ok := v.(string); ok {
-			out[k] = redactString(sv)
-		} else {
+		sv, ok := v.(string)
+		switch {
+		case !ok:
 			out[k] = v
+		case isChecksumKey(k) && isHexDigest(sv):
+			out[k] = sv
+		default:
+			out[k] = redactString(sv)
 		}
 	}
 	return out
+}
+
+func isChecksumKey(k string) bool {
+	return strings.HasSuffix(normalizeKey(k), "hash")
+}
+
+func isHexDigest(s string) bool {
+	if len(s) < 40 || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		isDigit := r >= '0' && r <= '9'
+		isLower := r >= 'a' && r <= 'f'
+		isUpper := r >= 'A' && r <= 'F'
+		if !isDigit && !isLower && !isUpper {
+			return false
+		}
+	}
+	return true
 }

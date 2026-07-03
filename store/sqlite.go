@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -70,6 +71,16 @@ const (
 	selectRegressResults         = `SELECT seq, body FROM regress_results WHERE baseline = ? ORDER BY seq`
 )
 
+func marshalVerbatim(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, fmt.Errorf("store.marshalVerbatim: %w", err)
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
 func OpenSQLite(path string) (Store, error) {
 	return openSQLite(sql.Open, path)
 }
@@ -97,7 +108,7 @@ func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path str
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLiteReadOnly schema: %w", err)
 	}
-	return &sqliteStore{db: db, marshal: json.Marshal}, nil
+	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }
 
 func readOnlyDSN(path string) string {
@@ -129,7 +140,7 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", err)
 	}
-	return &sqliteStore{db: db, marshal: json.Marshal}, nil
+	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }
 
 func (s *sqliteStore) applyGraph(tx *sql.Tx, nodes []*model.Node, edges []*model.Edge) error {

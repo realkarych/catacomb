@@ -369,6 +369,36 @@ func TestNodePayloadViewTextRedactsSecret(t *testing.T) {
 	require.NotEmpty(t, view.Redactions)
 }
 
+func TestNodePayloadViewReportsStoredRedaction(t *testing.T) {
+	d := New(tempStore(t))
+	d.SetAllowPayloadAccess(true)
+	ingestSecretToolUse(t, d)
+	var nodeID string
+	for _, g := range d.GraphsForTest() {
+		for id, n := range g.Nodes {
+			if n.Type == model.NodeToolCall {
+				nodeID = id
+			}
+		}
+	}
+	require.NotEmpty(t, nodeID)
+	d.mu.Lock()
+	view, err := d.nodePayloadView("s1", nodeID)
+	d.mu.Unlock()
+	require.NoError(t, err)
+	assert.True(t, view.Redacted)
+	assert.Contains(t, string(view.Input), "‹redacted:connection-string›")
+	assert.Empty(t, view.Redactions)
+}
+
+func TestHasMarkerViewEmptySides(t *testing.T) {
+	assert.False(t, HasMarkerView(nil, nil))
+}
+
+func TestHasMarkerViewOutputOnly(t *testing.T) {
+	assert.True(t, HasMarkerView(nil, json.RawMessage(`"‹redacted:aws-key›"`)))
+}
+
 func TestNodePayloadViewTextGatedOff(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)

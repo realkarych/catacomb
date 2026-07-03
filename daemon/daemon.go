@@ -27,6 +27,7 @@ import (
 	streamjsoningest "github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/pricing"
+	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
@@ -88,6 +89,7 @@ type Daemon struct {
 	drift              map[driftKey]uint64
 	formatWatchWarned  bool
 	logger             *slog.Logger
+	payloadPolicy      redact.Policy
 }
 
 func New(s store.Store) *Daemon {
@@ -105,6 +107,7 @@ func New(s store.Store) *Daemon {
 		reproCaptured: map[string]bool{},
 		drift:         map[driftKey]uint64{},
 		logger:        slog.Default(),
+		payloadPolicy: redact.DefaultPolicy(),
 		reproCapture: func(cwd string, cfg repro.Config) repro.Hashes {
 			return repro.Capture(os.DirFS(cwd), cfg)
 		},
@@ -476,6 +479,15 @@ func (d *Daemon) SetAllowPayloadAccess(v bool) {
 	d.allowPayloadAccess = v
 }
 
+func (d *Daemon) SetPayloadPolicy(p redact.Policy) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.payloadPolicy = p
+	if p.Mode == redact.ModeAll {
+		d.logger.Warn("payloads.mode=all: persisting unredacted payloads at rest; serve/export-time redaction still applies")
+	}
+}
+
 func (d *Daemon) SetSinks(sinks []config.Sink) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -560,9 +572,15 @@ func (d *Daemon) captureReproIfReady(runID string) {
 }
 
 func (d *Daemon) applyAndPersist(g *reduce.Graph, o model.Observation) error {
+	o = d.payloadPolicy.Observation(o)
 	applyFn(g, o)
 	d.watchVersion(g, o)
 	deltas := drainFn(g)
+	for i := range deltas {
+		if deltas[i].Node != nil {
+			deltas[i].Node = d.payloadPolicy.Node(deltas[i].Node)
+		}
+	}
 	if err := d.store.AppendDeltas(o, deltas); err != nil {
 		d.storeWriteErrors++
 		return err

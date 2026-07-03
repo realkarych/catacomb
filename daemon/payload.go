@@ -83,8 +83,12 @@ func buildPayloadView(nodeID, payloadHash string, rawIn, rawOut json.RawMessage)
 		Input:       redactedIn,
 		Output:      redactedOut,
 		Redactions:  allFindings,
-		Redacted:    len(allFindings) > 0,
+		Redacted:    len(allFindings) > 0 || HasMarkerView(redactedIn, redactedOut),
 	}
+}
+
+func HasMarkerView(in, out json.RawMessage) bool {
+	return redact.HasMarker(in) || redact.HasMarker(out)
 }
 
 func (d *Daemon) handleNodePayload(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package redact_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -58,4 +59,21 @@ func TestObservationIdempotent(t *testing.T) {
 	once := redact.Observation(secretObservation())
 	twice := redact.Observation(once)
 	assert.Equal(t, once, twice)
+}
+
+func TestObservationPreservesChecksumAttrs(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	o := model.Observation{Attrs: map[string]any{
+		"prompts_hash":         digest,
+		"catacomb_config_hash": strings.Repeat("0f", 20),
+		"boot_hash":            "use AKIAIOSFODNN7EXAMPLE",
+		"tree_hash":            strings.Repeat("g", 64),
+		"entropy":              strings.Repeat("ab", 32),
+	}}
+	r := redact.Observation(o)
+	assert.Equal(t, digest, r.Attrs["prompts_hash"])
+	assert.Equal(t, strings.Repeat("0f", 20), r.Attrs["catacomb_config_hash"])
+	assert.Equal(t, "use ‹redacted:aws-key›", r.Attrs["boot_hash"])
+	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["tree_hash"])
+	assert.Equal(t, "‹redacted:high-entropy›", r.Attrs["entropy"])
 }
