@@ -90,6 +90,26 @@ func placeholder(reason string) string {
 	return "‹redacted:" + reason + "›"
 }
 
+func HasMarker(data []byte) bool {
+	s := string(data)
+	return strings.Contains(s, "‹redacted:") || strings.Contains(s, "‹binary:") || strings.Contains(s, "‹ref:")
+}
+
+var knownPlaceholders = func() map[string]bool {
+	m := map[string]bool{
+		placeholder("sensitive-key"): true,
+		placeholder("binary"):        true,
+	}
+	for _, rule := range valueRules {
+		m[placeholder(rule.reason)] = true
+	}
+	return m
+}()
+
+func isKnownPlaceholder(s string) bool {
+	return knownPlaceholders[s]
+}
+
 func matchValueRule(s string) string {
 	for _, rule := range valueRules {
 		if rule.re.MatchString(s) {
@@ -222,12 +242,16 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 		childPath := joinPath(path, k)
 		if isSensitiveKey(k) {
 			if sv, ok := v.(string); ok {
-				reason := matchValueRule(sv)
-				if reason == "" {
-					reason = "sensitive-key"
+				if isKnownPlaceholder(sv) {
+					result[k] = sv
+				} else {
+					reason := matchValueRule(sv)
+					if reason == "" {
+						reason = "sensitive-key"
+					}
+					result[k] = placeholder(reason)
+					*findings = append(*findings, Finding{Path: childPath, Reason: reason})
 				}
-				result[k] = placeholder(reason)
-				*findings = append(*findings, Finding{Path: childPath, Reason: reason})
 			} else {
 				result[k] = walkNode(v, childPath, findings)
 			}

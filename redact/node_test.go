@@ -178,3 +178,37 @@ func TestNode_CleanAttrsPassThroughUnchanged(t *testing.T) {
 	out := redact.Node(n)
 	assert.Equal(t, "ls -la", out.Attrs["command"])
 }
+
+func TestNode_RedactsSubagentType(t *testing.T) {
+	n := &model.Node{SubagentType: "AKIAIOSFODNN7EXAMPLE"}
+	rn := redact.Node(n)
+	assert.Equal(t, "‹redacted:aws-key›", rn.SubagentType)
+	assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", n.SubagentType)
+}
+
+func TestNode_RecomputesPostRedactionHash(t *testing.T) {
+	n := &model.Node{
+		Payload: &model.Payload{
+			Input: json.RawMessage(`{"command":"psql postgres://kesha:pw@localhost/db"}`),
+			Hash:  "stale",
+		},
+		PayloadHash: "stale",
+	}
+	rn := redact.Node(n)
+	require.NotNil(t, rn.Payload)
+	assert.Equal(t, model.HashPayload(rn.Payload), rn.Payload.Hash)
+	assert.Equal(t, rn.Payload.Hash, rn.PayloadHash)
+	assert.Equal(t, "stale", n.PayloadHash)
+}
+
+func TestNode_Idempotent(t *testing.T) {
+	n := &model.Node{
+		Name:         "run AKIAIOSFODNN7EXAMPLE",
+		SubagentType: "general-purpose",
+		Attrs:        map[string]any{"cwd": "/home/kesha", "description": "psql postgres://u:p@h/db"},
+		Payload:      &model.Payload{Input: json.RawMessage(`{"password":"hunter2"}`)},
+	}
+	once := redact.Node(n)
+	twice := redact.Node(once)
+	assert.Equal(t, once, twice)
+}

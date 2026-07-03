@@ -772,3 +772,33 @@ func TestRedact_NumberFidelity(t *testing.T) {
 		assert.NotContains(t, string(result.Data), "\\u0026")
 	})
 }
+
+func TestRedactFixedPoint(t *testing.T) {
+	cases := []string{
+		`{"api_key":"AKIAIOSFODNN7EXAMPLE"}`,
+		`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb"}`,
+		`export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE && curl -H "Authorization: Bearer abcdefghij1234567890"`,
+		"-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
+		`token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dozjgNryP4J3jVmNHl0w5N7XgL0n3I9PlFUP0THsR8U`,
+		`AKIAIOSFODNN7EXAMPLE0123456789abcdef0123456789abcdef01234567`,
+		`{"nested":{"password":"hunter2","cwd":"/home/kesha"},"n":3}`,
+		string([]byte{0xff, 0xfe, 0x01}),
+		`{"text":"no secrets here"}`,
+		`plain prose without any secret`,
+	}
+	for _, in := range cases {
+		once := redact.Redact([]byte(in))
+		twice := redact.Redact(once.Data)
+		assert.Equal(t, string(once.Data), string(twice.Data), "input %q", in)
+		assert.False(t, twice.Redacted, "second pass must be a no-op for %q", in)
+		assert.Empty(t, twice.Findings, "input %q", in)
+	}
+}
+
+func TestHasMarker(t *testing.T) {
+	assert.True(t, redact.HasMarker([]byte(`{"x":"‹redacted:aws-key›"}`)))
+	assert.True(t, redact.HasMarker([]byte(`"‹binary:3,0123456789abcdef›"`)))
+	assert.True(t, redact.HasMarker([]byte(`"‹ref:99,0123456789abcdef›"`)))
+	assert.False(t, redact.HasMarker([]byte(`{"x":"clean"}`)))
+	assert.False(t, redact.HasMarker(nil))
+}
