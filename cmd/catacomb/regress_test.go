@@ -324,6 +324,7 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		{"metric-rel-delta", "0.53", func(th regress.Thresholds) string { return strconv.FormatFloat(th.MetricRelDelta, 'g', -1, 64) }},
 		{"iqr-factor", "2.5", func(th regress.Thresholds) string { return strconv.FormatFloat(th.IQRFactor, 'g', -1, 64) }},
 		{"coverage-floor", "0.8", func(th regress.Thresholds) string { return strconv.FormatFloat(th.CoverageFloor, 'g', -1, 64) }},
+		{"z", "1.96", func(th regress.Thresholds) string { return strconv.FormatFloat(th.Z, 'g', -1, 64) }},
 	}
 	for _, tc := range cases {
 		var f regressFlags
@@ -332,6 +333,48 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set(tc.flag, tc.val))
 		assert.Equal(t, tc.val, tc.got(f.thresholds), "flag %s", tc.flag)
 	}
+}
+
+func TestRegressFailOnNotableFlagMaps(t *testing.T) {
+	var f regressFlags
+	cmd := &cobra.Command{Use: "regress"}
+	bindRegressFlags(cmd, &f)
+	require.NoError(t, cmd.Flags().Set("fail-on-notable", "true"))
+	assert.True(t, f.thresholds.FailOnNotable)
+}
+
+func TestRegressZFlagRejectsNonPositive(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(3, false, 100))
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "0"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--z must be > 0")
+}
+
+func TestRegressDefaultZFlipRegressionExitOne(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(3, true, 100))
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out.String(), "overall regression")
+	assert.Empty(t, errBuf.String())
+}
+
+func TestRegressZWidensToNotableFailOnNotableEscalates(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(3, true, 100))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "1.96"}, &out, &errBuf)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out.String(), "overall ok")
+	assert.Empty(t, errBuf.String())
+
+	out.Reset()
+	errBuf.Reset()
+	code = run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "1.96", "--fail-on-notable"}, &out, &errBuf)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out.String(), "overall regression")
+	assert.Empty(t, errBuf.String())
 }
 
 func seedV1RegressDB(t *testing.T) string {
