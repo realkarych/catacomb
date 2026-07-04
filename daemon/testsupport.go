@@ -23,7 +23,7 @@ func (d *Daemon) dropShardForTest(runID string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.graphs, d.execBySession[runID])
-	delete(d.lastSeen, runID)
+	delete(d.lastSeen, d.execBySession[runID])
 }
 
 func (d *Daemon) execForTest(runID string) string {

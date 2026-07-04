@@ -33,7 +33,22 @@ Every node is keyed by an `execution_id` — a ULID minted per session — not b
 
 A **run** groups one or more executions (sessions) under a label. The label
 defaults to the session id; set `CATACOMB_RUN_ID` or use
-`catacomb run --run-id <label>` to group related sessions together.
+`catacomb run --run-id <label>` to group related sessions together. The grouped
+view (`catacomb runs`, `catacomb inspect`) folds the sessions at read time:
+`status` is the most severe/live state across them (error, else running while
+any session is live, else ok) and `ended_at` is the last session to end. The
+per-session views remain available by querying a session id directly. Bench
+cells are single-session, so `bench` and `regress` are unaffected by the fold.
+
+Two boundaries of read-time grouping are worth knowing. The persisted `runs`
+table row for a shared run id is last-writer-wins across its sessions, but no
+read path consults it for grouping — `runs`, `inspect`, `regress`, and `bench`
+all reconstruct the group from the stored observations — so that row is
+cosmetic. And `aggregate`/`regress` read run `duration_ms` from a single anchor
+session's run timing rather than the unioned span (node counts and cost are
+unioned); because bench cells are single-session this never affects a shipped
+`bench`/`regress` workflow, and `runs`/`inspect` still report the correct
+unioned span.
 
 ### Session hierarchy
 

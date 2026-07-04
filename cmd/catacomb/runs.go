@@ -19,6 +19,7 @@ func newRunsCmd() *cobra.Command {
 	var dbPath string
 	var asJSON bool
 	var labels []string
+	var runID string
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "List all runs in the stored catacomb database",
@@ -27,12 +28,13 @@ func newRunsCmd() *cobra.Command {
 			if err := validateLabelTerms(labels); err != nil {
 				return err
 			}
-			return runRuns(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, dbPath, asJSON, labels)
+			return runRuns(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, newPricer, dbPath, asJSON, labels, runID)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label selector; keep only runs matching all terms (repeatable, AND)")
+	cmd.Flags().StringVar(&runID, "run-id", "", "keep only the run with this exact run id")
 	return cmd
 }
 
@@ -47,7 +49,10 @@ func validateLabelTerms(terms []string) error {
 	return nil
 }
 
-func runRuns(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath string, asJSON bool, labels []string) error {
+func runRuns(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath string, asJSON bool, labels []string, runID string) error {
+	if runID != "" && !model.ValidRunID(runID) {
+		return fmt.Errorf("invalid --run-id %q: expected [A-Za-z0-9._-]{1,256}", runID)
+	}
 	s, err := openReadStore(open, dbPath)
 	if err != nil {
 		return err
@@ -61,6 +66,9 @@ func runRuns(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbP
 	runs := collectRuns(graphs)
 	summaries := make([]daemon.SessionSummary, 0, len(runs))
 	for _, r := range runs {
+		if runID != "" && r.ID != runID {
+			continue
+		}
 		if !model.MatchLabels(r.Labels, selector) {
 			continue
 		}

@@ -578,6 +578,39 @@ func TestEvictTerminalSoftCap(t *testing.T) {
 	assert.LessOrEqual(t, len(d.GraphsForTest()), 1)
 }
 
+func TestEvictGroupedSiblingKeepsLiveRunLiveness(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Hour)
+	d.SetMaxShards(1)
+	const runID = "grp"
+	require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"s1"}`), "", runID))
+	require.NoError(t, d.IngestWithLabels("SessionEnd", []byte(`{"session_id":"s1"}`), "", runID))
+	require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"s2"}`), "", runID))
+
+	execA := d.execForTest("s1")
+	execB := d.execForTest("s2")
+	require.NotEmpty(t, execA)
+	require.NotEmpty(t, execB)
+	require.NotEqual(t, execA, execB)
+
+	now := time.Now()
+	d.evictTerminal(now)
+
+	_, aPresent := d.GraphsForTest()[execA]
+	require.False(t, aPresent)
+	assert.Equal(t, int64(1), d.EvictedForTest())
+	gB := d.GraphsForTest()[execB]
+	require.NotNil(t, gB)
+
+	require.NoError(t, d.reapIdle(now))
+
+	rB := gB.Runs[runID]
+	require.NotNil(t, rB)
+	assert.Equal(t, model.StatusRunning, rB.Status)
+	assert.Empty(t, rB.EndReason)
+}
+
 func TestMetricsSnapshot(t *testing.T) {
 	s := tempStore(t)
 	d := New(s)
@@ -2009,4 +2042,91 @@ func TestWatchVersionAtCeilingDoesNothing(t *testing.T) {
 	r := runForSession(t, d, "s2")
 	assert.NotContains(t, r.Meta, "format_watch")
 	assert.NotContains(t, buf.String(), "tested ceiling")
+}
+
+func allGraphs(d *Daemon) []*reduce.Graph {
+	return graphSlice(d.GraphsForTest())
+}
+
+func TestIngestStreamJSONRunIDGroupsSessions(t *testing.T) {
+	d := New(tempStore(t))
+	for _, s := range []string{"sA", "sB"} {
+		require.NoError(t, d.IngestStreamJSONWithLabels(
+			[]byte(`{"type":"system","subtype":"init","session_id":"`+s+`","model":"m"}`), s, "", "runR"))
+		require.NoError(t, d.IngestStreamJSONWithLabels(
+			[]byte(`{"type":"result","subtype":"success","session_id":"`+s+`","total_cost_usd":0.10}`), s, "", "runR"))
+	}
+	sum := SummarizeRun("runR", allGraphs(d))
+	assert.Equal(t, "runR", sum.Session)
+	assert.Equal(t, []string{"runR"}, sum.RunIDs)
+	assert.Equal(t, string(model.StatusOK), sum.Status)
+	require.NotNil(t, sum.CostUSD)
+	assert.InDelta(t, 0.20, *sum.CostUSD, 1e-9)
+	assert.Empty(t, SummarizeRun("sA", allGraphs(d)).RunIDs)
+	assert.Equal(t, []string{"runR"}, SummarizeSession("sA", allGraphs(d)).RunIDs)
+}
+
+func TestRunIDGroupFoldsToErrorWhenAnySessionErrors(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sOK","model":"m"}`), "sOK", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"result","subtype":"success","session_id":"sOK"}`), "sOK", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sErr","model":"m"}`), "sErr", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"sErr"}`), "sErr", "", "runR"))
+	sum := SummarizeRun("runR", allGraphs(d))
+	assert.Equal(t, []string{"runR"}, sum.RunIDs)
+	assert.Equal(t, string(model.StatusError), sum.Status)
+}
+
+func TestRunIDGroupStaysRunningUntilLastSessionEnds(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sA","model":"m"}`), "sA", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"result","subtype":"success","session_id":"sA"}`), "sA", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sB","model":"m"}`), "sB", "", "runR"))
+	assert.Equal(t, string(model.StatusRunning), SummarizeRun("runR", allGraphs(d)).Status)
+}
+
+func TestIngestHookRunIDOverridesSessionDefault(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"sH"}`), "", "runR"))
+	assert.Equal(t, []string{"runR"}, SummarizeRun("runR", allGraphs(d)).RunIDs)
+	assert.Equal(t, []string{"runR"}, SummarizeSession("sH", allGraphs(d)).RunIDs)
+}
+
+func TestIngestInvalidRunIDFallsBackToSession(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sX","model":"m"}`), "sX", "", "bad id!!"))
+	assert.Empty(t, SummarizeRun("bad id!!", allGraphs(d)).RunIDs)
+	assert.Equal(t, "sX", SummarizeRun("sX", allGraphs(d)).Session)
+}
+
+func TestRunIDGroupingSurvivesRecover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d := New(s)
+	for _, sess := range []string{"sA", "sB"} {
+		require.NoError(t, d.IngestStreamJSONWithLabels(
+			[]byte(`{"type":"system","subtype":"init","session_id":"`+sess+`","model":"m"}`), sess, "", "runR"))
+		require.NoError(t, d.IngestStreamJSONWithLabels(
+			[]byte(`{"type":"result","subtype":"success","session_id":"`+sess+`","total_cost_usd":0.10}`), sess, "", "runR"))
+	}
+	require.NoError(t, s.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	sum := SummarizeRun("runR", allGraphs(d2))
+	assert.Equal(t, []string{"runR"}, sum.RunIDs)
+	require.NotNil(t, sum.CostUSD)
+	assert.InDelta(t, 0.20, *sum.CostUSD, 1e-9)
 }

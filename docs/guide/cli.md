@@ -338,7 +338,7 @@ catacomb run [flags] -- <cmd...>
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--run-id` | (empty) | Sets `CATACOMB_RUN_ID` for the child process (multi-session grouping) |
+| `--run-id` | (empty) | Sets `CATACOMB_RUN_ID` for the child process (multi-session grouping); validated as `[A-Za-z0-9._-]{1,256}`, invalid values are rejected before the child starts |
 | `--label` | (repeatable) | `k=v` label recorded on the run; adds to `CATACOMB_LABELS`, flag wins per key |
 
 Exits with the child's exit code. The child inherits `CATACOMB_DISCOVERY` from the
@@ -354,6 +354,13 @@ stream-json ones), tool payload precedence, permission-deny (`blocked`) statuses
 compaction/notification markers. When both fire, the run ends once — hook timing wins and the
 second end signal is a no-op. The idle reaper remains the fallback for streams that die before
 `result` (such runs end `abandoned` after the quiescence window).
+
+A run spanning multiple sessions is grouped by run id: the forwarders send `CATACOMB_RUN_ID`
+on the `X-Catacomb-Run-ID` header and the daemon tags every event with it, so sessions sharing
+one run id fold into a single run at read time (`status` = most severe/live across sessions,
+`ended_at` = last session to end). Query the group with `catacomb runs --run-id <id>` or
+`catacomb inspect <id>`. Bench cells are single-session, so `bench` and `regress` are
+unaffected by the fold.
 
 ```sh
 catacomb run --run-id sprint-42 --label basket=checkout -- claude --model claude-opus-4-5 "refactor the auth module"
@@ -465,6 +472,7 @@ catacomb runs [flags]
 | `--db` | `~/.catacomb/catacomb.db` | Database path to read from |
 | `--json` | false | Emit JSON output |
 | `--label` | (repeatable) | `k=v` selector; keep only runs matching every term (AND) |
+| `--run-id` | (empty) | Keep only the run with this exact run id (validated `[A-Za-z0-9._-]{1,256}`); resolves a `bench` cell's manifest run id to its stored run |
 
 Outputs a table (or JSON) of runs with status, start time, tool counts, token counts, and
 cost. Cost prefers the session total reported by Claude Code itself (the stream-json
@@ -474,11 +482,16 @@ usage — the cumulative `result` record is never double-counted. Databases
 written by older catacomb versions are re-summarized correctly on read; no
 migration is needed. Repeat `--label` to narrow the listing to runs carrying all of the given labels; the
 JSON output includes each run's `labels` object. See
-[ingestion.md](ingestion.md#run-labels) for how labels are attached.
+[ingestion.md](ingestion.md#run-labels) for how labels are attached. Pass `--run-id <id>` to keep
+only that one run; sessions sharing a `CATACOMB_RUN_ID` are already folded into a single row, and a
+`bench` cell's manifest `run_id` (e.g. `bench-<basket>-<task>-<variant>-r<rep>`) resolves here.
+`--run-id` and `--label` combine with AND: a run is kept only when it matches the given run id and
+carries every requested label.
 
 ```sh
 catacomb runs --db ~/.catacomb/catacomb.db --json
 catacomb runs --label basket=checkout --label rep=1 --json
+catacomb runs --run-id sprint-42 --json
 ```
 
 ---

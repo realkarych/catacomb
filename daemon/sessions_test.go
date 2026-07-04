@@ -1186,6 +1186,48 @@ func TestSummarizeRunMixedGraphsSumPerGraphBest(t *testing.T) {
 	assert.Equal(t, "reported", sum.CostSource)
 }
 
+func TestSummarizeRunRunningOmitsEndedAtAndDuration(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	endA := start.Add(2 * time.Minute)
+	startB := start.Add(1 * time.Minute)
+
+	gA := reduce.NewGraph()
+	gA.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusOK, SessionIDs: []string{"a"}, StartedAt: &start, EndedAt: &endA}
+	gA.Nodes["a1"] = &model.Node{ID: "a1", RunID: "r1", Type: model.NodeAssistantTurn}
+
+	gB := reduce.NewGraph()
+	gB.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusRunning, SessionIDs: []string{"b"}, StartedAt: &startB}
+	gB.Nodes["b1"] = &model.Node{ID: "b1", RunID: "r1", Type: model.NodeAssistantTurn}
+
+	sum := SummarizeRun("r1", []*reduce.Graph{gA, gB})
+
+	assert.Equal(t, string(model.StatusRunning), sum.Status)
+	assert.Empty(t, sum.EndedAt)
+	assert.Nil(t, sum.DurationMS)
+	assert.Equal(t, start.UTC().Format(time.RFC3339), sum.StartedAt)
+}
+
+func TestSummarizeRunAllEndedReportsEndedAtAndDuration(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	endA := start.Add(2 * time.Minute)
+	endB := start.Add(3 * time.Minute)
+
+	gA := reduce.NewGraph()
+	gA.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusOK, SessionIDs: []string{"a"}, StartedAt: &start, EndedAt: &endA}
+	gA.Nodes["a1"] = &model.Node{ID: "a1", RunID: "r1", Type: model.NodeAssistantTurn}
+
+	gB := reduce.NewGraph()
+	gB.Runs["r1"] = &model.Run{ID: "r1", Status: model.StatusOK, SessionIDs: []string{"b"}, StartedAt: &start, EndedAt: &endB}
+	gB.Nodes["b1"] = &model.Node{ID: "b1", RunID: "r1", Type: model.NodeAssistantTurn}
+
+	sum := SummarizeRun("r1", []*reduce.Graph{gA, gB})
+
+	assert.Equal(t, string(model.StatusOK), sum.Status)
+	assert.Equal(t, endB.UTC().Format(time.RFC3339), sum.EndedAt)
+	require.NotNil(t, sum.DurationMS)
+	assert.Equal(t, int64(3*60*1000), *sum.DurationMS)
+}
+
 func TestSessionSummariesReportedSessionTotal(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)
