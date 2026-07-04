@@ -156,7 +156,7 @@ func seedRunGroup(t *testing.T) string {
 		{"r3", "basket=b2"},
 	}
 	for _, sd := range seeds {
-		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+sd.id+`"}`), sd.labels))
+		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+sd.id+`"}`), sd.labels, ""))
 	}
 	obs, err := s.ObservationsSince(0)
 	require.NoError(t, err)
@@ -245,9 +245,9 @@ func TestLoadRunGroupMultiRunBucketsAndOrders(t *testing.T) {
 	require.NoError(t, err)
 	d := daemon.New(s)
 	for _, rid := range []string{"r3", "r1", "r2"} {
-		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+rid+`"}`), "basket=b1"))
-		require.NoError(t, d.IngestWithLabels("PreToolUse", []byte(`{"session_id":"`+rid+`","tool_name":"Bash","tool_use_id":"`+rid+`-t2","tool_input":{}}`), "basket=b1"))
-		require.NoError(t, d.IngestWithLabels("PreToolUse", []byte(`{"session_id":"`+rid+`","tool_name":"Bash","tool_use_id":"`+rid+`-t1","tool_input":{}}`), "basket=b1"))
+		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+rid+`"}`), "basket=b1", ""))
+		require.NoError(t, d.IngestWithLabels("PreToolUse", []byte(`{"session_id":"`+rid+`","tool_name":"Bash","tool_use_id":"`+rid+`-t2","tool_input":{}}`), "basket=b1", ""))
+		require.NoError(t, d.IngestWithLabels("PreToolUse", []byte(`{"session_id":"`+rid+`","tool_name":"Bash","tool_use_id":"`+rid+`-t1","tool_input":{}}`), "basket=b1", ""))
 	}
 	require.NoError(t, s.Close())
 

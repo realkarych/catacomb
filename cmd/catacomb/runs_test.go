@@ -80,7 +80,7 @@ func seedRunsWithLabels(t *testing.T, runs map[string]string) string {
 	require.NoError(t, err)
 	d := daemon.New(s)
 	for id, labels := range runs {
-		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+id+`"}`), labels))
+		require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"`+id+`"}`), labels, ""))
 	}
 	require.NoError(t, s.Close())
 	return dbPath

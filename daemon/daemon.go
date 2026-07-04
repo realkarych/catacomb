@@ -190,10 +190,10 @@ func (d *Daemon) Recover() error {
 }
 
 func (d *Daemon) Ingest(hookType string, payload []byte) error {
-	return d.IngestWithLabels(hookType, payload, "")
+	return d.IngestWithLabels(hookType, payload, "", "")
 }
 
-func (d *Daemon) IngestWithLabels(hookType string, payload []byte, labels string) (err error) {
+func (d *Daemon) IngestWithLabels(hookType string, payload []byte, labels, runID string) (err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	defer func() {
@@ -202,11 +202,11 @@ func (d *Daemon) IngestWithLabels(hookType string, payload []byte, labels string
 			err = nil
 		}
 	}()
-	d.ingestLocked(hookType, payload, canonicalLabels(labels))
+	d.ingestLocked(hookType, payload, canonicalLabels(labels), runID)
 	return nil
 }
 
-func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) {
+func (d *Daemon) ingestLocked(hookType string, payload []byte, labels, runID string) {
 	sessionID := sessionIDOf(payload)
 	execID, known := d.execBySession[sessionID]
 	if !known {
@@ -220,6 +220,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) {
 	}
 	d.recordDrift(model.SourceHook, dc)
 	attachLabels(obs, labels)
+	attachRunID(obs, runID)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -301,10 +302,10 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 }
 
 func (d *Daemon) IngestStreamJSON(line []byte, sessionID string) error {
-	return d.IngestStreamJSONWithLabels(line, sessionID, "")
+	return d.IngestStreamJSONWithLabels(line, sessionID, "", "")
 }
 
-func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels string) (err error) {
+func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels, runID string) (err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	defer func() {
@@ -325,6 +326,7 @@ func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels strin
 	}
 	d.recordDrift(model.SourceStreamJSON, dc)
 	attachLabels(obs, canonicalLabels(labels))
+	attachRunID(obs, runID)
 	g, inMem := d.graphs[execID]
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
@@ -733,6 +735,15 @@ func attachLabels(obs []model.Observation, labels string) {
 			obs[i].Attrs = map[string]any{}
 		}
 		obs[i].Attrs["catacomb.labels"] = labels
+	}
+}
+
+func attachRunID(obs []model.Observation, runID string) {
+	if !model.ValidRunID(runID) {
+		return
+	}
+	for i := range obs {
+		obs[i].RunID = runID
 	}
 }
 
