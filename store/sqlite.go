@@ -143,11 +143,12 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 		return nil, fmt.Errorf("store.OpenSQLite wal: %w", err)
 	}
 	logger := slog.Default()
-	if err := migrate(db, version, schemaMigrations, logger); err != nil {
+	changed, migErr := migrate(db, version, schemaMigrations, logger)
+	if migErr != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", err)
+		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", migErr)
 	}
-	if shouldVacuumAfterMigration(version) {
+	if shouldVacuumAfterMigration(changed) {
 		vacuumAfterScrub(db, logger)
 	}
 	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil

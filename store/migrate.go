@@ -190,10 +190,10 @@ func schemaVersionGuard(db *sql.DB, current int) (int, error) {
 	return version, nil
 }
 
-func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logger) error {
+func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logger) (map[string]int, error) {
 	pending := pendingMigrations(version, migrations)
 	if len(pending) == 0 {
-		return nil
+		return nil, nil
 	}
 	target := pending[len(pending)-1].to
 	logger.Info("store: schema migration start", "from", version, "to", target)
@@ -202,7 +202,7 @@ func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logge
 	for _, m := range pending {
 		counts, err := applyMigration(db, m)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for table, n := range counts {
 			changed[table] += n
@@ -212,7 +212,7 @@ func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logge
 		"from", version, "to", target,
 		"changed_rows", changed,
 		"duration_ms", time.Since(started).Milliseconds())
-	return nil
+	return changed, nil
 }
 
 func pendingMigrations(version int, migrations []migration) []migration {
@@ -226,8 +226,13 @@ func pendingMigrations(version int, migrations []migration) []migration {
 	return pending
 }
 
-func shouldVacuumAfterMigration(version int) bool {
-	return version > 0 && version < currentSchemaVersion
+func shouldVacuumAfterMigration(changed map[string]int) bool {
+	for _, n := range changed {
+		if n > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func vacuumAfterScrub(conn migrationConn, logger *slog.Logger) {

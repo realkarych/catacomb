@@ -143,7 +143,8 @@ func TestMigrateAppliesInOrder(t *testing.T) {
 		{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { order = append(order, 1); return nil, nil }},
 		{from: 1, to: 2, apply: func(*sql.Tx) (map[string]int, error) { order = append(order, 2); return nil, nil }},
 	}
-	require.NoError(t, migrate(db, 0, migs, discardLogger()))
+	_, err := migrate(db, 0, migs, discardLogger())
+	require.NoError(t, err)
 	assert.Equal(t, []int{1, 2}, order)
 	assert.Equal(t, 2, userVersion(t, db))
 }
@@ -154,7 +155,7 @@ func TestMigrateFailingStepRollsBackWithSentinel(t *testing.T) {
 		{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { return nil, nil }},
 		{from: 1, to: 2, apply: func(*sql.Tx) (map[string]int, error) { return nil, errors.New("boom") }},
 	}
-	err := migrate(db, 0, migs, discardLogger())
+	_, err := migrate(db, 0, migs, discardLogger())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
 	assert.Equal(t, 1, userVersion(t, db))
@@ -173,7 +174,8 @@ func TestMigrateLogsStartAndFinishWithChangedRowCounts(t *testing.T) {
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	require.NoError(t, migrate(db, 3, schemaMigrations, logger))
+	_, err = migrate(db, 3, schemaMigrations, logger)
+	require.NoError(t, err)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "schema migration start")
@@ -190,15 +192,16 @@ func TestMigrateAtCurrentVersionLogsNothing(t *testing.T) {
 	db := rawDB(t)
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	require.NoError(t, migrate(db, currentSchemaVersion, schemaMigrations, logger))
+	_, err := migrate(db, currentSchemaVersion, schemaMigrations, logger)
+	require.NoError(t, err)
 	assert.Empty(t, buf.String())
 }
 
 func TestShouldVacuumAfterMigration(t *testing.T) {
-	assert.False(t, shouldVacuumAfterMigration(0), "fresh DB has no data to scrub")
-	assert.True(t, shouldVacuumAfterMigration(1))
-	assert.True(t, shouldVacuumAfterMigration(3))
-	assert.False(t, shouldVacuumAfterMigration(currentSchemaVersion))
+	assert.False(t, shouldVacuumAfterMigration(nil), "no migration scrubbed any row")
+	assert.False(t, shouldVacuumAfterMigration(map[string]int{"runs": 0}), "scrub touched no rows")
+	assert.True(t, shouldVacuumAfterMigration(map[string]int{"runs": 1}))
+	assert.True(t, shouldVacuumAfterMigration(map[string]int{"observations": 0, "nodes": 2}))
 }
 
 type execErrConn struct{}
@@ -594,6 +597,38 @@ func TestMigrationLeavesNoSecretBytesInFile(t *testing.T) {
 		assert.NotContains(t, string(blob), "kesha_dev_password", f)
 		assert.NotContains(t, string(blob), "AKIAIOSFODNN7EXAMPLE", f)
 		assert.NotContains(t, string(blob), seedRunCwdSecret, f)
+		assert.NotContains(t, string(blob), "run_label_password", f)
+	}
+}
+
+func TestOpenVacuumsUnversionedV0DBWithScrubbedData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	run := model.Run{
+		ID:     "r1",
+		Status: model.StatusRunning,
+		Labels: map[string]string{
+			"filler": strings.Repeat("benign low entropy padding words ", 400),
+			"note":   seedRunLabelSecret,
+		},
+	}
+	rb, err := json.Marshal(run)
+	require.NoError(t, err)
+	seed := seedV3Schema(t, path)
+	_, err = seed.Exec(`INSERT INTO runs(run_id, status, body) VALUES('r1','running',?)`, string(rb))
+	require.NoError(t, err)
+	_, err = seed.Exec("PRAGMA user_version = 0")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+
+	s, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	for _, f := range []string{path, path + "-wal"} {
+		blob, rerr := os.ReadFile(f)
+		if rerr != nil {
+			continue
+		}
 		assert.NotContains(t, string(blob), "run_label_password", f)
 	}
 }

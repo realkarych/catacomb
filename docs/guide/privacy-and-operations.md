@@ -74,10 +74,12 @@ Write-path redaction narrows what a copied `catacomb.db` can leak; it does not
 make the database a vault. Known residuals, each a deliberate design choice or
 an accepted trade-off:
 
-1. **Quarantine holds raw bytes only for input that could not be parsed.**
+1. **Quarantine holds raw bytes only for input that could not be parsed
+   (including panics during ingestion).**
    Malformed input is stored verbatim in the `quarantine` table so it can be
-   diagnosed; redaction never saw it. Persist-failure quarantine — input that
-   parsed but failed to persist — is redacted before it is written.
+   diagnosed; redaction never saw it. A panic while ingesting a payload
+   quarantines the raw payload the same way. Persist-failure quarantine — input
+   that parsed but failed to persist — is redacted before it is written.
 2. **Annotation values persist unredacted.** The annotation write endpoint
    (gated local API, off by default) stores caller-provided values as given.
 3. **Entropy-looking paths lose repro hashes.** A cwd path segment that looks
