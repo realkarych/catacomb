@@ -103,7 +103,7 @@ The file and its parent directory are created with permissions 0600/0700. It con
 | Variable | Effect |
 | --- | --- |
 | `CATACOMB_DISCOVERY` | Path to the discovery file. Clients and installed hooks read this to locate the daemon. |
-| `CATACOMB_RUN_ID` | Multi-session grouping label. Set by `catacomb run --run-id`; ingestion tags all sessions under that run. |
+| `CATACOMB_RUN_ID` | Groups multiple sessions under one run id. Set by `catacomb run --run-id` (and inherited by hooks); the forwarders send it on `X-Catacomb-Run-ID` and the daemon tags every event with it. Sessions sharing the value form one run (folded at read time): status is the most severe/live across sessions, `ended_at` is the last session to end. Must match `[A-Za-z0-9._-]{1,256}`; an invalid value falls back to per-session grouping. Query with `catacomb runs --run-id <id>`. |
 
 The `OTEL_*` and `CLAUDE_CODE_*` variables are emitted by `catacomb env` and are covered in [ingestion.md](ingestion.md).
 

@@ -72,7 +72,19 @@ To group multiple sessions under one run label, pass `--run-id`:
 catacomb run --run-id my-experiment -- claude --output-format stream-json <prompt>
 ```
 
-`catacomb run` sets `CATACOMB_RUN_ID` in the child process environment. The daemon tags all ingested events from that child with the run ID. The child's exit code is preserved.
+`catacomb run` sets `CATACOMB_RUN_ID` in the child process environment, and the
+forwarders send it to the daemon on the `X-Catacomb-Run-ID` header (the hook
+forwarder inherits it from the child's environment). The daemon tags every
+ingested event from those sessions with the run id, overriding the per-session
+default, so sessions sharing one `CATACOMB_RUN_ID` are grouped into a single
+run. Grouping is computed at read time from the stored observations (so it
+survives a daemon restart) and shows up in `catacomb runs` and `catacomb
+inspect`; query one group with `catacomb runs --run-id <id>` or
+`catacomb inspect <id>`. A grouped run reports `status` as the most severe/live
+state across its sessions (error, else running while any session is live, else
+ok) and `ended_at` as the last session to end. An invalid run id (not matching
+`[A-Za-z0-9._-]{1,256}`) is ignored and the session falls back to per-session
+grouping. The child's exit code is preserved.
 
 ## Transcript JSONL
 
