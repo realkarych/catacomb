@@ -24,6 +24,7 @@ type envelope struct {
 	Message         json.RawMessage `json:"message"`
 	Usage           *usage          `json:"usage"`
 	TotalCostUSD    *float64        `json:"total_cost_usd"`
+	IsError         bool            `json:"is_error"`
 	Cwd             string          `json:"cwd"`
 }
 
@@ -143,7 +144,14 @@ func build(e envelope) ([]partial, drift.Counts, error) {
 		if e.TotalCostUSD != nil {
 			attrs["cost_usd"] = *e.TotalCostUSD
 		}
-		return []partial{{kind: "assistant_turn", correlation: base, attrs: attrs}}, nil, nil
+		endAttrs := map[string]any{"reason": e.Subtype}
+		if e.IsError {
+			endAttrs["status"] = string(model.StatusError)
+		}
+		return []partial{
+			{kind: "assistant_turn", correlation: base, attrs: attrs},
+			{kind: "session_end", correlation: base, attrs: endAttrs},
+		}, nil, nil
 	default:
 		return nil, drift.Counts{drift.ReasonUnknownRecordType: 1}, nil
 	}

@@ -66,7 +66,7 @@ func TestParseResultCacheTokens(t *testing.T) {
 
 	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
+	require.Len(t, obs, 2)
 
 	o := obs[0]
 	assert.Equal(t, int64(11), o.Attrs["cache_read_in"])
@@ -160,7 +160,7 @@ func TestParseResultEnrichment(t *testing.T) {
 	line := []byte(`{"type":"result","session_id":"s","usage":{"input_tokens":7,"output_tokens":9},"total_cost_usd":0.0123}`)
 	obs, _, err := Parse(line, "e", seq())
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
+	require.Len(t, obs, 2)
 	o := obs[0]
 	assert.Equal(t, "assistant_turn", o.Kind)
 	assert.Equal(t, int64(7), o.Attrs["tokens_in"])
@@ -213,7 +213,7 @@ func TestParseResultNoUsageNoCost(t *testing.T) {
 	fixedNow(time.Now())
 	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s"}`), "e2", seq())
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
+	require.Len(t, obs, 2)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
 	_, hasTokensIn := obs[0].Attrs["tokens_in"]
 	assert.False(t, hasTokensIn)
@@ -273,7 +273,7 @@ func TestParseResultTurnNoPayload(t *testing.T) {
 	next := func() uint64 { s := seq; seq++; return s }
 	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s1","usage":{"input_tokens":3,"output_tokens":4}}`), "e", next)
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
+	require.Len(t, obs, 2)
 	assert.Equal(t, "assistant_turn", obs[0].Kind)
 	assert.Nil(t, obs[0].Payload)
 }
@@ -398,12 +398,12 @@ func TestParseResultTaggedSessionTotal(t *testing.T) {
 	fixedNow(time.Now())
 	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":0.5}`), "e", seq())
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
+	require.Len(t, obs, 2)
 	assert.Equal(t, true, obs[0].Attrs["session_total"])
 
 	obs, _, err = Parse([]byte(`{"type":"result","session_id":"s"}`), "e", seq())
 	require.NoError(t, err)
-	require.Len(t, obs, 1)
+	require.Len(t, obs, 2)
 	assert.Equal(t, true, obs[0].Attrs["session_total"])
 
 	obs, _, err = Parse([]byte(`{"type":"assistant","session_id":"s","message":{"id":"m1","model":"m","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"x"}]}}`), "e", seq())
@@ -422,8 +422,41 @@ func TestParseResultNeverCarriesModelAttrElseSessionTotalGetsEstimatePricedAsRep
 	for _, line := range lines {
 		obs, _, err := Parse(line, "e", seq())
 		require.NoError(t, err)
-		require.Len(t, obs, 1)
+		require.Len(t, obs, 2)
 		_, has := obs[0].Attrs["model"]
 		assert.False(t, has, "result partial must not carry model: the reducer would estimate-price the cumulative session_total node and rollups would sum it as the reported session cost")
+	}
+}
+
+func TestParseResultEmitsSessionEndAfterSessionTotal(t *testing.T) {
+	fixedNow(time.Now())
+	line := []byte(`{"type":"result","subtype":"success","is_error":false,"session_id":"s","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":0.5}`)
+	obs, dc, err := Parse(line, "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 2)
+	assert.Equal(t, "assistant_turn", obs[0].Kind)
+	assert.Equal(t, true, obs[0].Attrs["session_total"])
+	end := obs[1]
+	assert.Equal(t, "session_end", end.Kind)
+	assert.Equal(t, "success", end.Attrs["reason"])
+	_, hasStatus := end.Attrs["status"]
+	assert.False(t, hasStatus)
+	assert.Equal(t, "s", end.Correlation.SessionID)
+	assert.Equal(t, model.SourceStreamJSON, end.Source)
+	assert.Less(t, obs[0].Seq, obs[1].Seq)
+	assert.Empty(t, dc)
+}
+
+func TestParseResultErrorSubtypesMapErrorStatus(t *testing.T) {
+	fixedNow(time.Now())
+	for _, subtype := range []string{"error_max_turns", "error_during_execution", "error_max_budget_usd"} {
+		line := []byte(`{"type":"result","subtype":"` + subtype + `","is_error":true,"session_id":"s"}`)
+		obs, _, err := Parse(line, "e", seq())
+		require.NoError(t, err)
+		require.Len(t, obs, 2)
+		end := obs[1]
+		assert.Equal(t, "session_end", end.Kind)
+		assert.Equal(t, subtype, end.Attrs["reason"])
+		assert.Equal(t, string(model.StatusError), end.Attrs["status"])
 	}
 }

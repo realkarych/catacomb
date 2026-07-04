@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
@@ -569,6 +570,114 @@ func sessionEndObs(exec, runID string, seq uint64) model.Observation {
 	}
 }
 
+func streamSessionEndObs(exec, runID, reason, status string, seq uint64) model.Observation {
+	attrs := map[string]any{"reason": reason}
+	if status != "" {
+		attrs["status"] = status
+	}
+	return model.Observation{
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
+		Source: model.SourceStreamJSON, Kind: "session_end",
+		Correlation: model.Correlation{SessionID: runID}, Attrs: attrs,
+		EventTime: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	}
+}
+
+func TestStreamSessionEndFinalizesRunOK(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		streamSessionEndObs("e1", "s1", "success", "", 2),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusOK, r.Status)
+	assert.Equal(t, "session_ended", r.EndReason)
+	require.NotNil(t, r.EndedAt)
+	assert.Equal(t, time.Unix(2, 0).UTC(), *r.EndedAt)
+	n := g.Nodes[model.SessionNodeID("e1")]
+	assert.Equal(t, model.StatusOK, n.Status)
+	require.NotNil(t, n.TEnd)
+}
+
+func TestStreamSessionEndErrorEndsRunErrorAndLatches(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		streamSessionEndObs("e1", "s1", "error_max_turns", string(model.StatusError), 2),
+		sessionEndObs("e1", "s1", 3),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusError, r.Status)
+	assert.Equal(t, model.StatusError, g.Nodes[model.SessionNodeID("e1")].Status)
+	require.NotNil(t, r.EndedAt)
+	assert.Equal(t, time.Unix(3, 0).UTC(), *r.EndedAt)
+}
+
+func TestHookOKThenStreamErrorEndsRunError(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		sessionEndObs("e1", "s1", 2),
+		streamSessionEndObs("e1", "s1", "error_during_execution", string(model.StatusError), 3),
+	})
+	assert.Equal(t, model.StatusError, g.Runs["s1"].Status)
+}
+
+func TestRunEndedAtConvergesToHookTimingBothOrders(t *testing.T) {
+	fwd := NewGraph()
+	fwd.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		streamSessionEndObs("e1", "s1", "success", "", 5),
+		sessionEndObs("e1", "s1", 6),
+	})
+	rev := NewGraph()
+	rev.ApplyAll([]model.Observation{
+		sessionStartObs("e2", "s2", 1),
+		sessionEndObs("e2", "s2", 6),
+		streamSessionEndObs("e2", "s2", "success", "", 5),
+	})
+	require.NotNil(t, fwd.Runs["s1"].EndedAt)
+	require.NotNil(t, rev.Runs["s2"].EndedAt)
+	assert.Equal(t, time.Unix(6, 0).UTC(), *fwd.Runs["s1"].EndedAt)
+	assert.Equal(t, time.Unix(6, 0).UTC(), *rev.Runs["s2"].EndedAt)
+}
+
+func TestLateObservationAfterStreamEndDoesNotReopenRun(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		streamSessionEndObs("e1", "s1", "success", "", 2),
+		toolObs("e1", "s1", "t9", "Bash", "running", 3),
+	})
+	r := g.Runs["s1"]
+	assert.Equal(t, model.StatusOK, r.Status)
+	require.NotNil(t, r.EndedAt)
+	assert.Equal(t, time.Unix(2, 0).UTC(), *r.EndedAt)
+	assert.Equal(t, uint64(3), r.LastSeq)
+}
+
+func TestReaperRunEndedCannotAbandonErrorRun(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		streamSessionEndObs("e1", "s1", "error_max_turns", string(model.StatusError), 2),
+		runEndedObs("e1", "s1", "timeout", 3),
+	})
+	assert.Equal(t, model.StatusError, g.Runs["s1"].Status)
+	assert.Equal(t, "session_ended", g.Runs["s1"].EndReason)
+}
+
+func TestStreamEndYieldsRunDurationSample(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{
+		sessionStartObs("e1", "s1", 1),
+		streamSessionEndObs("e1", "s1", "success", "", 2),
+	})
+	rep := aggregate.Aggregate([]aggregate.RunGraph{{Run: *g.Runs["s1"]}}, aggregate.Options{})
+	assert.Equal(t, 1, rep.Totals.DurationMS.N)
+	assert.Equal(t, float64(1000), rep.Totals.DurationMS.Median)
+}
+
 func otelTool(exec, runID, toolUse, span, parentSpan string, seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
@@ -1013,10 +1122,27 @@ func canonGraph(g *Graph) string {
 		ev = append(ev, edgeView{ID: id, Rev: e.Rev})
 	}
 	sort.Slice(ev, func(i, j int) bool { return ev[i].ID < ev[j].ID })
+	type runView struct {
+		ID        string
+		Status    model.Status
+		EndReason string
+		EndedAt   string
+		LastSeq   uint64
+	}
+	var rv []runView
+	for id, r := range g.Runs {
+		v := runView{ID: id, Status: r.Status, EndReason: r.EndReason, LastSeq: r.LastSeq}
+		if r.EndedAt != nil {
+			v.EndedAt = r.EndedAt.UTC().Format(time.RFC3339Nano)
+		}
+		rv = append(rv, v)
+	}
+	sort.Slice(rv, func(i, j int) bool { return rv[i].ID < rv[j].ID })
 	b, _ := json.Marshal(struct {
 		Nodes []nodeView
 		Edges []edgeView
-	}{nv, ev})
+		Runs  []runView
+	}{nv, ev, rv})
 	return string(b)
 }
 
