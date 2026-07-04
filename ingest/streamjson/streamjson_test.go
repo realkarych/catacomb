@@ -412,3 +412,18 @@ func TestParseResultTaggedSessionTotal(t *testing.T) {
 	_, has := obs[0].Attrs["session_total"]
 	assert.False(t, has)
 }
+
+func TestParseResultNeverCarriesModelAttrElseSessionTotalGetsEstimatePricedAsReported(t *testing.T) {
+	fixedNow(time.Now())
+	lines := [][]byte{
+		[]byte(`{"type":"result","session_id":"s","model":"claude-haiku-4-5","usage":{"input_tokens":3000,"output_tokens":1200},"total_cost_usd":0.0421}`),
+		[]byte(`{"type":"result","session_id":"s","model":"claude-haiku-4-5","usage":{"input_tokens":3000,"output_tokens":1200}}`),
+	}
+	for _, line := range lines {
+		obs, _, err := Parse(line, "e", seq())
+		require.NoError(t, err)
+		require.Len(t, obs, 1)
+		_, has := obs[0].Attrs["model"]
+		assert.False(t, has, "result partial must not carry model: the reducer would estimate-price the cumulative session_total node and rollups would sum it as the reported session cost")
+	}
+}

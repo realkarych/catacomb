@@ -1407,3 +1407,81 @@ func TestServeStartsExporterConsumerViaBuildFn(t *testing.T) {
 	cancel()
 	require.NoError(t, <-errc)
 }
+
+const f7Stream = `{"type":"system","subtype":"init","session_id":"s1","model":"claude-haiku-4-5"}
+{"type":"assistant","session_id":"s1","message":{"id":"m1","model":"claude-haiku-4-5","usage":{"input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"a"}]}}
+{"type":"assistant","session_id":"s1","message":{"id":"m2","model":"claude-haiku-4-5","usage":{"input_tokens":2000,"output_tokens":700},"content":[{"type":"text","text":"b"}]}}
+`
+
+const f7Result = `{"type":"result","session_id":"s1","usage":{"input_tokens":3000,"output_tokens":1200},"total_cost_usd":0.0421}
+`
+
+func ingestF7(t *testing.T, d *Daemon, body string) {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/stream-json", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	d.Handler("tok").ServeHTTP(rec, r)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, time.Second, 10*time.Millisecond)
+}
+
+func TestStreamJSONSessionCostNotDoubleCounted(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	ingestF7(t, d, f7Stream+f7Result)
+
+	d.mu.Lock()
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+
+	require.Len(t, sums, 1)
+	require.NotNil(t, sums[0].CostUSD)
+	assert.InDelta(t, 0.0421, *sums[0].CostUSD, 1e-12)
+	assert.Equal(t, "reported", sums[0].CostSource)
+	assert.Equal(t, int64(3000), sums[0].TokensIn)
+	assert.Equal(t, int64(1200), sums[0].TokensOut)
+}
+
+func TestStreamJSONNoResultFallsBackToEstimates(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	ingestF7(t, d, f7Stream)
+
+	d.mu.Lock()
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+
+	require.Len(t, sums, 1)
+	require.NotNil(t, sums[0].CostUSD)
+	assert.InDelta(t, 0.009, *sums[0].CostUSD, 1e-12)
+	assert.Equal(t, "estimated", sums[0].CostSource)
+	assert.Equal(t, int64(3000), sums[0].TokensIn)
+	assert.Equal(t, int64(1200), sums[0].TokensOut)
+}
+
+func TestStreamJSONCostRecoverMatchesLive(t *testing.T) {
+	st := tempStore(t)
+	d1 := New(st)
+	fixedExecID(d1)
+	ingestF7(t, d1, f7Stream+f7Result)
+
+	d1.mu.Lock()
+	live := d1.sessionSummaries()
+	d1.mu.Unlock()
+	require.Len(t, live, 1)
+
+	d2 := New(st)
+	require.NoError(t, d2.Recover())
+	d2.mu.Lock()
+	recovered := d2.sessionSummaries()
+	d2.mu.Unlock()
+
+	require.Len(t, recovered, 1)
+	require.NotNil(t, recovered[0].CostUSD)
+	require.NotNil(t, live[0].CostUSD)
+	assert.InDelta(t, *live[0].CostUSD, *recovered[0].CostUSD, 1e-12)
+	assert.Equal(t, live[0].CostSource, recovered[0].CostSource)
+	assert.Equal(t, live[0].TokensIn, recovered[0].TokensIn)
+	assert.Equal(t, live[0].TokensOut, recovered[0].TokensOut)
+}
