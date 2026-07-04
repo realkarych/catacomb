@@ -162,7 +162,7 @@ func (d *Daemon) Recover() error {
 		if o.Correlation.SessionID != "" {
 			d.execBySession[o.Correlation.SessionID] = o.ExecutionID
 		}
-		d.lastSeen[o.RunID] = o.ObservedAt
+		d.lastSeen[o.ExecutionID] = o.ObservedAt
 		if o.Seq > maxSeq {
 			maxSeq = o.Seq
 		}
@@ -240,7 +240,7 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels, runID str
 			d.quarantineRedacted(hookType, payload, err.Error())
 			return
 		}
-		d.lastSeen[o.RunID] = o.ObservedAt
+		d.lastSeen[o.ExecutionID] = o.ObservedAt
 	}
 }
 
@@ -296,7 +296,7 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 			d.quarantineRedacted("otel", raw, err.Error())
 			return nil
 		}
-		d.lastSeen[o.RunID] = o.ObservedAt
+		d.lastSeen[o.ExecutionID] = o.ObservedAt
 	}
 	return nil
 }
@@ -346,7 +346,7 @@ func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels, runI
 			d.quarantineRedacted("stream-json", line, err.Error())
 			return nil
 		}
-		d.lastSeen[o.RunID] = o.ObservedAt
+		d.lastSeen[o.ExecutionID] = o.ObservedAt
 	}
 	return nil
 }
@@ -390,7 +390,7 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 			d.quarantineRedacted("jsonl", line, err.Error())
 			return nil
 		}
-		d.lastSeen[o.RunID] = o.ObservedAt
+		d.lastSeen[o.ExecutionID] = o.ObservedAt
 	}
 	return nil
 }
@@ -444,7 +444,7 @@ func (d *Daemon) IngestSubagentMeta(m model.SubagentMeta) (err error) {
 		d.quarantineRedacted("subagent_meta", nil, err.Error())
 		return nil
 	}
-	d.lastSeen[o.RunID] = o.ObservedAt
+	d.lastSeen[o.ExecutionID] = o.ObservedAt
 	return nil
 }
 
@@ -775,25 +775,25 @@ func (d *Daemon) executionsForSession(hash string) []string {
 }
 
 type shardRef struct {
-	execID, runID string
-	ended         time.Time
+	execID string
+	ended  time.Time
 }
 
 func (d *Daemon) terminalShards() []shardRef {
 	var out []shardRef
 	for execID, g := range d.graphs {
-		for runID, r := range g.Runs {
+		for _, r := range g.Runs {
 			if r.Status == model.StatusOK || r.Status == model.StatusAbandoned {
-				out = append(out, shardRef{execID, runID, *r.EndedAt})
+				out = append(out, shardRef{execID, *r.EndedAt})
 			}
 		}
 	}
 	return out
 }
 
-func (d *Daemon) evictShard(execID, runID string) {
+func (d *Daemon) evictShard(execID string) {
 	delete(d.graphs, execID)
-	delete(d.lastSeen, runID)
+	delete(d.lastSeen, execID)
 	d.evicted++
 }
 
@@ -802,7 +802,7 @@ func (d *Daemon) evictTerminal(now time.Time) {
 	defer d.mu.Unlock()
 	for _, t := range d.terminalShards() {
 		if now.Sub(t.ended) > d.reaperWindow {
-			d.evictShard(t.execID, t.runID)
+			d.evictShard(t.execID)
 		}
 	}
 	if d.maxShards > 0 && len(d.graphs) > d.maxShards {
@@ -812,7 +812,7 @@ func (d *Daemon) evictTerminal(now time.Time) {
 			if len(d.graphs) <= d.maxShards {
 				break
 			}
-			d.evictShard(t.execID, t.runID)
+			d.evictShard(t.execID)
 		}
 	}
 }
@@ -825,7 +825,7 @@ func (d *Daemon) reapIdle(now time.Time) error {
 			if r.Status != model.StatusRunning {
 				continue
 			}
-			last := d.lastSeen[runID]
+			last := d.lastSeen[execID]
 			if now.Sub(last) < d.reaperWindow {
 				continue
 			}

@@ -578,6 +578,39 @@ func TestEvictTerminalSoftCap(t *testing.T) {
 	assert.LessOrEqual(t, len(d.GraphsForTest()), 1)
 }
 
+func TestEvictGroupedSiblingKeepsLiveRunLiveness(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetReaperWindow(time.Hour)
+	d.SetMaxShards(1)
+	const runID = "grp"
+	require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"s1"}`), "", runID))
+	require.NoError(t, d.IngestWithLabels("SessionEnd", []byte(`{"session_id":"s1"}`), "", runID))
+	require.NoError(t, d.IngestWithLabels("SessionStart", []byte(`{"session_id":"s2"}`), "", runID))
+
+	execA := d.execForTest("s1")
+	execB := d.execForTest("s2")
+	require.NotEmpty(t, execA)
+	require.NotEmpty(t, execB)
+	require.NotEqual(t, execA, execB)
+
+	now := time.Now()
+	d.evictTerminal(now)
+
+	_, aPresent := d.GraphsForTest()[execA]
+	require.False(t, aPresent)
+	assert.Equal(t, int64(1), d.EvictedForTest())
+	gB := d.GraphsForTest()[execB]
+	require.NotNil(t, gB)
+
+	require.NoError(t, d.reapIdle(now))
+
+	rB := gB.Runs[runID]
+	require.NotNil(t, rB)
+	assert.Equal(t, model.StatusRunning, rB.Status)
+	assert.Empty(t, rB.EndReason)
+}
+
 func TestMetricsSnapshot(t *testing.T) {
 	s := tempStore(t)
 	d := New(s)

@@ -88,7 +88,7 @@ func (d *Daemon) IngestMark(m MarkInput) (err error) {
 		d.quarantine("mark", nil, err.Error())
 		return nil
 	}
-	d.lastSeen[o.RunID] = o.ObservedAt
+	d.lastSeen[o.ExecutionID] = o.ObservedAt
 	return nil
 }
 
