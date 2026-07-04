@@ -42,7 +42,7 @@ metadata.
 
 - **An outline, not a hairball.** The web UI is a virtualized, collapsible tree — `session → prompt → turn → tool` — that stays readable at thousands of nodes. (An earlier force-directed graph view was removed after it proved unusable on real sessions.)
 - **Subagents you can actually inspect.** Each subagent nests under the turn that spawned it (`turn → Agent tool call → subagent → its prompt/turns/tools`), labelled with its task. A subagent's inner work is lazy-loaded on expand, so a session with hundreds of subagents still loads fast.
-- **Content inspection, gated and redaction-aware.** Conversation text and tool input/output are served only through an authorization-gated endpoint (off by default) with serve-time secret redaction — never inlined into the graph.
+- **Content inspection, gated and redaction-aware.** Conversation text and tool input/output are redacted before they ever reach disk (write-path redaction, ADR-0024) and served only through an authorization-gated endpoint (off by default) with serve-time redaction as defense in depth — never inlined into graph responses.
 - **Terminal observer.** `catacomb observe` is a full TUI over the same live feed (sessions → tree → node detail).
 - **Silence when healthy.** Status is surfaced only when it carries signal (failures, live activity); a calm session stays calm.
 
@@ -222,12 +222,14 @@ it from, and its discovery file lives under `~/.catacomb/run/`.
 
 ## <p align=center>🔒 Privacy</p>
 
-Catacomb observes your sessions locally. The graph holds structure, timing,
-token/cost metadata, and a content *hash* — not the conversation text itself.
-Message and tool content is served only when the daemon is started with
-`--allow-payload-access`, through a token-gated endpoint that redacts secrets at
-serve time. The HTTP surface binds to loopback and is gated by a bearer token
-printed at startup.
+Catacomb observes your sessions locally. Graph responses hold structure, timing,
+token/cost metadata, and a content *hash* — conversation text is never inlined
+into them. Payload bodies pass through secret redaction on the write path
+(ADR-0024) before they touch the database, so what sits in `catacomb.db` is
+already redacted. Message and tool content is served only when the daemon is
+started with `--allow-payload-access`, through a token-gated endpoint that
+redacts once more at serve time. The HTTP surface binds to loopback and is gated
+by a bearer token printed at startup.
 
 <hr>
 

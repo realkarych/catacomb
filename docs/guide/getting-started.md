@@ -71,16 +71,16 @@ from the terminal to open it manually.
 
 ## Reading message content
 
-By default the graph stores a content hash — not the conversation text. To
-read message and tool content in the UI, start the daemon with
-`--allow-payload-access`:
+Graph responses carry a content hash — not the conversation text. Payload
+bodies are redacted on the write path before being stored. To read message and
+tool content in the UI, start the daemon with `--allow-payload-access`:
 
 ```sh
 catacomb daemon --allow-payload-access
 ```
 
-Content is served through a token-gated endpoint with serve-time secret
-redaction. See [Privacy and operations](privacy-and-operations.md) for what is
+Content is served through a token-gated endpoint that redacts once more at
+serve time. See [Privacy and operations](privacy-and-operations.md) for what is
 redacted and how.
 
 ## Next steps
