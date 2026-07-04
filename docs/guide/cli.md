@@ -346,6 +346,14 @@ environment so hooks also fire. Labels passed with `--label` merge over any inhe
 `CATACOMB_LABELS` and ride the child's hook and stream-json events to the daemon; OpenTelemetry
 spans and transcript backfill are not labeled. See
 [ingestion.md](ingestion.md#run-labels) for label rules and caps.
+The child's terminal stream-json `result` event finalizes the run as the child exits: run
+status becomes `ok` (or `error` when the result reports `is_error`), `ended_at` is set, and
+run-scope `duration_ms` flows into `runs`/`regress` — no hooks required. Hooks are still worth
+installing for richer capture: authoritative start/end timing (hook observations outrank
+stream-json ones), tool payload precedence, permission-deny (`blocked`) statuses, and
+compaction/notification markers. When both fire, the run ends once — hook timing wins and the
+second end signal is a no-op. The idle reaper remains the fallback for streams that die before
+`result` (such runs end `abandoned` after the quiescence window).
 
 ```sh
 catacomb run --run-id sprint-42 --label basket=checkout -- claude --model claude-opus-4-5 "refactor the auth module"
@@ -562,6 +570,10 @@ not).
 and pings `/healthz`, exiting `2` with a hint to `catacomb up` if the daemon is missing or
 unreachable. If the manifest already has entries and you pass neither `--resume` nor a fresh
 `--manifest`, `bench` refuses (exit `2`) rather than silently appending a second run's cells.
+
+Cells finalize from the child's stream `result` event, so run status, `ended_at`, and run-scope
+`duration_ms` work without hooks. Installing hooks (project-local is enough) still sharpens end
+timing and adds permission and notification capture.
 
 A failing cell is recorded and the basket continues (deciding whether a change regressed is
 `catacomb regress`'s job, not the runner's). Exit codes: `0` every cell ran (even if some cells
