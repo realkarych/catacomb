@@ -393,3 +393,22 @@ func TestParseUserPromptDistinctContentDistinctUUID(t *testing.T) {
 	assert.Equal(t, model.PromptUUID("s1", "second"), obs2[0].Correlation.UUID)
 	assert.NotEqual(t, obs1[0].Correlation.UUID, obs2[0].Correlation.UUID)
 }
+
+func TestParseResultTaggedSessionTotal(t *testing.T) {
+	fixedNow(time.Now())
+	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":0.5}`), "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, true, obs[0].Attrs["session_total"])
+
+	obs, _, err = Parse([]byte(`{"type":"result","session_id":"s"}`), "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, true, obs[0].Attrs["session_total"])
+
+	obs, _, err = Parse([]byte(`{"type":"assistant","session_id":"s","message":{"id":"m1","model":"m","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"x"}]}}`), "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	_, has := obs[0].Attrs["session_total"]
+	assert.False(t, has)
+}

@@ -82,6 +82,12 @@ func (g *Graph) Apply(o model.Observation) {
 			}
 			n.Attrs["model"] = m
 		}
+		if sessionTotalObservation(o) {
+			if n.Attrs == nil {
+				n.Attrs = map[string]any{}
+			}
+			n.Attrs["session_total"] = true
+		}
 		g.mergePayload(n, o.Payload, o.Source)
 		g.emitNode(n, o)
 		g.parentTurn(o, n.ID)
@@ -492,6 +498,17 @@ func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Sourc
 		n.TokensOut = &v
 	}
 	return true
+}
+
+func sessionTotalObservation(o model.Observation) bool {
+	if v, ok := o.Attrs["session_total"].(bool); ok && v {
+		return true
+	}
+	if o.Source != model.SourceStreamJSON || o.Correlation.MessageID != "" {
+		return false
+	}
+	_, ok := o.Attrs["cost_usd"]
+	return ok
 }
 
 func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {

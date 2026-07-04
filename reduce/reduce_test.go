@@ -3091,3 +3091,65 @@ func TestPromptObsFallbackDistinctObsIDs(t *testing.T) {
 	assert.NotEqual(t, n1.ID, n2.ID)
 	assert.Nil(t, g.Nodes[model.UserPromptID(execID, "")])
 }
+
+func TestResultObservationTagsSessionTotalNode(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Source = model.SourceStreamJSON
+	o.Attrs = map[string]any{"session_total": true, "model": "m", "tokens_in": int64(7), "tokens_out": int64(9), "cost_usd": 0.5}
+
+	g := NewGraph()
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "")]
+	require.NotNil(t, n)
+	assert.True(t, n.SessionTotal())
+}
+
+func TestLegacyResultObservationTagsSessionTotalNode(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Source = model.SourceStreamJSON
+	o.Attrs = map[string]any{"tokens_in": int64(7), "cost_usd": 0.5}
+
+	g := NewGraph()
+	g.Apply(o)
+
+	assert.True(t, g.Nodes[model.AssistantTurnID(execID, "")].SessionTotal())
+}
+
+func TestMessageTurnWithReportedCostNotSessionTotal(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Source = model.SourceStreamJSON
+	o.Correlation.MessageID = "m1"
+	o.Attrs = map[string]any{"cost_usd": 0.5}
+
+	g := NewGraph()
+	g.Apply(o)
+
+	assert.False(t, g.Nodes[model.AssistantTurnID(execID, "m1")].SessionTotal())
+}
+
+func TestNonStreamTurnWithCostNotSessionTotal(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Attrs = map[string]any{"cost_usd": 0.5}
+
+	g := NewGraph()
+	g.Apply(o)
+
+	assert.False(t, g.Nodes[model.AssistantTurnID(execID, "")].SessionTotal())
+}
+
+func TestSessionTotalTagSurvivesStoreRoundTrip(t *testing.T) {
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Source = model.SourceStreamJSON
+	o.Attrs = map[string]any{"session_total": true, "cost_usd": 0.5}
+
+	raw, err := json.Marshal(o)
+	require.NoError(t, err)
+	var rt model.Observation
+	require.NoError(t, json.Unmarshal(raw, &rt))
+
+	g := NewGraph()
+	g.Apply(rt)
+
+	assert.True(t, g.Nodes[model.AssistantTurnID(execID, "")].SessionTotal())
+}
