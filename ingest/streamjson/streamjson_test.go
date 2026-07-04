@@ -333,6 +333,15 @@ func TestParseCompactBoundarySubtypeNoDrift(t *testing.T) {
 	assert.Empty(t, dc)
 }
 
+func TestParseKnownSystemSubtypesNoDrift(t *testing.T) {
+	for _, subtype := range []string{"hook_started", "hook_response", "thinking_tokens"} {
+		obs, dc, err := Parse([]byte(`{"type":"system","subtype":"`+subtype+`","session_id":"s1"}`), "exec-1", seq())
+		require.NoError(t, err, subtype)
+		assert.Empty(t, obs, subtype)
+		assert.Empty(t, dc, subtype)
+	}
+}
+
 func TestParseUnknownContentBlockCountsDrift(t *testing.T) {
 	line := `{"type":"assistant","session_id":"s1","message":{"id":"m1","model":"m","content":[{"type":"hologram"},{"type":"text","text":"hi"}]}}`
 	obs, dc, err := Parse([]byte(line), "exec-1", seq())

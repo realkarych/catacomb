@@ -102,7 +102,7 @@ func build(e envelope) ([]partial, drift.Counts, error) {
 			}
 			return []partial{{kind: "session_start", correlation: base, attrs: attrs}}, nil, nil
 		}
-		if e.Subtype == "compact_boundary" {
+		if knownIgnoredSystemSubtype(e.Subtype) {
 			return nil, nil, nil
 		}
 		return nil, drift.Counts{drift.ReasonUnknownSubtype: 1}, nil
@@ -275,6 +275,15 @@ func knownAssistantBlock(t string) bool {
 func knownUserBlock(t string) bool {
 	switch t {
 	case "text", "tool_result", "image", "document":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownIgnoredSystemSubtype(t string) bool {
+	switch t {
+	case "compact_boundary", "hook_started", "hook_response", "thinking_tokens":
 		return true
 	default:
 		return false
