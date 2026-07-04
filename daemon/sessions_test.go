@@ -1119,3 +1119,92 @@ func TestSummarizeSessionReproDeepCopied(t *testing.T) {
 	r.Repro.Cwd = "/mutated"
 	assert.Equal(t, dir, sum.Repro.Cwd)
 }
+
+func sessionTotalGraph(withResult bool, resultCost *float64) *reduce.Graph {
+	g := reduce.NewGraph()
+	g.Runs["s1"] = &model.Run{ID: "s1", Status: model.StatusOK, SessionIDs: []string{"s1"}}
+	est1, est2 := 0.30, 0.40
+	ti1, to1 := int64(100), int64(50)
+	ti2, to2 := int64(200), int64(70)
+	g.Nodes["e:turn:m1"] = &model.Node{ID: "e:turn:m1", RunID: "s1", Type: model.NodeAssistantTurn, CostUSD: &est1, TokensIn: &ti1, TokensOut: &to1, Attrs: map[string]any{"cost_source": "estimated"}}
+	g.Nodes["e:turn:m2"] = &model.Node{ID: "e:turn:m2", RunID: "s1", Type: model.NodeAssistantTurn, CostUSD: &est2, TokensIn: &ti2, TokensOut: &to2, Attrs: map[string]any{"cost_source": "estimated"}}
+	if withResult {
+		tit, tot := int64(999), int64(999)
+		n := &model.Node{ID: "e:turn:", RunID: "s1", Type: model.NodeAssistantTurn, TokensIn: &tit, TokensOut: &tot, Attrs: map[string]any{"session_total": true}}
+		if resultCost != nil {
+			n.CostUSD = resultCost
+			n.Attrs["cost_source"] = "reported"
+		}
+		g.Nodes["e:turn:"] = n
+	}
+	return g
+}
+
+func TestSummarizeRunReportedSessionTotalReplacesEstimates(t *testing.T) {
+	rep := 0.50
+	sum := SummarizeRun("s1", []*reduce.Graph{sessionTotalGraph(true, &rep)})
+
+	require.NotNil(t, sum.CostUSD)
+	assert.InDelta(t, 0.50, *sum.CostUSD, 1e-12)
+	assert.Equal(t, "reported", sum.CostSource)
+	assert.Equal(t, int64(300), sum.TokensIn)
+	assert.Equal(t, int64(120), sum.TokensOut)
+}
+
+func TestSummarizeRunFallsBackToEstimatesWithoutResult(t *testing.T) {
+	sum := SummarizeRun("s1", []*reduce.Graph{sessionTotalGraph(false, nil)})
+
+	require.NotNil(t, sum.CostUSD)
+	assert.InDelta(t, 0.70, *sum.CostUSD, 1e-12)
+	assert.Equal(t, "estimated", sum.CostSource)
+	assert.Equal(t, int64(300), sum.TokensIn)
+	assert.Equal(t, int64(120), sum.TokensOut)
+}
+
+func TestSummarizeRunSessionTotalWithoutCostStillExcludedFromTokens(t *testing.T) {
+	sum := SummarizeRun("s1", []*reduce.Graph{sessionTotalGraph(true, nil)})
+
+	require.NotNil(t, sum.CostUSD)
+	assert.InDelta(t, 0.70, *sum.CostUSD, 1e-12)
+	assert.Equal(t, "estimated", sum.CostSource)
+	assert.Equal(t, int64(300), sum.TokensIn)
+	assert.Equal(t, int64(120), sum.TokensOut)
+}
+
+func TestSummarizeRunMixedGraphsSumPerGraphBest(t *testing.T) {
+	rep := 0.50
+	g1 := sessionTotalGraph(true, &rep)
+	g2 := reduce.NewGraph()
+	g2.Runs["s1"] = &model.Run{ID: "s1", Status: model.StatusOK, SessionIDs: []string{"s1"}}
+	est := 0.20
+	g2.Nodes["e2:turn:m9"] = &model.Node{ID: "e2:turn:m9", RunID: "s1", Type: model.NodeAssistantTurn, CostUSD: &est, Attrs: map[string]any{"cost_source": "estimated"}}
+
+	sum := SummarizeRun("s1", []*reduce.Graph{g1, g2})
+
+	require.NotNil(t, sum.CostUSD)
+	assert.InDelta(t, 0.70, *sum.CostUSD, 1e-12)
+	assert.Equal(t, "reported", sum.CostSource)
+}
+
+func TestSessionSummariesReportedSessionTotal(t *testing.T) {
+	d := New(tempStore(t))
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+
+	d.mu.Lock()
+	g := d.graphs["exec1"]
+	est, rep := 0.30, 0.50
+	ti, to := int64(100), int64(40)
+	tit, tot := int64(999), int64(999)
+	g.Nodes["exec1:turn:m1"] = &model.Node{ID: "exec1:turn:m1", RunID: "s1", Type: model.NodeAssistantTurn, CostUSD: &est, TokensIn: &ti, TokensOut: &to, Attrs: map[string]any{"cost_source": "estimated"}}
+	g.Nodes["exec1:turn:"] = &model.Node{ID: "exec1:turn:", RunID: "s1", Type: model.NodeAssistantTurn, CostUSD: &rep, TokensIn: &tit, TokensOut: &tot, Attrs: map[string]any{"cost_source": "reported", "session_total": true}}
+	sums := d.sessionSummaries()
+	d.mu.Unlock()
+
+	require.Len(t, sums, 1)
+	require.NotNil(t, sums[0].CostUSD)
+	assert.InDelta(t, 0.50, *sums[0].CostUSD, 1e-12)
+	assert.Equal(t, "reported", sums[0].CostSource)
+	assert.Equal(t, int64(100), sums[0].TokensIn)
+	assert.Equal(t, int64(40), sums[0].TokensOut)
+}
