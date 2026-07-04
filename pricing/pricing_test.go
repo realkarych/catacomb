@@ -51,3 +51,43 @@ func TestNewHasRealTableEntry(t *testing.T) {
 	assert.Equal(t, "estimated", r.Source)
 	assert.Greater(t, r.USD, 0.0)
 }
+
+func TestCostPrefixFamilyFallbackEstimated(t *testing.T) {
+	e := New()
+	r, ok := e.Cost(Inputs{ModelID: "claude-opus-4-9", TokensIn: 1_000_000})
+	require.True(t, ok)
+	assert.Equal(t, "estimated", r.Source)
+	assert.InDelta(t, 5.00, r.USD, 1e-9)
+}
+
+func TestCostUnknownFamilyYieldsNothing(t *testing.T) {
+	e := New()
+	_, ok := e.Cost(Inputs{ModelID: "gpt-5-turbo", TokensIn: 10})
+	assert.False(t, ok)
+}
+
+func TestCostExactMatchTakesPrecedenceOverFamily(t *testing.T) {
+	e := New()
+	r, ok := e.Cost(Inputs{ModelID: "claude-haiku-4-5", TokensIn: 1_000_000})
+	require.True(t, ok)
+	assert.Equal(t, "estimated", r.Source)
+	assert.InDelta(t, 1.00, r.USD, 1e-9)
+}
+
+func TestCostPrefixLongestFamilyWins(t *testing.T) {
+	fams := []family{
+		{prefix: "claude-opus-", tier: Tier{InputPerMTok: 5}},
+		{prefix: "claude-opus-4-", tier: Tier{InputPerMTok: 9}},
+	}
+	e := newEngineWithFamilies(testTable(), fams)
+	r, ok := e.Cost(Inputs{ModelID: "claude-opus-4-9", TokensIn: 1_000_000})
+	require.True(t, ok)
+	assert.Equal(t, "estimated", r.Source)
+	assert.InDelta(t, 9.0, r.USD, 1e-9)
+}
+
+func TestCostNoFamiliesStillMissesUnknown(t *testing.T) {
+	e := newEngineWithTable(testTable())
+	_, ok := e.Cost(Inputs{ModelID: "claude-opus-4-9", TokensIn: 10})
+	assert.False(t, ok)
+}
