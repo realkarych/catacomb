@@ -249,3 +249,90 @@ func TestWorse(t *testing.T) {
 	assert.Equal(t, model.StatusError, worse(model.StatusError, model.StatusOK))
 	assert.Equal(t, model.StatusOK, worse(model.StatusOK, model.StatusOK))
 }
+
+func sessionTotalRun(withResult bool, resultCost *float64) RunGraph {
+	nodes := []*model.Node{
+		{ID: "e:sess", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK},
+		{ID: "e:turn:m1", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, CostUSD: f64(0.30), TokensIn: i64(100), TokensOut: i64(50)},
+		{ID: "e:turn:m2", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, CostUSD: f64(0.40), TokensIn: i64(200), TokensOut: i64(70)},
+	}
+	if withResult {
+		n := &model.Node{ID: "e:turn:", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, TokensIn: i64(999), TokensOut: i64(999), Attrs: map[string]any{"session_total": true}}
+		n.CostUSD = resultCost
+		nodes = append(nodes, n)
+	}
+	return RunGraph{Run: model.Run{ID: "r1", Status: model.StatusOK}, Nodes: nodes}
+}
+
+func TestRunTotalsPreferReportedSessionTotal(t *testing.T) {
+	r := runTotals([]RunGraph{sessionTotalRun(true, f64(0.50))})
+
+	assert.InDelta(t, 0.50, r.CostUSD.Median, 1e-12)
+	assert.Equal(t, float64(300), r.TokensIn.Median)
+	assert.Equal(t, float64(120), r.TokensOut.Median)
+	assert.Equal(t, float64(4), r.Nodes.Median)
+}
+
+func TestRunTotalsFallBackToEstimates(t *testing.T) {
+	r := runTotals([]RunGraph{sessionTotalRun(false, nil)})
+
+	assert.InDelta(t, 0.70, r.CostUSD.Median, 1e-12)
+	assert.Equal(t, float64(300), r.TokensIn.Median)
+	assert.Equal(t, float64(120), r.TokensOut.Median)
+}
+
+func TestRunTotalsSessionTotalWithoutCostFallsBack(t *testing.T) {
+	r := runTotals([]RunGraph{sessionTotalRun(true, nil)})
+
+	assert.InDelta(t, 0.70, r.CostUSD.Median, 1e-12)
+	assert.Equal(t, float64(300), r.TokensIn.Median)
+}
+
+func TestRunTotalsSupersededSessionTotalIgnored(t *testing.T) {
+	rg := sessionTotalRun(true, f64(0.50))
+	rg.Nodes[3].Status = model.StatusSuperseded
+
+	r := runTotals([]RunGraph{rg})
+
+	assert.InDelta(t, 0.70, r.CostUSD.Median, 1e-12)
+	assert.Equal(t, float64(3), r.Nodes.Median)
+}
+
+func TestPhaseFoldExcludesSessionTotalMember(t *testing.T) {
+	t0 := fixtureBase
+	group := []RunGraph{{
+		Run: model.Run{ID: "r1", Status: model.StatusOK},
+		Nodes: []*model.Node{
+			{ID: "m1", RunID: "r1", Type: model.NodeMarker, Name: "phase", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(time.Second))},
+			{ID: "in-window", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, CostUSD: f64(1), TokensIn: i64(10), TokensOut: i64(5)},
+			{ID: "e:turn:", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, CostUSD: f64(9), TokensIn: i64(900), TokensOut: i64(900), Attrs: map[string]any{"session_total": true}},
+		},
+		Edges: []*model.Edge{
+			{Type: model.EdgeMarkerSpan, Src: "m1", Dst: "in-window"},
+			{Type: model.EdgeMarkerSpan, Src: "m1", Dst: "e:turn:"},
+		},
+	}}
+
+	rep := Aggregate(group, Options{})
+
+	require.Len(t, rep.Phases, 1)
+	assert.Equal(t, float64(1), rep.Phases[0].CostUSD.Median)
+	assert.Equal(t, float64(10), rep.Phases[0].TokensIn.Median)
+	assert.Equal(t, float64(5), rep.Phases[0].TokensOut.Median)
+}
+
+func TestStepFoldExcludesSessionTotal(t *testing.T) {
+	group := []RunGraph{{
+		Run: model.Run{ID: "r1", Status: model.StatusOK},
+		Nodes: []*model.Node{
+			{ID: "a", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, StepKey: "s1", CostUSD: f64(1)},
+			{ID: "b", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, StepKey: "s1", CostUSD: f64(9), Attrs: map[string]any{"session_total": true}},
+		},
+	}}
+
+	rep := Aggregate(group, Options{})
+
+	require.Len(t, rep.Steps, 1)
+	assert.Equal(t, float64(1), rep.Steps[0].CostUSD.Median)
+	assert.Equal(t, float64(1), rep.Steps[0].Occurrences.Median)
+}
