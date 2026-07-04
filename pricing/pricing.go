@@ -1,5 +1,7 @@
 package pricing
 
+import "strings"
+
 type Tier struct {
 	InputPerMTok      float64
 	OutputPerMTok     float64
@@ -21,16 +23,26 @@ type Result struct {
 	Source string
 }
 
+type family struct {
+	prefix string
+	tier   Tier
+}
+
 type Engine struct {
-	table map[string]Tier
+	table    map[string]Tier
+	families []family
 }
 
 func New() *Engine {
-	return newEngineWithTable(defaultTable())
+	return newEngineWithFamilies(defaultTable(), defaultFamilies())
 }
 
 func newEngineWithTable(t map[string]Tier) *Engine {
 	return &Engine{table: t}
+}
+
+func newEngineWithFamilies(t map[string]Tier, fams []family) *Engine {
+	return &Engine{table: t, families: fams}
 }
 
 func (e *Engine) Cost(in Inputs) (Result, bool) {
@@ -39,7 +51,10 @@ func (e *Engine) Cost(in Inputs) (Result, bool) {
 	}
 	tier, ok := e.table[in.ModelID]
 	if !ok {
-		return Result{}, false
+		tier, ok = e.familyTier(in.ModelID)
+		if !ok {
+			return Result{}, false
+		}
 	}
 	usd := perMTok(in.TokensIn, tier.InputPerMTok) +
 		perMTok(in.TokensOut, tier.OutputPerMTok) +
@@ -48,8 +63,32 @@ func (e *Engine) Cost(in Inputs) (Result, bool) {
 	return Result{USD: usd, Source: "estimated"}, true
 }
 
+func (e *Engine) familyTier(id string) (Tier, bool) {
+	best := -1
+	var chosen Tier
+	for _, f := range e.families {
+		if len(f.prefix) > best && strings.HasPrefix(id, f.prefix) {
+			best = len(f.prefix)
+			chosen = f.tier
+		}
+	}
+	if best < 0 {
+		return Tier{}, false
+	}
+	return chosen, true
+}
+
 func perMTok(tokens int64, perM float64) float64 {
 	return float64(tokens) / 1_000_000 * perM
+}
+
+func defaultFamilies() []family {
+	return []family{
+		{prefix: "claude-opus-", tier: Tier{InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25}},
+		{prefix: "claude-sonnet-", tier: Tier{InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75}},
+		{prefix: "claude-haiku-", tier: Tier{InputPerMTok: 1.00, OutputPerMTok: 5.00, CacheReadPerMTok: 0.10, CacheWritePerMTok: 1.25}},
+		{prefix: "claude-fable-", tier: Tier{InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50}},
+	}
 }
 
 func defaultTable() map[string]Tier {

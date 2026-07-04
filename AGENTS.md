@@ -6,7 +6,7 @@ Real-time execution-graph observability for Claude Code agentic pipelines. A sid
 - Architecture decisions → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)
 
-**Status:** observability substrate complete (M0–M5 + eval-core, PRs #1–#98); current focus is the eval-management layer — baskets, run-group aggregation, regression gates (ADR-0022).
+**Status:** observability substrate, eval-management layer, and post-review hardening all shipped (M0–M5, eval-core, ADR-0022 baskets/aggregation/regression gates, ADR-0023–0025 hardening; PRs #1–#111). Current state and open follow-ups live in the [post-review hardening roadmap](docs/superpowers/plans/2026-07-02-post-review-hardening-roadmap.md) and the [post-P0 CTO review](docs/reviews/2026-07-02-post-p0-cto-design-review.md).
 
 ## Principles
 
@@ -63,6 +63,7 @@ This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy)
 make build   # build bin/catacomb
 make test    # go test -race + coverage profile
 make cover   # test + 100% coverage gate
+make fuzz    # reducer commutativity fuzzer (30s; not in cover/CI)
 make lint    # golangci-lint
 make fmt     # gofumpt + goimports
 ```
