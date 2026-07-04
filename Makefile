@@ -4,7 +4,7 @@ APP_NAME := catacomb
 DIST_DIR := bin
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: all build test cover lint fmt tidy clean proto help
+.PHONY: all build test cover lint fmt tidy clean proto help fuzz
 
 ## Regenerate protobuf bindings (installs plugins to GOBIN, then runs buf generate)
 proto:
@@ -26,6 +26,10 @@ test:
 ## Run tests then enforce the coverage threshold (.testcoverage.yml)
 cover: test
 	@go run github.com/vladopajic/go-test-coverage/v2@v2.18.8 --config=.testcoverage.yml
+
+## Fuzz the reducer commutativity property for a short burst (not part of cover/CI)
+fuzz:
+	@go test -run '^$$' -fuzz '^FuzzReductionCommutativity$$' -fuzztime 30s ./reduce
 
 ## Run linters (golangci-lint)
 lint:
@@ -49,6 +53,7 @@ help:
 	@echo "  build   - build the binary into bin/"
 	@echo "  test    - run tests with -race and a coverage profile"
 	@echo "  cover   - test + enforce the 100% coverage gate"
+	@echo "  fuzz    - fuzz the reducer commutativity property (30s; not in cover/CI)"
 	@echo "  lint    - run golangci-lint"
 	@echo "  fmt     - apply gofumpt + goimports via golangci-lint"
 	@echo "  tidy    - go mod tidy"

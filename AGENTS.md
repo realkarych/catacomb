@@ -63,6 +63,7 @@ This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy)
 make build   # build bin/catacomb
 make test    # go test -race + coverage profile
 make cover   # test + 100% coverage gate
+make fuzz    # reducer commutativity fuzzer (30s; not in cover/CI)
 make lint    # golangci-lint
 make fmt     # gofumpt + goimports
 ```
