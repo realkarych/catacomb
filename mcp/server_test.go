@@ -113,3 +113,33 @@ func TestServeReturnsWriterError(t *testing.T) {
 	err := Serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`+"\n"), errWriter{})
 	require.ErrorIs(t, err, errBoom)
 }
+
+func TestToolsCallMarkOK(t *testing.T) {
+	msgs := serve(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mark","arguments":{"name":"impl","boundary":"start","occurrence":0,"state_ref":"c1"}}}`+"\n")
+	res := msgs[0]["result"].(map[string]any)
+	assert.Equal(t, false, res["isError"])
+	content := res["content"].([]any)[0].(map[string]any)
+	assert.Equal(t, "text", content["type"])
+	assert.Contains(t, content["text"], "impl")
+}
+
+func TestToolsCallMarkMissingFieldsIsError(t *testing.T) {
+	msgs := serve(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mark","arguments":{"boundary":"sideways"}}}`+"\n")
+	res := msgs[0]["result"].(map[string]any)
+	assert.Equal(t, true, res["isError"])
+}
+
+func TestToolsCallMarkBadArgumentsShapeIsError(t *testing.T) {
+	msgs := serve(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mark","arguments":"not-an-object"}}`+"\n")
+	assert.Equal(t, true, msgs[0]["result"].(map[string]any)["isError"])
+}
+
+func TestToolsCallUnknownToolIsInvalidParams(t *testing.T) {
+	msgs := serve(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}`+"\n")
+	assert.EqualValues(t, codeInvalidParams, msgs[0]["error"].(map[string]any)["code"])
+}
+
+func TestToolsCallBadParamsIsInvalidParams(t *testing.T) {
+	msgs := serve(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":5}`+"\n")
+	assert.EqualValues(t, codeInvalidParams, msgs[0]["error"].(map[string]any)["code"])
+}

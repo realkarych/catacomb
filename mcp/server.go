@@ -78,6 +78,8 @@ func dispatch(req request) (any, *rpcError) {
 		return initializeResult(req.Params), nil
 	case "tools/list":
 		return toolsListResult(), nil
+	case "tools/call":
+		return toolsCallResult(req.Params)
 	default:
 		return nil, &rpcError{Code: codeMethodNotFound, Message: "method not found: " + req.Method}
 	}
@@ -116,6 +118,37 @@ func markToolSpec() map[string]any {
 			},
 			"required": []any{"name", "boundary"},
 		},
+	}
+}
+
+func toolsCallResult(params json.RawMessage) (any, *rpcError) {
+	var p struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: codeInvalidParams, Message: "invalid params"}
+	}
+	if p.Name != "mark" {
+		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + p.Name}
+	}
+	var a struct {
+		Name     string `json:"name"`
+		Boundary string `json:"boundary"`
+	}
+	if err := json.Unmarshal(p.Arguments, &a); err != nil {
+		return toolResult("mark: invalid arguments", true), nil
+	}
+	if a.Name == "" || (a.Boundary != "start" && a.Boundary != "end") {
+		return toolResult("mark: name is required and boundary must be start or end", true), nil
+	}
+	return toolResult("marked "+a.Boundary+" "+a.Name, false), nil
+}
+
+func toolResult(text string, isErr bool) map[string]any {
+	return map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": text}},
+		"isError": isErr,
 	}
 }
 
