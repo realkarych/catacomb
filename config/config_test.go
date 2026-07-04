@@ -30,6 +30,12 @@ func TestDefaults(t *testing.T) {
 	assert.Nil(t, c.Sinks)
 }
 
+func TestDefaultsPayloads(t *testing.T) {
+	c := Defaults()
+	assert.Equal(t, PayloadModeRedact, c.Payloads.Mode)
+	assert.Equal(t, DefaultPayloadMaxBytes, c.Payloads.MaxBytes)
+}
+
 func TestDefaultsTogglesAreDistinctPointers(t *testing.T) {
 	c := Defaults()
 	*c.Sources.Hooks.Enabled = false
@@ -63,6 +69,7 @@ func TestSentinelsDistinct(t *testing.T) {
 		ErrNoStoreBackend, ErrUnknownStoreBackend, ErrMissingSQLitePath,
 		ErrBackendNotImplemented, ErrUnknownSink, ErrMissingSinkField,
 		ErrDuplicateSink, ErrEmptyTranscriptDir,
+		ErrUnknownPayloadMode, ErrInvalidPayloadMaxBytes,
 	}
 	for i := range all {
 		for j := range all {

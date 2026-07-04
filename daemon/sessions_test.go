@@ -411,7 +411,7 @@ func TestSessionSummaryRunInGraphNotInSession(t *testing.T) {
 }
 
 func TestSessionSummaryExposesRepro(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	d := New(tempStore(t))
 	fixedExecID(d)
 	p, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})
@@ -1101,7 +1101,7 @@ func TestSummarizeGraphsReproDeepCopied(t *testing.T) {
 }
 
 func TestSummarizeSessionReproDeepCopied(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	d := New(tempStore(t))
 	fixedExecID(d)
 	p, _ := json.Marshal(map[string]string{"session_id": "s1", "cwd": dir})

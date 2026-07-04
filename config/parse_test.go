@@ -29,6 +29,13 @@ func TestParseSinksAndSources(t *testing.T) {
 	assert.Equal(t, "/x.jsonl", c.Sinks[0].Path)
 }
 
+func TestParsePayloadsSection(t *testing.T) {
+	c, err := Parse([]byte("payloads:\n  mode: refs\n  max_bytes: 1024\n"))
+	require.NoError(t, err)
+	assert.Equal(t, PayloadModeRefs, c.Payloads.Mode)
+	assert.Equal(t, 1024, c.Payloads.MaxBytes)
+}
+
 func TestParseEmptyIsZero(t *testing.T) {
 	c, err := Parse(nil)
 	require.NoError(t, err)

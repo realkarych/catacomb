@@ -279,6 +279,32 @@ func TestTrendsV2StoreReportsOutdated(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "older than this binary")
 }
 
+func TestTrendsCurrentVersionMissingBaselinesTable(t *testing.T) {
+	dbPath := seedCurrentVersionDropTable(t, "baselines")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "older than this binary")
+}
+
+func TestTrendsCurrentVersionMissingRegressResultsTable(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("DROP TABLE regress_results")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "older than this binary")
+}
+
 func TestTrendsCmdWiredAndGrouped(t *testing.T) {
 	root := newRootCmd()
 	groups := make(map[string]string)

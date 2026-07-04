@@ -8,7 +8,18 @@ func Merge(base, override Config) Config {
 	if override.Sinks != nil {
 		out.Sinks = override.Sinks
 	}
+	out.Payloads = mergePayloads(base.Payloads, override.Payloads)
 	return out
+}
+
+func mergePayloads(base, o PayloadsConfig) PayloadsConfig {
+	if o.Mode != "" {
+		base.Mode = o.Mode
+	}
+	if o.MaxBytes != 0 {
+		base.MaxBytes = o.MaxBytes
+	}
+	return base
 }
 
 func mergeDaemon(base, o DaemonConfig) DaemonConfig {

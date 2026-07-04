@@ -160,6 +160,26 @@ func TestAppendDeltasInsertsObservation(t *testing.T) {
 	assert.Equal(t, 0, count(t, s, "edges"))
 }
 
+func TestMarshalVerbatimError(t *testing.T) {
+	_, err := marshalVerbatim(make(chan int))
+	require.Error(t, err)
+}
+
+func TestAppendDeltasPreservesPayloadBytesVerbatim(t *testing.T) {
+	s := fileStore(t)
+	input := json.RawMessage(`{"command":"ls && pwd <ok>"}`)
+	o := model.Observation{
+		ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1,
+		Payload: &model.Payload{Input: input, Hash: model.HashPayload(&model.Payload{Input: input})},
+	}
+	require.NoError(t, s.AppendDeltas(o, nil))
+	got, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Payload)
+	assert.Equal(t, []byte(input), []byte(got[0].Payload.Input))
+}
+
 func TestAppendDeltasUpsertsNode(t *testing.T) {
 	s := fileStore(t)
 	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
@@ -873,35 +893,40 @@ func TestDeleteBaselineExecError(t *testing.T) {
 	assert.Error(t, s.DeleteBaseline("b"))
 }
 
-func TestGetBaselineOnV1StoreReportsOutdated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v1.db")
-	seedV1DB(t, path)
-	s, err := openSQLiteReadOnly(sql.Open, path)
+func currentStoreMissingTable(t *testing.T, table string) Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	_, _, err = s.GetBaseline("x")
+	require.NoError(t, s.Close())
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = raw.Exec("DROP TABLE " + table)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	ro, err := openSQLiteReadOnly(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ro.Close() })
+	return ro
+}
+
+func TestGetBaselineMissingTableReportsOutdated(t *testing.T) {
+	s := currentStoreMissingTable(t, "baselines")
+	_, _, err := s.GetBaseline("x")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
-func TestListBaselinesOnV1StoreReportsOutdated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v1.db")
-	seedV1DB(t, path)
-	s, err := openSQLiteReadOnly(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	_, err = s.ListBaselines()
+func TestListBaselinesMissingTableReportsOutdated(t *testing.T) {
+	s := currentStoreMissingTable(t, "baselines")
+	_, err := s.ListBaselines()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
-func TestRegressResultsForOnV2StoreReportsOutdated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v2.db")
-	seedV2DB(t, path)
-	s, err := openSQLiteReadOnly(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	_, err = s.RegressResultsFor("golden")
+func TestRegressResultsForMissingTableReportsOutdated(t *testing.T) {
+	s := currentStoreMissingTable(t, "regress_results")
+	_, err := s.RegressResultsFor("golden")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }

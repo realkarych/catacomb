@@ -14,6 +14,7 @@ import (
 
 	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/daemon"
+	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
@@ -43,6 +44,7 @@ type daemonParams struct {
 	transcriptExclude  []string
 	allowPayloadAccess bool
 	allowAnnotations   bool
+	payloads           config.PayloadsConfig
 }
 
 func defaultDaemonDeps() daemonDeps {
@@ -191,6 +193,7 @@ remain the highest-precedence override.`,
 				transcriptExclude:  transcriptExclude,
 				allowPayloadAccess: cfg.Daemon.AllowPayloadAccess,
 				allowAnnotations:   cfg.Daemon.AllowAnnotations,
+				payloads:           cfg.Payloads,
 			}
 			return runDaemonWith(ctx, defaultDaemonDeps(), params)
 		},
@@ -230,6 +233,7 @@ func runDaemonWith(ctx context.Context, deps daemonDeps, p daemonParams) error {
 	d.SetDBPath(dbPath)
 	d.SetAllowPayloadAccess(p.allowPayloadAccess)
 	d.SetAllowAnnotations(p.allowAnnotations)
+	d.SetPayloadPolicy(redact.Policy{Mode: redact.Mode(p.payloads.Mode), MaxBytes: p.payloads.MaxBytes})
 
 	sinks := append([]config.Sink(nil), p.sinks...)
 	if p.otlpEndpoint != "" {

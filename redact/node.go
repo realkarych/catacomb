@@ -1,8 +1,6 @@
 package redact
 
 import (
-	"encoding/json"
-
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -12,25 +10,11 @@ func Node(n *model.Node) *model.Node {
 	}
 	nc := *n
 	nc.Name = redactString(n.Name)
-	if n.Attrs != nil {
-		nc.Attrs = make(map[string]any, len(n.Attrs))
-		for k, v := range n.Attrs {
-			if sv, ok := v.(string); ok {
-				nc.Attrs[k] = redactString(sv)
-			} else {
-				nc.Attrs[k] = v
-			}
-		}
-	}
+	nc.SubagentType = redactString(n.SubagentType)
+	nc.Attrs = redactAttrs(n.Attrs)
 	if n.Payload != nil {
-		pc := *n.Payload
-		if len(n.Payload.Input) > 0 {
-			pc.Input = append(json.RawMessage(nil), Redact(n.Payload.Input).Data...)
-		}
-		if len(n.Payload.Output) > 0 {
-			pc.Output = append(json.RawMessage(nil), Redact(n.Payload.Output).Data...)
-		}
-		nc.Payload = &pc
+		nc.Payload = redactPayload(n.Payload)
+		nc.PayloadHash = nc.Payload.Hash
 	}
 	return &nc
 }

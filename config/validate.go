@@ -9,7 +9,22 @@ func Validate(c Config) error {
 	if err := validateSources(c.Sources); err != nil {
 		return err
 	}
+	if err := validatePayloads(c.Payloads); err != nil {
+		return err
+	}
 	return validateSinks(c.Sinks)
+}
+
+func validatePayloads(p PayloadsConfig) error {
+	switch p.Mode {
+	case "", PayloadModeRedact, PayloadModeRefs, PayloadModeAll:
+	default:
+		return fmt.Errorf("config.Validate: %w", ErrUnknownPayloadMode)
+	}
+	if p.MaxBytes < 0 {
+		return fmt.Errorf("config.Validate: %w", ErrInvalidPayloadMaxBytes)
+	}
+	return nil
 }
 
 func validateStore(s StoreConfig) error {

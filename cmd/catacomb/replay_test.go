@@ -131,6 +131,35 @@ func TestRunReplayWithHappyNoExport(t *testing.T) {
 	require.NotNil(t, g.Nodes[model.SessionNodeID("exec-T")])
 }
 
+func TestReplayScrubsSecretsAtRest(t *testing.T) {
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "s.jsonl")
+	line := `{"type":"assistant","sessionId":"replay-s","message":{"id":"m1","model":"m","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb"}}]}}`
+	require.NoError(t, os.WriteFile(transcript, []byte(line+"\n"), 0o600))
+	dbPath := filepath.Join(dir, "replay.db")
+
+	g, err := runReplayWith(store.OpenSQLite, func() string { return "exec-replay" }, replayArgs{input: transcript, dbPath: dbPath})
+	require.NoError(t, err)
+
+	var sawPayload bool
+	for _, n := range g.Nodes {
+		if n.Payload != nil && len(n.Payload.Input) > 0 {
+			sawPayload = true
+			assert.NotContains(t, string(n.Payload.Input), "kesha_dev_password")
+			assert.Contains(t, string(n.Payload.Input), "‹redacted:connection-string›")
+			assert.Equal(t, model.HashPayload(n.Payload), n.PayloadHash)
+		}
+	}
+	assert.True(t, sawPayload)
+
+	blob, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(blob), "kesha_dev_password")
+	if wal, werr := os.ReadFile(dbPath + "-wal"); werr == nil {
+		assert.NotContains(t, string(wal), "kesha_dev_password")
+	}
+}
+
 func TestReplayCommandWiring(t *testing.T) {
 	dir := t.TempDir()
 	root := newRootCmd()

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,6 +27,15 @@ func TestResolveConfigDefaultsWhenNoFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.BackendSQLite, cfg.Store.Backend)
 	assert.Equal(t, filepath.FromSlash("/home/u/.catacomb/catacomb.db"), cfg.Store.SQLite.Path)
+}
+
+func TestResolveConfigDefaultsPayloads(t *testing.T) {
+	cfg, err := resolveConfig(daemonFlags{},
+		func(string) ([]byte, error) { return nil, os.ErrNotExist },
+		func(string) (string, bool) { return "", false }, "/home/u")
+	require.NoError(t, err)
+	assert.Equal(t, config.PayloadModeRedact, cfg.Payloads.Mode)
+	assert.Equal(t, config.DefaultPayloadMaxBytes, cfg.Payloads.MaxBytes)
 }
 
 func TestResolveConfigFileThenEnvThenFlags(t *testing.T) {

@@ -772,3 +772,143 @@ func TestRedact_NumberFidelity(t *testing.T) {
 		assert.NotContains(t, string(result.Data), "\\u0026")
 	})
 }
+
+func TestRedactJSONValueReplacesOnlyMatchedSpan(t *testing.T) {
+	sha := strings.Repeat("0123456789abcdef", 2) + "01234567"
+	input := []byte(`{"command":"git checkout ` + sha + ` && make test"}`)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.JSONEq(t, `{"command":"git checkout ‹redacted:high-entropy› && make test"}`, string(result.Data))
+	assert.Contains(t, findingReasons(result.Findings), "high-entropy")
+
+	twice := redact.Redact(result.Data)
+	assert.Equal(t, string(result.Data), string(twice.Data), "span-level value redaction must be idempotent")
+	assert.False(t, twice.Redacted)
+}
+
+func TestRedactJSONValueMultipleRulesInOneValue(t *testing.T) {
+	input := []byte(`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb && export K=AKIAIOSFODNN7EXAMPLE"}`)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.NotContains(t, string(result.Data), "kesha_dev_password")
+	assert.NotContains(t, string(result.Data), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(result.Data), "‹redacted:connection-string›")
+	assert.Contains(t, string(result.Data), "‹redacted:aws-key›")
+	assert.Contains(t, string(result.Data), "export K=")
+	reasons := findingReasons(result.Findings)
+	assert.Contains(t, reasons, "connection-string")
+	assert.Contains(t, reasons, "aws-key")
+	assert.Equal(t, findingPaths(result.Findings), []string{"command", "command"})
+}
+
+func TestRedactSensitiveKeyStillReplacesWholeValue(t *testing.T) {
+	input := []byte(`{"password":"prefix AKIAIOSFODNN7EXAMPLE suffix"}`)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.JSONEq(t, `{"password":"‹redacted:aws-key›"}`, string(result.Data))
+}
+
+func TestRedactJSONValuePEMBlockSpan(t *testing.T) {
+	input, err := json.Marshal(map[string]string{
+		"script": "cat key.pem\n-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\necho done",
+	})
+	require.NoError(t, err)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.NotContains(t, string(result.Data), "MIIEow")
+	assert.Contains(t, string(result.Data), "cat key.pem")
+	assert.Contains(t, string(result.Data), "echo done")
+	assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
+}
+
+func TestRedactFixedPoint(t *testing.T) {
+	cases := []string{
+		`{"api_key":"AKIAIOSFODNN7EXAMPLE"}`,
+		`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb"}`,
+		`export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE && curl -H "Authorization: Bearer abcdefghij1234567890"`,
+		"-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----",
+		`token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dozjgNryP4J3jVmNHl0w5N7XgL0n3I9PlFUP0THsR8U`,
+		`AKIAIOSFODNN7EXAMPLE0123456789abcdef0123456789abcdef01234567`,
+		`{"nested":{"password":"hunter2","cwd":"/home/kesha"},"n":3}`,
+		`{"command":"git checkout ` + strings.Repeat("ab", 20) + ` && make test"}`,
+		`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb && export K=AKIAIOSFODNN7EXAMPLE"}`,
+		string([]byte{0xff, 0xfe, 0x01}),
+		`{"text":"no secrets here"}`,
+		`plain prose without any secret`,
+		"{\"password\":\"foo -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY----- bar\"}",
+		"{\"password\":\"foo postgres://user:pa\x01ss@host/db bar\"}",
+	}
+	for _, in := range cases {
+		once := redact.Redact([]byte(in))
+		twice := redact.Redact(once.Data)
+		assert.Equal(t, string(once.Data), string(twice.Data), "input %q", in)
+		assert.False(t, twice.Redacted, "second pass must be a no-op for %q", in)
+		assert.Empty(t, twice.Findings, "input %q", in)
+	}
+}
+
+func TestRedactFixedPointFreeTextHealing(t *testing.T) {
+	cases := []string{
+		"{\"password\":\"foo -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY----- bar\"}",
+		"{\"password\":\"foo postgres://user:pa\x01ss@host/db bar\"}",
+	}
+	for _, in := range cases {
+		once := redact.Redact([]byte(in))
+		twice := redact.Redact(once.Data)
+		assert.Equal(t, string(once.Data), string(twice.Data), "redact(redact(x)) must equal redact(x) for %q", in)
+		assert.True(t, once.Redacted, "input %q must be redacted", in)
+		assert.False(t, containsSecret(once.Data, "postgres://user"), "connection string must not survive in %q", in)
+	}
+}
+
+func TestRedactMergesDuplicateFindingsAcrossPasses(t *testing.T) {
+	input := []byte("ghp_" + strings.Repeat("z", 36) + " and github_pat_" + strings.Repeat("A", 40))
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	require.Len(t, result.Findings, 1, "two github-token hits must dedupe to one finding")
+	assert.Equal(t, "github-token", result.Findings[0].Reason)
+}
+
+func TestRedactPreservesTypedRefUnderSensitiveKey(t *testing.T) {
+	cases := []string{
+		`{"token":"‹ref:262144,fedcba9876543210›"}`,
+		`{"password":"‹binary:1048576,0123456789abcdef›"}`,
+	}
+	for _, in := range cases {
+		r := redact.Redact([]byte(in))
+		assert.False(t, r.Redacted, "typed ref under a sensitive key must not be re-wrapped: %q", in)
+		assert.Equal(t, in, string(r.Data), "typed ref under a sensitive key must stay byte-identical: %q", in)
+		assert.Empty(t, r.Findings, "%q", in)
+		twice := redact.Redact(r.Data)
+		assert.Equal(t, in, string(twice.Data), "re-redaction must stay byte-identical: %q", in)
+	}
+}
+
+func TestRedactAnchorsTypedRefLookalikesUnderSensitiveKey(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"trailing garbage after ref", "‹ref:1,ab›garbage"},
+		{"leading char before binary ref", "x‹binary:3,abc›"},
+		{"ref with trailing newline", "‹ref:1,ab›\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]string{"token": tc.value})
+			require.NoError(t, err)
+			result := redact.Redact(raw)
+			assert.True(t, result.Redacted, "typed-ref lookalike %q must still be redacted", tc.value)
+			assert.False(t, containsSecret(result.Data, tc.value), "lookalike %q must not survive byte-identical", tc.value)
+			assert.Contains(t, string(result.Data), "‹redacted:", "lookalike %q must be wrapped", tc.value)
+		})
+	}
+}
+
+func TestHasMarker(t *testing.T) {
+	assert.True(t, redact.HasMarker([]byte(`{"x":"‹redacted:aws-key›"}`)))
+	assert.True(t, redact.HasMarker([]byte(`"‹binary:3,0123456789abcdef›"`)))
+	assert.True(t, redact.HasMarker([]byte(`"‹ref:99,0123456789abcdef›"`)))
+	assert.False(t, redact.HasMarker([]byte(`{"x":"clean"}`)))
+	assert.False(t, redact.HasMarker(nil))
+}

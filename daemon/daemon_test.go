@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	collectorv1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -28,6 +30,7 @@ import (
 	"github.com/realkarych/catacomb/ingest/drift"
 	otelingest "github.com/realkarych/catacomb/ingest/otel"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
@@ -132,6 +135,47 @@ func TestRecoverRebuildsGraphsAndSeq(t *testing.T) {
 	assert.Equal(t, uint64(3), d2.seq)
 }
 
+func TestRecoverCanonicalizesWhitespacePayloadByteForByte(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	d := New(s)
+	fixedExecID(d)
+	require.NoError(t, d.Ingest("SessionStart", []byte(`{"session_id":"s1"}`)))
+	require.NoError(t, d.Ingest("PreToolUse", []byte(`{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command": "ls -la"}}`)))
+
+	nodeID := model.ToolCallID("exec1", "t1")
+	live := d.graphs["exec1"].Nodes[nodeID]
+	require.NotNil(t, live)
+	require.NotNil(t, live.Payload)
+	liveInput := append([]byte(nil), live.Payload.Input...)
+	liveHash := live.Payload.Hash
+
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	var stored *model.Payload
+	for i := range obs {
+		if obs[i].Payload != nil && len(obs[i].Payload.Input) > 0 {
+			stored = obs[i].Payload
+		}
+	}
+	require.NotNil(t, stored)
+	assert.Equal(t, string(liveInput), string(stored.Input))
+	assert.Equal(t, stored.Hash, model.HashPayload(stored))
+	require.NoError(t, s.Close())
+
+	s2, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s2.Close() })
+	d2 := New(s2)
+	require.NoError(t, d2.Recover())
+	rec := d2.graphs["exec1"].Nodes[nodeID]
+	require.NotNil(t, rec)
+	require.NotNil(t, rec.Payload)
+	assert.Equal(t, string(liveInput), string(rec.Payload.Input))
+	assert.Equal(t, liveHash, rec.Payload.Hash)
+}
+
 func TestRecoverError(t *testing.T) {
 	d := New(&errStore{failSince: true})
 	require.Error(t, d.Recover())
@@ -204,6 +248,88 @@ func TestIngestQuarantinesPersistError(t *testing.T) {
 	n, err := s.QuarantineCount()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
+}
+
+type captureQuarantineStore struct {
+	store.Store
+	mu   sync.Mutex
+	recs []model.QuarantineRecord
+}
+
+func (s *captureQuarantineStore) Quarantine(rec model.QuarantineRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recs = append(s.recs, rec)
+	return nil
+}
+
+func (s *captureQuarantineStore) lastQuarantined(t *testing.T) model.QuarantineRecord {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	require.NotEmpty(t, s.recs)
+	return s.recs[len(s.recs)-1]
+}
+
+type appendErrCaptureStore struct{ *captureQuarantineStore }
+
+func (s *appendErrCaptureStore) AppendDeltas(model.Observation, []cdc.GraphDelta) error {
+	return errors.New("append")
+}
+
+const leakyHookPayload = `{"session_id":"leak","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb && make test"}}`
+
+func TestIngestPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	require.NoError(t, d.Ingest("PreToolUse", []byte(leakyHookPayload)))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "PreToolUse", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "kesha_dev_password")
+	assert.Contains(t, string(rec.Raw), "‹redacted:connection-string›")
+	assert.Contains(t, string(rec.Raw), "make test")
+}
+
+func TestIngestParseFailureQuarantineKeepsRawBytes(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(capture)
+	raw := []byte(`{malformed AKIAIOSFODNN7EXAMPLE`)
+	require.NoError(t, d.Ingest("PreToolUse", raw))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, raw, rec.Raw)
+}
+
+func TestIngestStreamJSONPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	line := []byte(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-8","cwd":"/home/AKIAIOSFODNN7EXAMPLE/w"}`)
+	require.NoError(t, d.IngestStreamJSON(line, "s1"))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "stream-json", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(rec.Raw), "‹redacted:aws-key›")
+}
+
+func TestIngestTranscriptPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	line := []byte(`{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"use AKIAIOSFODNN7EXAMPLE"}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "jsonl", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(rec.Raw), "‹redacted:aws-key›")
+}
+
+func TestIngestOTLPPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	req := makeOTLPToolReq("s-perr", "t4", "cmd AKIAIOSFODNN7EXAMPLE")
+	require.NoError(t, d.IngestOTLP(req))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "otel", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.True(t, redact.HasMarker(rec.Raw))
 }
 
 func TestIngestRecoversPanic(t *testing.T) {
@@ -1484,8 +1610,16 @@ func TestCaptureReproNoCwdDeferred(t *testing.T) {
 	assert.False(t, captured)
 }
 
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(os.TempDir(), "w"+ulid.Make().String())
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestReproDefaultCapturePathNoSetter(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Claude\n"), 0o644))
 	d := New(tempStore(t))
 	fixedExecID(d)
@@ -1678,6 +1812,160 @@ func TestWatchVersionFlagsRunAndWarnsOnce(t *testing.T) {
 	r := runForSession(t, d, "s1")
 	assert.Equal(t, true, r.Meta["format_watch"])
 	assert.Equal(t, 1, strings.Count(buf.String(), "tested ceiling"))
+}
+
+const secretToolInput = `{"command":"export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE && psql postgres://kesha:kesha_dev_password@localhost/appdb"}`
+
+func ingestSecretToolUse(t *testing.T, d *Daemon) {
+	t.Helper()
+	payload := `{"session_id":"s1","tool_name":"Bash","tool_use_id":"t1","tool_input":` + secretToolInput + `}`
+	require.NoError(t, d.Ingest("PreToolUse", []byte(payload)))
+}
+
+func TestApplyAndPersistScrubsObservationLog(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	ingestSecretToolUse(t, d)
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	require.NotEmpty(t, obs)
+	raw, err := json.Marshal(obs)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.NotContains(t, string(raw), "kesha_dev_password")
+	assert.Contains(t, string(raw), "‹redacted:connection-string›")
+}
+
+func TestPersistedPayloadHashIsPostRedaction(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	ingestSecretToolUse(t, d)
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	var found bool
+	for i := range obs {
+		if obs[i].Payload == nil {
+			continue
+		}
+		found = true
+		assert.Equal(t, model.HashPayload(obs[i].Payload), obs[i].Payload.Hash)
+		assert.Contains(t, string(obs[i].Payload.Input), "‹redacted:connection-string›")
+	}
+	assert.True(t, found)
+}
+
+func TestNodeRowsAtRestAreRedacted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	d := New(s)
+	ingestSecretToolUse(t, d)
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	rows, err := db.Query("SELECT body FROM nodes")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var count int
+	for rows.Next() {
+		var body string
+		require.NoError(t, rows.Scan(&body))
+		count++
+		assert.NotContains(t, body, "AKIAIOSFODNN7EXAMPLE")
+		assert.NotContains(t, body, "kesha_dev_password")
+	}
+	require.NoError(t, rows.Err())
+	assert.Positive(t, count)
+}
+
+func snapshotNodes(d *Daemon) map[string]*model.Node {
+	out := map[string]*model.Node{}
+	for _, g := range d.GraphsForTest() {
+		maps.Copy(out, g.Nodes)
+	}
+	return out
+}
+
+func TestRecoverRebuildsIdenticalRedactedGraph(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	ingestSecretToolUse(t, d)
+	live := snapshotNodes(d)
+	require.NotEmpty(t, live)
+	d2 := New(s)
+	require.NoError(t, d2.Recover())
+	assert.Equal(t, live, snapshotNodes(d2))
+}
+
+func TestSetPayloadPolicyRefsModeStoresRefsOnly(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	d.SetPayloadPolicy(redact.Policy{Mode: redact.ModeRefs, MaxBytes: redact.DefaultMaxBytes})
+	ingestSecretToolUse(t, d)
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	var found bool
+	for _, o := range obs {
+		if o.Payload != nil && len(o.Payload.Input) > 0 {
+			found = true
+			assert.Regexp(t, `^"‹ref:\d+,[0-9a-f]{16}›"$`, string(o.Payload.Input))
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestRefsModeNodeAtRestNeverCarriesRawContentHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := store.OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	d := New(s)
+	d.SetPayloadPolicy(redact.Policy{Mode: redact.ModeRefs, MaxBytes: redact.DefaultMaxBytes})
+	ingestSecretToolUse(t, d)
+	rawHash := model.HashPayload(&model.Payload{Input: json.RawMessage(secretToolInput)})
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	rows, err := db.Query("SELECT body FROM nodes")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var checked bool
+	for rows.Next() {
+		var body []byte
+		require.NoError(t, rows.Scan(&body))
+		var n model.Node
+		require.NoError(t, json.Unmarshal(body, &n))
+		if n.Payload == nil || len(n.Payload.Input) == 0 {
+			continue
+		}
+		checked = true
+		assert.NotEqual(t, rawHash, n.PayloadHash)
+		assert.Equal(t, model.HashPayload(n.Payload), n.PayloadHash)
+	}
+	require.NoError(t, rows.Err())
+	assert.True(t, checked)
+}
+
+func TestSetPayloadPolicyAllModePersistsRawAndWarns(t *testing.T) {
+	s := tempStore(t)
+	d := New(s)
+	buf := driftLogBuffer(d)
+	d.SetPayloadPolicy(redact.Policy{Mode: redact.ModeAll, MaxBytes: redact.DefaultMaxBytes})
+	assert.Contains(t, buf.String(), "payloads.mode=all")
+	ingestSecretToolUse(t, d)
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	raw, err := json.Marshal(obs)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "kesha_dev_password")
+}
+
+func TestSetPayloadPolicyRedactModeDoesNotWarn(t *testing.T) {
+	d := New(tempStore(t))
+	buf := driftLogBuffer(d)
+	d.SetPayloadPolicy(redact.DefaultPolicy())
+	assert.NotContains(t, buf.String(), "payloads.mode")
 }
 
 func TestWatchVersionAtCeilingDoesNothing(t *testing.T) {

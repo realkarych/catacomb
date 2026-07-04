@@ -21,6 +21,7 @@ import (
 	"github.com/realkarych/catacomb/config"
 	"github.com/realkarych/catacomb/daemon"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/repro"
 	"github.com/realkarych/catacomb/store"
 )
@@ -387,6 +388,47 @@ func TestDaemonEndToEnd(t *testing.T) {
 	obs, err := s.ObservationsSince(0)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(obs), 4)
+}
+
+func TestPayloadModeConstantsMatchRedactModes(t *testing.T) {
+	assert.Equal(t, config.PayloadModeRedact, string(redact.ModeRedact))
+	assert.Equal(t, config.PayloadModeRefs, string(redact.ModeRefs))
+	assert.Equal(t, config.PayloadModeAll, string(redact.ModeAll))
+	assert.Equal(t, config.DefaultPayloadMaxBytes, redact.DefaultMaxBytes)
+}
+
+func TestRunDaemonWithPayloadsRefsModeStoresRefs(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "g.db")
+	discovery := filepath.Join(dir, "d.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	p := testDaemonParams(t)
+	p.store = config.StoreConfig{Backend: config.BackendSQLite, SQLite: config.SQLiteConfig{Path: dbPath}}
+	p.discoveryPath = discovery
+	p.payloads = config.PayloadsConfig{Mode: config.PayloadModeRefs, MaxBytes: config.DefaultPayloadMaxBytes}
+	go func() { errc <- runDaemonWith(ctx, testDaemonDeps(), p) }()
+	awaitHealthz(t, readAddr(t, discovery))
+	payload, err := os.ReadFile(filepath.Join("..", "..", "ingest", "hook", "testdata", "pretooluse.json"))
+	require.NoError(t, err)
+	warn := &bytes.Buffer{}
+	forward(warn, discovery, "PreToolUse", bytes.NewReader(payload), "")
+	require.Empty(t, warn.String())
+	cancel()
+	require.NoError(t, <-errc)
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	obs, err := s.ObservationsSince(0)
+	require.NoError(t, err)
+	var found bool
+	for _, o := range obs {
+		if o.Payload != nil && len(o.Payload.Input) > 0 {
+			found = true
+			assert.Regexp(t, `^"‹ref:\d+,[0-9a-f]{16}›"$`, string(o.Payload.Input))
+		}
+	}
+	assert.True(t, found)
 }
 
 func TestDaemonCommandWiring(t *testing.T) {

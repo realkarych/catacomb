@@ -53,6 +53,20 @@ func TestMergeToggleAndJSONL(t *testing.T) {
 	assert.True(t, *got.Sources.Otel.Enabled)
 }
 
+func TestMergePayloads(t *testing.T) {
+	base := Defaults()
+	out := Merge(base, Config{Payloads: PayloadsConfig{Mode: PayloadModeAll}})
+	assert.Equal(t, PayloadModeAll, out.Payloads.Mode)
+	assert.Equal(t, DefaultPayloadMaxBytes, out.Payloads.MaxBytes)
+
+	out = Merge(base, Config{Payloads: PayloadsConfig{MaxBytes: 4096}})
+	assert.Equal(t, PayloadModeRedact, out.Payloads.Mode)
+	assert.Equal(t, 4096, out.Payloads.MaxBytes)
+
+	out = Merge(base, Config{})
+	assert.Equal(t, base.Payloads, out.Payloads)
+}
+
 func TestMergeSinksReplace(t *testing.T) {
 	base := Config{Sinks: []Sink{{Type: SinkJSONL, Path: "/a"}}}
 	got := Merge(base, Config{Sinks: []Sink{{Type: SinkOTLP, Endpoint: "e"}}})

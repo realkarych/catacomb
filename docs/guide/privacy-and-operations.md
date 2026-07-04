@@ -16,19 +16,22 @@ file (`~/.catacomb/run/daemon.json`, mode 0600; directory mode 0700).
 
 ### Graph holds structure, not content
 
-The action graph stores timing, token counts, costs, statuses, step keys, and a content
-hash per node — not the conversation text or tool inputs/outputs. Content is served only
-through a dedicated endpoint that is off by default.
+Graph API and SSE responses carry timing, token counts, costs, statuses, step keys,
+and a content hash per node — payload content is never inlined into them. Payload
+bodies are persisted in the database (already redacted, see below) and are served
+only through a dedicated endpoint that is off by default.
 
-### Payload endpoint and content access
+### Secrets at rest
 
-`GET /v1/sessions/{hash}/nodes/{nodeId}/payload` returns the message or tool
-input/output for one node. The endpoint returns `403 Forbidden` unless the daemon was
-started with `--allow-payload-access` (or `daemon.allow_payload_access: true` in
-config).
+Redaction is enforced on the write path
+([ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md)): every
+observation is passed through the redaction rules before it is applied to the
+graph and appended to the store, and every node delta is redacted again before
+persistence. What is on disk in `catacomb.db` is already redacted; serve-time
+and export-time redaction still run as defense in depth. `payload_hash` is the
+sha256 of the redacted payload — no pre-redaction hash is stored or exported.
 
-Payloads go through serve-time secret redaction before being returned. The `redact`
-package applies regex patterns for:
+The `redact` package applies regex patterns for:
 
 - AWS access keys
 - GitHub tokens and PATs
@@ -42,9 +45,73 @@ package applies regex patterns for:
 - High-entropy hex and base64 strings
 
 It also matches key-path globs including `password`, `secret`, `token`, `apikey`,
-`auth`, `credential`, and `private_key`. Each matched redaction is reported as
-`{path, reason}` in the response. The `payload_hash` stored in the graph is computed
-after redaction (see [ADR-0020](../adr/0020-redaction-surface-and-secrets-at-rest.md)).
+`auth`, `credential`, and `private_key`.
+
+Payload handling is configurable via the `payloads` config section
+(mode `redact` | `refs` | `all`, plus `max_bytes`; see
+[Configuration](configuration.md)). Ordering is redact-then-cap: payloads are
+redacted first, then sides larger than `max_bytes` are replaced by a typed
+`‹ref:len,hash›` reference; non-UTF-8 payloads become `‹binary:len,hash›`
+references. In `refs` mode no payload bodies are stored at all — note that the
+`transcript_path` attr still points at the unredacted transcript file on disk.
+`all` disables write-path redaction (a startup warning is logged); serve-time
+redaction still applies. Redaction false positives destroy data at rest — there
+is no raw copy to recover; `all` is the explicit opt-out.
+
+Databases created before schema v4 are scrubbed by a one-time data migration on
+the first write-path open (`catacomb up` / `catacomb daemon`): all existing
+observation, node, and run bodies are rewritten through the redactor, hashes
+are recomputed, and the file is vacuumed so old row images do not linger. The
+migration is idempotent. Read-only commands (`runs`, `inspect`, `export`, …)
+refuse pre-v4 databases with a schema-outdated error until a write-path command
+has migrated them. Quarantine holds raw bytes only for input that could not be
+parsed; persist-failure quarantine (input that parsed but failed to persist) is
+redacted before it is written.
+
+### Known residuals
+
+Write-path redaction narrows what a copied `catacomb.db` can leak; it does not
+make the database a vault. Known residuals, each a deliberate design choice or
+an accepted trade-off:
+
+1. **Quarantine holds raw bytes only for input that could not be parsed
+   (including panics during ingestion).**
+   Malformed input is stored verbatim in the `quarantine` table so it can be
+   diagnosed; redaction never saw it. A panic while ingesting a payload
+   quarantines the raw payload the same way. Persist-failure quarantine — input
+   that parsed but failed to persist — is redacted before it is written.
+2. **Annotation values persist unredacted.** The annotation write endpoint
+   (gated local API, off by default) stores caller-provided values as given.
+3. **Entropy-looking paths lose repro hashes.** A cwd path segment that looks
+   like a high-entropy string is redacted at rest, so repro hashes for such
+   paths come back `absent`. This is deterministic — it never corrupts other
+   data.
+4. **`redacted` in the payload response is marker detection.** Literal
+   `‹redacted:…›` or `‹ref:…›` text occurring in genuine content reads as a
+   false positive, and a payload capped to a typed ref also reads as
+   `redacted`.
+5. **A crash between the v4 scrub commit and the vacuum leaves free pages.**
+   The scrub commit and the `VACUUM` are separate steps; if the process dies
+   between them, pre-scrub row images can linger in the file's free pages
+   until an incidental vacuum — the vacuum trigger is gated on the
+   schema-version bump, which has already committed.
+6. **Stored hashes are not always `hash(stored bytes)`.** In `all` mode the
+   stored hash is the parser wire-bytes hash, which differs from the hash of
+   the stored bytes for non-compact wire payloads. In `refs` mode observation
+   rows carry the content hash while the bodies are typed refs.
+
+### Payload endpoint and content access
+
+`GET /v1/sessions/{hash}/nodes/{nodeId}/payload` returns the message or tool
+input/output for one node. The endpoint returns `403 Forbidden` unless the daemon was
+started with `--allow-payload-access` (or `daemon.allow_payload_access: true` in
+config).
+
+The stored (already-redacted) payload is passed through serve-time redaction once
+more before being returned. In the response, `redacted` is true when the stored
+content carries redaction markers or serve-time redaction fired; the `redactions`
+list reports serve-time findings only, as `{path, reason}` — write-path findings
+are not persisted.
 
 ### Annotations access
 

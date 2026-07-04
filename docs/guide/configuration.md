@@ -46,6 +46,9 @@ sinks:                          # zero or more live export sinks
     project: "catacomb"
   - type: jsonl
     path: "/path/out.jsonl"
+payloads:
+  mode: redact                  # redact | refs | all
+  max_bytes: 262144             # per-side payload cap; overflow becomes a typed ref
 ```
 
 ## Store backends
@@ -66,6 +69,21 @@ The `sinks:` list defines live export destinations. Deltas are forwarded in real
 - `jsonl` — `path`
 
 Duplicates are rejected at startup. For one-shot export from the stored database, see the `catacomb export` command in [`cli.md`](cli.md).
+
+## Payload redaction and caps
+
+`payloads.mode` controls what payload content is persisted
+([ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md)):
+`redact` (default) stores redacted payloads; `refs` stores only typed
+`‹ref:len,hash›` references plus post-redaction hashes; `all` stores raw
+payloads (startup warning; serve/export-time redaction still applies;
+oversized sides are still capped to typed refs).
+`payloads.max_bytes` (default 262144) caps each payload side after redaction;
+oversized sides are replaced by a typed reference. `max_bytes: 0` means the
+default 262144, not zero. `catacomb replay` always
+uses the defaults (`redact`/262144). See
+[Privacy and operations](privacy-and-operations.md) for the redaction rules
+and the at-rest guarantees.
 
 ## Discovery file
 
@@ -101,5 +119,7 @@ The `OTEL_*` and `CLAUDE_CODE_*` variables are emitted by `catacomb env` and are
 | Annotations | off (403) | `--allow-annotations` / `daemon.allow_annotations` |
 | Reaper window | 30m | `--reaper-window` / `daemon.reaper_window` |
 | Max shards | 4096 | `--max-shards` / `daemon.max_shards` |
+| Payload mode | `redact` | `payloads.mode` |
+| Payload cap | 262144 bytes | `payloads.max_bytes` |
 
 For the full CLI flags reference, see [`cli.md`](cli.md). For wiring ingestion sources, see [`ingestion.md`](ingestion.md).
