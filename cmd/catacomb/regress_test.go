@@ -404,6 +404,28 @@ func seedV2RegressDB(t *testing.T) string {
 	return dbPath
 }
 
+func seedCurrentVersionDropTable(t *testing.T, table string) string {
+	t.Helper()
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("DROP TABLE " + table)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	return dbPath
+}
+
+func TestRegressNameSelectorCurrentVersionMissingBaselinesTable(t *testing.T) {
+	dbPath := seedCurrentVersionDropTable(t, "baselines")
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "older than this binary")
+}
+
 func TestRegressNameSelectorLoadError(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
 	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))

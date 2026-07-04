@@ -183,6 +183,43 @@ func TestPolicyRecomputesHashWhenOtherSideIsRawSecret(t *testing.T) {
 	assert.NotEqual(t, incomingHash, o.Payload.Hash)
 }
 
+func TestPolicyForgedHighEntropyRefRecomputesHashAndStaysIdempotent(t *testing.T) {
+	forged := json.RawMessage(`"‹ref:1,` + strings.Repeat("a", 64) + `›"`)
+	rawSecret := json.RawMessage(`{"password":"hunter2"}`)
+
+	cases := []struct {
+		name string
+		out  json.RawMessage
+	}{
+		{"empty-other-side", nil},
+		{"raw-secret-other-side", rawSecret},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wantHash := model.HashPayload(&model.Payload{
+				Input:  json.RawMessage(redact.Redact(forged).Data),
+				Output: json.RawMessage(redact.Redact(tc.out).Data),
+			})
+
+			mk := func() *model.Payload {
+				return &model.Payload{Input: forged, Output: tc.out, Hash: "incoming-stale-hash"}
+			}
+
+			p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: redact.DefaultMaxBytes}
+			once := p.Observation(model.Observation{Payload: mk()})
+			assert.Equal(t, wantHash, once.Payload.Hash)
+			assert.NotEqual(t, "incoming-stale-hash", once.Payload.Hash)
+			assert.NotContains(t, string(once.Payload.Input), strings.Repeat("a", 64))
+			twice := p.Observation(once)
+			assert.Equal(t, once, twice)
+
+			ro := redact.Observation(model.Observation{Payload: mk()})
+			assert.Equal(t, wantHash, ro.Payload.Hash)
+			assert.Equal(t, ro, redact.Observation(ro))
+		})
+	}
+}
+
 func TestPolicyCanonicalizesWhitespaceJSONBeforeHash(t *testing.T) {
 	spacey := json.RawMessage(`{"command": "ls -la"}`)
 	p := redact.DefaultPolicy()
