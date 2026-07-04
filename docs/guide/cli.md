@@ -459,7 +459,12 @@ catacomb runs [flags]
 | `--label` | (repeatable) | `k=v` selector; keep only runs matching every term (AND) |
 
 Outputs a table (or JSON) of runs with status, start time, tool counts, token counts, and
-cost. Repeat `--label` to narrow the listing to runs carrying all of the given labels; the
+cost. Cost prefers the session total reported by Claude Code itself (the stream-json
+`result` event; `cost_source: reported`) and falls back to summing per-turn
+estimates when no reported total exists. Token totals always come from per-turn
+usage — the cumulative `result` record is never double-counted. Databases
+written by older catacomb versions are re-summarized correctly on read; no
+migration is needed. Repeat `--label` to narrow the listing to runs carrying all of the given labels; the
 JSON output includes each run's `labels` object. See
 [ingestion.md](ingestion.md#run-labels) for how labels are attached.
 
