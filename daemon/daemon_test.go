@@ -1073,6 +1073,39 @@ func TestIngestStreamJSONSessionInit(t *testing.T) {
 	assert.Equal(t, model.StatusRunning, n.Status)
 }
 
+func TestStreamJSONOnlyRunFinalizesAndReaperSkipsIt(t *testing.T) {
+	d := New(tempStore(t))
+	lines := []string{
+		`{"type":"system","subtype":"init","session_id":"f6","model":"m"}`,
+		`{"type":"assistant","session_id":"f6","message":{"id":"m1","model":"m","usage":{"input_tokens":10,"output_tokens":5},"content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"session_id":"f6","usage":{"input_tokens":10,"output_tokens":5},"total_cost_usd":0.01}`,
+	}
+	for _, l := range lines {
+		require.NoError(t, d.IngestStreamJSON([]byte(l), "f6"))
+	}
+	g := d.GraphsForTest()[d.execForTest("f6")]
+	require.NotNil(t, g)
+	r := g.Runs["f6"]
+	require.NotNil(t, r)
+	assert.Equal(t, model.StatusOK, r.Status)
+	require.NotNil(t, r.EndedAt)
+	assert.Equal(t, "session_ended", r.EndReason)
+	require.NoError(t, d.reapIdle(time.Now().Add(24*time.Hour)))
+	r = d.GraphsForTest()[d.execForTest("f6")].Runs["f6"]
+	assert.Equal(t, model.StatusOK, r.Status)
+	assert.Equal(t, "session_ended", r.EndReason)
+}
+
+func TestStreamJSONErrorResultFinalizesRunError(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"system","subtype":"init","session_id":"f6e","model":"m"}`), "f6e"))
+	require.NoError(t, d.IngestStreamJSON([]byte(`{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"f6e"}`), "f6e"))
+	r := d.GraphsForTest()[d.execForTest("f6e")].Runs["f6e"]
+	require.NotNil(t, r)
+	assert.Equal(t, model.StatusError, r.Status)
+	require.NotNil(t, r.EndedAt)
+}
+
 func TestIngestStreamJSONMergesByToolUseIDWithHook(t *testing.T) {
 	d := New(tempStore(t))
 	fixedExecID(d)

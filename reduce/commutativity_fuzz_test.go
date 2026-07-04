@@ -24,6 +24,7 @@ func commutativityCorpus() []model.Observation {
 		runEndedObs("e1", "s1", "timeout", 10),
 		toolObs("e1", "s1", "t4", "Read", string(model.StatusOK), 11),
 		sessionEndObs("e1", "s1", 12),
+		streamSessionEndObs("e1", "s1", "error_max_turns", string(model.StatusError), 13),
 	}
 }
 

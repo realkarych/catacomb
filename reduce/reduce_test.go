@@ -1122,10 +1122,27 @@ func canonGraph(g *Graph) string {
 		ev = append(ev, edgeView{ID: id, Rev: e.Rev})
 	}
 	sort.Slice(ev, func(i, j int) bool { return ev[i].ID < ev[j].ID })
+	type runView struct {
+		ID        string
+		Status    model.Status
+		EndReason string
+		EndedAt   string
+		LastSeq   uint64
+	}
+	var rv []runView
+	for id, r := range g.Runs {
+		v := runView{ID: id, Status: r.Status, EndReason: r.EndReason, LastSeq: r.LastSeq}
+		if r.EndedAt != nil {
+			v.EndedAt = r.EndedAt.UTC().Format(time.RFC3339Nano)
+		}
+		rv = append(rv, v)
+	}
+	sort.Slice(rv, func(i, j int) bool { return rv[i].ID < rv[j].ID })
 	b, _ := json.Marshal(struct {
 		Nodes []nodeView
 		Edges []edgeView
-	}{nv, ev})
+		Runs  []runView
+	}{nv, ev, rv})
 	return string(b)
 }
 
