@@ -295,16 +295,17 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 	if sum.NodeCount > 0 {
 		sum.ErrorRate = float64(sum.ErrorCount) / float64(sum.NodeCount)
 	}
+	running := sum.Status == string(model.StatusRunning)
 	if tStart != nil {
 		sum.StartedAt = tStart.UTC().Format(time.RFC3339)
 	}
-	if tEnd != nil {
+	if tEnd != nil && !running {
 		sum.EndedAt = tEnd.UTC().Format(time.RFC3339)
 	}
 	if lastAct != nil {
 		sum.LastActivity = lastAct.UTC().Format(time.RFC3339)
 	}
-	if tStart != nil && tEnd != nil {
+	if tStart != nil && tEnd != nil && !running {
 		ms := tEnd.Sub(*tStart).Milliseconds()
 		sum.DurationMS = &ms
 	}

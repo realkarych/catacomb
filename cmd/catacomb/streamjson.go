@@ -113,7 +113,7 @@ func newRunCmd() *cobra.Command {
 			return runChild(cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), runID, args, canonical)
 		},
 	}
-	cmd.Flags().StringVar(&runID, "run-id", "", "CATACOMB_RUN_ID value exported to the child for multi-session grouping")
+	cmd.Flags().StringVar(&runID, "run-id", "", "CATACOMB_RUN_ID value exported to the child for multi-session grouping ([A-Za-z0-9._-]{1,256})")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label recorded on the run (repeatable; adds to CATACOMB_LABELS)")
 	return cmd
 }

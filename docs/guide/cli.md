@@ -485,6 +485,8 @@ JSON output includes each run's `labels` object. See
 [ingestion.md](ingestion.md#run-labels) for how labels are attached. Pass `--run-id <id>` to keep
 only that one run; sessions sharing a `CATACOMB_RUN_ID` are already folded into a single row, and a
 `bench` cell's manifest `run_id` (e.g. `bench-<basket>-<task>-<variant>-r<rep>`) resolves here.
+`--run-id` and `--label` combine with AND: a run is kept only when it matches the given run id and
+carries every requested label.
 
 ```sh
 catacomb runs --db ~/.catacomb/catacomb.db --json
