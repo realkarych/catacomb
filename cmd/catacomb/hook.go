@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/daemon"
+	"github.com/realkarych/catacomb/model"
 )
 
 func newHookCmd() *cobra.Command {
@@ -20,13 +21,14 @@ func newHookCmd() *cobra.Command {
 		Short: "Forward a Claude Code hook event to the catacomb daemon",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			forward(cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], cmd.InOrStdin(), os.Getenv("CATACOMB_LABELS"))
+			forward(cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], cmd.InOrStdin(),
+				os.Getenv("CATACOMB_LABELS"), os.Getenv("CATACOMB_RUN_ID"))
 			return nil
 		},
 	}
 }
 
-func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader, labels string) {
+func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader, labels, runID string) {
 	payload, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(warn, "catacomb hook: read stdin: %v\n", err)
@@ -46,6 +48,9 @@ func forward(warn io.Writer, discoveryPath, hookType string, stdin io.Reader, la
 	req.Header.Set("Content-Type", "application/json")
 	if labels != "" {
 		req.Header.Set("X-Catacomb-Labels", labels)
+	}
+	if model.ValidRunID(runID) {
+		req.Header.Set("X-Catacomb-Run-ID", runID)
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)

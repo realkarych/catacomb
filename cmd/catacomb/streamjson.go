@@ -46,7 +46,7 @@ func (w *lossyWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func streamForward(warn io.Writer, discoveryPath string, body io.Reader, labels string) {
+func streamForward(warn io.Writer, discoveryPath string, body io.Reader, labels, runID string) {
 	d, err := daemon.ReadDiscovery(discoveryPath)
 	if err != nil {
 		fmt.Fprintf(warn, "catacomb stream-json: discovery: %v\n", err)
@@ -61,6 +61,9 @@ func streamForward(warn io.Writer, discoveryPath string, body io.Reader, labels 
 	req.Header.Set("Content-Type", "application/x-ndjson")
 	if labels != "" {
 		req.Header.Set("X-Catacomb-Labels", labels)
+	}
+	if model.ValidRunID(runID) {
+		req.Header.Set("X-Catacomb-Run-ID", runID)
 	}
 	resp, err := streamHTTPClient.Do(req)
 	if err != nil {
@@ -82,7 +85,8 @@ func newIngestCmd() *cobra.Command {
 		Use:   "stream-json",
 		Short: "Forward stream-json NDJSON from stdin to the catacomb daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			streamForward(cmd.ErrOrStderr(), clientDiscoveryPath(), cmd.InOrStdin(), os.Getenv("CATACOMB_LABELS"))
+			streamForward(cmd.ErrOrStderr(), clientDiscoveryPath(), cmd.InOrStdin(),
+				os.Getenv("CATACOMB_LABELS"), os.Getenv("CATACOMB_RUN_ID"))
 			return nil
 		},
 	}
@@ -100,6 +104,9 @@ func newRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateLabelTerms(labels); err != nil {
 				return err
+			}
+			if runID != "" && !model.ValidRunID(runID) {
+				return fmt.Errorf("invalid --run-id %q: expected [A-Za-z0-9._-]{1,256}", runID)
 			}
 			merged := model.MergeLabels(model.ParseLabels(os.Getenv("CATACOMB_LABELS")), model.ParseLabels(strings.Join(labels, ",")))
 			canonical := model.FormatLabels(merged)
@@ -185,7 +192,7 @@ func runChildObserved(stdout, stderr io.Writer, discoveryPath, runID string, arg
 	fwdDone := make(chan struct{})
 	go func() {
 		defer close(fwdDone)
-		streamForward(stderr, discoveryPath, pr, labels)
+		streamForward(stderr, discoveryPath, pr, labels, runID)
 		_, _ = io.Copy(io.Discard, pr)
 	}()
 	teardown := func() {

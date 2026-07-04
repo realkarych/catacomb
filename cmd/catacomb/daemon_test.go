@@ -375,7 +375,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 		payload, err := os.ReadFile(filepath.Join("..", "..", "ingest", "hook", "testdata", f.file))
 		require.NoError(t, err)
 		warn := &bytes.Buffer{}
-		forward(warn, discovery, f.typ, bytes.NewReader(payload), "")
+		forward(warn, discovery, f.typ, bytes.NewReader(payload), "", "")
 		require.Empty(t, warn.String())
 	}
 
@@ -412,7 +412,7 @@ func TestRunDaemonWithPayloadsRefsModeStoresRefs(t *testing.T) {
 	payload, err := os.ReadFile(filepath.Join("..", "..", "ingest", "hook", "testdata", "pretooluse.json"))
 	require.NoError(t, err)
 	warn := &bytes.Buffer{}
-	forward(warn, discovery, "PreToolUse", bytes.NewReader(payload), "")
+	forward(warn, discovery, "PreToolUse", bytes.NewReader(payload), "", "")
 	require.Empty(t, warn.String())
 	cancel()
 	require.NoError(t, <-errc)

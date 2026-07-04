@@ -23,14 +23,14 @@ func TestStreamForwardDelivers(t *testing.T) {
 	d, discovery := runTestDaemon(t)
 	var warn bytes.Buffer
 	body := bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}` + "\n"))
-	streamForward(&warn, discovery, body, "")
+	streamForward(&warn, discovery, body, "", "")
 	assert.Empty(t, warn.String())
 	require.Eventually(t, func() bool { return len(d.GraphsForTest()) == 1 }, 30*time.Second, 10*time.Millisecond)
 }
 
 func TestStreamForwardMissingDiscovery(t *testing.T) {
 	var warn bytes.Buffer
-	streamForward(&warn, filepath.Join(t.TempDir(), "nope.json"), bytes.NewReader([]byte(`{}`)), "")
+	streamForward(&warn, filepath.Join(t.TempDir(), "nope.json"), bytes.NewReader([]byte(`{}`)), "", "")
 	assert.Contains(t, warn.String(), "discovery")
 }
 
@@ -42,7 +42,7 @@ func TestStreamForwardDaemonDown(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: addr, Token: "t"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)), "")
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)), "", "")
 	assert.Contains(t, warn.String(), "forward")
 }
 
@@ -129,7 +129,7 @@ func TestStreamForwardBadAddr(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: "\x7f", Token: "t"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)), "")
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`)), "", "")
 	assert.NotEmpty(t, warn.String())
 }
 
@@ -139,7 +139,7 @@ func TestStreamForwardNon2xx(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: d.Addr, Token: "wrong"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`+"\n")), "")
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{"type":"system","subtype":"init","session_id":"s1"}`+"\n")), "", "")
 	assert.Contains(t, warn.String(), "status 401")
 }
 
@@ -153,7 +153,7 @@ func TestStreamForwardSetsLabelsHeader(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "team=alpha,env=prod")
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "team=alpha,env=prod", "")
 	assert.Empty(t, warn.String())
 	assert.Equal(t, "team=alpha,env=prod", <-gotHeader)
 }
@@ -169,9 +169,57 @@ func TestStreamForwardOmitsLabelsHeaderWhenEmpty(t *testing.T) {
 	discovery := filepath.Join(t.TempDir(), "d.json")
 	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
 	var warn bytes.Buffer
-	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "")
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "", "")
 	assert.Empty(t, warn.String())
 	assert.False(t, <-present)
+}
+
+func TestStreamForwardSendsRunIDHeaderWhenValid(t *testing.T) {
+	gotHeader := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader <- r.Header.Get("X-Catacomb-Run-ID")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	var warn bytes.Buffer
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "", "runR")
+	assert.Empty(t, warn.String())
+	assert.Equal(t, "runR", <-gotHeader)
+}
+
+func TestStreamForwardOmitsRunIDHeaderWhenInvalid(t *testing.T) {
+	gotHeader := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader <- r.Header.Get("X-Catacomb-Run-ID")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	discovery := filepath.Join(t.TempDir(), "d.json")
+	require.NoError(t, daemon.WriteDiscovery(discovery, daemon.Discovery{Addr: srv.Listener.Addr().String(), Token: "tok"}))
+	var warn bytes.Buffer
+	streamForward(&warn, discovery, bytes.NewReader([]byte(`{}`+"\n")), "", "bad id!!")
+	assert.Empty(t, warn.String())
+	assert.Empty(t, <-gotHeader)
+}
+
+func TestRunRejectsInvalidRunID(t *testing.T) {
+	spawned := false
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		spawned = true
+		return exec.Command(os.Args[0])
+	}
+	t.Cleanup(func() { execCommand = orig })
+	cmd := newRunCmd()
+	cmd.SetArgs([]string{"--run-id", "bad id!!", "--", "true"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "run-id")
+	assert.False(t, spawned)
 }
 
 func TestIngestStreamJSONCommandWiring(t *testing.T) {

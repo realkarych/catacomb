@@ -2066,6 +2066,21 @@ func TestIngestStreamJSONRunIDGroupsSessions(t *testing.T) {
 	assert.Equal(t, []string{"runR"}, SummarizeSession("sA", allGraphs(d)).RunIDs)
 }
 
+func TestRunIDGroupFoldsToErrorWhenAnySessionErrors(t *testing.T) {
+	d := New(tempStore(t))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sOK","model":"m"}`), "sOK", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"result","subtype":"success","session_id":"sOK"}`), "sOK", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"system","subtype":"init","session_id":"sErr","model":"m"}`), "sErr", "", "runR"))
+	require.NoError(t, d.IngestStreamJSONWithLabels(
+		[]byte(`{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"sErr"}`), "sErr", "", "runR"))
+	sum := SummarizeRun("runR", allGraphs(d))
+	assert.Equal(t, []string{"runR"}, sum.RunIDs)
+	assert.Equal(t, string(model.StatusError), sum.Status)
+}
+
 func TestRunIDGroupStaysRunningUntilLastSessionEnds(t *testing.T) {
 	d := New(tempStore(t))
 	require.NoError(t, d.IngestStreamJSONWithLabels(
