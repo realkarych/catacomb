@@ -41,12 +41,16 @@ func (g *Graph) Apply(o model.Observation) {
 		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 		g.stamp(n, o)
 		g.stampEnd(n, o)
-		n.Status = resolveStatus(n.Status, model.StatusOK)
+		end := model.StatusOK
+		if s, ok := o.Attrs["status"].(string); ok && s == string(model.StatusError) {
+			end = model.StatusError
+		}
+		n.Status = resolveStatus(n.Status, end)
 		g.emitNode(n, o)
 		g.cascadeStatus(n.ID, model.StatusUnknown, o.Seq)
 		r := g.Runs[o.RunID]
-		r.Status = model.StatusOK
-		ended := o.EventTime
+		r.Status = resolveStatus(r.Status, end)
+		ended := *n.TEnd
 		r.EndedAt = &ended
 		r.EndReason = "session_ended"
 		g.emit(cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
@@ -623,7 +627,7 @@ func (g *Graph) ensureRun(o model.Observation) {
 
 func (g *Graph) applyRunEnded(o model.Observation) {
 	r := g.Runs[o.RunID]
-	if r.Status == model.StatusOK {
+	if rank(r.Status) == 3 {
 		return
 	}
 	r.Status = model.StatusAbandoned
