@@ -30,7 +30,7 @@ Catacomb is **domain-agnostic** and **evaluation-agnostic**: it does not score, 
 
 ### Non-Goals (v1)
 
-- **No evaluation / scoring / optimality** (MC-value, rollouts, reward models, improvement reports). Out of scope; supported only via a generic annotation slot for downstream consumers.
+- **No evaluation / scoring / optimality** (MC-value, rollouts, reward models, improvement reports). Out of scope; supported only via a generic annotation slot for downstream consumers. (ADR-0022 refines this boundary, it does not move it: deterministic distributional comparison of observables already in the graph — status, presence, duration, cost, tokens — is in-scope analytics, the same family as `diff`; judging semantic output *quality* stays out, delegated to external scorers via annotations per ADR-0016.)
 - **No pipeline orchestration or control** of Claude Code. Catacomb only observes.
 - **No multi-tenant SaaS, accounts, or RBAC.** Single-operator local/self-hosted tool. (This is *not* "no security": the daemon still has a local trust boundary — unix-socket/bearer-token ingress, no unauthenticated exfiltration — per ADR-0013.)
 - **No support for non–Claude-Code runtimes** in v1 (the data model is kept runtime-neutral to allow it later).
