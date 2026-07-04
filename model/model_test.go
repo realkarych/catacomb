@@ -26,6 +26,13 @@ func TestNodeStepKeyOmitemptyWhenUnset(t *testing.T) {
 	assert.NotContains(t, string(b), "step_key")
 }
 
+func TestNodeSessionTotal(t *testing.T) {
+	assert.False(t, (&Node{}).SessionTotal())
+	assert.False(t, (&Node{Attrs: map[string]any{"session_total": false}}).SessionTotal())
+	assert.False(t, (&Node{Attrs: map[string]any{"session_total": "true"}}).SessionTotal())
+	assert.True(t, (&Node{Attrs: map[string]any{"session_total": true}}).SessionTotal())
+}
+
 func TestTailCursorJSONRoundTrip(t *testing.T) {
 	c := TailCursor{Path: "/a/b.jsonl", Offset: 128, Fingerprint: "deadbeef", Size: 256, Mtime: 999}
 	b, err := json.Marshal(c)

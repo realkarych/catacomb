@@ -161,6 +161,50 @@ func (p *labelPick) result() map[string]string {
 	return out
 }
 
+type costAcc struct {
+	reported     float64
+	hasReported  bool
+	estimated    float64
+	hasEstimated bool
+	srcRank      int
+	src          string
+}
+
+func (a *costAcc) add(n *model.Node) {
+	if n.CostUSD == nil {
+		return
+	}
+	if n.SessionTotal() {
+		a.hasReported = true
+		a.reported += *n.CostUSD
+		return
+	}
+	a.hasEstimated = true
+	a.estimated += *n.CostUSD
+	src, _ := n.Attrs["cost_source"].(string)
+	var rank int
+	switch src {
+	case "reported":
+		rank = 2
+	case "estimated":
+		rank = 1
+	}
+	if rank > a.srcRank {
+		a.srcRank = rank
+		a.src = src
+	}
+}
+
+func (a *costAcc) fold() (float64, string, int, bool) {
+	if a.hasReported {
+		return a.reported, "reported", 2, true
+	}
+	if a.hasEstimated {
+		return a.estimated, a.src, a.srcRank, true
+	}
+	return 0, "", 0, false
+}
+
 func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) bool) SessionSummary {
 	sum := SessionSummary{
 		Session:        key,
@@ -211,6 +255,7 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 				}
 			}
 		}
+		var acc costAcc
 		for _, n := range g.Nodes {
 			r, ok := g.Runs[n.RunID]
 			if !ok || !match(r) {
@@ -228,27 +273,22 @@ func summarizeGraphs(key string, graphs []*reduce.Graph, match func(*model.Run) 
 			if n.Status == model.StatusError {
 				sum.ErrorCount++
 			}
-			if n.TokensIn != nil {
-				tokensIn += *n.TokensIn
-			}
-			if n.TokensOut != nil {
-				tokensOut += *n.TokensOut
-			}
-			if n.CostUSD != nil {
-				hasCost = true
-				totalCost += *n.CostUSD
-				src, _ := n.Attrs["cost_source"].(string)
-				var rank int
-				switch src {
-				case "reported":
-					rank = 2
-				case "estimated":
-					rank = 1
+			if !n.SessionTotal() {
+				if n.TokensIn != nil {
+					tokensIn += *n.TokensIn
 				}
-				if rank > srcRank {
-					srcRank = rank
-					sum.CostSource = src
+				if n.TokensOut != nil {
+					tokensOut += *n.TokensOut
 				}
+			}
+			acc.add(n)
+		}
+		if c, src, rank, ok := acc.fold(); ok {
+			hasCost = true
+			totalCost += c
+			if rank > srcRank {
+				srcRank = rank
+				sum.CostSource = src
 			}
 		}
 	}
@@ -338,6 +378,7 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 				}
 			}
 		}
+		var acc costAcc
 		for _, n := range g.Nodes {
 			r, ok := g.Runs[n.RunID]
 			if !ok || !slices.Contains(r.SessionIDs, hash) {
@@ -358,27 +399,22 @@ func (d *Daemon) summarizeSession(hash string) SessionSummary {
 			if n.Status == model.StatusError {
 				sum.ErrorCount++
 			}
-			if n.TokensIn != nil {
-				tokensIn += *n.TokensIn
-			}
-			if n.TokensOut != nil {
-				tokensOut += *n.TokensOut
-			}
-			if n.CostUSD != nil {
-				hasCost = true
-				totalCost += *n.CostUSD
-				src, _ := n.Attrs["cost_source"].(string)
-				var rank int
-				switch src {
-				case "reported":
-					rank = 2
-				case "estimated":
-					rank = 1
+			if !n.SessionTotal() {
+				if n.TokensIn != nil {
+					tokensIn += *n.TokensIn
 				}
-				if rank > srcRank {
-					srcRank = rank
-					sum.CostSource = src
+				if n.TokensOut != nil {
+					tokensOut += *n.TokensOut
 				}
+			}
+			acc.add(n)
+		}
+		if c, src, rank, ok := acc.fold(); ok {
+			hasCost = true
+			totalCost += c
+			if rank > srcRank {
+				srcRank = rank
+				sum.CostSource = src
 			}
 		}
 	}

@@ -393,3 +393,37 @@ func TestParseUserPromptDistinctContentDistinctUUID(t *testing.T) {
 	assert.Equal(t, model.PromptUUID("s1", "second"), obs2[0].Correlation.UUID)
 	assert.NotEqual(t, obs1[0].Correlation.UUID, obs2[0].Correlation.UUID)
 }
+
+func TestParseResultTaggedSessionTotal(t *testing.T) {
+	fixedNow(time.Now())
+	obs, _, err := Parse([]byte(`{"type":"result","session_id":"s","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":0.5}`), "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, true, obs[0].Attrs["session_total"])
+
+	obs, _, err = Parse([]byte(`{"type":"result","session_id":"s"}`), "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.Equal(t, true, obs[0].Attrs["session_total"])
+
+	obs, _, err = Parse([]byte(`{"type":"assistant","session_id":"s","message":{"id":"m1","model":"m","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"x"}]}}`), "e", seq())
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	_, has := obs[0].Attrs["session_total"]
+	assert.False(t, has)
+}
+
+func TestParseResultNeverCarriesModelAttrElseSessionTotalGetsEstimatePricedAsReported(t *testing.T) {
+	fixedNow(time.Now())
+	lines := [][]byte{
+		[]byte(`{"type":"result","session_id":"s","model":"claude-haiku-4-5","usage":{"input_tokens":3000,"output_tokens":1200},"total_cost_usd":0.0421}`),
+		[]byte(`{"type":"result","session_id":"s","model":"claude-haiku-4-5","usage":{"input_tokens":3000,"output_tokens":1200}}`),
+	}
+	for _, line := range lines {
+		obs, _, err := Parse(line, "e", seq())
+		require.NoError(t, err)
+		require.Len(t, obs, 1)
+		_, has := obs[0].Attrs["model"]
+		assert.False(t, has, "result partial must not carry model: the reducer would estimate-price the cumulative session_total node and rollups would sum it as the reported session cost")
+	}
+}

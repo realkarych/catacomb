@@ -133,7 +133,7 @@ func build(e envelope) ([]partial, drift.Counts, error) {
 	case "stream_event":
 		return nil, nil, nil
 	case "result":
-		attrs := map[string]any{}
+		attrs := map[string]any{"session_total": true}
 		if e.Usage != nil {
 			attrs["tokens_in"] = e.Usage.InputTokens
 			attrs["tokens_out"] = e.Usage.OutputTokens
