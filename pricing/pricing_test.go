@@ -67,8 +67,11 @@ func TestCostUnknownFamilyYieldsNothing(t *testing.T) {
 }
 
 func TestCostExactMatchTakesPrecedenceOverFamily(t *testing.T) {
-	e := New()
-	r, ok := e.Cost(Inputs{ModelID: "claude-haiku-4-5", TokensIn: 1_000_000})
+	fams := []family{
+		{prefix: "model-", tier: Tier{InputPerMTok: 99, OutputPerMTok: 99, CacheReadPerMTok: 99, CacheWritePerMTok: 99}},
+	}
+	e := newEngineWithFamilies(testTable(), fams)
+	r, ok := e.Cost(Inputs{ModelID: "model-x", TokensIn: 1_000_000})
 	require.True(t, ok)
 	assert.Equal(t, "estimated", r.Source)
 	assert.InDelta(t, 1.00, r.USD, 1e-9)
