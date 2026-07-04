@@ -202,13 +202,11 @@ func (d *Daemon) IngestWithLabels(hookType string, payload []byte, labels string
 			err = nil
 		}
 	}()
-	if e := d.ingestLocked(hookType, payload, canonicalLabels(labels)); e != nil {
-		d.quarantine(hookType, payload, e.Error())
-	}
+	d.ingestLocked(hookType, payload, canonicalLabels(labels))
 	return nil
 }
 
-func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) error {
+func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) {
 	sessionID := sessionIDOf(payload)
 	execID, known := d.execBySession[sessionID]
 	if !known {
@@ -217,7 +215,8 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) er
 	}
 	obs, dc, err := hook.Parse(hookType, payload, execID, d.next)
 	if err != nil {
-		return err
+		d.quarantine(hookType, payload, err.Error())
+		return
 	}
 	d.recordDrift(model.SourceHook, dc)
 	attachLabels(obs, labels)
@@ -225,9 +224,10 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) er
 	if !inMem {
 		g = reduce.NewGraphWithPricer(d.pricer)
 		if known {
-			prior, err := d.store.ObservationsForExecution(execID)
-			if err != nil {
-				return err
+			prior, loadErr := d.store.ObservationsForExecution(execID)
+			if loadErr != nil {
+				d.quarantineRedacted(hookType, payload, loadErr.Error())
+				return
 			}
 			g.ApplyAll(prior)
 			_ = g.DrainDeltas()
@@ -236,11 +236,11 @@ func (d *Daemon) ingestLocked(hookType string, payload []byte, labels string) er
 	}
 	for _, o := range obs {
 		if err := d.applyAndPersist(g, o); err != nil {
-			return err
+			d.quarantineRedacted(hookType, payload, err.Error())
+			return
 		}
 		d.lastSeen[o.RunID] = o.ObservedAt
 	}
-	return nil
 }
 
 func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err error) {
@@ -280,7 +280,7 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
-				d.quarantine("otel", nil, loadErr.Error())
+				d.quarantineRedacted("otel", nil, loadErr.Error())
 				return nil
 			}
 			g.ApplyAll(prior)
@@ -292,7 +292,7 @@ func (d *Daemon) IngestOTLP(req *collectorv1.ExportTraceServiceRequest) (err err
 		if err := d.applyAndPersist(g, o); err != nil {
 			var raw []byte
 			raw, _ = proto.Marshal(req)
-			d.quarantine("otel", raw, err.Error())
+			d.quarantineRedacted("otel", raw, err.Error())
 			return nil
 		}
 		d.lastSeen[o.RunID] = o.ObservedAt
@@ -331,7 +331,7 @@ func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels strin
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
-				d.quarantine("stream-json", line, loadErr.Error())
+				d.quarantineRedacted("stream-json", line, loadErr.Error())
 				return nil
 			}
 			g.ApplyAll(prior)
@@ -341,7 +341,7 @@ func (d *Daemon) IngestStreamJSONWithLabels(line []byte, sessionID, labels strin
 	}
 	for _, o := range obs {
 		if err := d.applyAndPersist(g, o); err != nil {
-			d.quarantine("stream-json", line, err.Error())
+			d.quarantineRedacted("stream-json", line, err.Error())
 			return nil
 		}
 		d.lastSeen[o.RunID] = o.ObservedAt
@@ -375,7 +375,7 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
-				d.quarantine("jsonl", line, loadErr.Error())
+				d.quarantineRedacted("jsonl", line, loadErr.Error())
 				return nil
 			}
 			g.ApplyAll(prior)
@@ -385,7 +385,7 @@ func (d *Daemon) IngestTranscript(line []byte, sessionID string) (err error) {
 	}
 	for _, o := range obs {
 		if err := d.applyAndPersist(g, o); err != nil {
-			d.quarantine("jsonl", line, err.Error())
+			d.quarantineRedacted("jsonl", line, err.Error())
 			return nil
 		}
 		d.lastSeen[o.RunID] = o.ObservedAt
@@ -413,7 +413,7 @@ func (d *Daemon) IngestSubagentMeta(m model.SubagentMeta) (err error) {
 		if known {
 			prior, loadErr := d.store.ObservationsForExecution(execID)
 			if loadErr != nil {
-				d.quarantine("subagent_meta", nil, loadErr.Error())
+				d.quarantineRedacted("subagent_meta", nil, loadErr.Error())
 				return nil
 			}
 			g.ApplyAll(prior)
@@ -439,7 +439,7 @@ func (d *Daemon) IngestSubagentMeta(m model.SubagentMeta) (err error) {
 		Seq:        d.next(),
 	}
 	if err := d.applyAndPersist(g, o); err != nil {
-		d.quarantine("subagent_meta", nil, err.Error())
+		d.quarantineRedacted("subagent_meta", nil, err.Error())
 		return nil
 	}
 	d.lastSeen[o.RunID] = o.ObservedAt
@@ -709,6 +709,10 @@ func (d *Daemon) quarantine(hookType string, payload []byte, msg string) {
 	if err := d.store.Quarantine(rec); err != nil {
 		log.Printf("catacomb: quarantine write failed: %v", err)
 	}
+}
+
+func (d *Daemon) quarantineRedacted(hookType string, payload []byte, msg string) {
+	d.quarantine(hookType, redact.Redact(payload).Data, msg)
 }
 
 func (d *Daemon) next() uint64 {

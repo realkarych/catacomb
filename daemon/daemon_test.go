@@ -250,6 +250,88 @@ func TestIngestQuarantinesPersistError(t *testing.T) {
 	assert.Equal(t, int64(1), n)
 }
 
+type captureQuarantineStore struct {
+	store.Store
+	mu   sync.Mutex
+	recs []model.QuarantineRecord
+}
+
+func (s *captureQuarantineStore) Quarantine(rec model.QuarantineRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recs = append(s.recs, rec)
+	return nil
+}
+
+func (s *captureQuarantineStore) lastQuarantined(t *testing.T) model.QuarantineRecord {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	require.NotEmpty(t, s.recs)
+	return s.recs[len(s.recs)-1]
+}
+
+type appendErrCaptureStore struct{ *captureQuarantineStore }
+
+func (s *appendErrCaptureStore) AppendDeltas(model.Observation, []cdc.GraphDelta) error {
+	return errors.New("append")
+}
+
+const leakyHookPayload = `{"session_id":"leak","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb && make test"}}`
+
+func TestIngestPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	require.NoError(t, d.Ingest("PreToolUse", []byte(leakyHookPayload)))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "PreToolUse", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "kesha_dev_password")
+	assert.Contains(t, string(rec.Raw), "‹redacted:connection-string›")
+	assert.Contains(t, string(rec.Raw), "make test")
+}
+
+func TestIngestParseFailureQuarantineKeepsRawBytes(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(capture)
+	raw := []byte(`{malformed AKIAIOSFODNN7EXAMPLE`)
+	require.NoError(t, d.Ingest("PreToolUse", raw))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, raw, rec.Raw)
+}
+
+func TestIngestStreamJSONPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	line := []byte(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-8","cwd":"/home/AKIAIOSFODNN7EXAMPLE/w"}`)
+	require.NoError(t, d.IngestStreamJSON(line, "s1"))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "stream-json", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(rec.Raw), "‹redacted:aws-key›")
+}
+
+func TestIngestTranscriptPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	line := []byte(`{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"use AKIAIOSFODNN7EXAMPLE"}}`)
+	require.NoError(t, d.IngestTranscript(line, "s1"))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "jsonl", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(rec.Raw), "‹redacted:aws-key›")
+}
+
+func TestIngestOTLPPersistFailureQuarantineIsRedacted(t *testing.T) {
+	capture := &captureQuarantineStore{Store: tempStore(t)}
+	d := New(&appendErrCaptureStore{capture})
+	req := makeOTLPToolReq("s-perr", "t4", "cmd AKIAIOSFODNN7EXAMPLE")
+	require.NoError(t, d.IngestOTLP(req))
+	rec := capture.lastQuarantined(t)
+	assert.Equal(t, "otel", rec.HookType)
+	assert.NotContains(t, string(rec.Raw), "AKIAIOSFODNN7EXAMPLE")
+	assert.True(t, redact.HasMarker(rec.Raw))
+}
+
 func TestIngestRecoversPanic(t *testing.T) {
 	orig := applyFn
 	applyFn = func(*reduce.Graph, model.Observation) { panic("boom") }

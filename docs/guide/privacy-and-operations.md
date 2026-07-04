@@ -60,12 +60,13 @@ is no raw copy to recover; `all` is the explicit opt-out.
 
 Databases created before schema v4 are scrubbed by a one-time data migration on
 the first write-path open (`catacomb up` / `catacomb daemon`): all existing
-observation and node bodies are rewritten through the redactor, hashes are
-recomputed, and the file is vacuumed so old row images do not linger. The
+observation, node, and run bodies are rewritten through the redactor, hashes
+are recomputed, and the file is vacuumed so old row images do not linger. The
 migration is idempotent. Read-only commands (`runs`, `inspect`, `export`, …)
 refuse pre-v4 databases with a schema-outdated error until a write-path command
-has migrated them. Quarantined records (malformed input that could not be
-parsed) are stored raw by design and are not covered by write-path redaction.
+has migrated them. Quarantine holds raw bytes only for input that could not be
+parsed; persist-failure quarantine (input that parsed but failed to persist) is
+redacted before it is written.
 
 ### Known residuals
 
@@ -73,9 +74,10 @@ Write-path redaction narrows what a copied `catacomb.db` can leak; it does not
 make the database a vault. Known residuals, each a deliberate design choice or
 an accepted trade-off:
 
-1. **Quarantine rows are raw.** Malformed input that could not be parsed is
-   stored verbatim in the `quarantine` table so it can be diagnosed; redaction
-   never saw it.
+1. **Quarantine holds raw bytes only for input that could not be parsed.**
+   Malformed input is stored verbatim in the `quarantine` table so it can be
+   diagnosed; redaction never saw it. Persist-failure quarantine — input that
+   parsed but failed to persist — is redacted before it is written.
 2. **Annotation values persist unredacted.** The annotation write endpoint
    (gated local API, off by default) stores caller-provided values as given.
 3. **Entropy-looking paths lose repro hashes.** A cwd path segment that looks

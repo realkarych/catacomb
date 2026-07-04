@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -141,13 +142,13 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLite wal: %w", err)
 	}
-	if err := migrate(db, version, schemaMigrations); err != nil {
+	logger := slog.Default()
+	if err := migrate(db, version, schemaMigrations, logger); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", err)
 	}
-	if version < currentSchemaVersion {
-		_, _ = db.Exec("VACUUM")
-		_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	if shouldVacuumAfterMigration(version) {
+		vacuumAfterScrub(db, logger)
 	}
 	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }

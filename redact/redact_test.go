@@ -773,6 +773,54 @@ func TestRedact_NumberFidelity(t *testing.T) {
 	})
 }
 
+func TestRedactJSONValueReplacesOnlyMatchedSpan(t *testing.T) {
+	sha := strings.Repeat("0123456789abcdef", 2) + "01234567"
+	input := []byte(`{"command":"git checkout ` + sha + ` && make test"}`)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.JSONEq(t, `{"command":"git checkout ‹redacted:high-entropy› && make test"}`, string(result.Data))
+	assert.Contains(t, findingReasons(result.Findings), "high-entropy")
+
+	twice := redact.Redact(result.Data)
+	assert.Equal(t, string(result.Data), string(twice.Data), "span-level value redaction must be idempotent")
+	assert.False(t, twice.Redacted)
+}
+
+func TestRedactJSONValueMultipleRulesInOneValue(t *testing.T) {
+	input := []byte(`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb && export K=AKIAIOSFODNN7EXAMPLE"}`)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.NotContains(t, string(result.Data), "kesha_dev_password")
+	assert.NotContains(t, string(result.Data), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(result.Data), "‹redacted:connection-string›")
+	assert.Contains(t, string(result.Data), "‹redacted:aws-key›")
+	assert.Contains(t, string(result.Data), "export K=")
+	reasons := findingReasons(result.Findings)
+	assert.Contains(t, reasons, "connection-string")
+	assert.Contains(t, reasons, "aws-key")
+	assert.Equal(t, findingPaths(result.Findings), []string{"command", "command"})
+}
+
+func TestRedactSensitiveKeyStillReplacesWholeValue(t *testing.T) {
+	input := []byte(`{"password":"prefix AKIAIOSFODNN7EXAMPLE suffix"}`)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.JSONEq(t, `{"password":"‹redacted:aws-key›"}`, string(result.Data))
+}
+
+func TestRedactJSONValuePEMBlockSpan(t *testing.T) {
+	input, err := json.Marshal(map[string]string{
+		"script": "cat key.pem\n-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\necho done",
+	})
+	require.NoError(t, err)
+	result := redact.Redact(input)
+	assert.True(t, result.Redacted)
+	assert.NotContains(t, string(result.Data), "MIIEow")
+	assert.Contains(t, string(result.Data), "cat key.pem")
+	assert.Contains(t, string(result.Data), "echo done")
+	assert.Contains(t, findingReasons(result.Findings), "pem-private-key")
+}
+
 func TestRedactFixedPoint(t *testing.T) {
 	cases := []string{
 		`{"api_key":"AKIAIOSFODNN7EXAMPLE"}`,
@@ -782,6 +830,8 @@ func TestRedactFixedPoint(t *testing.T) {
 		`token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dozjgNryP4J3jVmNHl0w5N7XgL0n3I9PlFUP0THsR8U`,
 		`AKIAIOSFODNN7EXAMPLE0123456789abcdef0123456789abcdef01234567`,
 		`{"nested":{"password":"hunter2","cwd":"/home/kesha"},"n":3}`,
+		`{"command":"git checkout ` + strings.Repeat("ab", 20) + ` && make test"}`,
+		`{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb && export K=AKIAIOSFODNN7EXAMPLE"}`,
 		string([]byte{0xff, 0xfe, 0x01}),
 		`{"text":"no secrets here"}`,
 		`plain prose without any secret`,

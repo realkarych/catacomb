@@ -164,7 +164,10 @@ func Redact(raw []byte) Result {
 		cur = pass.Data
 	}
 	sort.SliceStable(findings, func(i, j int) bool {
-		return findings[i].Path < findings[j].Path
+		if findings[i].Path != findings[j].Path {
+			return findings[i].Path < findings[j].Path
+		}
+		return findings[i].Reason < findings[j].Reason
 	})
 	return Result{Data: cur, Findings: findings, Redacted: redacted}
 }
@@ -216,7 +219,10 @@ func redactOnce(raw []byte) Result {
 	}
 
 	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].Path < findings[j].Path
+		if findings[i].Path != findings[j].Path {
+			return findings[i].Path < findings[j].Path
+		}
+		return findings[i].Reason < findings[j].Reason
 	})
 
 	var buf bytes.Buffer
@@ -233,32 +239,13 @@ func redactOnce(raw []byte) Result {
 }
 
 func redactFreeText(raw []byte) Result {
-	text := string(raw)
-	var findings []Finding
-	result := text
-
-	if rePEMBlock.MatchString(result) {
-		result = rePEMBlock.ReplaceAllString(result, placeholder("pem-private-key"))
-		findings = append(findings, Finding{Path: "", Reason: "pem-private-key"})
-	} else if rePEMMarker.MatchString(result) {
-		result = rePEMMarker.ReplaceAllString(result, placeholder("pem-private-key"))
-		findings = append(findings, Finding{Path: "", Reason: "pem-private-key"})
-	}
-
-	for _, rule := range valueRules {
-		if rule.re == rePEMMarker {
-			continue
-		}
-		if rule.re.MatchString(result) {
-			result = rule.re.ReplaceAllStringFunc(result, func(m string) string {
-				return placeholder(rule.reason)
-			})
-			findings = append(findings, Finding{Path: "", Reason: rule.reason})
-		}
-	}
-
-	if len(findings) == 0 {
+	result, reasons := replaceSecretSpans(string(raw))
+	if len(reasons) == 0 {
 		return Result{Data: raw}
+	}
+	findings := make([]Finding, 0, len(reasons))
+	for _, reason := range reasons {
+		findings = append(findings, Finding{Path: "", Reason: reason})
 	}
 	sort.Slice(findings, func(i, j int) bool {
 		return findings[i].Reason < findings[j].Reason
@@ -268,6 +255,32 @@ func redactFreeText(raw []byte) Result {
 		Findings: findings,
 		Redacted: true,
 	}
+}
+
+func replaceSecretSpans(text string) (string, []string) {
+	result := text
+	var reasons []string
+
+	if rePEMBlock.MatchString(result) {
+		result = rePEMBlock.ReplaceAllString(result, placeholder("pem-private-key"))
+		reasons = append(reasons, "pem-private-key")
+	} else if rePEMMarker.MatchString(result) {
+		result = rePEMMarker.ReplaceAllString(result, placeholder("pem-private-key"))
+		reasons = append(reasons, "pem-private-key")
+	}
+
+	for _, rule := range valueRules {
+		if rule.re == rePEMMarker {
+			continue
+		}
+		if rule.re.MatchString(result) {
+			result = rule.re.ReplaceAllStringFunc(result, func(string) string {
+				return placeholder(rule.reason)
+			})
+			reasons = append(reasons, rule.reason)
+		}
+	}
+	return result, reasons
 }
 
 func walkNode(node any, path string, findings *[]Finding) any {
@@ -319,13 +332,14 @@ func walkArray(arr []any, path string, findings *[]Finding) []any {
 }
 
 func redactStringValue(s, path string, findings *[]Finding) any {
-	for _, rule := range valueRules {
-		if rule.re.MatchString(s) {
-			*findings = append(*findings, Finding{Path: path, Reason: rule.reason})
-			return placeholder(rule.reason)
-		}
+	result, reasons := replaceSecretSpans(s)
+	if len(reasons) == 0 {
+		return s
 	}
-	return s
+	for _, reason := range reasons {
+		*findings = append(*findings, Finding{Path: path, Reason: reason})
+	}
+	return result
 }
 
 func joinPath(parent, key string) string {

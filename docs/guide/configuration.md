@@ -76,9 +76,11 @@ Duplicates are rejected at startup. For one-shot export from the stored database
 ([ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md)):
 `redact` (default) stores redacted payloads; `refs` stores only typed
 `‹ref:len,hash›` references plus post-redaction hashes; `all` stores raw
-payloads (startup warning; serve/export-time redaction still applies).
+payloads (startup warning; serve/export-time redaction still applies;
+oversized sides are still capped to typed refs).
 `payloads.max_bytes` (default 262144) caps each payload side after redaction;
-oversized sides are replaced by a typed reference. `catacomb replay` always
+oversized sides are replaced by a typed reference. `max_bytes: 0` means the
+default 262144, not zero. `catacomb replay` always
 uses the defaults (`redact`/262144). See
 [Privacy and operations](privacy-and-operations.md) for the redaction rules
 and the at-rest guarantees.

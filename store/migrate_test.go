@@ -1,12 +1,16 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,10 +140,10 @@ func TestMigrateAppliesInOrder(t *testing.T) {
 	db := rawDB(t)
 	var order []int
 	migs := []migration{
-		{from: 0, to: 1, apply: func(*sql.Tx) error { order = append(order, 1); return nil }},
-		{from: 1, to: 2, apply: func(*sql.Tx) error { order = append(order, 2); return nil }},
+		{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { order = append(order, 1); return nil, nil }},
+		{from: 1, to: 2, apply: func(*sql.Tx) (map[string]int, error) { order = append(order, 2); return nil, nil }},
 	}
-	require.NoError(t, migrate(db, 0, migs))
+	require.NoError(t, migrate(db, 0, migs, discardLogger()))
 	assert.Equal(t, []int{1, 2}, order)
 	assert.Equal(t, 2, userVersion(t, db))
 }
@@ -147,13 +151,69 @@ func TestMigrateAppliesInOrder(t *testing.T) {
 func TestMigrateFailingStepRollsBackWithSentinel(t *testing.T) {
 	db := rawDB(t)
 	migs := []migration{
-		{from: 0, to: 1, apply: func(*sql.Tx) error { return nil }},
-		{from: 1, to: 2, apply: func(*sql.Tx) error { return errors.New("boom") }},
+		{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { return nil, nil }},
+		{from: 1, to: 2, apply: func(*sql.Tx) (map[string]int, error) { return nil, errors.New("boom") }},
 	}
-	err := migrate(db, 0, migs)
+	err := migrate(db, 0, migs, discardLogger())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
 	assert.Equal(t, 1, userVersion(t, db))
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestMigrateLogsStartAndFinishWithChangedRowCounts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	require.NoError(t, migrate(db, 3, schemaMigrations, logger))
+
+	logs := buf.String()
+	assert.Contains(t, logs, "schema migration start")
+	assert.Contains(t, logs, "schema migration finish")
+	assert.Contains(t, logs, `"from":3`)
+	assert.Contains(t, logs, `"to":4`)
+	assert.Contains(t, logs, `"observations":1`)
+	assert.Contains(t, logs, `"nodes":1`)
+	assert.Contains(t, logs, `"runs":1`)
+	assert.Contains(t, logs, "duration_ms")
+}
+
+func TestMigrateAtCurrentVersionLogsNothing(t *testing.T) {
+	db := rawDB(t)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	require.NoError(t, migrate(db, currentSchemaVersion, schemaMigrations, logger))
+	assert.Empty(t, buf.String())
+}
+
+func TestShouldVacuumAfterMigration(t *testing.T) {
+	assert.False(t, shouldVacuumAfterMigration(0), "fresh DB has no data to scrub")
+	assert.True(t, shouldVacuumAfterMigration(1))
+	assert.True(t, shouldVacuumAfterMigration(3))
+	assert.False(t, shouldVacuumAfterMigration(currentSchemaVersion))
+}
+
+type execErrConn struct{}
+
+func (execErrConn) Query(string, ...any) (*sql.Rows, error) { return nil, errors.New("query boom") }
+func (execErrConn) Exec(string, ...any) (sql.Result, error) { return nil, errors.New("exec boom") }
+
+func TestVacuumAfterScrubLogsErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	vacuumAfterScrub(execErrConn{}, logger)
+	logs := buf.String()
+	assert.Contains(t, logs, "vacuum failed")
+	assert.Contains(t, logs, "wal checkpoint failed")
+	assert.Contains(t, logs, "exec boom")
 }
 
 func TestReadSchemaVersionError(t *testing.T) {
@@ -174,19 +234,20 @@ func TestSetSchemaVersionError(t *testing.T) {
 func TestApplyMigrationBeginError(t *testing.T) {
 	db := rawDB(t)
 	require.NoError(t, db.Close())
-	require.Error(t, applyMigration(db, migration{from: 0, to: 1, apply: func(*sql.Tx) error { return nil }}))
+	_, err := applyMigration(db, migration{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { return nil, nil }})
+	require.Error(t, err)
 }
 
 func TestApplyMigrationApplyError(t *testing.T) {
 	db := rawDB(t)
-	err := applyMigration(db, migration{from: 0, to: 1, apply: func(*sql.Tx) error { return errors.New("boom") }})
+	_, err := applyMigration(db, migration{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { return nil, errors.New("boom") }})
 	require.Error(t, err)
 	assert.Equal(t, 0, userVersion(t, db))
 }
 
 func TestApplyMigrationStampError(t *testing.T) {
 	db := rawDB(t)
-	err := applyMigration(db, migration{from: 0, to: 1, apply: func(tx *sql.Tx) error { return tx.Rollback() }})
+	_, err := applyMigration(db, migration{from: 0, to: 1, apply: func(tx *sql.Tx) (map[string]int, error) { return nil, tx.Rollback() }})
 	require.Error(t, err)
 	assert.Equal(t, 0, userVersion(t, db))
 }
@@ -202,13 +263,13 @@ func TestApplyMigrationRollsBackPartialDDL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ddl.db")
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	m := migration{from: 0, to: 1, apply: func(tx *sql.Tx) error {
+	m := migration{from: 0, to: 1, apply: func(tx *sql.Tx) (map[string]int, error) {
 		if _, e := tx.Exec("CREATE TABLE probe(x)"); e != nil {
-			return e
+			return nil, e
 		}
-		return errors.New("boom after ddl")
+		return nil, errors.New("boom after ddl")
 	}}
-	err = applyMigration(db, m)
+	_, err = applyMigration(db, m)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
 	require.NoError(t, db.Close())
@@ -228,7 +289,8 @@ func TestApplySchemaV1Error(t *testing.T) {
 	require.NoError(t, err)
 	tx, err := db.Begin()
 	require.NoError(t, err)
-	require.Error(t, applySchemaV1(tx))
+	_, errV1 := applySchemaV1(tx)
+	require.Error(t, errV1)
 	_ = tx.Rollback()
 }
 
@@ -237,7 +299,8 @@ func TestApplySchemaV2Error(t *testing.T) {
 	tx, err := db.Begin()
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
-	require.Error(t, applySchemaV2(tx))
+	_, errV2 := applySchemaV2(tx)
+	require.Error(t, errV2)
 }
 
 func seedV1DB(t *testing.T, path string) {
@@ -373,7 +436,8 @@ func TestApplySchemaV3Error(t *testing.T) {
 	tx, err := db.Begin()
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
-	require.Error(t, applySchemaV3(tx))
+	_, errV3 := applySchemaV3(tx)
+	require.Error(t, errV3)
 }
 
 func seedV3Schema(t *testing.T, path string) *sql.DB {
@@ -394,7 +458,12 @@ func stampAndClose(t *testing.T, seed *sql.DB) {
 	require.NoError(t, seed.Close())
 }
 
-func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNodeBody string) {
+const (
+	seedRunCwdSecret   = "AKIARUNCWD0EXAMPLE00"
+	seedRunLabelSecret = "postgres://runner:run_label_password@db.internal/labels"
+)
+
+func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNodeBody, secretRunBody string) {
 	t.Helper()
 	obs := model.Observation{
 		ObsID: "o1", RunID: "r1", ExecutionID: "e1", Source: model.SourceHook, Kind: "assistant_tool_use", Seq: 1,
@@ -413,11 +482,21 @@ func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNod
 		},
 		PayloadHash: "deadbeef",
 	}
+	run := model.Run{
+		ID: "r1", Status: model.StatusRunning,
+		Labels: map[string]string{"team": "core", "note": seedRunLabelSecret},
+		Repro: &model.ReproMeta{
+			Cwd:         "/deploy/" + seedRunCwdSecret + "/build",
+			PromptsHash: strings.Repeat("ab", 32),
+		},
+	}
 	ob, err := json.Marshal(obs)
 	require.NoError(t, err)
 	cb, err := json.Marshal(clean)
 	require.NoError(t, err)
 	nb, err := json.Marshal(node)
+	require.NoError(t, err)
+	rb, err := json.Marshal(run)
 	require.NoError(t, err)
 
 	seed := seedV3Schema(t, path)
@@ -425,13 +504,15 @@ func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNod
 	require.NoError(t, err)
 	_, err = seed.Exec(`INSERT INTO nodes(id, run_id, body) VALUES('n1','r1',?)`, string(nb))
 	require.NoError(t, err)
+	_, err = seed.Exec(`INSERT INTO runs(run_id, status, body) VALUES('r1','running',?)`, string(rb))
+	require.NoError(t, err)
 	stampAndClose(t, seed)
-	return string(ob), string(cb), string(nb)
+	return string(ob), string(cb), string(nb), string(rb)
 }
 
 func TestOpenMigratesV3ToV4ScrubbingBodies(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
-	secretBody, cleanBody, nodeSeed := seedV3DB(t, path)
+	secretBody, cleanBody, nodeSeed, runSeed := seedV3DB(t, path)
 
 	migrated, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
@@ -463,6 +544,18 @@ func TestOpenMigratesV3ToV4ScrubbingBodies(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(nodeBody), &n))
 	assert.Equal(t, model.HashPayload(n.Payload), n.PayloadHash)
 	assert.Equal(t, n.Payload.Hash, n.PayloadHash)
+
+	var runBody string
+	require.NoError(t, db.QueryRow("SELECT body FROM runs WHERE run_id='r1'").Scan(&runBody))
+	assert.NotEqual(t, runSeed, runBody)
+	assert.NotContains(t, runBody, seedRunCwdSecret)
+	assert.NotContains(t, runBody, "run_label_password")
+	var r model.Run
+	require.NoError(t, json.Unmarshal([]byte(runBody), &r))
+	assert.Equal(t, "/deploy/‹redacted:aws-key›/build", r.Repro.Cwd)
+	assert.Equal(t, "‹redacted:connection-string›", r.Labels["note"])
+	assert.Equal(t, "core", r.Labels["team"])
+	assert.Equal(t, strings.Repeat("ab", 32), r.Repro.PromptsHash)
 }
 
 func TestApplySchemaV4IsIdempotent(t *testing.T) {
@@ -478,8 +571,11 @@ func TestApplySchemaV4IsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	nodesChanged, err := scrubTable(tx, "SELECT id, body FROM nodes", "UPDATE nodes SET body = ? WHERE id = ?", scrubNodeBody)
 	require.NoError(t, err)
+	runsChanged, err := scrubTable(tx, "SELECT run_id, body FROM runs", "UPDATE runs SET body = ? WHERE run_id = ?", scrubRunBody)
+	require.NoError(t, err)
 	assert.Zero(t, obsChanged)
 	assert.Zero(t, nodesChanged)
+	assert.Zero(t, runsChanged)
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, migrated.Close())
 }
@@ -497,6 +593,8 @@ func TestMigrationLeavesNoSecretBytesInFile(t *testing.T) {
 		}
 		assert.NotContains(t, string(blob), "kesha_dev_password", f)
 		assert.NotContains(t, string(blob), "AKIAIOSFODNN7EXAMPLE", f)
+		assert.NotContains(t, string(blob), seedRunCwdSecret, f)
+		assert.NotContains(t, string(blob), "run_label_password", f)
 	}
 }
 
@@ -546,6 +644,25 @@ func TestScrubNodeBodyRejectsInvalidJSON(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestScrubRunBodyRejectsInvalidJSON(t *testing.T) {
+	_, err := scrubRunBody([]byte("not-json"))
+	require.Error(t, err)
+}
+
+func TestApplySchemaV4RunErrorPropagates(t *testing.T) {
+	db := rawDB(t)
+	_, err := db.Exec(schema)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO runs(run_id, status, body) VALUES('bad','running','not-json')`)
+	require.NoError(t, err)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = applySchemaV4(tx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runs")
+}
+
 func TestScrubTableUpdateError(t *testing.T) {
 	db := rawDB(t)
 	_, err := db.Exec(schema)
@@ -570,7 +687,8 @@ func TestApplySchemaV4NodeErrorPropagates(t *testing.T) {
 	tx, err := db.Begin()
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	require.Error(t, applySchemaV4(tx))
+	_, errV4 := applySchemaV4(tx)
+	require.Error(t, errV4)
 }
 
 type failingScanner struct {
