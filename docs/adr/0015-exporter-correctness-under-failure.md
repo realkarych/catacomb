@@ -1,6 +1,6 @@
 # ADR-0015: Exporter correctness under failure
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
 - **Related:** spec §7, §9, §10, §13; ADR-0007, ADR-0010, ADR-0012
