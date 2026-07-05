@@ -109,7 +109,8 @@ catacomb mark --session <id> --name <name> --boundary start|end
 ```
 
 Or from inside an agent session via the `mcp__catacomb__mark` tool (which
-rides the trace stream without extra wiring).
+rides the trace stream without extra wiring), served by the shipped
+[`catacomb mcp`](cli.md#mcp) stdio server.
 
 A phase is the half-open time window `[start_marker.t_start, end_marker.t_start)`
 — the start is inclusive, the end is exclusive. Every node whose `t_start`
