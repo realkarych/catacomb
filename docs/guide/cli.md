@@ -792,7 +792,7 @@ side, is reported `insufficient` rather than guessed. A configured key that neve
 step in either group prints a warning to stderr (stdout and `--json` stay clean).
 
 Comparison runs at three scopes — run totals, checkpoint phases, and steps. The human table
-prints `VERDICT SCOPE KEY METRIC BASELINE CANDIDATE BAND` with presence-normalized values
+prints `VERDICT SCOPE KEY NAME METRIC BASELINE CANDIDATE BAND` with presence-normalized values
 (presence rate, not absence); `--json` emits the full report (presence rows carry absence rates
 plus a clarifying `detail` field). Exit codes: `0` pass, `1` regression (or `insufficient` with
 `--strict`), `2` operational error (invalid selector, unknown baseline, missing store, empty
