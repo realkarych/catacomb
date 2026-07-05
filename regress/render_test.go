@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -67,6 +68,32 @@ func TestRenderJSONGolden(t *testing.T) {
 	golden, err := os.ReadFile("testdata/golden_report.json")
 	require.NoError(t, err)
 	assert.Equal(t, string(golden), buf.String())
+}
+
+func TestRenderHumanNameColumn(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictOK,
+		Findings: []Finding{
+			{Scope: "total", Key: "", Name: "", Metric: "cost_usd", Verdict: VerdictOK, Baseline: 0.10, Candidate: 0.10, BandLo: 0.07, BandHi: 0.13},
+			{Scope: "phase", Key: "pa", Name: "alpha", Metric: "duration_ms", Verdict: VerdictOK, Baseline: 1000, Candidate: 1000, BandLo: 700, BandHi: 1300},
+			{Scope: "step", Key: "s1", Name: "step-one", Metric: "duration_ms", Verdict: VerdictOK, Baseline: 1000, Candidate: 1000, BandLo: 700, BandHi: 1300},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	rows := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 {
+			rows[fields[2]] = fields
+		}
+	}
+	require.Contains(t, rows, "KEY")
+	assert.Equal(t, "NAME", rows["KEY"][3])
+	assert.Equal(t, "alpha", rows["pa"][3])
+	assert.Equal(t, "step-one", rows["s1"][3])
+	assert.Equal(t, "-", rows["-"][3])
 }
 
 func TestRenderHumanPresenceNormalized(t *testing.T) {
