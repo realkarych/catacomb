@@ -11,7 +11,7 @@ Real-time execution-graph observability for Claude Code agentic pipelines. A sid
 ## Principles
 
 - **Simplest thing that works.** Stdlib first; minimal dependencies; **pure Go, no cgo** (single static cross-platform binary). SQLite via `modernc.org/sqlite`, never `mattn/go-sqlite3`.
-- **Deterministic core.** The canonical graph is a deterministic reduction of an append-only observation stream: the same observations, in any order, produce the same graph.
+- **Deterministic core.** The canonical graph is a deterministic reduction of an append-only observation stream: the same observations in any order converge to the same graph once genuine terminals arrive, since provisional statuses are reversible and superseded by any later terminal (the §16 commutativity invariant).
 - **TDD by default.** Failing test first, then the minimal implementation, then refactor under green. Not a suggestion — the process.
 
 ## Comments: forbidden
