@@ -315,6 +315,41 @@ catacomb mark --session 01HZABC123 --name eval-loop --boundary start
 
 ---
 
+### mcp
+
+Run the catacomb MCP server over stdio (JSON-RPC 2.0, newline-delimited). It exposes a single
+`mark` tool so an in-run agent can record phase checkpoints without any hand-rolled stub.
+
+```sh
+catacomb mcp
+```
+
+Takes no flags or arguments; it reads requests from stdin and writes responses to stdout, and
+exits when stdin closes (or on `SIGINT`/`SIGTERM`). The `mark` tool takes:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | **required** | Phase name |
+| `boundary` | **required** | `start` or `end` |
+| `occurrence` | optional int | Occurrence index for repeated same-name phases |
+| `state_ref` | optional | Opaque state reference stored on the marker node |
+
+Wire it into Claude Code with `--mcp-config` so the agent can call the `mcp__catacomb__mark`
+checkpoint tool during a run — the server named `catacomb` exposing `mark` surfaces as
+`mcp__catacomb__mark`:
+
+```json
+{"mcpServers":{"catacomb":{"command":"catacomb","args":["mcp"]}}}
+```
+
+Pass `--strict-mcp-config` alongside it (as the bench cells do) so only the catacomb server is
+loaded and no ambient MCP config leaks in. The tool is a pure acknowledgement — it never contacts
+the daemon; the marker is synthesized from the tool-call input on the trace stream, so it needs no
+configuration and fails open. See [workflows.md](workflows.md#placing-markers) for the
+checkpoints workflow.
+
+---
+
 ### ingest stream-json
 
 Read NDJSON from stdin and forward it to the daemon.

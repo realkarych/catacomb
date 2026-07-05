@@ -70,7 +70,19 @@ explicit `--occurrence` on both the start and the end only when same-name phases
 genuinely overlap (neither nested nor sequential) — there LIFO cannot tell which
 end belongs to which start, and the explicit occurrence pins the pairing.
 
-The agent can also call `mcp__catacomb__mark` directly, which rides the trace stream.
+The agent can also call `mcp__catacomb__mark` directly, which rides the trace
+stream. That tool is served by `catacomb mcp` — a stdlib stdio MCP server that
+ships with catacomb (no hand-rolled stub needed). Wire it in with `--mcp-config`:
+
+```json
+{"mcpServers":{"catacomb":{"command":"catacomb","args":["mcp"]}}}
+```
+
+The server named `catacomb` exposing the `mark` tool surfaces to the agent as
+`mcp__catacomb__mark`. The call is a pure acknowledgement — the marker is
+synthesized from the tool-call input on the trace stream, so no daemon
+connection is required and the tool fails open. See
+[cli.md](cli.md#mcp) for the tool schema and `--strict-mcp-config` note.
 
 The HTTP endpoint `POST /v1/mark` accepts the same fields: `session_id`, `name`,
 `boundary` (start or end), `occurrence` (optional, defaults to 0), and `state_ref`
