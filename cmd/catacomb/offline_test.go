@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,4 +77,33 @@ func TestLoadGraphOfflineWithPricer(t *testing.T) {
 	require.NotEmpty(t, nodes)
 	_, err = loadGraphOffline(filepath.Join(t.TempDir(), "absent.jsonl"), nil, "exec-3", newPricer(), nil)
 	require.Error(t, err)
+}
+
+func TestParseTranscriptsWarnsOnUnknownRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	content := `{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"hi"}}` + "\n" +
+		`{"type":"checkpoint_v9","sessionId":"s1"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	var buf bytes.Buffer
+	orig := driftOut
+	driftOut = &buf
+	t.Cleanup(func() { driftOut = orig })
+
+	obs, err := parseTranscripts(path, nil, "exec-w")
+	require.NoError(t, err)
+	require.NotEmpty(t, obs)
+	assert.Contains(t, buf.String(), "unrecognized transcript record")
+	assert.Contains(t, buf.String(), "unknown_record_type=1")
+}
+
+func TestParseTranscriptsNoWarnOnCleanTranscript(t *testing.T) {
+	var buf bytes.Buffer
+	orig := driftOut
+	driftOut = &buf
+	t.Cleanup(func() { driftOut = orig })
+
+	_, err := parseTranscripts(filepath.Join("testdata", "session.jsonl"), nil, "exec-c")
+	require.NoError(t, err)
+	assert.Empty(t, buf.String())
 }
