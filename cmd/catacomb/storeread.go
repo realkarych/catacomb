@@ -10,6 +10,8 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
+type storeOpener func(path string) (store.Store, error)
+
 func openReadStore(open storeOpener, dbPath string) (store.Store, error) {
 	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
 		return nil, ErrStoreNotFound

@@ -9,28 +9,23 @@ import (
 
 	xjsonl "github.com/realkarych/catacomb/export/jsonl"
 	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
-	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/reduce"
-	"github.com/realkarych/catacomb/store"
 )
 
 type replayArgs struct {
 	input      string
-	dbPath     string
 	exportPath string
 }
-
-type storeOpener func(path string) (store.Store, error)
 
 func newReplayCmd() *cobra.Command {
 	args := replayArgs{}
 	cmd := &cobra.Command{
 		Use:   "replay <transcript.jsonl>",
 		Short: "Build a graph from a recorded Claude Code transcript",
-		Long: `Build a graph from a single recorded Claude Code transcript and persist it
-to a standalone SQLite database. This does not feed the running daemon; to
-load history into it, use catacomb up --history.`,
+		Long: `Build an in-memory graph from a single recorded Claude Code transcript and
+print a node/edge summary. Use --export-jsonl to also write the graph as a
+JSONL snapshot.`,
 		Example: `  catacomb replay ~/.claude/projects/<project>/<session>.jsonl`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, positional []string) error {
@@ -43,7 +38,6 @@ load history into it, use catacomb up --history.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&args.dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&args.exportPath, "export-jsonl", "", "also write a JSONL graph snapshot")
 	return cmd
 }
@@ -51,40 +45,8 @@ load history into it, use catacomb up --history.`,
 func newExecutionID() string { return ulid.Make().String() }
 
 func runReplay(args replayArgs) (*reduce.Graph, error) {
-	return runReplayWith(store.OpenSQLite, newExecutionID, args)
-}
-
-func loadGraph(path, executionID string) (*reduce.Graph, []model.Observation, error) {
-	f, err := os.Open(path)
+	g, err := loadGraph(args.input, newExecutionID())
 	if err != nil {
-		return nil, nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	obs, err := ijsonl.ParseReader(f, executionID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-
-	policy := redact.DefaultPolicy()
-	for i := range obs {
-		obs[i] = policy.Observation(obs[i])
-	}
-
-	g := reduce.NewGraph()
-	g.ApplyAll(obs)
-	return g, obs, nil
-}
-
-func runReplayWith(open storeOpener, newExecID func() string, args replayArgs) (*reduce.Graph, error) {
-	executionID := newExecID()
-
-	g, obs, err := loadGraph(args.input, executionID)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := persist(open, args.dbPath, obs, g); err != nil {
 		return nil, err
 	}
 	if args.exportPath != "" {
@@ -95,19 +57,26 @@ func runReplayWith(open storeOpener, newExecID func() string, args replayArgs) (
 	return g, nil
 }
 
-func persist(open storeOpener, dbPath string, obs []model.Observation, g *reduce.Graph) error {
-	s, err := open(dbPath)
+func loadGraph(path, executionID string) (*reduce.Graph, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer func() { _ = s.Close() }()
+	defer func() { _ = f.Close() }()
 
-	nodes, edges := g.Snapshot()
-	policy := redact.DefaultPolicy()
-	for i := range nodes {
-		nodes[i] = policy.Node(nodes[i])
+	obs, err := ijsonl.ParseReader(f, executionID)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return s.Persist(obs, nodes, edges)
+
+	policy := redact.DefaultPolicy()
+	for i := range obs {
+		obs[i] = policy.Observation(obs[i])
+	}
+
+	g := reduce.NewGraph()
+	g.ApplyAll(obs)
+	return g, nil
 }
 
 func export(path string, g *reduce.Graph) error {

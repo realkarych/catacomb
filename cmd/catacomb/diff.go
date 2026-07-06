@@ -84,12 +84,12 @@ func newDiffCmd() *cobra.Command {
 
 func runDiff(args diffArgs) (catdiff.DiffResult, error) {
 	aExec := newExecutionID()
-	ag, _, err := loadGraph(args.a, aExec)
+	ag, err := loadGraph(args.a, aExec)
 	if err != nil {
 		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %w (%w)", args.a, err, ErrDiffInput)
 	}
 	bExec := newExecutionID()
-	bg, _, err := loadGraph(args.b, bExec)
+	bg, err := loadGraph(args.b, bExec)
 	if err != nil {
 		return catdiff.DiffResult{}, fmt.Errorf("diff: %s: %w (%w)", args.b, err, ErrDiffInput)
 	}

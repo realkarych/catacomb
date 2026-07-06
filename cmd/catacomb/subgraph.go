@@ -51,7 +51,7 @@ func newSubgraphCmd() *cobra.Command {
 
 func runSubgraph(a subgraphArgs) ([]*model.Node, []*model.Edge, error) {
 	exec := newExecutionID()
-	g, _, err := loadGraph(a.input, exec)
+	g, err := loadGraph(a.input, exec)
 	if err != nil {
 		return nil, nil, fmt.Errorf("subgraph: %s: %w (%w)", a.input, err, ErrDiffInput)
 	}

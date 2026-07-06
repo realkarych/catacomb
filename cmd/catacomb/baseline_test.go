@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/store"
 )
@@ -132,6 +133,54 @@ func TestBaselineSetRequiresRunsDir(t *testing.T) {
 	var opErr *operationalError
 	require.ErrorAs(t, err, &opErr)
 }
+
+type fakeStore struct{}
+
+func (f *fakeStore) Persist([]model.Observation, []*model.Node, []*model.Edge) error { return nil }
+
+func (f *fakeStore) Close() error { return nil }
+
+func (f *fakeStore) AppendDeltas(model.Observation, []cdc.GraphDelta) error { return nil }
+
+func (f *fakeStore) MaxSeq() (uint64, error) { return 0, nil }
+
+func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error) { return nil, nil }
+
+func (f *fakeStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
+
+func (f *fakeStore) UpsertRun(model.Run) error { return nil }
+
+func (f *fakeStore) ListOpenRuns() ([]model.Run, error) { return nil, nil }
+
+func (f *fakeStore) Runs() ([]model.Run, error) { return nil, nil }
+
+func (f *fakeStore) Quarantine(model.QuarantineRecord) error { return nil }
+
+func (f *fakeStore) QuarantineCount() (int64, error) { return 0, nil }
+
+func (f *fakeStore) UpsertTailCursor(model.TailCursor) error { return nil }
+
+func (f *fakeStore) LoadTailCursors() ([]model.TailCursor, error) { return nil, nil }
+
+func (f *fakeStore) UpsertAnnotation(model.Annotation) error { return nil }
+
+func (f *fakeStore) AnnotationsForExecution(string) ([]model.Annotation, error) { return nil, nil }
+
+func (f *fakeStore) MoveAnnotations(string, string, string) error { return nil }
+
+func (f *fakeStore) UpsertBaseline(model.Baseline) error { return nil }
+
+func (f *fakeStore) GetBaseline(string) (model.Baseline, bool, error) {
+	return model.Baseline{}, false, nil
+}
+
+func (f *fakeStore) ListBaselines() ([]model.Baseline, error) { return nil, nil }
+
+func (f *fakeStore) DeleteBaseline(string) error { return nil }
+
+func (f *fakeStore) AppendRegressResult(string, json.RawMessage) (int, error) { return 0, nil }
+
+func (f *fakeStore) RegressResultsFor(string) ([]model.RegressResult, error) { return nil, nil }
 
 type upsertErrStore struct {
 	fakeStore

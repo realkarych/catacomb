@@ -29,7 +29,6 @@ func TestBatchCommandsUseDefaultDBPath(t *testing.T) {
 	}{
 		{"regress", newRegressCmd().Flags().Lookup("db").DefValue},
 		{"trends", newTrendsCmd().Flags().Lookup("db").DefValue},
-		{"replay", newReplayCmd().Flags().Lookup("db").DefValue},
 	} {
 		assert.Equal(t, defaultDBPath(), cmd.def, "command %s --db default", cmd.name)
 	}
