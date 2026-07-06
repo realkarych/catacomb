@@ -258,13 +258,13 @@ func TestBenchRejectsRemovedOfflineFlag(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "unknown flag")
 }
 
-func TestBenchCmdWiredAndGrouped(t *testing.T) {
+func TestBenchCmdWired(t *testing.T) {
 	root := newRootCmd()
-	groups := make(map[string]string)
+	names := make(map[string]bool)
 	for _, sub := range root.Commands() {
-		groups[sub.Name()] = sub.GroupID
+		names[sub.Name()] = true
 	}
-	assert.Equal(t, "advanced", groups["bench"])
+	assert.True(t, names["bench"])
 }
 
 func TestBenchNoOfflineFlag(t *testing.T) {

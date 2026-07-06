@@ -310,13 +310,13 @@ func TestParseAnnotationFlagsErrors(t *testing.T) {
 	}
 }
 
-func TestRegressCmdWiredAndGrouped(t *testing.T) {
+func TestRegressCmdWired(t *testing.T) {
 	root := newRootCmd()
-	groups := make(map[string]string)
+	names := make(map[string]bool)
 	for _, sub := range root.Commands() {
-		groups[sub.Name()] = sub.GroupID
+		names[sub.Name()] = true
 	}
-	assert.Equal(t, "advanced", groups["regress"])
+	assert.True(t, names["regress"])
 }
 
 type appendErrStore struct {

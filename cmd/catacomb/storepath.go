@@ -1,6 +1,11 @@
 package main
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
+
+var osUserHomeDir = os.UserHomeDir
 
 func defaultDBPath() string {
 	home, err := osUserHomeDir()

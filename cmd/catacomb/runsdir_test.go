@@ -592,3 +592,9 @@ func TestRegressRunsDirRenderErrorOperational(t *testing.T) {
 	var opErr *operationalError
 	require.ErrorAs(t, err, &opErr)
 }
+
+type failWriter struct{}
+
+func (failWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
+}

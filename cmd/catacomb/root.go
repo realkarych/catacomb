@@ -2,73 +2,38 @@ package main
 
 import "github.com/spf13/cobra"
 
-const (
-	groupObserve  = "observe"
-	groupSetup    = "setup"
-	groupAdvanced = "advanced"
-)
-
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "catacomb",
-		Short: "Execution-graph observability for Claude Code agentic pipelines",
-		Long: `Catacomb builds a real-time execution graph of your Claude Code sessions —
-prompts, turns, tool calls, MCP calls, and subagents — and serves it over
-an HTTP and gRPC API.
+		Short: "Offline eval gate for Claude Code agentic pipelines",
+		Long: `Catacomb is an offline eval gate for Claude Code agentic pipelines. It runs
+prompt baskets, reduces the recorded transcripts into a canonical execution
+graph, derives step and phase keys, aggregates metrics, and gates regressions
+against saved baselines.
 
 Common recipes:
-  Observe every session (all projects):
-      catacomb up --global
+  Run a basket and record a run:
+      catacomb bench <basket> --record
 
-  Load past sessions into the daemon:
-      catacomb up --history
+  Gate a candidate against a baseline:
+      catacomb regress --baseline label:main --candidate label:pr
 
-  Expose conversation content over the API (off by default):
-      catacomb daemon --allow-payload-access
+  Build a graph from a single recorded transcript:
+      catacomb replay <session>.jsonl
 
 Run 'catacomb <command> --help' for details on any command.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddGroup(
-		&cobra.Group{ID: groupObserve, Title: "Observe:"},
-		&cobra.Group{ID: groupSetup, Title: "Setup:"},
-		&cobra.Group{ID: groupAdvanced, Title: "Advanced:"},
-	)
-
-	observe := func(cmd *cobra.Command) *cobra.Command {
-		cmd.GroupID = groupObserve
-		return cmd
-	}
-	setup := func(cmd *cobra.Command) *cobra.Command {
-		cmd.GroupID = groupSetup
-		return cmd
-	}
-	advanced := func(cmd *cobra.Command) *cobra.Command {
-		cmd.GroupID = groupAdvanced
-		return cmd
-	}
-
-	root.AddCommand(observe(newUpCmd()))
-	root.AddCommand(observe(newDownCmd()))
-	root.AddCommand(observe(newRestartCmd()))
-	root.AddCommand(observe(newStatusCmd()))
-	root.AddCommand(observe(newLogsCmd()))
-	root.AddCommand(setup(newDaemonCmd()))
-	root.AddCommand(setup(newInstallHooksCmd()))
-	root.AddCommand(setup(newEnvCmd()))
-	root.AddCommand(advanced(newHookCmd()))
-	root.AddCommand(advanced(newMarkCmd()))
-	root.AddCommand(advanced(newMCPCmd()))
-	root.AddCommand(advanced(newReplayCmd()))
-	root.AddCommand(advanced(newDiffCmd()))
-	root.AddCommand(advanced(newSubgraphCmd()))
-	root.AddCommand(advanced(newDemoCmd()))
-	root.AddCommand(advanced(newBenchCmd()))
-	root.AddCommand(advanced(newBaselineCmd()))
-	root.AddCommand(advanced(newRegressCmd()))
-	root.AddCommand(advanced(newTrendsCmd()))
-	root.AddCommand(advanced(newVersionCmd()))
-	root.AddCommand(advanced(newExportCmd()))
+	root.AddCommand(newBenchCmd())
+	root.AddCommand(newRegressCmd())
+	root.AddCommand(newBaselineCmd())
+	root.AddCommand(newTrendsCmd())
+	root.AddCommand(newDiffCmd())
+	root.AddCommand(newSubgraphCmd())
+	root.AddCommand(newExportCmd())
+	root.AddCommand(newReplayCmd())
+	root.AddCommand(newMCPCmd())
+	root.AddCommand(newVersionCmd())
 	return root
 }

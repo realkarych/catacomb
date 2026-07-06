@@ -352,13 +352,13 @@ func TestBaselineListLegacyRowWithoutStamps(t *testing.T) {
 	assert.Contains(t, buf.String(), "legacy")
 }
 
-func TestBaselineCmdWiredAndGrouped(t *testing.T) {
+func TestBaselineCmdWired(t *testing.T) {
 	root := newRootCmd()
-	groups := make(map[string]string)
+	names := make(map[string]bool)
 	for _, sub := range root.Commands() {
-		groups[sub.Name()] = sub.GroupID
+		names[sub.Name()] = true
 	}
-	assert.Equal(t, "advanced", groups["baseline"])
+	assert.True(t, names["baseline"])
 }
 
 func TestBaselineExitCodesOperational(t *testing.T) {

@@ -307,13 +307,13 @@ func TestTrendsCurrentVersionMissingRegressResultsTable(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "older than this binary")
 }
 
-func TestTrendsCmdWiredAndGrouped(t *testing.T) {
+func TestTrendsCmdWired(t *testing.T) {
 	root := newRootCmd()
-	groups := make(map[string]string)
+	names := make(map[string]bool)
 	for _, sub := range root.Commands() {
-		groups[sub.Name()] = sub.GroupID
+		names[sub.Name()] = true
 	}
-	assert.Equal(t, "advanced", groups["trends"])
+	assert.True(t, names["trends"])
 }
 
 func TestTotalFindingAndMetricCandidate(t *testing.T) {

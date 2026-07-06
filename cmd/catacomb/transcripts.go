@@ -9,6 +9,12 @@ import (
 
 var sleepFn = realSleep
 
+func realSleep(d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	<-timer.C
+}
+
 type transcriptSet struct {
 	Main      string
 	Subagents []string

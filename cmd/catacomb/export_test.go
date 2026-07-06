@@ -217,11 +217,11 @@ func TestExportRedactsSecretBearingTranscript(t *testing.T) {
 	assert.Contains(t, out, "‹redacted:connection-string›")
 }
 
-func TestExportCmdGrouped(t *testing.T) {
+func TestExportCmdWired(t *testing.T) {
 	root := newRootCmd()
-	groups := make(map[string]string)
+	names := make(map[string]bool)
 	for _, sub := range root.Commands() {
-		groups[sub.Name()] = sub.GroupID
+		names[sub.Name()] = true
 	}
-	assert.Equal(t, "advanced", groups["export"])
+	assert.True(t, names["export"])
 }

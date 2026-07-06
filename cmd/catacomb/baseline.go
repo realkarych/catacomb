@@ -44,7 +44,7 @@ func newBaselineSetCmd() *cobra.Command {
 		},
 	}
 	home, _ := os.UserHomeDir()
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path for the baselines table (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path for the baselines table (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label selector (repeatable, AND)")
 	cmd.Flags().StringVar(&runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve the label selector from")
 	return cmd
@@ -61,7 +61,7 @@ func newBaselineListCmd() *cobra.Command {
 			return runBaselineList(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, dbPath, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
 }
@@ -76,7 +76,7 @@ func newBaselineRmCmd() *cobra.Command {
 			return runBaselineRm(cmd.OutOrStdout(), store.OpenSQLite, dbPath, args[0])
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	return cmd
 }
 
