@@ -1,6 +1,6 @@
 # ADR-0007: Export model — materialized graph (upsert + CDC) and snapshot
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
 - **Related:** spec §10, §5.7; ADR-0004, ADR-0006, ADR-0012, ADR-0015

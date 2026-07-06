@@ -1,6 +1,6 @@
 # ADR-0019: Operability, fault isolation, and self-observation
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
 - **Related:** spec §4, §6, §13, §17; ADR-0002, ADR-0013, ADR-0015

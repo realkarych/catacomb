@@ -1,6 +1,6 @@
 # ADR-0013: Daemon security and trust boundary
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
 - **Related:** spec §2 (Non-Goals), §4, §6, §9, §11; ADR-0001, ADR-0008, ADR-0020

@@ -1,6 +1,6 @@
 # ADR-0002: Four-source capture with hooks as the backbone
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
 - **Related:** spec §3, §6; ADR-0003
