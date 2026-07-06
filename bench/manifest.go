@@ -18,6 +18,8 @@ type ManifestEntry struct {
 	SessionID          string    `json:"session_id,omitempty"`
 	Marked             bool      `json:"marked"`
 	MissingCheckpoints []string  `json:"missing_checkpoints,omitempty"`
+	CostUSD            *float64  `json:"cost_usd,omitempty"`
+	EvidenceDir        string    `json:"evidence_dir,omitempty"`
 	BasketHash         string    `json:"basket_hash"`
 	FinishedAt         time.Time `json:"finished_at"`
 	Note               string    `json:"note,omitempty"`

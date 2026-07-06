@@ -197,6 +197,47 @@ checkpoint it did not find. A miss shows up immediately as a `cell <run-id>: mis
 then downstream as a presence-rate drop for that phase in `regress` — bench only reports the
 gap, `regress` decides whether it is a regression.
 
+### Daemonless benching (ADR-0026)
+
+The same loop runs with no daemon and no store. `bench --offline` executes each cell as a plain
+local process: it peeks the child's stream-json for the session id and the authoritative
+`total_cost_usd`, resolves the session's transcripts from `~/.claude/projects`
+(`--projects-dir`), synthesizes the `task:<id>` boundary markers from the child's wall clock,
+verifies declared `checkpoints:` in-process against the graph rebuilt from those transcripts,
+and writes a secret-redacted evidence directory per cell under `~/.catacomb/runs`
+(`--runs-dir`):
+
+```sh
+catacomb bench checkout.yaml --offline
+```
+
+```text
+~/.catacomb/runs/<run-id>/
+├── session.jsonl             # main transcript, secret-redacted
+├── subagents/agent-*.jsonl   # subagent transcripts, when present
+└── meta.json                 # run id, labels, exit code, cost_usd, marker window
+```
+
+Manifest entries gain `cost_usd` and `evidence_dir`, and the epilogue prints the matching
+offline comparison ready to paste. `regress --runs-dir` resolves `label:` selectors by scanning
+the evidence directories' `meta.json` — no store involved — and rebuilds each matching run's
+graph from its transcripts, so verdicts, thresholds, and exit codes are exactly the
+[Compare and gate](#compare-and-gate) ones:
+
+```sh
+catacomb regress --runs-dir ~/.catacomb/runs \
+  --baseline label:basket=checkout,variant=main \
+  --candidate label:basket=checkout,variant=candidate
+```
+
+In-task checkpoints still ride the `mark` MCP tool: the agent calls `mcp__catacomb__mark`
+(served by `catacomb mcp`, wired with `--mcp-config` as
+[above](#checkpoints-and-phase-scoped-diff)), and offline bench observes the call in the
+transcript instead of over HTTP — the convention and the basket `checkpoints:` lists carry over
+unchanged. `name:` selectors and `--record` still require the store; offline baselines land in
+PV-2. This is the PV-1 slice of ADR-0026 (the form-factor pivot to an offline eval gate); flag
+details in [bench](cli.md#bench) and [regress](cli.md#regress).
+
 ### Label two run groups by hand
 
 `catacomb bench` is a thin loop over `catacomb run`; when you need one-off control you can drive

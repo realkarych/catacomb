@@ -10,15 +10,19 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/bench"
 	"github.com/realkarych/catacomb/daemon"
+	"github.com/realkarych/catacomb/evidence"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 const baselineNameMaxBytes = 128
@@ -27,11 +31,16 @@ var errBenchRerun = errors.New("bench: manifest already has entries: pass --resu
 
 var errBenchFailFast = errors.New("bench: stopped after a failing cell (--fail-fast)")
 
+var errBenchOfflineDirs = errors.New("bench: --offline requires --projects-dir and --runs-dir (home directory could not be resolved; set them explicitly)")
+
 type benchFlags struct {
-	manifest string
-	resume   bool
-	failFast bool
-	dryRun   bool
+	manifest    string
+	resume      bool
+	failFast    bool
+	dryRun      bool
+	offline     bool
+	projectsDir string
+	runsDir     string
 }
 
 func newBenchCmd() *cobra.Command {
@@ -44,12 +53,25 @@ func newBenchCmd() *cobra.Command {
 			return runBench(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], f)
 		},
 	}
+	home, _ := os.UserHomeDir()
 	cmd.Flags().StringVar(&f.manifest, "manifest", "", "manifest path (default: <basket>.manifest.jsonl)")
 	cmd.Flags().BoolVar(&f.resume, "resume", false, "skip cells already recorded in the manifest")
 	cmd.Flags().BoolVar(&f.failFast, "fail-fast", false, "stop at the first failing cell")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print the cell expansion and exit without executing")
+	cmd.Flags().BoolVar(&f.offline, "offline", false, "run daemonless: read Claude transcripts and write evidence dirs")
+	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts (--offline)")
+	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir for --offline runs")
 	return cmd
 }
+
+func benchDefaultDir(home string, parts ...string) string {
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(append([]string{home}, parts...)...)
+}
+
+type cellRunner func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool)
 
 func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, basketPath string, f benchFlags) error {
 	basket, hash, err := bench.Load(basketPath)
@@ -61,10 +83,33 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 		printDryRun(stdout, cells)
 		return nil
 	}
-	disc, err := benchPreflight(ctx, discoveryPath)
+	cellFn, err := benchCellFunc(ctx, stdout, stderr, discoveryPath, hash, f)
 	if err != nil {
 		return operational(err)
 	}
+	return runBenchCells(stdout, basketPath, basket, cells, hash, f, cellFn)
+}
+
+func benchCellFunc(ctx context.Context, stdout, stderr io.Writer, discoveryPath, hash string, f benchFlags) (cellRunner, error) {
+	if f.offline {
+		if f.projectsDir == "" || f.runsDir == "" {
+			return nil, errBenchOfflineDirs
+		}
+		o := offlineOpts{projectsDir: f.projectsDir, runsDir: f.runsDir, pricer: newPricer()}
+		return func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
+			return runBenchCellOffline(stdout, stderr, cell, hash, ambient, o)
+		}, nil
+	}
+	disc, err := benchPreflight(ctx, discoveryPath)
+	if err != nil {
+		return nil, err
+	}
+	return func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
+		return runBenchCell(ctx, stdout, stderr, discoveryPath, disc, cell, hash, ambient)
+	}, nil
+}
+
+func runBenchCells(stdout io.Writer, basketPath string, basket bench.Basket, cells []bench.Cell, hash string, f benchFlags, cellFn cellRunner) error {
 	manifestPath := f.manifest
 	if manifestPath == "" {
 		manifestPath = basketPath + ".manifest.jsonl"
@@ -89,7 +134,7 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 			fmt.Fprintf(stdout, "skip %s (already completed)\n", cell.RunID)
 			continue
 		}
-		entry, failed, verified := runBenchCell(ctx, stdout, stderr, discoveryPath, disc, cell, hash, ambient)
+		entry, failed, verified := cellFn(cell, ambient)
 		if err := manifest.Append(entry); err != nil {
 			return operational(fmt.Errorf("bench: manifest: %w", err))
 		}
@@ -108,8 +153,16 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 		fmt.Fprintf(stdout, "marked %d/%d cells\n", marked, executed)
 		printCheckpointSummary(stdout, basket, stats)
 	}
-	printEpilogue(stdout, basket)
+	printBenchEpilogue(stdout, basket, f)
 	return nil
+}
+
+func printBenchEpilogue(out io.Writer, b bench.Basket, f benchFlags) {
+	if f.offline {
+		printOfflineEpilogue(out, b, f.runsDir)
+		return
+	}
+	printEpilogue(out, b)
 }
 
 func benchPreflight(ctx context.Context, discoveryPath string) (daemon.Discovery, error) {
@@ -190,6 +243,146 @@ func verifyCheckpoints(ctx context.Context, stderr io.Writer, disc daemon.Discov
 		fmt.Fprintf(stderr, "cell %s: missing checkpoints: %s\n", cell.RunID, strings.Join(missing, ", "))
 	}
 	return true
+}
+
+type offlineOpts struct {
+	projectsDir string
+	runsDir     string
+	pricer      reduce.Pricer
+}
+
+func runBenchCellOffline(stdout, stderr io.Writer, cell bench.Cell, hash string, ambient map[string]string, o offlineOpts) (bench.ManifestEntry, bool, bool) {
+	entry := bench.ManifestEntry{
+		RunID:      cell.RunID,
+		Task:       cell.Task.ID,
+		Variant:    cell.Variant.ID,
+		Rep:        cell.Rep,
+		BasketHash: hash,
+	}
+	if code, ok := runSetup(stdout, stderr, cell); !ok {
+		entry.ExitCode = code
+		entry.Note = "setup failed"
+		entry.FinishedAt = nowFn()
+		return entry, true, false
+	}
+	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
+	peek := &streamPeek{}
+	start := nowFn()
+	err := runChildLocal(stdout, stderr, cell.Task.Cmd, cell.Task.Dir, offlineEnv(cell, merged), peek.onLine)
+	end := nowFn()
+	code, ok := exitInfo(err)
+	entry.ExitCode = code
+	entry.SessionID = peek.sessionID
+	entry.CostUSD = peek.costUSD
+	if offlineChildFailed(stderr, cell, err, &entry) {
+		return entry, !ok, false
+	}
+	verified := recordOfflineEvidence(stderr, cell, o, merged, start, end, &entry)
+	return entry, !ok, verified
+}
+
+func offlineChildFailed(stderr io.Writer, cell bench.Cell, err error, entry *bench.ManifestEntry) bool {
+	if note := spawnFailure(err); note != "" {
+		entry.Note = note
+		fmt.Fprintf(stderr, "bench %s: %s\n", cell.RunID, note)
+		entry.FinishedAt = nowFn()
+		return true
+	}
+	if entry.SessionID == "" {
+		entry.Note = "no session id observed"
+		entry.FinishedAt = nowFn()
+		return true
+	}
+	return false
+}
+
+func recordOfflineEvidence(stderr io.Writer, cell bench.Cell, o offlineOpts, labels map[string]string, start, end time.Time, entry *bench.ManifestEntry) bool {
+	ts, err := resolveTranscriptsRetry(o.projectsDir, entry.SessionID, 6, 500*time.Millisecond)
+	if err != nil {
+		entry.Note = appendNote(entry.Note, "transcripts not found: "+err.Error())
+		entry.FinishedAt = nowFn()
+		return false
+	}
+	boundary := boundaryObservations(entry.SessionID, "task:"+cell.Task.ID, start, end)
+	g, err := loadGraphOffline(ts.Main, ts.Subagents, newExecutionID(), o.pricer, boundary)
+	if err != nil {
+		entry.Note = appendNote(entry.Note, "graph: "+err.Error())
+		entry.FinishedAt = nowFn()
+		return false
+	}
+	marks := graphMarkerNames(g)
+	_, entry.Marked = marks["task:"+cell.Task.ID]
+	verified := verifyCheckpointsOffline(stderr, cell, marks, entry)
+	finishedAt := nowFn()
+	entry.FinishedAt = finishedAt
+	writeOfflineEvidence(filepath.Join(o.runsDir, cell.RunID), offlineMeta(*entry, labels, start, end, finishedAt), ts, entry)
+	return verified
+}
+
+func verifyCheckpointsOffline(stderr io.Writer, cell bench.Cell, marks map[string]struct{}, entry *bench.ManifestEntry) bool {
+	if len(cell.Task.Checkpoints) == 0 {
+		return false
+	}
+	var missing []string
+	for _, name := range cell.Task.Checkpoints {
+		if _, ok := marks[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		entry.MissingCheckpoints = missing
+		fmt.Fprintf(stderr, "cell %s: missing checkpoints: %s\n", cell.RunID, strings.Join(missing, ", "))
+	}
+	return true
+}
+
+func writeOfflineEvidence(dir string, meta evidence.Meta, ts transcriptSet, entry *bench.ManifestEntry) {
+	if err := evidence.Write(dir, meta, offlineFiles(ts)); err != nil {
+		entry.Note = appendNote(entry.Note, "evidence write: "+err.Error())
+		return
+	}
+	entry.EvidenceDir = dir
+}
+
+func offlineMeta(entry bench.ManifestEntry, labels map[string]string, start, end, finishedAt time.Time) evidence.Meta {
+	return evidence.Meta{
+		RunID:       entry.RunID,
+		Task:        entry.Task,
+		Variant:     entry.Variant,
+		Rep:         entry.Rep,
+		SessionID:   entry.SessionID,
+		Labels:      labels,
+		ExitCode:    entry.ExitCode,
+		CostUSD:     entry.CostUSD,
+		BasketHash:  entry.BasketHash,
+		MarkerName:  "task:" + entry.Task,
+		MarkerStart: start.UTC(),
+		MarkerEnd:   end.UTC(),
+		FinishedAt:  finishedAt.UTC(),
+	}
+}
+
+func offlineFiles(ts transcriptSet) []evidence.SourceFile {
+	files := []evidence.SourceFile{{Src: ts.Main, Rel: "session.jsonl"}}
+	for _, sub := range ts.Subagents {
+		files = append(files, evidence.SourceFile{Src: sub, Rel: filepath.Join("subagents", filepath.Base(sub))})
+	}
+	return files
+}
+
+func offlineEnv(cell bench.Cell, labels map[string]string) []string {
+	return append(cellEnv(cell), "CATACOMB_LABELS="+model.FormatLabels(labels))
+}
+
+func printOfflineEpilogue(out io.Writer, b bench.Basket, runsDir string) {
+	fmt.Fprintln(out, "Next steps:")
+	if len(b.Variants) >= 2 {
+		first, second := b.Variants[0].ID, b.Variants[1].ID
+		fmt.Fprintf(out, "  catacomb regress --runs-dir %s --baseline label:basket=%s,variant=%s --candidate label:basket=%s,variant=%s\n", runsDir, b.Name, first, b.Name, second)
+	}
+	if b.Reps < 5 {
+		fmt.Fprintf(out, "  note: reps=%d limits rate-gate sensitivity; prefer reps: 5 or more\n", b.Reps)
+	}
 }
 
 func appendNote(existing, addition string) string {
