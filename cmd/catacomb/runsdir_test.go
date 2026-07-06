@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +185,39 @@ func TestEvidenceRunGraphEmptySnapshotLeavesRunZero(t *testing.T) {
 	assert.Empty(t, rg.Run.ModelID)
 	assert.Nil(t, rg.Run.StartedAt)
 	assert.Nil(t, rg.Run.EndedAt)
+}
+
+func TestEvidenceRunGraphOverlayKeyedByMetaSessionID(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r5")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "subagents"), 0o700))
+	data, err := os.ReadFile(filepath.Join("testdata", "session.jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), data, 0o600))
+	for i := 0; i < 8; i++ {
+		sub := strings.ReplaceAll(string(data), `"sessionId":"s1"`, fmt.Sprintf(`"sessionId":"sub-%d"`, i))
+		sub = strings.ReplaceAll(sub, "claude-opus-4-8", "claude-subagent-model")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "subagents", fmt.Sprintf("agent-%d.jsonl", i)), []byte(sub), 0o600))
+	}
+	m := evidence.Meta{RunID: "r5", SessionID: "s1", Labels: map[string]string{"variant": "base"}}
+	for i := 0; i < 20; i++ {
+		rg, gerr := evidenceRunGraph(dir, m, newPricer())
+		require.NoError(t, gerr)
+		require.Equal(t, "claude-opus-4-8", rg.Run.ModelID)
+		require.Equal(t, model.StatusRunning, rg.Run.Status)
+	}
+}
+
+func TestEvidenceRunGraphOverlayNoSessionMatchLeavesRunZero(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r6")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	data, err := os.ReadFile(filepath.Join("testdata", "session.jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), data, 0o600))
+	m := evidence.Meta{RunID: "r6", SessionID: "other-session"}
+	rg, err := evidenceRunGraph(dir, m, newPricer())
+	require.NoError(t, err)
+	assert.Empty(t, rg.Run.Status)
+	assert.Empty(t, rg.Run.ModelID)
 }
 
 func TestEvidenceRunGraphMergesSubagents(t *testing.T) {
