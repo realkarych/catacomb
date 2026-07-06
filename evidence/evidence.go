@@ -43,6 +43,11 @@ type Run struct {
 }
 
 func Write(dir string, m Meta, files []SourceFile) error {
+	for _, f := range files {
+		if !filepath.IsLocal(f.Rel) {
+			return fmt.Errorf("evidence.Write: rel %q escapes evidence dir", f.Rel)
+		}
+	}
 	if err := replaceDir(dir); err != nil {
 		return fmt.Errorf("evidence.Write: %w", err)
 	}

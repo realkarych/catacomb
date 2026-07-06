@@ -662,9 +662,11 @@ id, task, variant, rep, session id, labels, exit code, `cost_usd`, basket hash, 
 `result` event) and `evidence_dir`. An evidence-write failure keeps the cell's result and
 notes the error. On success the epilogue prints a copy-pasteable
 [`regress --runs-dir`](#regress) comparing the first two variants over these evidence
-directories — no `baseline set` step, because offline baselines land in PV-2. When the home
+directories; pin the golden variant by name with [`baseline set --runs-dir`](#baseline-set)
+when the comparison should survive label churn. When the home
 directory cannot be resolved, `--projects-dir` and `--runs-dir` must be set explicitly (exit
-`2`). Offline mode is the PV-1 slice of ADR-0026.
+`2`). Offline mode is the PV-1 slice of ADR-0026; offline baselines, recorded history, and
+`--scores` gating (PV-2) are covered under [regress](#regress).
 
 ```sh
 catacomb bench checkout.yaml
@@ -677,7 +679,8 @@ catacomb bench checkout.yaml --offline
 
 ### baseline set
 
-Create or replace a named baseline from a label selector, resolved against the store now.
+Create or replace a named baseline from a label selector, resolved now — against the store, or
+against offline evidence dirs with `--runs-dir`.
 
 ```sh
 catacomb baseline set <name> --label k=v [--label ...] [flags]
@@ -687,16 +690,31 @@ catacomb baseline set <name> --label k=v [--label ...] [flags]
 | --- | --- | --- |
 | `--label` | **required** (repeatable) | `k=v` selector; the baseline captures every run matching all terms (AND) |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--runs-dir` | (none) | Resolve the selector from [`bench --offline`](#bench) evidence dirs instead of the store |
 
 Resolves the label selector immediately, sorts the matching run IDs, and persists them with the
-selector, per-run repro fingerprints, and a created-at timestamp under `<name>`. The name must be
+selector, per-run repro fingerprints, a created-at timestamp, and the version stamps of the
+setting binary — the catacomb version and the step-key scheme — under `<name>`; `regress`
+checks those stamps whenever the baseline is resolved by name (see
+[Baseline version stamps](#baseline-version-stamps)). The name must be
 non-empty, at most 128 bytes, and free of leading or trailing whitespace; at least one `--label`
-is required. Requires read-write store access; errors if the store does not exist or the selector
-matches no runs. Re-running with the same name replaces the stored baseline. A saved baseline is
+is required. Requires read-write store access; errors when the selector matches no runs, and —
+without `--runs-dir` — when the store does not exist. Re-running with the same name replaces the
+stored baseline. A saved baseline is
 referenced by `regress` as `name:<baseline>`, so a golden group survives later label churn.
+
+With `--runs-dir` the selector resolves offline instead: the command scans
+`<runs-dir>/*/meta.json`, matches the labels against each run's recorded labels (all terms
+ANDed), and pins the matching run IDs — no daemon involved, and the store at `--db` is created
+if it does not exist yet, so the very first offline command can be this one. The baseline also
+records the runs dir it was set from; the evidence dirs are not copied, so
+[`regress --runs-dir`](#comparing-offline-evidence) re-reads the pinned runs from disk and warns
+when pointed at a different directory. Offline baselines carry no per-run repro fingerprints
+(those exist only for store-resolved runs).
 
 ```sh
 catacomb baseline set golden --label basket=checkout --label variant=main
+catacomb baseline set golden --label basket=checkout,variant=main --runs-dir ~/.catacomb/runs
 ```
 
 ---
@@ -716,8 +734,10 @@ catacomb baseline list [flags]
 
 Prints a table with columns `NAME`, `RUNS`, `SELECTOR`, `CREATED`, sorted by name; `SELECTOR`
 shows the sorted `k=v` terms and `CREATED` is a UTC RFC3339 timestamp. `--json` emits the stored
-records including each baseline's resolved run IDs and a `repro` field mapping run IDs to the
-repro fingerprints captured at `baseline set` time. On a store created by an older binary
+records including each baseline's resolved run IDs, a `repro` field mapping run IDs to the
+repro fingerprints captured at `baseline set` time, the `runs_dir` an offline baseline was
+resolved from, and the version `stamps` (catacomb version and step-key scheme) recorded at set
+time. On a store created by an older binary
 (schema v1) this command fails with a hint to run a write-path command (`catacomb up` or
 `baseline set`) to migrate the schema.
 
@@ -760,11 +780,12 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--baseline` | (empty) | Baseline selector: `label:k=v[,k=v...]` or `name:<baseline>` |
 | `--candidate` | (empty) | Candidate selector (same grammar) |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
-| `--runs-dir` | (none) | Resolve `label:` selectors from [`bench --offline`](#bench) evidence dirs instead of the store (see [Comparing offline evidence](#comparing-offline-evidence)) |
+| `--runs-dir` | (none) | Resolve selectors from [`bench --offline`](#bench) evidence dirs instead of the store; `name:` baselines and `--record` still use `--db` (see [Comparing offline evidence](#comparing-offline-evidence)) |
 | `--json` | false | Emit the full report as JSON |
-| `--strict` | false | Treat an insufficient-data verdict as a failure (exit 1) |
+| `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`) |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
+| `--scores` | (none) | JSONL file of external scores applied as node annotations before comparison (see [Gating on external scores](#gating-on-external-scores)) |
 | `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
 | `--error-delta` | 0.1 | Error-rate delta threshold |
@@ -803,20 +824,43 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
 #### Comparing offline evidence
 
 `--runs-dir` resolves the run groups from [`bench --offline`](#bench) evidence directories
-instead of the store — no daemon, no database (`--db` is ignored). It scans
+instead of the store — no daemon; the database at `--db` is touched only to look up `name:`
+baselines and to append `--record` history. It scans
 `<runs-dir>/*/meta.json`, matches `label:` selectors against each run's recorded labels (all
 terms ANDed), and rebuilds every matching run's graph from its redacted transcripts,
 re-applying the `task:<id>` marker window from `meta.json` so checkpoint phases and run timing
-carry over. Aggregation, thresholds, scopes, output, and exit codes are unchanged. `name:`
-selectors and `--record` still require the store — offline baselines land in PV-2 — and are
-operational errors (exit `2`) under `--runs-dir`. Annotation gates (`--annotation`) read
-their scores from the store, so they never fire under `--runs-dir` in PV-1 (each configured
-key only triggers the never-fired stderr warning); scores-file support lands in PV-2.
+carry over. Aggregation, thresholds, scopes, output, and exit codes are unchanged.
+
+`name:` selectors resolve offline too: the baseline row is read from the `--db` baselines table
+(read-only) and its pinned run IDs load from `<runs-dir>/<run-id>/` — every pinned run's
+evidence dir must be present and readable, or the command exits `2` naming the run and dir. A
+baseline set with [`baseline set --runs-dir`](#baseline-set) records the runs dir it was
+resolved from; when the `--runs-dir` flag names a different directory, a stderr warning notes
+the recorded dir and the flag wins. `--record` appends to the same store, opening it read-write
+(see [Recording history](#recording-history)). Annotation gates
+(`--annotation`) fire under `--runs-dir` when their values arrive through a
+[`--scores` file](#gating-on-external-scores); evidence dirs carry no store-written
+annotations, so a gated key without a scores file still only triggers the never-fired stderr
+warning.
+
+#### Baseline version stamps
+
+`baseline set` stamps every baseline with the versions that resolved it: the catacomb version
+and the step-key scheme (`stepkey/v1`). Whenever `--baseline` resolves by `name:` — with or
+without `--runs-dir` — `regress` compares those stamps against its own: a baseline with no
+stamps (set by a pre-stamp catacomb) or with differing stamps prints a stderr warning, and
+under `--strict` is refused as an operational error (exit `2`) instead. A step-key scheme
+change shifts step identity between the pinned runs and the candidate, so a cross-version
+comparison can quietly align nothing; after upgrading catacomb, re-run `baseline set` to re-pin
+the group under the current stamps. The check covers the `--baseline` side only (`label:`
+selectors carry no stamps, and a `name:` candidate is not checked), and stdout and `--json`
+stay clean either way.
 
 #### Gating on external scores
 
 `--annotation owner.key` folds a numeric annotation — an external scorer's verdict written back
-onto the graph (see [Annotations](workflows.md#annotations)) — into the comparison as if it were a
+onto the graph (see [Annotations](workflows.md#annotations)) or supplied from a `--scores` file
+(below) — into the comparison as if it were a
 built-in metric. The annotation values aggregate per `step_key` and are flagged with the same
 median ± `max(metric-rel-delta × |median|, iqr-factor × IQR)` band as other metrics, but with a
 declared direction. When the same `step_key` occurs more than once within a single run, that
@@ -837,12 +881,34 @@ in only some); an annotation whose `N` falls below `--min-support`, or one prese
 side, is reported `insufficient` rather than guessed. A configured key that never fires on any
 step in either group prints a warning to stderr (stdout and `--json` stay clean).
 
+`--scores file.jsonl` supplies those values from a file instead of the store — the only way
+annotations reach a `--runs-dir` comparison, and equally usable against the store. Each line is
+one JSON object:
+
+```json
+{"step_key": "1f0c9a4b2d8e7f36", "key": "deepeval.tool_correctness", "value": 0.92, "run_id": "bench-checkout-work-task-candidate-r1"}
+```
+
+`step_key` names the step the score lands on (take it from the `KEY` column of a `regress`
+table, or from [`subgraph --json`](#subgraph) node output), `key` uses the same `owner.key`
+grammar as `--annotation`, `value` must be a number, and `run_id` is optional: set it to score
+a single run — one line per scored run is the normal shape — or omit it and the value lands on
+every run in **both** groups that carries the step key, which flattens both medians to the same
+value. Blank lines are skipped; a malformed line is an operational error (exit `2`) naming the
+file and line. Values apply in memory to both groups before aggregation — nothing is written
+back to the store or the evidence dirs — and they overwrite a store-written annotation under
+the same key on the nodes they match. Entries that match no node are counted into a single
+stderr warning (`N score entries matched no node`); stdout and `--json` stay clean. The file
+only supplies values: each key still needs its `--annotation owner.key[:direction]` flag to
+declare a gate, or the scores are inert.
+
 Comparison runs at three scopes — run totals, checkpoint phases, and steps. The human table
 prints `VERDICT SCOPE KEY NAME METRIC BASELINE CANDIDATE BAND` with presence-normalized values
 (presence rate, not absence); `--json` emits the full report (presence rows carry absence rates
 plus a clarifying `detail` field). Exit codes: `0` pass, `1` regression (or `insufficient` with
 `--strict`), `2` operational error (invalid selector, unknown baseline, missing store, empty
-group, or `--min-support` below 1). Resolving a `name:` baseline on a store created by an older
+group, a [stamp refusal](#baseline-version-stamps) under `--strict`, or `--min-support` below
+1). Resolving a `name:` baseline on a store created by an older
 binary (schema v1) also exits `2` with a hint to run a write-path command (`catacomb up` or
 `baseline set`) to migrate the schema.
 
@@ -856,6 +922,14 @@ the store read-write, migrating an older schema in the process. The record is ap
 verdict is rendered to stdout, and a failed append is itself an operational error (exit `2`) that
 takes precedence over the verdict: a regression that could not be durably recorded exits `2`, not
 `1`, so a broken store never masquerades as a clean regression signal.
+
+Recording works under `--runs-dir` too: the store at `--db` is opened read-write solely to
+write the record, so a fully offline loop still accumulates [`trends`](#trends) history. The
+store must already exist: `--record` requires a `name:` baseline, and resolving one against an
+absent store fails first (exit `2`), so in an offline loop the store is created by
+[`baseline set --runs-dir`](#baseline-set), never by `--record`. Each record carries the
+version stamps of the recording binary (catacomb version and step-key scheme) in its body
+alongside the report.
 
 Sequence numbers are assigned atomically in a single statement, so a record is never silently
 overwritten. But concurrent `--record` writers against one store file — a fan-out CI matrix whose
@@ -872,6 +946,11 @@ catacomb regress --baseline name:golden --candidate label:variant=candidate \
 catacomb regress --baseline name:golden --candidate label:variant=candidate --record
 catacomb regress --runs-dir ~/.catacomb/runs \
   --baseline label:basket=checkout,variant=main --candidate label:basket=checkout,variant=candidate
+catacomb regress --runs-dir ~/.catacomb/runs --baseline name:golden \
+  --candidate label:basket=checkout,variant=candidate --record --strict
+catacomb regress --runs-dir ~/.catacomb/runs --baseline name:golden \
+  --candidate label:basket=checkout,variant=candidate \
+  --scores scores.jsonl --annotation deepeval.tool_correctness
 ```
 
 ---
@@ -910,8 +989,10 @@ history is never read as a continuous one.
 `--json` emits the raw stored history verbatim as `[{"seq":N,"record":<stored bytes>}]`: each
 `record` is the exact JSON body that was written, byte-for-byte, not a re-encoding. A body carries a
 schema version field `v` (currently `1`), the candidate selector, thresholds, annotation specs, the
-report, its own `created_at` (RFC3339 UTC), and a `baseline_created_at` stamp mirroring the
-baseline's `created_at` at record time — ready for dashboards or diffing scripts. A record whose `v`
+report, its own `created_at` (RFC3339 UTC), a `baseline_created_at` stamp mirroring the
+baseline's `created_at` at record time, and the recording binary's version `stamps` (catacomb
+version and step-key scheme; records written before stamps existed lack the field) — ready for
+dashboards or diffing scripts. A record whose `v`
 is not understood by this binary is an exit-`2` error naming the sequence and version (upgrade
 catacomb).
 

@@ -46,6 +46,24 @@ func TestWriteNestedRelAndErrors(t *testing.T) {
 	require.Error(t, evidence.Write(filepath.Join(t.TempDir(), "run-3"), sampleMeta("run-3", "base"), []evidence.SourceFile{{Src: filepath.Join(t.TempDir(), "missing.jsonl"), Rel: "session.jsonl"}}))
 }
 
+func TestWriteRejectsNonLocalRel(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl")
+	require.NoError(t, os.WriteFile(src, []byte("{}\n"), 0o600))
+	dir := filepath.Join(t.TempDir(), "run-x")
+	sentinel := filepath.Join(dir, "keep.txt")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(sentinel, []byte("x"), 0o600))
+	abs := filepath.Join(t.TempDir(), "abs.jsonl")
+	for _, rel := range []string{filepath.Join("..", "x"), abs} {
+		err := evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{{Src: src, Rel: rel}})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "rel")
+		require.Contains(t, err.Error(), rel)
+		_, serr := os.Stat(sentinel)
+		require.NoError(t, serr, "target dir must stay untouched")
+	}
+}
+
 func TestWriteRemovesStaleFiles(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "in.jsonl")
 	require.NoError(t, os.WriteFile(src, []byte("{}\n"), 0o600))

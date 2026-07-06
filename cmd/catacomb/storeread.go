@@ -24,6 +24,14 @@ func openReadStore(open storeOpener, dbPath string) (store.Store, error) {
 	return s, nil
 }
 
+func openWriteStore(open storeOpener, dbPath string) (store.Store, error) {
+	s, err := open(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("store open: %w", err)
+	}
+	return s, nil
+}
+
 func storeGraphs(s store.Store, pricer reduce.Pricer) ([]*reduce.Graph, error) {
 	graphs, _, err := storeGraphsWithIDs(s, pricer)
 	return graphs, err

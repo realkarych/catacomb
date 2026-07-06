@@ -2,9 +2,14 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
+	"github.com/realkarych/catacomb/store"
 )
 
 func writeEvidenceRun(t *testing.T, root, id, variant, fixture string) {
@@ -45,7 +52,7 @@ func evidenceRoot(t *testing.T) string {
 
 func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 	root := evidenceRoot(t)
-	base, err := resolveSelectorRunsDir(root, newPricer(), "label:variant=base")
+	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
 	require.NoError(t, err)
 	require.Len(t, base, 2)
 	assert.Equal(t, "base-0", base[0].Run.ID)
@@ -54,42 +61,34 @@ func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 		assert.Equal(t, []string{"s1"}, rg.Run.SessionIDs)
 		assert.NotEmpty(t, rg.Nodes)
 	}
-	cand, err := resolveSelectorRunsDir(root, newPricer(), "label:variant=cand")
+	cand, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=cand")
 	require.NoError(t, err)
 	assert.Len(t, cand, 2)
 }
 
-func TestRunsDirNameSelectorErrorsPV2(t *testing.T) {
-	root := evidenceRoot(t)
-	_, err := resolveSelectorRunsDir(root, newPricer(), "name:golden")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "name:")
-	assert.Contains(t, err.Error(), "PV-2")
-}
-
 func TestRunsDirEmptyMatchNamesSelector(t *testing.T) {
 	root := evidenceRoot(t)
-	_, err := resolveSelectorRunsDir(root, newPricer(), "label:variant=none")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=none")
 	require.ErrorIs(t, err, ErrEmptyGroup)
 	assert.Contains(t, err.Error(), "label:variant=none")
 }
 
 func TestRunsDirBadSelectorOperational(t *testing.T) {
 	root := evidenceRoot(t)
-	_, err := resolveSelectorRunsDir(root, newPricer(), "bogus")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "bogus")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid selector")
 }
 
 func TestRunsDirBadLabelTermOperational(t *testing.T) {
 	root := evidenceRoot(t)
-	_, err := resolveSelectorRunsDir(root, newPricer(), "label:BAD=x")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:BAD=x")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid --label")
 }
 
 func TestRunsDirScanError(t *testing.T) {
-	_, err := resolveSelectorRunsDir(filepath.Join(t.TempDir(), "absent"), newPricer(), "label:variant=base")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", filepath.Join(t.TempDir(), "absent"), newPricer(), "label:variant=base")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "runs-dir")
 }
@@ -106,8 +105,165 @@ func TestRunsDirEvidenceLoadErrorPropagates(t *testing.T) {
 		MarkerEnd:   time.Unix(2, 0).UTC(),
 	}
 	require.NoError(t, evidence.Write(filepath.Join(root, "broken"), m, nil))
-	_, err := resolveSelectorRunsDir(root, newPricer(), "label:variant=base")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
 	require.Error(t, err)
+}
+
+func upsertBaselineRunsDir(t *testing.T, dbPath string, b model.Baseline) {
+	t.Helper()
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertBaseline(b))
+	require.NoError(t, s.Close())
+}
+
+func TestRunsDirNameSelectorResolvesOffline(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, out.String(), "baseline runs 2")
+	assert.Empty(t, errBuf.String())
+}
+
+func TestRunsDirNameSelectorNotFound(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := emptyStoreDB(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:nope", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "baseline not found")
+}
+
+func TestRunsDirNameSelectorStoreMissing(t *testing.T) {
+	root := evidenceRoot(t)
+	missing := filepath.Join(t.TempDir(), "nope.db")
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", missing,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "no catacomb store")
+}
+
+func TestRunsDirNameSelectorGetBaselineError(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := emptyStoreDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO baselines(name, body) VALUES('golden','not-json')`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "get baseline")
+}
+
+func TestRunsDirNameSelectorMissingBaselinesTable(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := seedCurrentVersionDropTable(t, "baselines")
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "older than this binary")
+}
+
+func TestRunsDirNameSelectorEmptyRunIDs(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "empty", RunsDir: root, Stamps: currentStamps()})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:empty", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "matched no runs")
+}
+
+func TestRunsDirNameSelectorMissingRunDir(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{
+		Name: "golden", RunIDs: []string{"base-0", "ghost-99"}, RunsDir: root, Stamps: currentStamps(),
+	})
+
+	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ghost-99")
+	assert.Contains(t, err.Error(), filepath.Join(root, "ghost-99"))
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
+func TestRunRegressRunsDirDeletedRunDirNamesRunAndDir(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "base-1")))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), `run "base-1"`)
+	assert.Contains(t, errBuf.String(), filepath.Join(root, "base-1"))
+	assert.NotContains(t, errBuf.String(), "daemon")
+}
+
+func TestRunsDirNameSelectorBrokenEvidence(t *testing.T) {
+	root := evidenceRoot(t)
+	broken := evidence.Meta{RunID: "broken", SessionID: "s1", Labels: map[string]string{"variant": "base"}}
+	require.NoError(t, evidence.Write(filepath.Join(root, "broken"), broken, nil))
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{
+		Name: "golden", RunIDs: []string{"broken"}, RunsDir: root, Stamps: currentStamps(),
+	})
+
+	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "broken")
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
+func TestRunsDirNameSelectorRunsDirPrecedenceWarns(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{
+		Name: "golden", RunIDs: []string{"base-0", "base-1"}, RunsDir: "/recorded/elsewhere", Stamps: currentStamps(),
+	})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, errBuf.String(), "recorded runs-dir")
+	assert.Contains(t, errBuf.String(), "/recorded/elsewhere")
+	assert.Contains(t, errBuf.String(), root)
 }
 
 func TestEvidenceRunGraphNoMarker(t *testing.T) {
@@ -149,6 +305,74 @@ func TestEvidenceRunGraphRunWindowFromMarkerTimes(t *testing.T) {
 	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
 }
 
+func TestEvidenceRunGraphOverlaysStatusAndModel(t *testing.T) {
+	root := t.TempDir()
+	m := evidence.Meta{
+		RunID:       "r3",
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": "base"},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	require.NoError(t, evidence.Write(filepath.Join(root, "r3"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session_marked.jsonl"), Rel: "session.jsonl"}}))
+	rg, err := evidenceRunGraph(filepath.Join(root, "r3"), m, newPricer())
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusRunning, rg.Run.Status)
+	assert.Equal(t, "claude-opus-4-8", rg.Run.ModelID)
+	require.NotNil(t, rg.Run.StartedAt)
+	require.NotNil(t, rg.Run.EndedAt)
+	assert.Equal(t, m.MarkerStart, *rg.Run.StartedAt)
+	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
+}
+
+func TestEvidenceRunGraphEmptySnapshotLeavesRunZero(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r4")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), nil, 0o600))
+	m := evidence.Meta{RunID: "r4", SessionID: "s1"}
+	rg, err := evidenceRunGraph(dir, m, newPricer())
+	require.NoError(t, err)
+	assert.Empty(t, rg.Run.Status)
+	assert.Empty(t, rg.Run.ModelID)
+	assert.Nil(t, rg.Run.StartedAt)
+	assert.Nil(t, rg.Run.EndedAt)
+}
+
+func TestEvidenceRunGraphOverlayKeyedByMetaSessionID(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r5")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "subagents"), 0o700))
+	data, err := os.ReadFile(filepath.Join("testdata", "session.jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), data, 0o600))
+	for i := 0; i < 8; i++ {
+		sub := strings.ReplaceAll(string(data), `"sessionId":"s1"`, fmt.Sprintf(`"sessionId":"sub-%d"`, i))
+		sub = strings.ReplaceAll(sub, "claude-opus-4-8", "claude-subagent-model")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "subagents", fmt.Sprintf("agent-%d.jsonl", i)), []byte(sub), 0o600))
+	}
+	m := evidence.Meta{RunID: "r5", SessionID: "s1", Labels: map[string]string{"variant": "base"}}
+	for i := 0; i < 20; i++ {
+		rg, gerr := evidenceRunGraph(dir, m, newPricer())
+		require.NoError(t, gerr)
+		require.Equal(t, "claude-opus-4-8", rg.Run.ModelID)
+		require.Equal(t, model.StatusRunning, rg.Run.Status)
+	}
+}
+
+func TestEvidenceRunGraphOverlayNoSessionMatchLeavesRunZero(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r6")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	data, err := os.ReadFile(filepath.Join("testdata", "session.jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), data, 0o600))
+	m := evidence.Meta{RunID: "r6", SessionID: "other-session"}
+	rg, err := evidenceRunGraph(dir, m, newPricer())
+	require.NoError(t, err)
+	assert.Empty(t, rg.Run.Status)
+	assert.Empty(t, rg.Run.ModelID)
+}
+
 func TestEvidenceRunGraphMergesSubagents(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "r1")
@@ -176,15 +400,137 @@ func TestRegressRunsDirFullOffline(t *testing.T) {
 	assert.Empty(t, errBuf.String())
 }
 
-func TestRegressRunsDirRecordConflict(t *testing.T) {
+func TestRegressRunsDirRecordRequiresNameSelector(t *testing.T) {
 	root := evidenceRoot(t)
 	var out, errBuf bytes.Buffer
 	code := run([]string{
 		"regress", "--runs-dir", root, "--record",
+		"--db", filepath.Join(t.TempDir(), "b.db"),
 		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
 	}, &out, &errBuf)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "offline baselines land in PV-2")
+	assert.Contains(t, errBuf.String(), "name:")
+}
+
+func TestRegressRunsDirRecordRoundtrip(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	pinBaselineNow(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath, "--record",
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	res, err := s.RegressResultsFor("golden")
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	var rec regress.Record
+	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
+	assert.Equal(t, model.Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"}, rec.Stamps)
+	assert.Equal(t, "label:variant=cand", rec.CandidateSelector)
+	assert.Equal(t, regress.RecordVersion, rec.V)
+}
+
+func TestRegressRunsDirRecordAppendError(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	opener := func(path string) (store.Store, error) {
+		s, err := store.OpenSQLite(path)
+		if err != nil {
+			return nil, err
+		}
+		return &appendErrStore{Store: s}, nil
+	}
+
+	f := regressFlags{
+		runsDir: root, dbPath: dbPath,
+		baseline: "name:golden", candidate: "label:variant=cand",
+		record: true, thresholds: regress.DefaultThresholds(),
+	}
+	err := runRegress(io.Discard, io.Discard, opener, newPricer, f)
+	require.Error(t, err)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Contains(t, err.Error(), "boom-append")
+}
+
+func TestAppendRecordOfflineOpenError(t *testing.T) {
+	failing := func(string) (store.Store, error) { return nil, errors.New("boom-open") }
+	err := appendRecordOffline(failing, regressFlags{dbPath: "x"}, "golden", time.Now(), nil, regress.Report{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom-open")
+}
+
+func TestRegressRunsDirNameStampsZeroWarns(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0", "base-1"}, RunsDir: root})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, errBuf.String(), "baseline golden has no version stamps (pre-PV-2)")
+}
+
+func TestRegressRunsDirNameStampsZeroStrictRefuses(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0", "base-1"}, RunsDir: root})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath, "--strict",
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "no version stamps")
+}
+
+func TestRegressRunsDirNameStampsMismatchWarns(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{
+		Name: "golden", RunIDs: []string{"base-0", "base-1"}, RunsDir: root,
+		Stamps: model.Stamps{CatacombVersion: "old", StepKeyScheme: "stepkey/v0"},
+	})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, errBuf.String(), "version stamps differ")
+	assert.Contains(t, errBuf.String(), "old")
+	assert.Contains(t, errBuf.String(), "dev")
+}
+
+func TestRegressRunsDirNameStampsMismatchStrictRefuses(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{
+		Name: "golden", RunIDs: []string{"base-0", "base-1"}, RunsDir: root,
+		Stamps: model.Stamps{CatacombVersion: "old", StepKeyScheme: "stepkey/v1"},
+	})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath, "--strict",
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "version stamps differ")
 }
 
 func TestRegressRunsDirEmptyBaselineExitTwo(t *testing.T) {

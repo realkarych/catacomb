@@ -371,7 +371,7 @@ func offlineFiles(ts transcriptSet) []evidence.SourceFile {
 }
 
 func offlineEnv(cell bench.Cell, labels map[string]string) []string {
-	return append(cellEnv(cell), "CATACOMB_LABELS="+model.FormatLabels(labels))
+	return append(cellEnv(cell), "CATACOMB_LABELS="+model.FormatLabels(labels), "CATACOMB_RUN_ID="+cell.RunID)
 }
 
 func printOfflineEpilogue(out io.Writer, b bench.Basket, runsDir string) {

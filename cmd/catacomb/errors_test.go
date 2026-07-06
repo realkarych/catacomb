@@ -53,6 +53,11 @@ func TestRenderErrOsNotExist(t *testing.T) {
 	assert.Equal(t, ErrNoDaemon.Error(), renderErr(err))
 }
 
+func TestRenderErrOperationalNotExistKeepsMessage(t *testing.T) {
+	err := operational(fmt.Errorf("regress name:g: run %q dir %q: %w", "ghost-1", "/runs/ghost-1", os.ErrNotExist))
+	assert.Equal(t, err.Error(), renderErr(err))
+}
+
 func TestRenderErrNetOpError(t *testing.T) {
 	err := &net.OpError{Op: "dial", Net: "tcp", Err: &net.AddrError{Err: "refused"}}
 	assert.Equal(t, ErrDaemonUnreachable.Error(), renderErr(err))

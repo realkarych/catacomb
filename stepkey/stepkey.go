@@ -15,7 +15,7 @@ import (
 
 const Method = "heuristic"
 
-const scheme = "stepkey/v1"
+const Scheme = "stepkey/v1"
 
 type Key struct {
 	Key     string
@@ -106,7 +106,7 @@ func hash16(s string) string {
 
 func (b *builder) compute(n *model.Node) (string, string) {
 	p := b.levels(n)
-	return hash16(scheme + "|" + p + "|" + b.terms[n.ID]), hash16(scheme + "|path|" + p)
+	return hash16(Scheme + "|" + p + "|" + b.terms[n.ID]), hash16(Scheme + "|path|" + p)
 }
 
 func (b *builder) liveIndex(parent, target string) int {

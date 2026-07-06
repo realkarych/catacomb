@@ -25,6 +25,7 @@ type Record struct {
 	Report            Report           `json:"report"`
 	CreatedAt         time.Time        `json:"created_at"`
 	BaselineCreatedAt time.Time        `json:"baseline_created_at"`
+	Stamps            model.Stamps     `json:"stamps,omitempty"`
 }
 
 type Input struct {

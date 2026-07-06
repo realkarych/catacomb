@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/realkarych/catacomb/evidence"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
@@ -30,16 +31,18 @@ func newBaselineCmd() *cobra.Command {
 func newBaselineSetCmd() *cobra.Command {
 	var dbPath string
 	var labels []string
+	var runsDir string
 	cmd := &cobra.Command{
 		Use:   "set <name>",
 		Short: "Create or replace a baseline from a label selector",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBaselineSet(cmd.OutOrStdout(), store.OpenSQLite, newPricer, dbPath, args[0], labels)
+			return runBaselineSet(cmd.OutOrStdout(), store.OpenSQLite, newPricer, dbPath, args[0], labels, runsDir)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label selector (repeatable, AND)")
+	cmd.Flags().StringVar(&runsDir, "runs-dir", "", "resolve the label selector from evidence dirs instead of the store (offline)")
 	return cmd
 }
 
@@ -73,7 +76,7 @@ func newBaselineRmCmd() *cobra.Command {
 	return cmd
 }
 
-func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath, name string, labels []string) error {
+func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath, name string, labels []string, runsDir string) error {
 	if err := validateBaselineName(name); err != nil {
 		return operational(err)
 	}
@@ -83,19 +86,43 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 	if err := validateLabelTerms(labels); err != nil {
 		return operational(err)
 	}
-	s, err := openReadStore(open, dbPath)
+	s, err := openBaselineStore(open, dbPath, runsDir)
 	if err != nil {
 		return operational(err)
 	}
 	defer func() { _ = s.Close() }()
 
 	selector := model.ParseLabels(strings.Join(labels, ","))
+	ids, repro, err := resolveBaselineRuns(s, mkPricer, name, selector, runsDir)
+	if err != nil {
+		return err
+	}
+	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn(), RunsDir: runsDir, Stamps: currentStamps(), Repro: repro}
+	if err := s.UpsertBaseline(b); err != nil {
+		return operational(fmt.Errorf("baseline set: %w", err))
+	}
+	fmt.Fprintf(out, "baseline %q set: %d runs\n", name, len(ids))
+	return nil
+}
+
+func openBaselineStore(open storeOpener, dbPath, runsDir string) (store.Store, error) {
+	if runsDir != "" {
+		return openWriteStore(open, dbPath)
+	}
+	return openReadStore(open, dbPath)
+}
+
+func resolveBaselineRuns(s store.Store, mkPricer func() reduce.Pricer, name string, selector map[string]string, runsDir string) ([]string, map[string]*model.ReproMeta, error) {
+	if runsDir != "" {
+		ids, err := offlineBaselineRunIDs(runsDir, name, selector)
+		return ids, nil, err
+	}
 	group, err := loadRunGroup(s, mkPricer(), selector)
 	if err != nil {
-		return operational(err)
+		return nil, nil, operational(err)
 	}
 	if len(group) == 0 {
-		return operational(fmt.Errorf("baseline set %q: %w", name, ErrEmptyGroup))
+		return nil, nil, operational(fmt.Errorf("baseline set %q: %w", name, ErrEmptyGroup))
 	}
 	ids := make([]string, 0, len(group))
 	repro := make(map[string]*model.ReproMeta, len(group))
@@ -106,12 +133,25 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 		}
 	}
 	sort.Strings(ids)
-	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn(), Repro: repro}
-	if err := s.UpsertBaseline(b); err != nil {
-		return operational(fmt.Errorf("baseline set: %w", err))
+	return ids, repro, nil
+}
+
+func offlineBaselineRunIDs(runsDir, name string, selector map[string]string) ([]string, error) {
+	runs, err := evidence.ScanRuns(runsDir)
+	if err != nil {
+		return nil, operational(fmt.Errorf("baseline set --runs-dir: %w", err))
 	}
-	fmt.Fprintf(out, "baseline %q set: %d runs\n", name, len(ids))
-	return nil
+	ids := make([]string, 0, len(runs))
+	for _, r := range runs {
+		if evidence.MatchLabels(r.Meta.Labels, selector) {
+			ids = append(ids, r.Meta.RunID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, operational(fmt.Errorf("baseline set %q: selector %q: %w", name, formatSelector(selector), ErrEmptyGroup))
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func validateBaselineName(name string) error {

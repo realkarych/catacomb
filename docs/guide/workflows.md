@@ -234,9 +234,42 @@ In-task checkpoints still ride the `mark` MCP tool: the agent calls `mcp__cataco
 (served by `catacomb mcp`, wired with `--mcp-config` as
 [above](#checkpoints-and-phase-scoped-diff)), and offline bench observes the call in the
 transcript instead of over HTTP — the convention and the basket `checkpoints:` lists carry over
-unchanged. `name:` selectors and `--record` still require the store; offline baselines land in
-PV-2. This is the PV-1 slice of ADR-0026 (the form-factor pivot to an offline eval gate); flag
-details in [bench](cli.md#bench) and [regress](cli.md#regress).
+unchanged.
+
+The rest of the loop is offline too. Pin the golden group by name — `baseline set --runs-dir`
+resolves the labels from the evidence dirs, creates `~/.catacomb/catacomb.db` if it does not
+exist yet, and records which runs dir the pinned runs live in:
+
+```sh
+catacomb baseline set checkout-main --label basket=checkout,variant=main \
+  --runs-dir ~/.catacomb/runs
+catacomb regress --runs-dir ~/.catacomb/runs --baseline name:checkout-main \
+  --candidate label:basket=checkout,variant=candidate --record
+```
+
+The `name:` baseline resolves offline — its pinned run IDs load straight from
+`<runs-dir>/<run-id>/` (pointing `--runs-dir` somewhere other than the recorded dir warns, and
+the flag wins) — and `--record` appends the comparison to the baseline's history in the same
+database, so [`trends checkout-main`](cli.md#trends) replays the drift exactly as in the
+daemon-backed loop. Baselines carry version stamps (catacomb version and step-key scheme) from
+`set` time: after upgrading catacomb, a stamp mismatch warns — or fails the gate with
+`--strict` — until the baseline is re-`set`, so a scheme change never silently misaligns pinned
+evidence. External quality scores come along too: score the redacted transcripts however you
+like, write one JSONL line per scored step per run, and feed the file to the same gate:
+
+```sh
+catacomb regress --runs-dir ~/.catacomb/runs --baseline name:checkout-main \
+  --candidate label:basket=checkout,variant=candidate \
+  --scores scores.jsonl --annotation grader.task_score
+```
+
+Each `--scores` line is `{"step_key": ..., "key": "grader.task_score", "value": 0.92,
+"run_id": ...}`; the values land as node annotations on both groups before comparison, so the
+[external-score gate](#gate-on-external-scores-optional) works without a daemon or the
+annotations endpoint. This offline loop is ADR-0026 (the form-factor pivot to an offline eval
+gate): the runner and the comparison were the PV-1 slice; named baselines, recorded history,
+version stamps, and scores files are the PV-2 slice. Flag details in [bench](cli.md#bench) and
+[regress](cli.md#regress).
 
 ### Label two run groups by hand
 
@@ -353,7 +386,9 @@ catacomb trends golden --metric error_rate
 Catacomb compares deterministic observables (status, presence, duration, cost, tokens); it does
 not judge output *quality*. To fold a quality signal into the same gate, score the runs with an
 external evaluator and write the verdict back as a numeric annotation, then let `regress` treat it
-as one more metric.
+as one more metric. Daemonless, skip the write-back: put the scores in a JSONL file and pass
+[`--scores`](cli.md#gating-on-external-scores), as in
+[Daemonless benching](#daemonless-benching-adr-0026).
 
 1. **Score the runs.** Export each session and run the DeepEval integration under
    [`integrations/deepeval`](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval),

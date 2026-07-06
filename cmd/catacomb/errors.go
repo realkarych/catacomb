@@ -55,6 +55,10 @@ func renderErr(err error) string {
 	if errors.Is(err, ErrRunNotFound) {
 		return ErrRunNotFound.Error()
 	}
+	var opErr *operationalError
+	if errors.As(err, &opErr) {
+		return opErr.Error()
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return ErrNoDaemon.Error()
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -71,6 +72,7 @@ func TestBaselineSetListRmRoundTrip(t *testing.T) {
 	assert.Equal(t, "golden", baselines[0].Name)
 	assert.Equal(t, []string{"base-0", "base-1", "base-2"}, baselines[0].RunIDs)
 	assert.Equal(t, map[string]string{"variant": "base"}, baselines[0].Selector)
+	assert.Equal(t, model.Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"}, baselines[0].Stamps)
 
 	root = newRootCmd()
 	buf.Reset()
@@ -89,7 +91,7 @@ func TestBaselineSetListRmRoundTrip(t *testing.T) {
 
 func TestBaselineSetRequiresLabel(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
-	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "all", nil)
+	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "all", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one --label")
 }
@@ -108,7 +110,7 @@ func TestBaselineSetNameValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, tc.arg, []string{"variant=base"})
+			err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, tc.arg, []string{"variant=base"}, "")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})
@@ -125,7 +127,7 @@ func TestBaselineSetGetRoundTripsRepro(t *testing.T) {
 		{session: "base-1", labels: "variant=base", tools: 1, durationMS: 1000, cwd: "/repo/b"},
 	}
 	dbPath := seedRegressDB(t, runs)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 
 	s, err := store.OpenSQLiteReadOnly(dbPath)
 	require.NoError(t, err)
@@ -141,7 +143,7 @@ func TestBaselineSetGetRoundTripsRepro(t *testing.T) {
 
 func TestBaselineSetNoReproWhenRunsLackRepro(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 
 	s, err := store.OpenSQLiteReadOnly(dbPath)
 	require.NoError(t, err)
@@ -154,20 +156,20 @@ func TestBaselineSetNoReproWhenRunsLackRepro(t *testing.T) {
 
 func TestBaselineSetZeroMatchError(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
-	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "none", []string{"variant=ghost"})
+	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "none", []string{"variant=ghost"}, "")
 	require.ErrorIs(t, err, ErrEmptyGroup)
 }
 
 func TestBaselineSetInvalidLabel(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
-	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "bad", []string{"BAD=x"})
+	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "bad", []string{"BAD=x"}, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid --label")
 }
 
 func TestBaselineSetStoreMissing(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.db")
-	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, missing, "x", []string{"variant=base"})
+	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, missing, "x", []string{"variant=base"}, "")
 	require.ErrorIs(t, err, ErrStoreNotFound)
 }
 
@@ -175,7 +177,7 @@ func TestBaselineSetLoadError(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "*.db")
 	require.NoError(t, err)
 	_ = f.Close()
-	err = runBaselineSet(io.Discard, openStore(&obsErrStore{}), newPricer, f.Name(), "x", []string{"variant=base"})
+	err = runBaselineSet(io.Discard, openStore(&obsErrStore{}), newPricer, f.Name(), "x", []string{"variant=base"}, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store read")
 }
@@ -200,7 +202,7 @@ func TestBaselineSetUpsertError(t *testing.T) {
 		}
 		obs[i].Attrs["catacomb.labels"] = "variant=base"
 	}
-	err = runBaselineSet(io.Discard, openStore(&upsertErrStore{obs: obs}), newPricer, f.Name(), "x", []string{"variant=base"})
+	err = runBaselineSet(io.Discard, openStore(&upsertErrStore{obs: obs}), newPricer, f.Name(), "x", []string{"variant=base"}, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "baseline set")
 }
@@ -208,8 +210,8 @@ func TestBaselineSetUpsertError(t *testing.T) {
 func TestBaselineListSortsMultiple(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
 	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "zeta", []string{"variant=base"}))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "alpha", []string{"variant=other"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "zeta", []string{"variant=base"}, ""))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "alpha", []string{"variant=other"}, ""))
 
 	var buf bytes.Buffer
 	require.NoError(t, runBaselineList(&buf, store.OpenSQLiteReadOnly, dbPath, false))
@@ -276,6 +278,121 @@ func TestBaselineRmError(t *testing.T) {
 	assert.Contains(t, err.Error(), "baseline rm")
 }
 
+func emptyStoreDB(t *testing.T) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	return dbPath
+}
+
+func TestBaselineSetRunsDirPersistsOffline(t *testing.T) {
+	runsDir := evidenceRoot(t)
+	dbPath := emptyStoreDB(t)
+	ts := pinBaselineNow(t)
+
+	root := newRootCmd()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetArgs([]string{"baseline", "set", "golden", "--db", dbPath, "--label", "variant=base", "--runs-dir", runsDir})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), `baseline "golden" set: 2 runs`)
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	b, ok, err := s.GetBaseline("golden")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"base-0", "base-1"}, b.RunIDs)
+	assert.Equal(t, map[string]string{"variant": "base"}, b.Selector)
+	assert.Equal(t, runsDir, b.RunsDir)
+	assert.Equal(t, model.Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"}, b.Stamps)
+	assert.True(t, b.CreatedAt.Equal(ts))
+	assert.Empty(t, b.Repro)
+}
+
+func TestBaselineSetRunsDirEmptyMatch(t *testing.T) {
+	runsDir := evidenceRoot(t)
+	dbPath := emptyStoreDB(t)
+	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "none", []string{"variant=ghost"}, runsDir)
+	require.ErrorIs(t, err, ErrEmptyGroup)
+	assert.Contains(t, err.Error(), "variant=ghost")
+}
+
+func TestBaselineSetRunsDirScanError(t *testing.T) {
+	dbPath := emptyStoreDB(t)
+	err := runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "x", []string{"variant=base"}, filepath.Join(t.TempDir(), "absent"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runs-dir")
+}
+
+func TestBaselineSetRunsDirCreatesStoreOnFreshMachine(t *testing.T) {
+	runsDir := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "fresh", "catacomb.db")
+
+	var buf bytes.Buffer
+	require.NoError(t, runBaselineSet(&buf, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, runsDir))
+	assert.Contains(t, buf.String(), `baseline "golden" set: 2 runs`)
+
+	_, statErr := os.Stat(dbPath)
+	require.NoError(t, statErr)
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	b, ok, err := s.GetBaseline("golden")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"base-0", "base-1"}, b.RunIDs)
+}
+
+func TestBaselineSetRunsDirOpenError(t *testing.T) {
+	runsDir := evidenceRoot(t)
+	failing := func(string) (store.Store, error) { return nil, errors.New("boom-open") }
+	err := runBaselineSet(io.Discard, failing, newPricer, filepath.Join(t.TempDir(), "x.db"), "golden", []string{"variant=base"}, runsDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom-open")
+}
+
+func TestBaselineSetStorePathCarriesStamps(t *testing.T) {
+	dbPath := seedRegressDB(t, labeledRuns())
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	b, ok, err := s.GetBaseline("golden")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, model.Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"}, b.Stamps)
+	assert.Empty(t, b.RunsDir)
+}
+
+func TestBaselineListLegacyRowWithoutStamps(t *testing.T) {
+	dbPath := emptyStoreDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO baselines(name, body) VALUES ('legacy', '{"name":"legacy","run_ids":["r1"],"selector":{"variant":"base"},"created_at":"2026-01-02T03:04:05Z"}')`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	var buf bytes.Buffer
+	require.NoError(t, runBaselineList(&buf, store.OpenSQLiteReadOnly, dbPath, true))
+	var baselines []model.Baseline
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &baselines))
+	require.Len(t, baselines, 1)
+	assert.Equal(t, "legacy", baselines[0].Name)
+	assert.Equal(t, []string{"r1"}, baselines[0].RunIDs)
+	assert.True(t, baselines[0].Stamps.Zero())
+	assert.Empty(t, baselines[0].RunsDir)
+
+	buf.Reset()
+	require.NoError(t, runBaselineList(&buf, store.OpenSQLiteReadOnly, dbPath, false))
+	assert.Contains(t, buf.String(), "legacy")
+}
+
 func TestBaselineCmdWiredAndGrouped(t *testing.T) {
 	root := newRootCmd()
 	groups := make(map[string]string)
@@ -288,6 +405,7 @@ func TestBaselineCmdWiredAndGrouped(t *testing.T) {
 func TestBaselineExitCodesOperational(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
 	missing := filepath.Join(t.TempDir(), "nope.db")
+	root := evidenceRoot(t)
 	cases := []struct {
 		name string
 		args []string
@@ -295,6 +413,8 @@ func TestBaselineExitCodesOperational(t *testing.T) {
 		{"set missing store", []string{"baseline", "set", "x", "--db", missing, "--label", "variant=base"}},
 		{"set zero match", []string{"baseline", "set", "x", "--db", dbPath, "--label", "variant=ghost"}},
 		{"set invalid label", []string{"baseline", "set", "x", "--db", dbPath, "--label", "BAD=x"}},
+		{"set runs-dir zero match", []string{"baseline", "set", "x", "--db", dbPath, "--label", "variant=ghost", "--runs-dir", root}},
+		{"set runs-dir scan error", []string{"baseline", "set", "x", "--db", dbPath, "--label", "variant=base", "--runs-dir", filepath.Join(t.TempDir(), "absent")}},
 		{"list missing store", []string{"baseline", "list", "--db", missing}},
 		{"rm missing store", []string{"baseline", "rm", "x", "--db", missing}},
 	}
