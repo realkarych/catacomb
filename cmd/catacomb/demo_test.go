@@ -48,8 +48,8 @@ func TestRunDemoSuccess(t *testing.T) {
 	}
 	require.NoError(t, runDemo(context.Background(), &out, deps))
 	assert.Contains(t, out.String(), "demo-0001")
-	assert.Contains(t, out.String(), "View it:")
-	assert.NotContains(t, out.String(), "catacomb ui")
+	assert.NotContains(t, out.String(), "View it:")
+	assert.NotContains(t, out.String(), "http://")
 }
 
 func TestRunDemoNoDaemon(t *testing.T) {
@@ -140,7 +140,7 @@ func TestDemoCmdRunE(t *testing.T) {
 	assert.True(t, called)
 }
 
-func TestRunDemoPrintsDeepLink(t *testing.T) {
+func TestRunDemoOutputOmitsToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -161,8 +161,8 @@ func TestRunDemoPrintsDeepLink(t *testing.T) {
 	}
 	require.NoError(t, runDemo(context.Background(), &out, deps))
 	output := out.String()
-	assert.Contains(t, output, "demo-0001")
-	assert.Contains(t, output, "mytoken")
+	assert.Contains(t, output, "demo-0001 ingested")
+	assert.NotContains(t, output, "mytoken")
 }
 
 func TestRunDemoRequestError(t *testing.T) {

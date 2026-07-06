@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -21,22 +19,7 @@ import (
 	"github.com/realkarych/catacomb/daemon"
 )
 
-func browserCommand(goos, rawURL string) *exec.Cmd {
-	switch goos {
-	case "darwin":
-		return exec.Command("open", rawURL)
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
-	default:
-		return exec.Command("xdg-open", rawURL)
-	}
-}
-
 var startCmd = func(c *exec.Cmd) error { return c.Start() }
-
-var openBrowser = func(rawURL string) error {
-	return startCmd(browserCommand(runtime.GOOS, rawURL))
-}
 
 type upDeps struct {
 	readDiscovery func(string) (daemon.Discovery, error)
@@ -44,12 +27,10 @@ type upDeps struct {
 	installHooks  func() error
 	pollHealthz   func(ctx context.Context, addr string) error
 	sessionCount  func(ctx context.Context, disc daemon.Discovery) (int, error)
-	openBrowser   func(string) error
 	replayDemo    func(ctx context.Context, disc daemon.Discovery) error
 	after         func(time.Duration) <-chan time.Time
 	discoveryPath string
 	waitSeconds   int
-	noOpen        bool
 	noDemo        bool
 	history       bool
 	projectsDir   string
@@ -58,12 +39,12 @@ type upDeps struct {
 
 func newUpCmd() *cobra.Command {
 	var foreground bool
-	var noOpen, noDemo, global, history bool
+	var noDemo, global, history bool
 	cmd := &cobra.Command{
 		Use:   "up",
-		Short: "Start the daemon (if needed), install hooks, and open the UI",
+		Short: "Start the daemon (if needed) and install the Claude Code hooks",
 		Long: `Start the daemon if it is not already running, install the Claude Code
-hooks, print the bearer URL, and open the web UI.
+hooks, and print the daemon address.
 
 By default up observes only sessions started in the current directory, and
 only live activity. Use --global to install hooks for every project, and
@@ -138,11 +119,9 @@ exact command to restart it with history enabled.`,
 				installHooks:  buildInstallHooks(discPath, global),
 				pollHealthz:   prodPollHealthz,
 				sessionCount:  prodSessionCount,
-				openBrowser:   openBrowser,
 				replayDemo:    prodReplayDemo,
 				after:         time.After,
 				waitSeconds:   5,
-				noOpen:        noOpen,
 				noDemo:        noDemo,
 				history:       history,
 				projectsDir:   transcriptDir,
@@ -151,10 +130,9 @@ exact command to restart it with history enabled.`,
 			return runUp(runCtx, cmd.OutOrStdout(), deps)
 		},
 	}
-	cmd.Flags().BoolVar(&noOpen, "no-open", false, "print the URL without opening a browser")
 	cmd.Flags().BoolVar(&noDemo, "no-demo", false, "skip the demo fallback if no session appears")
 	cmd.Flags().BoolVar(&global, "global", false, "install hooks for all projects (~/.claude/settings.json) instead of the current directory")
-	cmd.Flags().BoolVar(&history, "history", false, "tail ~/.claude/projects so past sessions appear in the UI")
+	cmd.Flags().BoolVar(&history, "history", false, "tail ~/.claude/projects so past sessions are ingested")
 	cmd.Flags().BoolVarP(&foreground, "foreground", "F", false, "run the daemon attached in the current process (no fork; Ctrl-C stops; for debugging)")
 	return cmd
 }
@@ -289,21 +267,8 @@ func runUp(ctx context.Context, out io.Writer, deps upDeps) error {
 		return err
 	}
 
-	u := &url.URL{
-		Scheme:   "http",
-		Host:     disc.Addr,
-		Path:     "/",
-		RawQuery: url.Values{"token": {disc.Token}}.Encode(),
-	}
-	rawURL := u.String()
-	if _, err := fmt.Fprintln(out, rawURL); err != nil {
+	if _, err := fmt.Fprintf(out, "daemon ready at http://%s\n", disc.Addr); err != nil {
 		return err
-	}
-
-	if !deps.noOpen {
-		if err := deps.openBrowser(rawURL); err != nil {
-			return err
-		}
 	}
 
 	if deps.noDemo {

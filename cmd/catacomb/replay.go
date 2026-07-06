@@ -29,8 +29,8 @@ func newReplayCmd() *cobra.Command {
 		Use:   "replay <transcript.jsonl>",
 		Short: "Build a graph from a recorded Claude Code transcript",
 		Long: `Build a graph from a single recorded Claude Code transcript and persist it
-to a standalone SQLite database. This does not feed the running daemon or the
-web UI; to load history into the UI, use catacomb up --history.`,
+to a standalone SQLite database. This does not feed the running daemon; to
+load history into it, use catacomb up --history.`,
 		Example: `  catacomb replay ~/.claude/projects/<project>/<session>.jsonl`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, positional []string) error {

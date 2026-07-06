@@ -135,7 +135,7 @@ func newDaemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Run the catacomb daemon (receives hook events, builds the live graph)",
 		Long: `Run the catacomb daemon: it receives hook events, builds the live graph,
-persists it to the configured primary store, and serves the web UI and gRPC feed.
+persists it to the configured primary store, and serves the HTTP API and gRPC feed.
 
 Configuration is loaded from ~/.catacomb/config.yaml (override with --config or
 $CATACOMB_CONFIG). Set store.backend: memory for a live-only daemon that persists

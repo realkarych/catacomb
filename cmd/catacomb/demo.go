@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"time"
 
@@ -72,14 +71,6 @@ func runDemo(ctx context.Context, out io.Writer, deps demoDeps) error {
 		return fmt.Errorf("demo: daemon returned %d", resp.StatusCode)
 	}
 
-	uiURL := (&url.URL{
-		Scheme:   "http",
-		Host:     disc.Addr,
-		Path:     "/",
-		RawQuery: url.Values{"token": {disc.Token}}.Encode(),
-		Fragment: "/s/" + demoSessionID,
-	}).String()
-
-	_, err = fmt.Fprintf(out, "Demo session %s ingested. View it: %s\n", demoSessionID, uiURL)
+	_, err = fmt.Fprintf(out, "Demo session %s ingested.\n", demoSessionID)
 	return err
 }

@@ -9,6 +9,4 @@ dl/
 *.db
 coverage.out
 coverage.html
-webui/node_modules/
-webui/.svelte-kit/
 integrations/
