@@ -24,7 +24,7 @@ func TestErrHooksNotInstalledEndsInCommand(t *testing.T) {
 }
 
 func TestErrDaemonRestartedEndsInCommand(t *testing.T) {
-	assert.True(t, strings.HasSuffix(ErrDaemonRestarted.Error(), "catacomb ui"))
+	assert.True(t, strings.HasSuffix(ErrDaemonRestarted.Error(), "catacomb up"))
 }
 
 func TestErrNoDaemonIsCheckable(t *testing.T) {

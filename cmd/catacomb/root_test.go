@@ -45,10 +45,7 @@ func TestCommandGroupAssignments(t *testing.T) {
 		groups[sub.Name()] = sub.GroupID
 	}
 	assert.Equal(t, "observe", groups["up"])
-	assert.Equal(t, "observe", groups["ui"])
-	assert.Equal(t, "observe", groups["watch"])
 	assert.Equal(t, "observe", groups["status"])
-	assert.Equal(t, "observe", groups["observe"])
 	assert.Equal(t, "setup", groups["daemon"])
 	assert.Equal(t, "setup", groups["install-hooks"])
 	assert.Equal(t, "setup", groups["env"])
@@ -62,6 +59,22 @@ func TestCommandGroupAssignments(t *testing.T) {
 	assert.Equal(t, "advanced", groups["inspect"])
 	assert.Equal(t, "advanced", groups["version"])
 	assert.Equal(t, "advanced", groups["export"])
+}
+
+func TestViewerCommandsRemoved(t *testing.T) {
+	root := newRootCmd()
+	names := make(map[string]bool)
+	for _, sub := range root.Commands() {
+		names[sub.Name()] = true
+	}
+	for _, gone := range []string{"observe", "ui", "watch"} {
+		assert.False(t, names[gone], "command %q must not be registered", gone)
+	}
+}
+
+func TestRootLongMentionsNoTerminalObserver(t *testing.T) {
+	root := newRootCmd()
+	assert.NotContains(t, root.Long, "terminal observer")
 }
 
 func TestRootHelpContainsGroupTitles(t *testing.T) {

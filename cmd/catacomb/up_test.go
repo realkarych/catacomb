@@ -40,11 +40,9 @@ func fakeDepsWithDisc(t *testing.T, disc daemon.Discovery) upDeps {
 		installHooks:  func() error { return nil },
 		pollHealthz:   func(_ context.Context, _ string) error { return nil },
 		sessionCount:  func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:   func(_ string) error { return nil },
 		replayDemo:    func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:         func(_ time.Duration) <-chan time.Time { return ch },
 		waitSeconds:   0,
-		noOpen:        false,
 		noDemo:        false,
 	}
 	return deps
@@ -59,12 +57,12 @@ func TestRunUpDaemonAlreadyRunning(t *testing.T) {
 		startCalled = true
 		return nil
 	}
-	deps.noOpen = true
 
 	var out strings.Builder
 	require.NoError(t, runUp(context.Background(), &out, deps))
 	assert.False(t, startCalled, "startDaemon must not be called when daemon is already running")
 	assert.Contains(t, out.String(), "127.0.0.1:12345")
+	assert.NotContains(t, out.String(), "?token=")
 }
 
 func TestRunUpDaemonNotRunningStartsIt(t *testing.T) {
@@ -87,11 +85,9 @@ func TestRunUpDaemonNotRunningStartsIt(t *testing.T) {
 		installHooks: func() error { return nil },
 		pollHealthz:  func(_ context.Context, _ string) error { return nil },
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:        instantAfter,
 		waitSeconds:  1,
-		noOpen:       true,
 	}
 
 	var out strings.Builder
@@ -114,7 +110,6 @@ func TestRunUpStartDaemonError(t *testing.T) {
 		installHooks:  func() error { return nil },
 		pollHealthz:   func(_ context.Context, _ string) error { return nil },
 		sessionCount:  func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:   func(_ string) error { return nil },
 		replayDemo:    func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:         func(_ time.Duration) <-chan time.Time { return ch },
 		waitSeconds:   0,
@@ -147,38 +142,9 @@ func TestRunUpHooksFail(t *testing.T) {
 	assert.True(t, errors.Is(err, hookErr))
 }
 
-func TestRunUpNoOpen(t *testing.T) {
-	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
-	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
-	openCalled := false
-	deps.openBrowser = func(_ string) error {
-		openCalled = true
-		return nil
-	}
-
-	var out strings.Builder
-	require.NoError(t, runUp(context.Background(), &out, deps))
-	assert.False(t, openCalled)
-	assert.Contains(t, out.String(), "127.0.0.1:12345")
-}
-
-func TestRunUpOpenBrowserError(t *testing.T) {
-	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
-	deps := fakeDepsWithDisc(t, disc)
-	openErr := errors.New("browser failed")
-	deps.openBrowser = func(_ string) error { return openErr }
-	deps.noDemo = true
-
-	err := runUp(context.Background(), io.Discard, deps)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, openErr))
-}
-
 func TestRunUpDemoFallbackFires(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) { return 0, nil }
 	deps.after = instantAfter
 
@@ -197,7 +163,6 @@ func TestRunUpDemoFallbackFires(t *testing.T) {
 func TestRunUpDemoFallbackSkippedWhenSessions(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) { return 2, nil }
 	deps.after = instantAfter
 
@@ -214,7 +179,6 @@ func TestRunUpDemoFallbackSkippedWhenSessions(t *testing.T) {
 func TestRunUpNoDemoFlag(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.noDemo = true
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) { return 0, nil }
 	deps.after = instantAfter
@@ -232,7 +196,6 @@ func TestRunUpNoDemoFlag(t *testing.T) {
 func TestRunUpReplayDemoError(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) { return 0, nil }
 	deps.after = instantAfter
 	replayErr := errors.New("replay broken")
@@ -246,7 +209,6 @@ func TestRunUpReplayDemoError(t *testing.T) {
 func TestRunUpSessionCountError(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) {
 		return 0, errors.New("count failed")
 	}
@@ -274,7 +236,6 @@ func TestRunUpDiscoveryNonNotExistError(t *testing.T) {
 		installHooks:  func() error { return nil },
 		pollHealthz:   func(_ context.Context, _ string) error { return nil },
 		sessionCount:  func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:   func(_ string) error { return nil },
 		replayDemo:    func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:         func(_ time.Duration) <-chan time.Time { return ch },
 	}
@@ -305,11 +266,9 @@ func TestRunUpHealthzFailsAfterStart(t *testing.T) {
 			return ErrDaemonUnreachable
 		},
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:        func(_ time.Duration) <-chan time.Time { return ch },
 		waitSeconds:  0,
-		noOpen:       true,
 	}
 
 	err := runUp(context.Background(), io.Discard, deps)
@@ -341,11 +300,9 @@ func TestRunUpPollHealthzCalledAfterStart(t *testing.T) {
 			return nil
 		},
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:        instantAfter,
 		waitSeconds:  1,
-		noOpen:       true,
 	}
 
 	require.NoError(t, runUp(context.Background(), io.Discard, deps))
@@ -370,11 +327,9 @@ func TestRunUpReadDiscoveryAfterStartFails(t *testing.T) {
 		installHooks: func() error { return nil },
 		pollHealthz:  func(_ context.Context, _ string) error { return nil },
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:        instantAfter,
 		waitSeconds:  2,
-		noOpen:       true,
 	}
 
 	err := runUp(context.Background(), io.Discard, deps)
@@ -385,7 +340,6 @@ func TestRunUpReadDiscoveryAfterStartFails(t *testing.T) {
 func TestRunUpURLWriteError(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.noDemo = true
 
 	err := runUp(context.Background(), failWriter{}, deps)
@@ -395,15 +349,12 @@ func TestRunUpURLWriteError(t *testing.T) {
 func TestRunUpDemoOutputWriteError(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) { return 0, nil }
 	deps.after = instantAfter
 	deps.replayDemo = func(_ context.Context, _ daemon.Discovery) error { return nil }
 	deps.noDemo = false
 
 	var writes int
-	deps.openBrowser = func(_ string) error { return nil }
-
 	err := runUp(context.Background(), &countingWriter{maxWrites: 1, writes: &writes}, deps)
 	require.Error(t, err)
 }
@@ -424,7 +375,6 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 func TestRunUpDemoFallbackAfterFirstSessionCountHasSessions(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 
 	callCount := 0
 	deps.sessionCount = func(_ context.Context, _ daemon.Discovery) (int, error) {
@@ -476,11 +426,9 @@ func TestRunUpReadinessLoopConvergesAfterK(t *testing.T) {
 			return nil
 		},
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:        instantAfter,
 		waitSeconds:  5,
-		noOpen:       true,
 	}
 
 	var out strings.Builder
@@ -510,7 +458,6 @@ func TestRunUpReadinessLoopNeverReady(t *testing.T) {
 		installHooks: func() error { return nil },
 		pollHealthz:  func(_ context.Context, _ string) error { return nil },
 		sessionCount: func(_ context.Context, _ daemon.Discovery) (int, error) { return 1, nil },
-		openBrowser:  func(_ string) error { return nil },
 		replayDemo:   func(_ context.Context, _ daemon.Discovery) error { return nil },
 		after:        instantAfter,
 		waitSeconds:  3,
@@ -730,7 +677,7 @@ func TestUpPollHealthzConnectionRefused(t *testing.T) {
 
 func TestUpCmdHasFlags(t *testing.T) {
 	cmd := newUpCmd()
-	assert.NotNil(t, cmd.Flags().Lookup("no-open"))
+	assert.Nil(t, cmd.Flags().Lookup("no-open"))
 	assert.NotNil(t, cmd.Flags().Lookup("no-demo"))
 }
 
@@ -855,10 +802,6 @@ func TestUpCmdRunEWithHistory(t *testing.T) {
 	osUserHomeDir = func() (string, error) { return t.TempDir(), nil }
 	t.Cleanup(func() { osUserHomeDir = origHome })
 
-	origOpenBrowser := openBrowser
-	openBrowser = func(_ string) error { return nil }
-	t.Cleanup(func() { openBrowser = origOpenBrowser })
-
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
@@ -871,7 +814,7 @@ func TestUpCmdRunEWithHistory(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, cmd.ParseFlags([]string{"--no-open", "--no-demo", "--history"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--no-demo", "--history"}))
 	require.NoError(t, cmd.Execute())
 	assert.Contains(t, buf.String(), "127.0.0.1:12345")
 }
@@ -899,7 +842,6 @@ func TestRunUpHistoryAlreadyAllScope(t *testing.T) {
 	projects := "/home/u/.claude/projects"
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok", TranscriptDir: projects}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.history = true
 	deps.projectsDir = projects
 	var out strings.Builder
@@ -915,7 +857,6 @@ func TestRunUpHistoryRestartHint(t *testing.T) {
 		AllowPayloadAccess: true,
 	}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.history = true
 	deps.projectsDir = "/home/u/.claude/projects"
 	var out strings.Builder
@@ -930,7 +871,6 @@ func TestRunUpHistoryRestartHint(t *testing.T) {
 func TestRunUpHistoryAlreadyAllScopeWriteError(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok", TranscriptDir: "/p"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.history = true
 	deps.projectsDir = "/p"
 	require.Error(t, runUp(context.Background(), failWriter{}, deps))
@@ -939,7 +879,6 @@ func TestRunUpHistoryAlreadyAllScopeWriteError(t *testing.T) {
 func TestRunUpHistoryRestartHintWriteError(t *testing.T) {
 	disc := daemon.Discovery{Addr: "127.0.0.1:12345", Token: "tok", TranscriptDir: "/other"}
 	deps := fakeDepsWithDisc(t, disc)
-	deps.noOpen = true
 	deps.history = true
 	deps.projectsDir = "/p"
 	require.Error(t, runUp(context.Background(), failWriter{}, deps))
@@ -1046,10 +985,6 @@ func TestUpCmdForeground(t *testing.T) {
 	}
 	t.Cleanup(func() { fgRunDaemon = origFgRunDaemon })
 
-	origOpenBrowser := openBrowser
-	openBrowser = func(_ string) error { return nil }
-	t.Cleanup(func() { openBrowser = origOpenBrowser })
-
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
@@ -1065,7 +1000,7 @@ func TestUpCmdForeground(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	cmd.SetContext(ctx)
-	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground"}))
 	err := cmd.Execute()
 	assert.True(t, err == nil || errors.Is(err, context.Canceled))
 	assert.Contains(t, buf.String(), "127.0.0.1:12345")
@@ -1090,10 +1025,6 @@ func TestUpCmdForegroundWithHistory(t *testing.T) {
 	}
 	t.Cleanup(func() { fgRunDaemon = origFgRunDaemon })
 
-	origOpenBrowser := openBrowser
-	openBrowser = func(_ string) error { return nil }
-	t.Cleanup(func() { openBrowser = origOpenBrowser })
-
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
@@ -1109,7 +1040,7 @@ func TestUpCmdForegroundWithHistory(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	cmd.SetContext(ctx)
-	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open", "--history"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--history"}))
 	err := cmd.Execute()
 	assert.True(t, err == nil || errors.Is(err, context.Canceled))
 	assert.Contains(t, buf.String(), "127.0.0.1:12345")
@@ -1142,10 +1073,6 @@ func TestUpCmdForegroundDoesNotForkDaemon(t *testing.T) {
 	}
 	t.Cleanup(func() { startCmd = origStartCmd })
 
-	origOpenBrowser := openBrowser
-	openBrowser = func(_ string) error { return nil }
-	t.Cleanup(func() { openBrowser = origOpenBrowser })
-
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
@@ -1158,7 +1085,7 @@ func TestUpCmdForegroundDoesNotForkDaemon(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground"}))
 	require.NoError(t, cmd.Execute())
 	assert.False(t, startCmdCalled, "startCmd must not be called in foreground mode")
 }
@@ -1187,10 +1114,6 @@ func TestUpCmdForegroundSetsConfigPath(t *testing.T) {
 	}
 	t.Cleanup(func() { fgRunDaemon = origFgRunDaemon })
 
-	origOpenBrowser := openBrowser
-	openBrowser = func(_ string) error { return nil }
-	t.Cleanup(func() { openBrowser = origOpenBrowser })
-
 	origOsExecutable := osExecutable
 	osExecutable = func() (string, error) { return "/usr/bin/catacomb", nil }
 	t.Cleanup(func() { osExecutable = origOsExecutable })
@@ -1203,7 +1126,7 @@ func TestUpCmdForegroundSetsConfigPath(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, cmd.ParseFlags([]string{"--foreground", "--no-open"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--foreground"}))
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, customCfg, capturedConfigPath, "foreground daemon must record the resolved config path")
 }
@@ -1214,10 +1137,6 @@ func TestUpCmdRunE(t *testing.T) {
 	discPath := t.TempDir() + "/d.json"
 	require.NoError(t, daemon.WriteDiscovery(discPath, disc))
 	t.Setenv("CATACOMB_DISCOVERY", discPath)
-
-	origOpenBrowser := openBrowser
-	openBrowser = func(_ string) error { return nil }
-	t.Cleanup(func() { openBrowser = origOpenBrowser })
 
 	origStartCmd := startCmd
 	startCmd = func(_ *exec.Cmd) error { return nil }
@@ -1235,7 +1154,7 @@ func TestUpCmdRunE(t *testing.T) {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, cmd.ParseFlags([]string{"--no-open", "--no-demo"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--no-demo"}))
 	require.NoError(t, cmd.Execute())
 	assert.Contains(t, buf.String(), "127.0.0.1:12345")
 }
@@ -1250,4 +1169,10 @@ func TestUpPollHealthzTimesOutOnBlockedDaemon(t *testing.T) {
 	err := upPollHealthz(context.Background(), addr)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDaemonUnreachable))
+}
+
+type failWriter struct{}
+
+func (failWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
 }

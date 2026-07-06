@@ -399,7 +399,7 @@ func TestRedact_ValueScan_HighEntropy(t *testing.T) {
 		assert.False(t, result.Redacted)
 	})
 	t.Run("long absolute file path not redacted", func(t *testing.T) {
-		path := "/Users/karych/src/catacomb/webui/web/src/components/SessionView.svelte"
+		path := "/Users/karych/src/observability/web/src/components/SessionView.svelte"
 		input := []byte(`{"file_path":"` + path + `"}`)
 		result := redact.Redact(input)
 		assert.False(t, result.Redacted, "absolute file path must not be redacted as high-entropy")

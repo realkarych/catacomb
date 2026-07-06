@@ -11,7 +11,7 @@ For task-oriented recipes see [workflows.md](workflows.md).
 
 ### up
 
-Start the daemon (if needed), install hooks, and open the web UI.
+Start the daemon (if needed), install the Claude Code hooks, and print the daemon address.
 
 ```sh
 catacomb up [flags]
@@ -19,16 +19,16 @@ catacomb up [flags]
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--no-open` | false | Print the UI URL instead of opening it |
 | `--no-demo` | false | Skip the demo fallback when no session appears |
 | `--global` | false | Install hooks into `~/.claude/settings.json` instead of `./.claude/settings.json` |
 | `--history` | false | Tail `~/.claude/projects` so past sessions appear |
 | `--foreground`, `-F` | false | Run the daemon attached (do not detach) |
 
 Starts the daemon if it is not already running, installs hook entries into Claude Code
-settings, and opens the web UI. By default watches the current working directory for live
-sessions. `--history` backfills from the transcript directory. A synthetic demo session
-loads automatically if nothing appears within a short window unless `--no-demo` is set.
+settings, and prints the daemon address. By default it captures the current working
+directory's live sessions. `--history` backfills from the transcript directory. A
+synthetic demo session loads automatically if nothing appears within a short window
+unless `--no-demo` is set.
 
 ```sh
 catacomb up --history
@@ -85,49 +85,6 @@ catacomb restart
 
 ---
 
-### ui
-
-Open the catacomb web UI in the default browser.
-
-```sh
-catacomb ui [flags]
-```
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--no-open` | false | Print the URL instead of opening it |
-
-Requires a running daemon. Builds the URL from the discovery file's address and bearer token.
-See [ui.md](ui.md) for a walkthrough of all views.
-
-```sh
-catacomb ui --no-open
-```
-
----
-
-### watch
-
-Stream live graph deltas from the daemon to stdout (non-interactive SSE).
-
-```sh
-catacomb watch [flags]
-```
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--run` | (empty) | Filter deltas to a specific run ID |
-| `--type` | (repeatable) | Include only nodes of these types |
-| `--tier` | (repeatable) | Include only nodes at these tiers |
-
-Prints JSON delta lines to stdout. Intended for scripting and pipeline use.
-
-```sh
-catacomb watch --run my-run-id | jq .
-```
-
----
-
 ### status
 
 Print daemon address, PID, uptime, and session/node counts.
@@ -142,29 +99,6 @@ and node counts, and a `healthy` field.
 
 ```sh
 catacomb status --json
-```
-
----
-
-### observe
-
-Interactive terminal observer for a Claude Code session.
-
-```sh
-catacomb observe [hash] [flags]
-```
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--no-color` | false | Disable ANSI colour output |
-
-Pass an optional session hash to open that session directly; omit it to start in the
-sessions list. Key bindings: `Tab` cycles focus; `j`/`k` or arrows navigate; `/` filters;
-`Enter` selects; `h`/`l` collapse/expand tree nodes; `Space` toggles; `c` fetches payload
-(when `--allow-payload-access` is on); `d` toggles debug; `q`/Ctrl-C quits.
-
-```sh
-catacomb observe 01HZABC123
 ```
 
 ---
@@ -405,7 +339,7 @@ catacomb run --run-id sprint-42 --label basket=checkout -- claude --model claude
 
 ### replay
 
-Build a graph from a recorded Claude Code transcript (no daemon or UI required).
+Build a graph from a recorded Claude Code transcript (no daemon required).
 
 ```sh
 catacomb replay <transcript.jsonl> [flags]
@@ -485,8 +419,8 @@ Ingest the bundled synthetic transcript into the running daemon.
 catacomb demo
 ```
 
-Prints the demo session ID and the UI link. Useful for verifying the daemon and UI are
-working before any real Claude Code sessions have run.
+Prints the demo session ID. Useful for verifying the daemon is ingesting before any
+real Claude Code sessions have run.
 
 ```sh
 catacomb demo

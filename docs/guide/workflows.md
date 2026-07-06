@@ -2,29 +2,29 @@
 
 Task recipes for common catacomb operations.
 
-## Observe a live session
+## Capture a live session
 
-Start the daemon, install hooks, and open the web UI in one command.
+Start the daemon and install hooks in one command.
 
 ```sh
 catacomb up
 ```
 
-The daemon installs hooks into `./.claude/settings.json` for the current project and
-opens the sessions list in the default browser. Start Claude Code in the same directory;
-catacomb captures the session automatically.
+`up` installs hooks into `./.claude/settings.json` for the current project and prints
+the daemon address. Start Claude Code in the same directory; catacomb captures the
+session automatically. Watching a session live in a UI is delegated to a vendor
+substrate such as Phoenix (see
+[Daemonless benching](#daemonless-benching-adr-0026)).
 
-Use `--no-open` to print the URL without opening a browser, or `-F`/`--foreground` to
-run the daemon attached to the terminal:
+Use `-F`/`--foreground` to run the daemon attached to the terminal:
 
 ```sh
-catacomb up --no-open
 catacomb up --foreground
 ```
 
 ## Backfill history
 
-Load sessions from past transcripts so they appear in the UI alongside live ones.
+Load sessions from past transcripts so they sit in the store alongside live ones.
 
 ```sh
 catacomb up --history
@@ -130,9 +130,9 @@ The HTTP focus endpoint `GET /v1/sessions/{hash}/phase/{name}` (where `{name}` m
 `name,occurrence`) returns the phase subgraph as a JSON array of node/edge upsert
 events. Unknown session or phase returns `404`; invalid selector returns `400`.
 
-The web UI diff view has per-side phase pickers. It derives available phase names by
+There is no separate phases listing endpoint: a client derives available phase names by
 reading `marker` nodes from `GET /v1/sessions/{hash}/graph`, then calls `/v1/diff` with
-`aPhase`/`bPhase`. There is no separate phases listing endpoint.
+`aPhase`/`bPhase`.
 
 ## Regression-testing a change
 
@@ -217,6 +217,10 @@ catacomb bench checkout.yaml --offline
 ├── subagents/agent-*.jsonl   # subagent transcripts, when present
 └── meta.json                 # run id, labels, exit code, cost_usd, marker window
 ```
+
+Watching runs live is delegated to the vendor substrate per
+[ADR-0026 §2](../adr/0026-form-factor-pivot-offline-eval-gate.md): feed sessions to
+Phoenix through its first-party Claude Code plugin — catacomb ships no viewer of its own.
 
 Manifest entries gain `cost_usd` and `evidence_dir`, and the epilogue prints the matching
 offline comparison ready to paste. `regress --runs-dir` resolves `label:` selectors by scanning

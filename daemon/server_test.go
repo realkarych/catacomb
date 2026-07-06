@@ -999,7 +999,7 @@ func TestTranscriptRouteRegistered(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestStaticHandlerServesRoot(t *testing.T) {
+func TestRootReturnsNotFound(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
@@ -1007,11 +1007,11 @@ func TestStaticHandlerServesRoot(t *testing.T) {
 	resp, err := http.Get(srv.URL + "/")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.NotContains(t, resp.Header.Get("Content-Type"), "text/html")
 }
 
-func TestStaticHandlerDoesNotShadowHealthz(t *testing.T) {
+func TestRootRemovalKeepsHealthz(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
@@ -1022,7 +1022,7 @@ func TestStaticHandlerDoesNotShadowHealthz(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestStaticHandlerDoesNotShadowMetrics(t *testing.T) {
+func TestRootRemovalKeepsMetrics(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
@@ -1033,7 +1033,7 @@ func TestStaticHandlerDoesNotShadowMetrics(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestStaticHandlerDoesNotShadowSubscribe(t *testing.T) {
+func TestRootRemovalKeepsSubscribeAuth(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
@@ -1044,7 +1044,7 @@ func TestStaticHandlerDoesNotShadowSubscribe(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-func TestStaticHandlerMissingAsset404(t *testing.T) {
+func TestUnknownPathReturnsNotFound(t *testing.T) {
 	d := New(tempStore(t))
 	srv := httptest.NewServer(d.Handler("tok"))
 	t.Cleanup(srv.Close)
@@ -1116,35 +1116,6 @@ func TestSSEQueryTokenE2E(t *testing.T) {
 			t.Fatal("timed out waiting for node_upsert via ?token= auth")
 		}
 	}
-}
-
-func TestStaticHandlerFullSmokeIndex(t *testing.T) {
-	d := New(tempStore(t))
-	srv := httptest.NewServer(d.Handler("tok"))
-	t.Cleanup(srv.Close)
-
-	resp, err := http.Get(srv.URL + "/")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
-
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), `id="app"`)
-	assert.Contains(t, string(body), "<title>Catacomb</title>")
-	assert.Contains(t, string(body), `type="module"`)
-}
-
-func TestStaticHandlerSmokeHashedAssetResolves(t *testing.T) {
-	d := New(tempStore(t))
-	srv := httptest.NewServer(d.Handler("tok"))
-	t.Cleanup(srv.Close)
-
-	resp, err := http.Get(srv.URL + "/assets/")
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	assert.NotEqual(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
 func TestStartExporterProjectPropagates(t *testing.T) {

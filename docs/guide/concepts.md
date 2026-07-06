@@ -65,9 +65,10 @@ session
                       └─ ...
 ```
 
-Each subagent nests under the turn that spawned it. Subagent children are
-lazy-loaded on expand in the UI, so sessions with hundreds of subagents stay
-fast.
+Each subagent nests under the turn that spawned it. A subagent's inner tree is
+served on demand through its own subtree endpoint
+(`GET /v1/sessions/{hash}/subagent/{agentId}`), so sessions with hundreds of
+subagents stay cheap to query.
 
 ### Per-node fields
 

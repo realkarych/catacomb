@@ -23,7 +23,6 @@ import (
 	"github.com/realkarych/catacomb/export/build"
 	tailingest "github.com/realkarych/catacomb/ingest/tail"
 	"github.com/realkarych/catacomb/model"
-	"github.com/realkarych/catacomb/webui"
 )
 
 var buildFn func(ctx context.Context, sinks []config.Sink, daemonGRPCAddr, daemonHTTPAddr string) ([]exportiface.Exporter, error) = build.Build
@@ -70,7 +69,6 @@ func (d *Daemon) Handler(token string) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(d.metricsSnapshot())
 	})
-	mux.Handle("GET /", webui.Handler())
 	return mux
 }
 

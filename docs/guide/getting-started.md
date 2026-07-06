@@ -17,15 +17,16 @@ make build        # produces bin/catacomb
 ## Start the daemon
 
 `catacomb up` starts the daemon if it is not already running, installs hook
-entries into `./.claude/settings.json` for the current directory, prints the
-bearer URL, and opens the web UI:
+entries into `./.claude/settings.json` for the current directory, and prints
+the daemon address:
 
 ```sh
 catacomb up
 ```
 
-Open Claude Code in the same directory and run a session. The action graph
-appears in the UI immediately.
+Open Claude Code in the same directory and run a session. The daemon captures
+the action graph as the session runs; `catacomb status` shows session and node
+counts.
 
 ## Observe every project
 
@@ -58,22 +59,18 @@ Combine both flags for full coverage:
 catacomb up --global --history
 ```
 
-## Open the UI
+## Watch runs in a UI
 
-If the daemon is already running, open the web UI without restarting it:
-
-```sh
-catacomb ui
-```
-
-This prints the bearer URL and opens the browser. You can also copy the URL
-from the terminal to open it manually.
+Catacomb ships no viewer. To watch sessions live in a UI, feed them to a
+vendor substrate through that vendor's first-party Claude Code plugin —
+Phoenix is the recommended substrate
+([ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md) §2).
 
 ## Reading message content
 
 Graph responses carry a content hash — not the conversation text. Payload
 bodies are redacted on the write path before being stored. To read message and
-tool content in the UI, start the daemon with `--allow-payload-access`:
+tool content over the API, start the daemon with `--allow-payload-access`:
 
 ```sh
 catacomb daemon --allow-payload-access
