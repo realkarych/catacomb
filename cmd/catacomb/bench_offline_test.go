@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -69,8 +68,8 @@ func TestBenchOfflineEndToEnd(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
 
 	var out, errb bytes.Buffer
-	err := runBench(context.Background(), &out, &errb, "", basket, benchFlags{
-		offline: true, projectsDir: projects, runsDir: runs, manifest: manifestPath,
+	err := runBench(&out, &errb, basket, benchFlags{
+		projectsDir: projects, runsDir: runs, manifest: manifestPath,
 	})
 	require.NoError(t, err)
 
@@ -103,8 +102,8 @@ func TestBenchOfflineCheckpointHitEndToEnd(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
 
 	var out, errb bytes.Buffer
-	err := runBench(context.Background(), &out, &errb, "", basket, benchFlags{
-		offline: true, projectsDir: projects, runsDir: runs, manifest: manifestPath,
+	err := runBench(&out, &errb, basket, benchFlags{
+		projectsDir: projects, runsDir: runs, manifest: manifestPath,
 	})
 	require.NoError(t, err)
 
@@ -215,6 +214,20 @@ func TestBenchOfflineNoCheckpointsWritesEvidence(t *testing.T) {
 	require.NotNil(t, meta.CostUSD)
 }
 
+func TestBenchOfflineVariantEnvAndEmptySetup(t *testing.T) {
+	projects := t.TempDir()
+	runs := t.TempDir()
+	stubBenchChild(t, "HELPER_SESSION=ve1", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cell := offlineCell("bench-b-t1-base-r1",
+		bench.Task{ID: "t1", Cmd: []string{"claude"}, Env: map[string]string{"TASKENV": "a"}},
+		bench.Variant{ID: "base", Env: map[string]string{"VARENV": "b"}, Setup: []string{""}})
+	entry, failed, _ := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: projects, runsDir: runs})
+	assert.False(t, failed)
+	assert.True(t, entry.Marked)
+	require.NotEmpty(t, entry.EvidenceDir)
+}
+
 func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 	projects := t.TempDir()
 	runs := t.TempDir()
@@ -238,8 +251,8 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 func TestBenchOfflineMissingDirsIsOperational(t *testing.T) {
 	basket := writeBasket(t, "basket: b\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"x\"]\nvariants:\n  - id: v1\n")
 	var out, errb bytes.Buffer
-	err := runBench(context.Background(), &out, &errb, "", basket,
-		benchFlags{offline: true, projectsDir: "", runsDir: t.TempDir()})
+	err := runBench(&out, &errb, basket,
+		benchFlags{projectsDir: "", runsDir: t.TempDir()})
 	require.ErrorIs(t, err, errBenchOfflineDirs)
 	var opErr *operationalError
 	require.ErrorAs(t, err, &opErr)
