@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	xjsonl "github.com/realkarych/catacomb/export/jsonl"
-	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
-	"github.com/realkarych/catacomb/redact"
 	"github.com/realkarych/catacomb/reduce"
 )
 
@@ -58,25 +56,7 @@ func runReplay(args replayArgs) (*reduce.Graph, error) {
 }
 
 func loadGraph(path, executionID string) (*reduce.Graph, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	obs, err := ijsonl.ParseReader(f, executionID)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-
-	policy := redact.DefaultPolicy()
-	for i := range obs {
-		obs[i] = policy.Observation(obs[i])
-	}
-
-	g := reduce.NewGraph()
-	g.ApplyAll(obs)
-	return g, nil
+	return loadGraphOffline(path, nil, executionID, nil, nil)
 }
 
 func export(path string, g *reduce.Graph) error {

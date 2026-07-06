@@ -4,12 +4,32 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func captureDriftOut(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := driftOut
+	driftOut = &buf
+	t.Cleanup(func() { driftOut = orig })
+	return &buf
+}
+
+func writeDriftyCopy(t *testing.T, src string) string {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	require.NoError(t, err)
+	content := strings.TrimRight(string(data), "\n") + "\n" + `{"type":"checkpoint_v9","sessionId":"s1"}` + "\n"
+	path := filepath.Join(t.TempDir(), "drifty.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
 
 func TestParseTranscriptsRenumbersSeq(t *testing.T) {
 	main := filepath.Join("testdata", "session.jsonl")
@@ -85,10 +105,7 @@ func TestParseTranscriptsWarnsOnUnknownRecords(t *testing.T) {
 		`{"type":"checkpoint_v9","sessionId":"s1"}` + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
-	var buf bytes.Buffer
-	orig := driftOut
-	driftOut = &buf
-	t.Cleanup(func() { driftOut = orig })
+	buf := captureDriftOut(t)
 
 	obs, err := parseTranscripts(path, nil, "exec-w")
 	require.NoError(t, err)
@@ -98,10 +115,7 @@ func TestParseTranscriptsWarnsOnUnknownRecords(t *testing.T) {
 }
 
 func TestParseTranscriptsNoWarnOnCleanTranscript(t *testing.T) {
-	var buf bytes.Buffer
-	orig := driftOut
-	driftOut = &buf
-	t.Cleanup(func() { driftOut = orig })
+	buf := captureDriftOut(t)
 
 	_, err := parseTranscripts(filepath.Join("testdata", "session.jsonl"), nil, "exec-c")
 	require.NoError(t, err)

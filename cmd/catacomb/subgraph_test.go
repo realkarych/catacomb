@@ -63,6 +63,16 @@ func TestRunSubgraphEmptySpec(t *testing.T) {
 	assert.ErrorIs(t, err, subgraph.ErrInvalidSelector)
 }
 
+func TestSubgraphWarnsOnUnknownRecords(t *testing.T) {
+	buf := captureDriftOut(t)
+	drifty := writeDriftyCopy(t, "testdata/session_marked.jsonl")
+	root := newRootCmd()
+	root.SetOut(&strings.Builder{})
+	root.SetArgs([]string{"subgraph", "--phase", "plan", drifty})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), "unrecognized transcript record")
+}
+
 func TestSubgraphMissingInputIsOperational(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"subgraph", "--phase", "plan", filepath.Join(t.TempDir(), "nope.jsonl")}, &out, &errBuf)

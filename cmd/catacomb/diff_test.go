@@ -79,6 +79,16 @@ func TestDiffCommandErrorPropagated(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrDiffInput))
 }
 
+func TestDiffWarnsOnUnknownRecords(t *testing.T) {
+	buf := captureDriftOut(t)
+	drifty := writeDriftyCopy(t, filepath.Join("testdata", "session.jsonl"))
+	root := newRootCmd()
+	root.SetOut(&strings.Builder{})
+	root.SetArgs([]string{"diff", drifty, "testdata/session.jsonl"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), "unrecognized transcript record")
+}
+
 func TestDiffMissingInputIsOperational(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"diff", filepath.Join(t.TempDir(), "nope.jsonl"), "testdata/session.jsonl"}, &out, &errBuf)

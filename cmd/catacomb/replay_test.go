@@ -92,6 +92,17 @@ func TestReplayCommandError(t *testing.T) {
 	require.Error(t, root.Execute())
 }
 
+func TestReplayWarnsOnUnknownRecords(t *testing.T) {
+	buf := captureDriftOut(t)
+	drifty := writeDriftyCopy(t, filepath.Join("testdata", "session.jsonl"))
+	root := newRootCmd()
+	root.SetOut(&strings.Builder{})
+	root.SetArgs([]string{"replay", drifty})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), "unrecognized transcript record")
+	assert.Contains(t, buf.String(), "unknown_record_type=1")
+}
+
 func TestReplayMissingInputIsOperational(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"replay", filepath.Join(t.TempDir(), "nope.jsonl")}, &out, &errBuf)
