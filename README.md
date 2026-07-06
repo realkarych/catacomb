@@ -8,10 +8,10 @@
 </p>
 
 <p align="center">
-  Real-time execution-graph observability for
-  <a href="https://www.anthropic.com/claude-code">Claude Code</a> agentic sessions.<br>
-  Prompts, turns, tool calls, MCP calls, and subagents — reconciled into one
-  queryable <b>action graph</b>, served live over an HTTP and gRPC API.
+  Offline eval gate for
+  <a href="https://www.anthropic.com/claude-code">Claude Code</a> agentic pipelines.<br>
+  Run prompt baskets, reduce the recorded transcripts into one canonical
+  <b>action graph</b>, and gate regressions statistically in CI.
 </p>
 
 <!-- Badges -->
@@ -25,27 +25,31 @@
 
 <hr>
 
-Catacomb runs as a sidecar daemon next to Claude Code and captures everything a
-session does — prompts, assistant turns, tool calls, MCP calls, and subagents —
-from four signal sources: hooks, native OpenTelemetry, `stream-json`, and
-transcript JSONL (including each subagent's sub-transcript). It reconciles them
-into one canonical **action graph**, persists it to embedded SQLite, and serves
-it live over SSE and gRPC. The same graph exports as a materialized artifact to
-`jsonl`, OTLP/OpenInference, `neo4j`, and `postgres`.
+Changing a prompt, a skill, or an MCP tool changes your agent's behavior — but two runs
+of the same task are two samples from a distribution, so eyeballing one diff cannot
+tell a real regression from sampling noise. Catacomb closes that gap offline:
+`catacomb bench` runs a declarative basket of tasks × variants × reps, records each
+cell's Claude Code transcripts (including every subagent's sub-transcript) as a
+secret-redacted evidence directory, and `catacomb regress` reduces both groups to
+canonical execution graphs — prompts, turns, tool calls, MCP calls, subagents — aligns
+them by step and phase keys, and returns a statistical verdict with a CI-consumable
+exit code. No daemon, no service, no network: the whole loop is plain local files.
 
-It is domain- and evaluation-agnostic: it builds a faithful, queryable graph and
-leaves a per-node annotation slot for downstream tooling to attach its own
-metadata.
+It is domain- and evaluation-agnostic: it compares deterministic observables (presence,
+errors, duration, cost, tokens) and leaves a per-node annotation slot so external
+scorers (such as the shipped DeepEval bridge) can gate on quality through the same
+mechanism.
 
 ## <p align=center>✨ Highlights</p>
 
-- **An outline, not a hairball.** The graph is a collapsible tree — `session → prompt → turn → tool` — that stays queryable at thousands of nodes.
-- **Subagents you can actually inspect.** Each subagent nests under the turn that spawned it (`turn → Agent tool call → subagent → its prompt/turns/tools`), labelled with its task. A subagent's inner tree is served on demand through its own subtree endpoint, so a session with hundreds of subagents stays cheap to query.
-- **Content inspection, gated and redaction-aware.** Conversation text and tool input/output are redacted before they ever reach disk (write-path redaction, ADR-0024) and served only through an authorization-gated endpoint (off by default) with serve-time redaction as defense in depth — never inlined into graph responses.
-- **Bring your own viewer.** Catacomb ships no UI: watching runs live is delegated to a vendor substrate fed by that vendor's first-party Claude Code plugin — Phoenix is the recommended one ([ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md)). Catacomb stays the capture, diff, and regression-gate layer.
-- **Silence when healthy.** Status is surfaced only when it carries signal (failures, live activity); a calm session stays calm.
+- **A gate, not a vibe check.** `regress` compares repeated runs with one-sided Wilson bounds and IQR noise bands (ADR-0022), reports `regression`/`notable`/`insufficient` per finding, and maps the verdict to the exit code your CI already understands.
+- **An outline, not a hairball.** Each run reduces to a collapsible tree — `session → prompt → turn → tool` — with each subagent nested under the turn that spawned it, rebuilt deterministically from the transcripts.
+- **Stable identity across runs.** Step keys hash each call's redacted, salient input; phase keys name checkpoint windows the agent marks via the shipped `catacomb mcp` marker tool — so comparisons survive prompt churn.
+- **Redacted evidence you can share.** Transcript copies pass through secret redaction on write (ADR-0024); step keys and payload hashes are computed post-redaction, so no artifact catacomb writes encodes a raw secret.
+- **Longitudinal memory.** Pin golden groups as named, version-stamped baselines; `--record` appends every comparison to an append-only history that `trends` replays.
+- **Bring your own viewer.** Catacomb ships no UI: watching runs live is delegated to a vendor substrate fed by that vendor's first-party Claude Code plugin — Phoenix is the recommended one ([ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md)). Catacomb stays the offline capture, diff, and regression-gate layer.
 
-> **Status:** four-source ingestion (incl. subagent sub-transcripts), the reconciling reducer, SQLite persistence, live SSE + gRPC, the four exporters, and the bench/regress eval loop are implemented, built and maintained under a 100%-test-coverage, TDD gate. The display layer (web UI, terminal observer) was removed per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md).
+> **Status:** the offline gate is implemented end-to-end — the bench runner, redacted evidence capture, the reconciling reducer, step/phase keys, the statistical gate, named baselines with version stamps, recorded history (`trends`), external score gating, and the DeepEval bridge — built and maintained under a 100%-test-coverage, TDD gate. The daemon, live ingestion, and exporters were removed per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md).
 
 <hr>
 
@@ -108,133 +112,110 @@ Or build locally with `make build`.
 
 ```
 ❯ catacomb --help
-Catacomb builds a real-time execution graph of your Claude Code sessions —
-prompts, turns, tool calls, MCP calls, and subagents — and serves it over
-an HTTP and gRPC API.
+Catacomb is an offline eval gate for Claude Code agentic pipelines. It runs
+prompt baskets, reduces the recorded transcripts into a canonical execution
+graph, derives step and phase keys, aggregates metrics, and gates regressions
+against saved baselines.
 
 Common recipes:
-  Observe every session (all projects):
-      catacomb up --global
+  Run a basket and record evidence:
+      catacomb bench <basket.yaml>
 
-  Load past sessions into the daemon:
-      catacomb up --history
+  Gate a candidate against a baseline:
+      catacomb regress --baseline label:variant=main --candidate label:variant=pr
 
-  Expose conversation content over the API (off by default):
-      catacomb daemon --allow-payload-access
+  Build a graph from a single recorded transcript:
+      catacomb replay <session>.jsonl
 
 Run 'catacomb <command> --help' for details on any command.
 
 Usage:
   catacomb [command]
 
-Observe:
-  down          Stop the daemon and optionally remove catacomb's artifacts
-  logs          Print the daemon log (use -f to follow)
-  restart       Stop the running daemon and start a fresh one
-  status        Print daemon addr, pid, uptime, and session/node counts
-  up            Start the daemon (if needed) and install the Claude Code hooks
-
-Setup:
-  daemon        Run the catacomb daemon (receives hook events, builds the live graph)
-  env           Print OTLP environment variables for connecting to the running daemon
-  install-hooks Wire the catacomb hook forwarder into Claude Code settings.json
-
-Advanced:
-  baseline      Manage named baselines for regression comparison
-  bench         Run a benchmark basket: expand cells, execute, mark phases, record a manifest
-  demo          Ingest a bundled synthetic transcript into the running daemon
-  diff          Diff two session transcripts by step_key
-  export        Export graph data to an external sink (jsonl, otlp, neo4j, postgres, agentevals, evalview)
-  hook          Forward a Claude Code hook event to the catacomb daemon
-  ingest        Forward Claude Code output to the catacomb daemon
-  inspect       Show detailed summary for a specific run
-  mark          Record a phase boundary marker in a running session
-  mcp           Run the catacomb MCP stdio server (exposes the mark checkpoint tool)
-  regress       Compare a candidate run group against a baseline
-  replay        Build a graph from a recorded Claude Code transcript
-  run           Run a Claude Code command, tee its stream-json to the terminal and the daemon
-  runs          List all runs in the stored catacomb database
-  snapshot      Dump current graph state as JSONL
-  subgraph      Extract the execution subgraph of a checkpoint phase
-  trends        Show the recorded regression history for a baseline
-  version       Print the version
+Available Commands:
+  baseline    Manage named baselines for regression comparison
+  bench       Run a benchmark basket: expand cells, execute, mark phases, record a manifest
+  completion  Generate the autocompletion script for the specified shell
+  diff        Diff two session transcripts by step_key
+  export      Export a transcript or evidence dir as a JSONL graph snapshot
+  help        Help about any command
+  mcp         Run the catacomb MCP stdio server (exposes the mark checkpoint tool)
+  regress     Compare a candidate run group against a baseline
+  replay      Build a graph from a recorded Claude Code transcript
+  subgraph    Extract the execution subgraph of a checkpoint phase
+  trends      Show the recorded regression history for a baseline
+  version     Print the version
 ```
 
 <hr>
 
 ## <p align=center>🚀 Quickstart</p>
 
-```sh
-catacomb up
+Declare a basket — the matrix of tasks × variants × reps you want to compare:
+
+```yaml
+# checkout.yaml
+basket: checkout
+reps: 5
+tasks:
+  - id: work-task
+    cmd: ["claude", "-p", "work the checkout task", "--output-format", "stream-json"]
+variants:
+  - id: main
+  - id: candidate
+    setup: ["git checkout candidate-branch"]
 ```
 
-`catacomb up` starts the daemon if it is not already running, installs the
-Claude Code hooks for the **current directory**, and prints the daemon
-address. It observes **live** sessions started under that directory.
-
-### Observe every session
-
-To observe sessions in **every** project (not just the current directory),
-install the hooks globally:
+Run it:
 
 ```sh
-catacomb up --global
+catacomb bench checkout.yaml
 ```
 
-This writes `~/.claude/settings.json`, so any Claude Code session — from any
-directory — is observed.
+Every cell runs as a plain local process; catacomb resolves its transcripts from
+`~/.claude/projects`, verifies declared checkpoints, and writes a secret-redacted
+evidence directory under `~/.catacomb/runs/<run-id>/` plus a manifest line.
 
-### Load past sessions
-
-`up` and the hooks only see sessions that run *after* they are installed. To
-backfill the sessions you have **already** run, start the daemon tailing the
-Claude Code transcript directory:
+Gate the candidate against the baseline:
 
 ```sh
-catacomb up --history          # tails ~/.claude/projects when starting the daemon
+catacomb regress \
+  --baseline label:basket=checkout,variant=main \
+  --candidate label:basket=checkout,variant=candidate
 ```
 
-On startup the daemon reads every existing transcript (sessions and their
-subagents) and then follows live ones. Tail cursors are persisted, so
-re-running the daemon does not duplicate history. If a daemon is already
-running, `up --history` prints the exact command to restart it with history
-enabled rather than restarting it for you.
-
-Combine both for full coverage:
+Exit code `0` is a pass, `1` is a regression, `2` is an operational error — drop it
+straight into CI. Then go deeper:
 
 ```sh
-catacomb up --global --history
+catacomb baseline set golden --label basket=checkout,variant=main   # pin the golden group
+catacomb regress --baseline name:golden \
+  --candidate label:basket=checkout,variant=candidate --record      # gate + record history
+catacomb trends golden                                              # replay the drift
+catacomb diff run-a.jsonl run-b.jsonl                               # step-level diff
+catacomb export ~/.catacomb/runs/<run-id> --out run.jsonl           # JSONL graph snapshot
 ```
 
-Other commands:
-
-```sh
-catacomb status           # daemon addr, pid, uptime, what it's observing, counts
-catacomb demo             # ingest the bundled demo transcript into a running daemon
-catacomb version          # print the version
-```
-
-By default the daemon's database is `catacomb.db` in the directory you launch
-it from, and its discovery file lives under `~/.catacomb/run/`.
+See the [user guide](docs/guide/README.md) for the full loop — checkpoints, external
+quality scores, and the DeepEval bridge.
 
 <hr>
 
 ## <p align=center>🔒 Privacy</p>
 
-Catacomb observes your sessions locally. Graph responses hold structure, timing,
-token/cost metadata, and a content *hash* — conversation text is never inlined
-into them. Payload bodies pass through secret redaction on the write path
-(ADR-0024) before they touch the database, so what sits in `catacomb.db` is
-already redacted. Message and tool content is served only when the daemon is
-started with `--allow-payload-access`, through a token-gated endpoint that
-redacts once more at serve time. The HTTP surface binds to loopback and is gated
-by a bearer token stored in the discovery file (`~/.catacomb/run/daemon.json`,
-mode 0600).
+Catacomb runs no daemon and opens no sockets — everything is local files. The
+transcript copies it stores as evidence pass through secret redaction on the write path
+(ADR-0024): API keys, tokens, private keys, connection strings, and high-entropy
+values are replaced with typed markers before they touch disk. Graphs carry a content
+*hash* per node, computed after redaction; step keys likewise hash only redacted
+content. The SQLite store holds baselines and regression reports — never transcripts or
+payloads.
 
 <hr>
 
 ## <p align=center>📚 Documentation & Development</p>
 
+- User guide → [`docs/guide/`](docs/guide/README.md)
 - Design spec → [`docs/specs/2026-06-20-catacomb-design.md`](docs/specs/2026-06-20-catacomb-design.md)
 - Architecture decisions (ADRs) → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)

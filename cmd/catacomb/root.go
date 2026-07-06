@@ -12,11 +12,11 @@ graph, derives step and phase keys, aggregates metrics, and gates regressions
 against saved baselines.
 
 Common recipes:
-  Run a basket and record a run:
-      catacomb bench <basket> --record
+  Run a basket and record evidence:
+      catacomb bench <basket.yaml>
 
   Gate a candidate against a baseline:
-      catacomb regress --baseline label:main --candidate label:pr
+      catacomb regress --baseline label:variant=main --candidate label:variant=pr
 
   Build a graph from a single recorded transcript:
       catacomb replay <session>.jsonl

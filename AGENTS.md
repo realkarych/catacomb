@@ -1,12 +1,12 @@
 # Catacomb — agent & contributor guide
 
-Real-time execution-graph observability for Claude Code agentic pipelines. A sidecar daemon (plus a reusable core library) captures hooks, subagent allocation, tool calls, and MCP calls; reconciles them from four signal sources into one canonical action graph; persists it to embedded SQLite; and streams/exports it (jsonl, OTLP/OpenInference, neo4j, postgres).
+Offline eval gate for Claude Code agentic pipelines. A single CLI runs prompt baskets (`bench`), records each cell's transcripts as secret-redacted evidence dirs, reduces transcript JSONL into one canonical action graph (`reduce`), derives cross-run step and phase keys (`stepkey`/`phasekey`), aggregates repeated runs (`aggregate`), and gates regressions statistically (`regress`) against baselines stored in embedded SQLite (`store`: baselines + recorded history only). A stdlib-only stdio MCP server (`mcp`) ships the in-run `mark` checkpoint tool. No daemon, no network: the pipeline is `bench → transcript JSONL → reduce → step/phase keys → aggregate → regress`.
 
 - Design spec → [`docs/specs/2026-06-20-catacomb-design.md`](docs/specs/2026-06-20-catacomb-design.md)
 - Architecture decisions → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)
 
-**Status:** pivoting per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb narrows to the offline eval gate (`bench → transcript JSONL → reduce → step/phase keys → aggregate → regress`); observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores) and PV-3 (viewer deletion) have landed; PV-4/PV-5 (daemon/ingest/exporter deletion, repositioning) are next. Sequence and gates live in the [pivot roadmap](docs/superpowers/plans/2026-07-06-pivot-roadmap.md).
+**Status:** pivoted per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb is the offline eval gate; observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores), PV-3 (viewer deletion), and PV-4 (daemon/ingest/exporter/gRPC deletion, store slim) have landed; PV-5 (repositioning) is next. Sequence and gates live in the [pivot roadmap](docs/superpowers/plans/2026-07-06-pivot-roadmap.md).
 
 ## Principles
 
@@ -56,6 +56,7 @@ This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy)
 | No comments | `go test ./internal/codepolicy/` |
 | Coverage 100% | `go-test-coverage` ([`.testcoverage.yml`](.testcoverage.yml)) |
 | Docs lint | `markdownlint` ([`.markdownlint.json`](.markdownlint.json)) |
+| DeepEval bridge | `pytest` over [`integrations/deepeval`](integrations/deepeval) (own workflow) |
 
 ## Build / dev
 

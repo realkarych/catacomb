@@ -2,19 +2,23 @@
 
 ## The action graph
 
-Catacomb builds a directed graph of nodes and edges for each session.
+Catacomb reduces a session's transcripts into a directed graph of nodes and edges. The
+graph is deterministic: the same transcript records, in any order, converge to the same
+graph.
 
 ### Node types
 
-The graph has eight node types:
+The graph has nine node types:
 
 - `session` — a Claude Code session root
 - `user_prompt` — a user message submitted to the model
 - `assistant_turn` — a model response turn
 - `tool_call` — a tool invocation (file read, shell command, etc.)
 - `mcp_call` — an MCP tool invocation
+- `skill` — a skill invocation
 - `subagent` — a spawned subagent
-- `hook_event` — a raw hook event (PreCompact, Notification, etc.)
+- `hook_event` — retained in the data model for old exports; the transcript source
+  never produces it
 - `marker` — a phase boundary (see [Phases and checkpoints](#phases-and-checkpoints))
 
 ### Edge types
@@ -28,27 +32,15 @@ Four edge types connect nodes:
 
 ### Identity and scope
 
-Every node is keyed by an `execution_id` — a ULID minted per session — not by
-`run_id`. This means parallel or reused runs never collide.
+Every node is keyed by an `execution_id` — a ULID minted for each graph build — so
+graphs built from different transcripts (or twice from the same one) never collide.
+Cross-run identity does not ride node IDs at all; it rides `step_key` (see
+[Per-node fields](#per-node-fields)).
 
-A **run** groups one or more executions (sessions) under a label. The label
-defaults to the session id; set `CATACOMB_RUN_ID` or use
-`catacomb run --run-id <label>` to group related sessions together. The grouped
-view (`catacomb runs`, `catacomb inspect`) folds the sessions at read time:
-`status` is the most severe/live state across them (error, else running while
-any session is live, else ok) and `ended_at` is the last session to end. The
-per-session views remain available by querying a session id directly. Bench
-cells are single-session, so `bench` and `regress` are unaffected by the fold.
-
-Two boundaries of read-time grouping are worth knowing. The persisted `runs`
-table row for a shared run id is last-writer-wins across its sessions, but no
-read path consults it for grouping — `runs`, `inspect`, `regress`, and `bench`
-all reconstruct the group from the stored observations — so that row is
-cosmetic. And `aggregate`/`regress` read run `duration_ms` from a single anchor
-session's run timing rather than the unioned span (node counts and cost are
-unioned); because bench cells are single-session this never affects a shipped
-`bench`/`regress` workflow, and `runs`/`inspect` still report the correct
-unioned span.
+A **run** is one `bench` cell: a single session (plus its subagent sub-transcripts)
+recorded as an evidence directory with a `meta.json` carrying the run id
+(`bench-<basket>-<task>-<variant>-r<rep>`), labels, exit code, cost, and the `task:<id>`
+marker window. `regress` and `baseline set` group runs by matching those labels.
 
 ### Session hierarchy
 
@@ -65,53 +57,48 @@ session
                       └─ ...
 ```
 
-Each subagent nests under the turn that spawned it. A subagent's inner tree is
-served on demand through its own subtree endpoint
-(`GET /v1/sessions/{hash}/subagent/{agentId}`), so sessions with hundreds of
-subagents stay cheap to query.
+Each subagent nests under the turn that spawned it, and its inner tree is parsed from
+its own `subagents/agent-*.jsonl` sub-transcript.
 
 ### Per-node fields
 
 Each node carries:
 
 - **Timing** — `t_start`, `t_end`, `duration_ms`
-- **Cost and tokens** — ranked by source precedence
+- **Cost and tokens** — from transcript usage records, with reported totals preferred
+  over per-turn estimates
 - **Status** — running, ok, error, blocked, or unknown
-- **`payload_hash`** — a hash of the content (not the content itself)
-- **`step_key`** — cross-run identity for diffing and annotation
+- **`payload_hash`** — a hash of the (redacted) content, not the content itself
+- **`step_key`** — cross-run identity for diffing, aggregation, and score annotations
 - **`phase_key`** — which phase this node belongs to (if any)
-- **`annotations`** — a per-node slot for downstream tooling to attach metadata
+- **`annotations`** — a per-node slot where `--scores` values land before comparison
 - **`tier`** — `core` or `detail`, controlling export granularity
 
-## Ingestion sources
+A `step_key` names "the same logical step" across runs: it hashes the node's position
+and its redacted, salient tool input (for an edit, the file path; for a shell call, the
+command), so repeated runs of the same pipeline align step-to-step even though every
+node ID differs. The scheme is versioned (`stepkey/v1`) and stamped onto baselines so a
+scheme change is detected rather than silently misaligning groups.
 
-Catacomb reconciles four sources into one graph:
+## The transcript source
 
-- **Hooks** — the backbone; fire on every Claude Code execution path; capture
-  SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SubagentStop, Stop,
-  SessionEnd, PreCompact, and Notification. See [Ingestion](ingestion.md).
-- **OpenTelemetry** — native Claude Code telemetry; provides the clean span
-  tree, per-node cost and token data, and MCP spans. See [Ingestion](ingestion.md).
-- **stream-json** — structural hints (notably `parent_tool_use_id`) from Claude
-  Code's output stream. See [Ingestion](ingestion.md).
-- **Transcript JSONL** — the source of truth for the subagent tree; enables
-  post-hoc backfill of past sessions. See [Ingestion](ingestion.md).
-
-The four sources are merged by canonical entity precedence into one graph. See
-[docs/adr/](../adr/) — specifically ADR-0002 and ADR-0003 — for the
-reconciliation design.
+The graph is built from one source: Claude Code's transcript JSONL files (the main
+session transcript plus one sub-transcript per subagent). `bench` snapshots them into
+redacted evidence directories; the other commands parse them directly. See
+[Ingestion](ingestion.md) for the file layout and drift handling. Earlier catacomb
+versions reconciled four live sources through a daemon; that design is historical —
+see the
+[ADR-0026 supersession map](../adr/0026-form-factor-pivot-offline-eval-gate.md#supersession-map).
 
 ## Phases and checkpoints
 
-A **marker** node records a named phase boundary. You can insert one with:
+A **marker** node records a named phase boundary. Markers come from two places:
 
-```sh
-catacomb mark --session <id> --name <name> --boundary start|end
-```
-
-Or from inside an agent session via the `mcp__catacomb__mark` tool (which
-rides the trace stream without extra wiring), served by the shipped
-[`catacomb mcp`](cli.md#mcp) stdio server.
+- the agent calling the `mcp__catacomb__mark` tool during a run (served by
+  [`catacomb mcp`](cli.md#mcp)); the tool call lands in the transcript and the reducer
+  synthesizes the marker from it;
+- `bench` synthesizing `task:<id>` start/end markers around each cell from the child's
+  wall-clock window.
 
 A phase is the half-open time window `[start_marker.t_start, end_marker.t_start)`
 — the start is inclusive, the end is exclusive. Every node whose `t_start`
@@ -132,9 +119,9 @@ When the same phase name appears more than once, starts and ends pair by
 still-open phase of that name (correct bracket matching), so a `plan` nested
 inside an outer `plan` closes the inner one first. Occurrence numbers are
 assigned to starts in time order (first start is occurrence 0). If you supply
-an explicit `--occurrence` on **both** the start and the end, that pairing wins
+an explicit `occurrence` on **both** the start and the end, that pairing wins
 over LIFO — this is how you disambiguate phases of the same name that genuinely
 *overlap* (neither nested nor sequential), which are otherwise ambiguous.
 
-Phases are used for scoped diffs and subgraph extraction. See
-[Workflows](workflows.md) for recipes.
+Phases are used for scoped diffs, subgraph extraction, and the checkpoint scope of
+`regress`. See [Workflows](workflows.md) for recipes.
