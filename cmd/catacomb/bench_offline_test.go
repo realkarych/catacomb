@@ -84,6 +84,32 @@ func TestBenchOfflineEndToEnd(t *testing.T) {
 	require.NoError(t, statErr)
 }
 
+func TestBenchOfflineCheckpointHitEndToEnd(t *testing.T) {
+	projects := t.TempDir()
+	runs := t.TempDir()
+	stubBenchChild(t, "HELPER_SESSION=sess-cp", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+
+	basket := filepath.Join(t.TempDir(), "b.yaml")
+	require.NoError(t, os.WriteFile(basket, []byte(
+		"basket: bx\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"sess-cp\"]\n    checkpoints:\n      - plan\nvariants:\n  - id: base\n"), 0o600))
+	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
+
+	var out, errb bytes.Buffer
+	err := runBench(context.Background(), &out, &errb, "", basket, benchFlags{
+		offline: true, projectsDir: projects, runsDir: runs, manifest: manifestPath,
+	})
+	require.NoError(t, err)
+
+	entries, err := bench.Manifest{Path: manifestPath}.Completed()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entry := entries["bench-bx-t1-base-r1"]
+	assert.Empty(t, entry.MissingCheckpoints)
+	assert.True(t, entry.Marked)
+	assert.Contains(t, out.String(), "checkpoints[t1]: plan 1/1")
+	assert.NotContains(t, errb.String(), "missing checkpoints")
+}
+
 func TestBenchOfflineNoSessionNote(t *testing.T) {
 	stubBenchChild(t)
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
@@ -206,7 +232,9 @@ func TestBenchOfflineMissingDirsIsOperational(t *testing.T) {
 	var out, errb bytes.Buffer
 	err := runBench(context.Background(), &out, &errb, "", basket,
 		benchFlags{offline: true, projectsDir: "", runsDir: t.TempDir()})
-	require.Error(t, err)
+	require.ErrorIs(t, err, errBenchOfflineDirs)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
 }
 
 func TestBenchDefaultDir(t *testing.T) {
