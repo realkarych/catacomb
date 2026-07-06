@@ -469,3 +469,14 @@ func TestContentKeyIgnoresPosition(t *testing.T) {
 	kb := Compute([]*model.Node{pb, b}, []*model.Edge{edge("pb", "b")})
 	assert.Equal(t, ka["a"].Content, kb["b"].Content)
 }
+
+func TestSchemeExportedAndFeedsBothHashSites(t *testing.T) {
+	assert.Equal(t, "stepkey/v1", Scheme)
+	sess := tnode("sess", model.NodeSession, "", 0, "")
+	tool := tnode("tool", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
+	got := Compute([]*model.Node{sess, tool}, []*model.Edge{edge("sess", "tool")})
+	require.Contains(t, got, "tool")
+	level := string(model.NodeToolCall) + "#0"
+	assert.Equal(t, hash16(Scheme+"|"+level+"|"+got["tool"].Content), got["tool"].Key)
+	assert.Equal(t, hash16(Scheme+"|path|"+level), got["tool"].PathKey)
+}
