@@ -3,84 +3,29 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
-
-func TestErrNoDaemonEndsInCommand(t *testing.T) {
-	assert.True(t, strings.HasSuffix(ErrNoDaemon.Error(), "catacomb up"))
-}
-
-func TestErrDaemonUnreachableEndsInCommand(t *testing.T) {
-	assert.True(t, strings.HasSuffix(ErrDaemonUnreachable.Error(), "catacomb up"))
-}
-
-func TestErrHooksNotInstalledEndsInCommand(t *testing.T) {
-	assert.True(t, strings.HasSuffix(ErrHooksNotInstalled.Error(), "catacomb install-hooks"))
-}
-
-func TestErrDaemonRestartedEndsInCommand(t *testing.T) {
-	assert.True(t, strings.HasSuffix(ErrDaemonRestarted.Error(), "catacomb up"))
-}
-
-func TestErrNoDaemonIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("x: %w", ErrNoDaemon)
-	assert.True(t, errors.Is(wrapped, ErrNoDaemon))
-}
-
-func TestRenderErrNoDaemon(t *testing.T) {
-	assert.Equal(t, ErrNoDaemon.Error(), renderErr(ErrNoDaemon))
-}
-
-func TestRenderErrDaemonUnreachable(t *testing.T) {
-	assert.Equal(t, ErrDaemonUnreachable.Error(), renderErr(ErrDaemonUnreachable))
-}
-
-func TestRenderErrHooksNotInstalled(t *testing.T) {
-	assert.Equal(t, ErrHooksNotInstalled.Error(), renderErr(ErrHooksNotInstalled))
-}
-
-func TestRenderErrDaemonRestarted(t *testing.T) {
-	assert.Equal(t, ErrDaemonRestarted.Error(), renderErr(ErrDaemonRestarted))
-}
-
-func TestRenderErrOsNotExist(t *testing.T) {
-	err := &os.PathError{Op: "open", Path: "/no/such", Err: os.ErrNotExist}
-	assert.Equal(t, ErrNoDaemon.Error(), renderErr(err))
-}
-
-func TestRenderErrOperationalNotExistKeepsMessage(t *testing.T) {
-	err := operational(fmt.Errorf("regress name:g: run %q dir %q: %w", "ghost-1", "/runs/ghost-1", os.ErrNotExist))
-	assert.Equal(t, err.Error(), renderErr(err))
-}
-
-func TestRenderErrNetOpError(t *testing.T) {
-	err := &net.OpError{Op: "dial", Net: "tcp", Err: &net.AddrError{Err: "refused"}}
-	assert.Equal(t, ErrDaemonUnreachable.Error(), renderErr(err))
-}
 
 func TestRenderErrGeneric(t *testing.T) {
 	err := errors.New("something went wrong")
 	assert.Equal(t, "something went wrong", renderErr(err))
 }
 
-func TestRenderErrWrappedNoDaemon(t *testing.T) {
-	wrapped := fmt.Errorf("context: %w", ErrNoDaemon)
-	assert.Equal(t, ErrNoDaemon.Error(), renderErr(wrapped))
-}
-
-func TestRenderErrWrappedUnreachable(t *testing.T) {
-	wrapped := fmt.Errorf("context: %w", ErrDaemonUnreachable)
-	assert.Equal(t, ErrDaemonUnreachable.Error(), renderErr(wrapped))
-}
-
 func TestRenderErrDiffInput(t *testing.T) {
 	wrapped := fmt.Errorf("diff: /path/x.jsonl: open: %w (%w)", os.ErrNotExist, ErrDiffInput)
 	assert.Equal(t, wrapped.Error(), renderErr(wrapped))
+}
+
+func TestRenderErrOperationalKeepsMessage(t *testing.T) {
+	err := operational(fmt.Errorf("regress name:g: run %q dir %q: %w", "ghost-1", "/runs/ghost-1", os.ErrNotExist))
+	assert.Equal(t, err.Error(), renderErr(err))
+}
+
+func TestRenderErrStoreNotFound(t *testing.T) {
+	assert.Equal(t, ErrStoreNotFound.Error(), renderErr(ErrStoreNotFound))
 }
 
 func TestErrStoreNotFoundIsCheckable(t *testing.T) {
@@ -91,13 +36,4 @@ func TestErrStoreNotFoundIsCheckable(t *testing.T) {
 func TestErrUnknownSinkIsCheckable(t *testing.T) {
 	wrapped := fmt.Errorf("x: %w", ErrUnknownSink)
 	assert.True(t, errors.Is(wrapped, ErrUnknownSink))
-}
-
-func TestErrDaemonAlreadyRunningIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("daemon: %w", ErrDaemonAlreadyRunning)
-	assert.True(t, errors.Is(wrapped, ErrDaemonAlreadyRunning))
-}
-
-func TestRenderErrStoreNotFound(t *testing.T) {
-	assert.Equal(t, ErrStoreNotFound.Error(), renderErr(ErrStoreNotFound))
 }

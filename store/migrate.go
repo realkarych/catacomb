@@ -21,7 +21,7 @@ const schemaRegressResults = `CREATE TABLE IF NOT EXISTS regress_results (baseli
 var (
 	ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
 	ErrSchemaTooNew          = errors.New("store: on-disk schema is newer than this catacomb binary; upgrade catacomb")
-	ErrSchemaOutdated        = errors.New("store schema is older than this binary; run a write-path command (catacomb up or baseline set) to migrate")
+	ErrSchemaOutdated        = errors.New("store schema is older than this binary; run a write-path command like 'catacomb baseline set' to migrate")
 )
 
 type migration struct {
