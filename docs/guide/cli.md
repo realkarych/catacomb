@@ -837,7 +837,7 @@ evidence dir must be present and readable, or the command exits `2` naming the r
 baseline set with [`baseline set --runs-dir`](#baseline-set) records the runs dir it was
 resolved from; when the `--runs-dir` flag names a different directory, a stderr warning notes
 the recorded dir and the flag wins. `--record` appends to the same store, opening it read-write
-and creating it if absent (see [Recording history](#recording-history)). Annotation gates
+(see [Recording history](#recording-history)). Annotation gates
 (`--annotation`) fire under `--runs-dir` when their values arrive through a
 [`--scores` file](#gating-on-external-scores); evidence dirs carry no store-written
 annotations, so a gated key without a scores file still only triggers the never-fired stderr
@@ -923,10 +923,13 @@ verdict is rendered to stdout, and a failed append is itself an operational erro
 takes precedence over the verdict: a regression that could not be durably recorded exits `2`, not
 `1`, so a broken store never masquerades as a clean regression signal.
 
-Recording works under `--runs-dir` too: the store at `--db` is opened read-write — created if
-absent — solely to write the record, so a fully offline loop still accumulates
-[`trends`](#trends) history. Each record carries the version stamps of the recording binary
-(catacomb version and step-key scheme) in its body alongside the report.
+Recording works under `--runs-dir` too: the store at `--db` is opened read-write solely to
+write the record, so a fully offline loop still accumulates [`trends`](#trends) history. The
+store must already exist: `--record` requires a `name:` baseline, and resolving one against an
+absent store fails first (exit `2`), so in an offline loop the store is created by
+[`baseline set --runs-dir`](#baseline-set), never by `--record`. Each record carries the
+version stamps of the recording binary (catacomb version and step-key scheme) in its body
+alongside the report.
 
 Sequence numbers are assigned atomically in a single statement, so a record is never silently
 overwritten. But concurrent `--record` writers against one store file — a fan-out CI matrix whose
