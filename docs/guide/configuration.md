@@ -87,7 +87,7 @@ and the at-rest guarantees.
 
 ## Discovery file
 
-The discovery file is a small JSON file written by the daemon so that clients — hooks, `catacomb ui`, `catacomb env`, and others — can locate the running daemon without a fixed port.
+The discovery file is a small JSON file written by the daemon so that clients — hooks, `catacomb env`, `catacomb status`, and others — can locate the running daemon without a fixed port.
 
 Resolution order (first path that can be written wins):
 

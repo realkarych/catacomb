@@ -11,8 +11,9 @@ It is never reachable from outside the local machine.
 
 Every request requires `Authorization: Bearer <token>` or a `?token=<token>` query
 parameter. The token is a 64-character hex string (32 bytes from `crypto/rand`),
-compared in constant time. It is printed at daemon startup and written to the discovery
-file (`~/.catacomb/run/daemon.json`, mode 0600; directory mode 0700).
+compared in constant time. It is written to the discovery file
+(`~/.catacomb/run/daemon.json`, mode 0600; directory mode 0700); `catacomb env`
+emits it as the OTLP authorization header for clients.
 
 ### Graph holds structure, not content
 
@@ -179,7 +180,7 @@ sinks, sources, reaper window, shard counts, session and node counts, drift coun
 ### Lifecycle
 
 ```sh
-# Start daemon, install hooks, open UI
+# Start daemon and install hooks
 catacomb up
 
 # Stop daemon (graceful: SIGTERM, ~5 s, then SIGKILL with --force)
@@ -224,7 +225,7 @@ without blocking ingest.
 | --- | --- |
 | No sessions appear | Verify hooks are installed: `catacomb install-hooks` or re-run `catacomb up` |
 | Past sessions missing | Run `catacomb up --history` to tail `~/.claude/projects` |
-| Cannot read content in UI or observer | Start the daemon with `--allow-payload-access` |
+| Payload endpoint returns `403 Forbidden` | Start the daemon with `--allow-payload-access` |
 | "No daemon running" error from any command | Run `catacomb up` or check `catacomb status` |
 | Wrong database is loaded | Set `--db <path>` or `store.sqlite.path` in config |
 

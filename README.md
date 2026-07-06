@@ -11,7 +11,7 @@
   Real-time execution-graph observability for
   <a href="https://www.anthropic.com/claude-code">Claude Code</a> agentic sessions.<br>
   Prompts, turns, tool calls, MCP calls, and subagents — reconciled into one
-  queryable <b>action graph</b>, live in a web UI and a terminal observer.
+  queryable <b>action graph</b>, served live over an HTTP and gRPC API.
 </p>
 
 <!-- Badges -->
@@ -29,10 +29,9 @@ Catacomb runs as a sidecar daemon next to Claude Code and captures everything a
 session does — prompts, assistant turns, tool calls, MCP calls, and subagents —
 from four signal sources: hooks, native OpenTelemetry, `stream-json`, and
 transcript JSONL (including each subagent's sub-transcript). It reconciles them
-into one canonical **action graph**, persists it to embedded SQLite, serves it
-live over SSE and gRPC, and renders it in an embedded web UI and a terminal
-observer. The same graph exports as a materialized artifact to `jsonl`,
-OTLP/OpenInference, `neo4j`, and `postgres`.
+into one canonical **action graph**, persists it to embedded SQLite, and serves
+it live over SSE and gRPC. The same graph exports as a materialized artifact to
+`jsonl`, OTLP/OpenInference, `neo4j`, and `postgres`.
 
 It is domain- and evaluation-agnostic: it builds a faithful, queryable graph and
 leaves a per-node annotation slot for downstream tooling to attach its own
@@ -40,13 +39,13 @@ metadata.
 
 ## <p align=center>✨ Highlights</p>
 
-- **An outline, not a hairball.** The web UI is a virtualized, collapsible tree — `session → prompt → turn → tool` — that stays readable at thousands of nodes. (An earlier force-directed graph view was removed after it proved unusable on real sessions.)
-- **Subagents you can actually inspect.** Each subagent nests under the turn that spawned it (`turn → Agent tool call → subagent → its prompt/turns/tools`), labelled with its task. A subagent's inner work is lazy-loaded on expand, so a session with hundreds of subagents still loads fast.
+- **An outline, not a hairball.** The graph is a collapsible tree — `session → prompt → turn → tool` — that stays queryable at thousands of nodes.
+- **Subagents you can actually inspect.** Each subagent nests under the turn that spawned it (`turn → Agent tool call → subagent → its prompt/turns/tools`), labelled with its task. A subagent's inner tree is served on demand through its own subtree endpoint, so a session with hundreds of subagents stays cheap to query.
 - **Content inspection, gated and redaction-aware.** Conversation text and tool input/output are redacted before they ever reach disk (write-path redaction, ADR-0024) and served only through an authorization-gated endpoint (off by default) with serve-time redaction as defense in depth — never inlined into graph responses.
-- **Terminal observer.** `catacomb observe` is a full TUI over the same live feed (sessions → tree → node detail).
+- **Bring your own viewer.** Catacomb ships no UI: watching runs live is delegated to a vendor substrate fed by that vendor's first-party Claude Code plugin — Phoenix is the recommended one ([ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md)). Catacomb stays the capture, diff, and regression-gate layer.
 - **Silence when healthy.** Status is surfaced only when it carries signal (failures, live activity); a calm session stays calm.
 
-> **Status:** all designed surfaces are implemented — four-source ingestion (incl. subagent sub-transcripts), the reconciling reducer, SQLite persistence, live SSE + gRPC, the embedded web UI and the terminal observer, and the four exporters. Built and maintained under a 100%-test-coverage, TDD gate.
+> **Status:** four-source ingestion (incl. subagent sub-transcripts), the reconciling reducer, SQLite persistence, live SSE + gRPC, the four exporters, and the bench/regress eval loop are implemented, built and maintained under a 100%-test-coverage, TDD gate. The display layer (web UI, terminal observer) was removed per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md).
 
 <hr>
 
@@ -110,17 +109,17 @@ Or build locally with `make build`.
 ```
 ❯ catacomb --help
 Catacomb builds a real-time execution graph of your Claude Code sessions —
-prompts, turns, tool calls, MCP calls, and subagents — and serves it in a
-web UI and a terminal observer.
+prompts, turns, tool calls, MCP calls, and subagents — and serves it over
+an HTTP and gRPC API.
 
 Common recipes:
   Observe every session (all projects):
       catacomb up --global
 
-  Load past sessions into the UI:
+  Load past sessions into the daemon:
       catacomb up --history
 
-  Read conversation content in the UI (off by default):
+  Expose conversation content over the API (off by default):
       catacomb daemon --allow-payload-access
 
 Run 'catacomb <command> --help' for details on any command.
@@ -131,12 +130,9 @@ Usage:
 Observe:
   down          Stop the daemon and optionally remove catacomb's artifacts
   logs          Print the daemon log (use -f to follow)
-  observe       Interactive terminal observer for a Claude session
   restart       Stop the running daemon and start a fresh one
   status        Print daemon addr, pid, uptime, and session/node counts
-  ui            Open the catacomb web UI in the default browser
-  up            Start the daemon (if needed), install hooks, and open the UI
-  watch         Stream live graph deltas from the catacomb daemon (SSE)
+  up            Start the daemon (if needed) and install the Claude Code hooks
 
 Setup:
   daemon        Run the catacomb daemon (receives hook events, builds the live graph)
@@ -144,6 +140,8 @@ Setup:
   install-hooks Wire the catacomb hook forwarder into Claude Code settings.json
 
 Advanced:
+  baseline      Manage named baselines for regression comparison
+  bench         Run a benchmark basket: expand cells, execute, mark phases, record a manifest
   demo          Ingest a bundled synthetic transcript into the running daemon
   diff          Diff two session transcripts by step_key
   export        Export graph data to an external sink (jsonl, otlp, neo4j, postgres, agentevals, evalview)
@@ -151,11 +149,14 @@ Advanced:
   ingest        Forward Claude Code output to the catacomb daemon
   inspect       Show detailed summary for a specific run
   mark          Record a phase boundary marker in a running session
+  mcp           Run the catacomb MCP stdio server (exposes the mark checkpoint tool)
+  regress       Compare a candidate run group against a baseline
   replay        Build a graph from a recorded Claude Code transcript
   run           Run a Claude Code command, tee its stream-json to the terminal and the daemon
   runs          List all runs in the stored catacomb database
   snapshot      Dump current graph state as JSONL
   subgraph      Extract the execution subgraph of a checkpoint phase
+  trends        Show the recorded regression history for a baseline
   version       Print the version
 ```
 
@@ -168,8 +169,8 @@ catacomb up
 ```
 
 `catacomb up` starts the daemon if it is not already running, installs the
-Claude Code hooks for the **current directory**, prints the bearer URL, and
-opens the web UI. It observes **live** sessions started under that directory.
+Claude Code hooks for the **current directory**, and prints the daemon
+address. It observes **live** sessions started under that directory.
 
 ### Observe every session
 
@@ -209,8 +210,6 @@ Other commands:
 
 ```sh
 catacomb status           # daemon addr, pid, uptime, what it's observing, counts
-catacomb observe [hash]   # interactive terminal observer
-catacomb ui               # print the bearer URL and (re-)open the browser
 catacomb demo             # ingest the bundled demo transcript into a running daemon
 catacomb version          # print the version
 ```
@@ -229,7 +228,8 @@ into them. Payload bodies pass through secret redaction on the write path
 already redacted. Message and tool content is served only when the daemon is
 started with `--allow-payload-access`, through a token-gated endpoint that
 redacts once more at serve time. The HTTP surface binds to loopback and is gated
-by a bearer token printed at startup.
+by a bearer token stored in the discovery file (`~/.catacomb/run/daemon.json`,
+mode 0600).
 
 <hr>
 
