@@ -657,13 +657,14 @@ are verified in-process against the graph rebuilt from the transcripts — same
 daemon path, minus the lossy-stream false-miss caveat, since the transcript is read directly.
 Each cell then writes an evidence directory `<runs-dir>/<run-id>/` holding secret-redacted
 copies of the transcripts (`session.jsonl`, `subagents/agent-*.jsonl`) plus a `meta.json` (run
-id, task, variant, rep, session id, labels, exit code, `cost_usd`, basket hash, and the
-`task:<id>` marker window); the manifest entry gains `cost_usd` (from the `result` event) and
-`evidence_dir`. An evidence-write failure keeps the cell's result and notes the error. On
-success the epilogue prints a copy-pasteable [`regress --runs-dir`](#regress) comparing the
-first two variants over these evidence directories — no `baseline set` step, because offline
-baselines land in PV-2. When the home directory cannot be resolved, `--projects-dir` and
-`--runs-dir` must be set explicitly (exit `2`). Offline mode is the PV-1 slice of ADR-0026.
+id, task, variant, rep, session id, labels, exit code, `cost_usd`, basket hash, the
+`task:<id>` marker window, and `finished_at`); the manifest entry gains `cost_usd` (from the
+`result` event) and `evidence_dir`. An evidence-write failure keeps the cell's result and
+notes the error. On success the epilogue prints a copy-pasteable
+[`regress --runs-dir`](#regress) comparing the first two variants over these evidence
+directories — no `baseline set` step, because offline baselines land in PV-2. When the home
+directory cannot be resolved, `--projects-dir` and `--runs-dir` must be set explicitly (exit
+`2`). Offline mode is the PV-1 slice of ADR-0026.
 
 ```sh
 catacomb bench checkout.yaml
@@ -808,7 +809,9 @@ terms ANDed), and rebuilds every matching run's graph from its redacted transcri
 re-applying the `task:<id>` marker window from `meta.json` so checkpoint phases and run timing
 carry over. Aggregation, thresholds, scopes, output, and exit codes are unchanged. `name:`
 selectors and `--record` still require the store — offline baselines land in PV-2 — and are
-operational errors (exit `2`) under `--runs-dir`.
+operational errors (exit `2`) under `--runs-dir`. Annotation gates (`--annotation`) read
+their scores from the store, so they never fire under `--runs-dir` in PV-1 (each configured
+key only triggers the never-fired stderr warning); scores-file support lands in PV-2.
 
 #### Gating on external scores
 
