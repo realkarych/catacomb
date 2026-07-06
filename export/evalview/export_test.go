@@ -267,6 +267,29 @@ func TestWriteAllConcatenatesTracesSorted(t *testing.T) {
 	assert.Equal(t, "runA", first["trace_id"])
 }
 
+func TestSortNodesTieBreakAndNilTokens(t *testing.T) {
+	nodes := []*model.Node{
+		{ID: "z-turn", RunID: "run-1", Type: model.NodeAssistantTurn, Status: model.StatusOK},
+		{ID: "a-tool", RunID: "run-1", Name: "Bash", Type: model.NodeToolCall, Status: model.StatusOK},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, writeTrace(&buf, "run-1", nodes, nil))
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	require.Len(t, lines, 4)
+
+	var first, second map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &first))
+	require.NoError(t, json.Unmarshal([]byte(lines[2]), &second))
+	assert.Equal(t, "a-tool", first["span_id"])
+	assert.Equal(t, "z-turn", second["span_id"])
+
+	llm, ok := second["llm"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(0), llm["input_tokens"])
+	assert.Equal(t, float64(0), llm["output_tokens"])
+}
+
 type countWriter struct {
 	calls  int
 	failAt int

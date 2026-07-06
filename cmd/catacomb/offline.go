@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -74,6 +75,13 @@ func loadGraphOffline(main string, subs []string, executionID string, pricer red
 	}
 	g.ApplyAll(obs)
 	return g, nil
+}
+
+func sortedGraphSnapshot(g *reduce.Graph) ([]*model.Node, []*model.Edge) {
+	nodes, edges := g.Snapshot()
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	return nodes, edges
 }
 
 func graphMarkerNames(g *reduce.Graph) map[string]struct{} {

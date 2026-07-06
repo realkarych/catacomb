@@ -13,10 +13,7 @@ var (
 	ErrHooksNotInstalled    = errors.New("catacomb hooks are not installed. Install them: catacomb install-hooks")
 	ErrDaemonRestarted      = errors.New("catacomb daemon restarted (token mismatch). Reconnect: catacomb up")
 	ErrStoreNotFound        = errors.New("no catacomb store found. Create one: catacomb up")
-	ErrRunNotFound          = errors.New("run not found")
-	ErrUnknownSink          = errors.New("unknown export sink")
-	ErrSinkNotConfigured    = errors.New("export sink not configured (missing --otlp-export-endpoint / --postgres-export-dsn / --neo4j-export-uri)")
-	ErrModeUnsupported      = errors.New("export mode not supported for this sink (use --mode materialized)")
+	ErrUnknownSink          = errors.New("unknown export format (only jsonl is supported)")
 	ErrDaemonStop           = errors.New("failed to stop the catacomb daemon")
 	ErrDaemonAlreadyRunning = errors.New("a catacomb daemon is already running for this discovery path. Stop it first: catacomb down")
 	ErrConfirmationRequired = errors.New("refusing a destructive teardown without --yes in a non-interactive shell")
@@ -51,9 +48,6 @@ func renderErr(err error) string {
 	}
 	if errors.Is(err, ErrStoreNotFound) {
 		return ErrStoreNotFound.Error()
-	}
-	if errors.Is(err, ErrRunNotFound) {
-		return ErrRunNotFound.Error()
 	}
 	var opErr *operationalError
 	if errors.As(err, &opErr) {

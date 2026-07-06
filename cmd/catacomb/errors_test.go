@@ -88,24 +88,9 @@ func TestErrStoreNotFoundIsCheckable(t *testing.T) {
 	assert.True(t, errors.Is(wrapped, ErrStoreNotFound))
 }
 
-func TestErrRunNotFoundIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("x: %w", ErrRunNotFound)
-	assert.True(t, errors.Is(wrapped, ErrRunNotFound))
-}
-
 func TestErrUnknownSinkIsCheckable(t *testing.T) {
 	wrapped := fmt.Errorf("x: %w", ErrUnknownSink)
 	assert.True(t, errors.Is(wrapped, ErrUnknownSink))
-}
-
-func TestErrSinkNotConfiguredIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("x: %w", ErrSinkNotConfigured)
-	assert.True(t, errors.Is(wrapped, ErrSinkNotConfigured))
-}
-
-func TestErrModeUnsupportedIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("x: %w", ErrModeUnsupported)
-	assert.True(t, errors.Is(wrapped, ErrModeUnsupported))
 }
 
 func TestErrDaemonAlreadyRunningIsCheckable(t *testing.T) {
@@ -115,8 +100,4 @@ func TestErrDaemonAlreadyRunningIsCheckable(t *testing.T) {
 
 func TestRenderErrStoreNotFound(t *testing.T) {
 	assert.Equal(t, ErrStoreNotFound.Error(), renderErr(ErrStoreNotFound))
-}
-
-func TestRenderErrRunNotFound(t *testing.T) {
-	assert.Equal(t, ErrRunNotFound.Error(), renderErr(ErrRunNotFound))
 }

@@ -80,10 +80,11 @@ func TestBatchCommandsUseDefaultBatchDBPath(t *testing.T) {
 		name string
 		got  string
 	}{
-		{"runs", newRunsCmd().Flags().Lookup("db").DefValue},
-		{"inspect", newInspectCmd().Flags().Lookup("db").DefValue},
-		{"snapshot", newSnapshotCmd().Flags().Lookup("db").DefValue},
-		{"export", newExportCmd().Flags().Lookup("db").DefValue},
+		{"regress", newRegressCmd().Flags().Lookup("db").DefValue},
+		{"trends", newTrendsCmd().Flags().Lookup("db").DefValue},
+		{"baseline set", newBaselineSetCmd().Flags().Lookup("db").DefValue},
+		{"baseline list", newBaselineListCmd().Flags().Lookup("db").DefValue},
+		{"baseline rm", newBaselineRmCmd().Flags().Lookup("db").DefValue},
 	} {
 		assert.Equal(t, expected, tc.got, "command %s", tc.name)
 	}

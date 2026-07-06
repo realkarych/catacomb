@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,310 +9,212 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/realkarych/catacomb/cdc"
-	exportiface "github.com/realkarych/catacomb/export"
-	exportneo4j "github.com/realkarych/catacomb/export/neo4j"
-	exportotlp "github.com/realkarych/catacomb/export/otlp"
-	"github.com/realkarych/catacomb/model"
-	"github.com/realkarych/catacomb/store"
+	"github.com/realkarych/catacomb/evidence"
 )
 
-type recSpanExporter struct {
-	batches [][]sdktrace.ReadOnlySpan
-}
-
-func (r *recSpanExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
-	r.batches = append(r.batches, spans)
-	return nil
-}
-
-func (r *recSpanExporter) Shutdown(_ context.Context) error { return nil }
-
-type recNeo4jRunner struct {
-	calls []string
-}
-
-func (r *recNeo4jRunner) Run(_ context.Context, cypher string, _ map[string]any) error {
-	r.calls = append(r.calls, cypher)
-	return nil
-}
-
-func (r *recNeo4jRunner) Close(_ context.Context) error { return nil }
-
-type fakeExporter struct {
-	snapshotCalled bool
-	flushCalls     []string
-	shutdownCalled bool
-	snapshotErr    error
-	flushErr       error
-	shutdownErr    error
-}
-
-func (f *fakeExporter) Name() string { return "fake" }
-
-func (f *fakeExporter) ApplyDelta(_ context.Context, _ cdc.GraphDelta) error { return nil }
-
-func (f *fakeExporter) SnapshotState(_ context.Context, _ []*model.Node, _ []*model.Edge) error {
-	f.snapshotCalled = true
-	return f.snapshotErr
-}
-
-func (f *fakeExporter) FlushRun(_ context.Context, runID string) error {
-	f.flushCalls = append(f.flushCalls, runID)
-	return f.flushErr
-}
-
-func (f *fakeExporter) Shutdown(_ context.Context) error {
-	f.shutdownCalled = true
-	return f.shutdownErr
-}
-
-type fakeRunExporterSink struct {
-	fakeExporter
-	snapshotRunsCalled bool
-	snapshotRunsErr    error
-}
-
-func (f *fakeRunExporterSink) SnapshotRuns(_ context.Context, _ []model.Run) error {
-	f.snapshotRunsCalled = true
-	return f.snapshotRunsErr
-}
-
-func TestExportJSONLMaterialized(t *testing.T) {
-	dbPath := seedDB(t)
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-	})
-	require.NoError(t, err)
-
-	type kindHolder struct {
-		Kind string `json:"kind"`
-	}
-	var nodeCount, edgeCount int
-	scanner := bufio.NewScanner(strings.NewReader(buf.String()))
+func decodeSnapshotLines(t *testing.T, out string) []map[string]any {
+	t.Helper()
+	var lines []map[string]any
+	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
-		var kh kindHolder
-		require.NoError(t, json.Unmarshal(scanner.Bytes(), &kh))
-		switch kh.Kind {
+		var line map[string]any
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &line))
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func countKinds(lines []map[string]any) map[string]int {
+	counts := map[string]int{}
+	for _, l := range lines {
+		kind, _ := l["kind"].(string)
+		counts[kind]++
+	}
+	return counts
+}
+
+func TestExportTranscriptViaRootEmitsKindLines(t *testing.T) {
+	root := newRootCmd()
+	root.SetArgs([]string{"export", "testdata/session.jsonl"})
+	var buf strings.Builder
+	root.SetOut(&buf)
+	require.NoError(t, root.Execute())
+
+	lines := decodeSnapshotLines(t, buf.String())
+	counts := countKinds(lines)
+	assert.Positive(t, counts["node"])
+	assert.Positive(t, counts["edge"])
+	assert.Positive(t, counts["run"])
+
+	var prev string
+	for _, l := range lines {
+		if l["kind"] != "node" {
+			continue
+		}
+		id, _ := l["id"].(string)
+		assert.LessOrEqual(t, prev, id)
+		prev = id
+	}
+}
+
+func TestExportTranscriptExplicitToJSONL(t *testing.T) {
+	var buf strings.Builder
+	require.NoError(t, runExport(&buf, exportArgs{input: "testdata/session.jsonl", to: "jsonl"}))
+	counts := countKinds(decodeSnapshotLines(t, buf.String()))
+	assert.Positive(t, counts["node"])
+	assert.Positive(t, counts["run"])
+}
+
+func writeExportEvidenceDir(t *testing.T) string {
+	t.Helper()
+	sub := filepath.Join(t.TempDir(), "agent-001.jsonl")
+	line := `{"type":"assistant","uuid":"sa1","sessionId":"sub1","timestamp":"2026-06-20T10:00:05Z","message":{"role":"assistant","id":"msg_s1","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_s1","name":"Read","input":{"file_path":"a.txt"}}],"usage":{"input_tokens":3,"output_tokens":2}}}`
+	require.NoError(t, os.WriteFile(sub, []byte(line+"\n"), 0o600))
+	dir := filepath.Join(t.TempDir(), "run-ev1")
+	m := evidence.Meta{
+		RunID:       "run-ev1",
+		Task:        "t1",
+		Variant:     "base",
+		Rep:         1,
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": "base"},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	files := []evidence.SourceFile{
+		{Src: filepath.Join("testdata", "session.jsonl"), Rel: "session.jsonl"},
+		{Src: sub, Rel: filepath.Join("subagents", "agent-001.jsonl")},
+	}
+	require.NoError(t, evidence.Write(dir, m, files))
+	return dir
+}
+
+func TestExportEvidenceDirSynthesizesBoundaryAndMetaRun(t *testing.T) {
+	dir := writeExportEvidenceDir(t)
+	var buf strings.Builder
+	require.NoError(t, runExport(&buf, exportArgs{input: dir, to: "jsonl"}))
+
+	lines := decodeSnapshotLines(t, buf.String())
+	var sawMarker, sawSubagentNode, sawMetaRun bool
+	var runCount int
+	for _, l := range lines {
+		switch l["kind"] {
 		case "node":
-			nodeCount++
-		case "edge":
-			edgeCount++
+			if l["type"] == "marker" && l["name"] == "task:t1" {
+				sawMarker = true
+			}
+			if l["run_id"] == "sub1" {
+				sawSubagentNode = true
+			}
+		case "run":
+			runCount++
+			if l["id"] == "run-ev1" {
+				sawMetaRun = true
+				labels, ok := l["labels"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "base", labels["variant"])
+				assert.Equal(t, []any{"s1"}, l["session_ids"])
+			}
 		}
 	}
-	assert.Positive(t, nodeCount)
-	assert.Positive(t, edgeCount)
+	assert.True(t, sawMarker)
+	assert.True(t, sawSubagentNode)
+	assert.True(t, sawMetaRun)
+	assert.Equal(t, 1, runCount)
 }
 
-func TestExportJSONLEventsDumpsObservations(t *testing.T) {
-	dbPath := seedDB(t)
+func TestExportTranscriptSortsRuns(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "two.jsonl")
+	lines := `{"type":"user","uuid":"u1","sessionId":"sB","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"hi"}}
+{"type":"user","uuid":"u2","sessionId":"sA","timestamp":"2026-06-20T10:00:01Z","message":{"role":"user","content":"hi"}}
+`
+	require.NoError(t, os.WriteFile(transcript, []byte(lines), 0o600))
+
 	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-		mode:   "events",
-	})
-	require.NoError(t, err)
+	require.NoError(t, runExport(&buf, exportArgs{input: transcript, to: "jsonl"}))
 
-	var obs []model.Observation
-	scanner := bufio.NewScanner(strings.NewReader(buf.String()))
-	for scanner.Scan() {
-		var o model.Observation
-		require.NoError(t, json.Unmarshal(scanner.Bytes(), &o))
-		obs = append(obs, o)
+	var runIDs []string
+	for _, l := range decodeSnapshotLines(t, buf.String()) {
+		if l["kind"] == "run" {
+			id, _ := l["id"].(string)
+			runIDs = append(runIDs, id)
+		}
 	}
-	require.NotEmpty(t, obs)
-	for _, o := range obs {
-		assert.NotEmpty(t, o.ObsID)
-	}
+	assert.Equal(t, []string{"sA", "sB"}, runIDs)
 }
 
-func TestExportOTLPViaFakeSpanExporter(t *testing.T) {
-	dbPath := seedDB(t)
-	rec := &recSpanExporter{}
-	exp := exportotlp.ExporterWithSpanExporter(rec)
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newOTLP: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return exp, nil
-		},
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:       dbPath,
-		to:           "otlp",
-		otlpEndpoint: "fake:4317",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "exported")
-	assert.NotEmpty(t, rec.batches)
+func TestExportEvidenceDirWithoutMetaErrors(t *testing.T) {
+	err := runExport(io.Discard, exportArgs{input: t.TempDir(), to: "jsonl"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "evidence.ReadMeta")
 }
 
-func TestExportNeo4jViaFakeRunner(t *testing.T) {
-	dbPath := seedDB(t)
-	rec := &recNeo4jRunner{}
-	exp := exportneo4j.ExporterWithRunner(rec)
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newNeo4j: func(_ context.Context, _, _, _ string) (exportiface.Exporter, error) {
-			return exp, nil
-		},
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:   dbPath,
-		to:       "neo4j",
-		neo4jURI: "bolt://fake",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "exported")
-	assert.NotEmpty(t, rec.calls)
+func TestExportEvidenceDirMissingSessionErrors(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "broken")
+	m := evidence.Meta{RunID: "broken", SessionID: "s1"}
+	require.NoError(t, evidence.Write(dir, m, nil))
+	err := runExport(io.Discard, exportArgs{input: dir, to: "jsonl"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session.jsonl")
 }
 
-func TestExportPostgresViaFakeExporter(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{}
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "postgres://fake",
-	})
-	require.NoError(t, err)
-	assert.True(t, fe.snapshotCalled)
-	assert.True(t, fe.shutdownCalled)
-	assert.Contains(t, buf.String(), "exported")
-}
-
-func TestExportUnknownSink(t *testing.T) {
-	dbPath := seedDB(t)
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "badformat",
-	})
+func TestExportUnknownFormatRejected(t *testing.T) {
+	err := runExport(io.Discard, exportArgs{input: "testdata/session.jsonl", to: "otlp"})
 	assert.True(t, errors.Is(err, ErrUnknownSink))
 }
 
-func TestExportEventsModeNonJSONL(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{}
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newOTLP: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath:       dbPath,
-		to:           "otlp",
-		mode:         "events",
-		otlpEndpoint: "x:4317",
-	})
-	assert.True(t, errors.Is(err, ErrModeUnsupported))
+func TestExportMissingInput(t *testing.T) {
+	err := runExport(io.Discard, exportArgs{input: filepath.Join(t.TempDir(), "nope.jsonl"), to: "jsonl"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "export input")
 }
 
-func TestExportSinkNotConfigured(t *testing.T) {
-	dbPath := seedDB(t)
-	tests := []struct {
-		name string
-		args exportArgs
-	}{
-		{"otlp", exportArgs{dbPath: dbPath, to: "otlp"}},
-		{"neo4j", exportArgs{dbPath: dbPath, to: "neo4j"}},
-		{"postgres", exportArgs{dbPath: dbPath, to: "postgres"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			deps := exportDeps{
-				open:      store.OpenSQLiteReadOnly,
-				newPricer: newPricer,
-			}
-			err := runExport(context.Background(), io.Discard, deps, tc.args)
-			assert.True(t, errors.Is(err, ErrSinkNotConfigured))
-		})
-	}
+func TestExportMalformedTranscript(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "bad.jsonl")
+	require.NoError(t, os.WriteFile(bad, []byte("{not json}\n"), 0o600))
+	err := runExport(io.Discard, exportArgs{input: bad, to: "jsonl"})
+	require.Error(t, err)
 }
 
-func TestExportSnapshotStateError(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{snapshotErr: errors.New("snap fail")}
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
+func TestExportToFileViaRoot(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "out.jsonl")
+	root := newRootCmd()
+	root.SetArgs([]string{"export", "testdata/session.jsonl", "--to", "jsonl", "--out", outPath})
+	root.SetOut(io.Discard)
+	require.NoError(t, root.Execute())
+	data, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	counts := countKinds(decodeSnapshotLines(t, string(data)))
+	assert.Positive(t, counts["node"])
+}
+
+func TestExportBadOutPath(t *testing.T) {
+	err := runExport(io.Discard, exportArgs{
+		input: "testdata/session.jsonl",
+		to:    "jsonl",
+		out:   filepath.Join(t.TempDir(), "nodir", "x.jsonl"),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export snapshot")
-	assert.True(t, fe.shutdownCalled)
+	assert.Contains(t, err.Error(), "export create")
 }
 
-func TestExportFlushError(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{flushErr: errors.New("flush fail")}
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export flush")
-	assert.True(t, fe.shutdownCalled)
-}
+func TestExportRedactsSecretBearingTranscript(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "s.jsonl")
+	line := `{"type":"assistant","sessionId":"exp-s","message":{"id":"m1","model":"m","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"psql postgres://kesha:kesha_dev_password@localhost/appdb"}}]}}`
+	require.NoError(t, os.WriteFile(transcript, []byte(line+"\n"), 0o600))
 
-func TestExportStoreMissing(t *testing.T) {
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: "/no/such/path/nope.db",
-		to:     "jsonl",
-	})
-	assert.True(t, errors.Is(err, ErrStoreNotFound))
+	var buf strings.Builder
+	require.NoError(t, runExport(&buf, exportArgs{input: transcript, to: "jsonl"}))
+	out := buf.String()
+	assert.NotContains(t, out, "kesha_dev_password")
+	assert.Contains(t, out, "‹redacted:connection-string›")
 }
 
 func TestExportCmdGrouped(t *testing.T) {
@@ -323,464 +224,4 @@ func TestExportCmdGrouped(t *testing.T) {
 		groups[sub.Name()] = sub.GroupID
 	}
 	assert.Equal(t, "advanced", groups["export"])
-}
-
-func TestExportCmdExecuteViaRoot(t *testing.T) {
-	dbPath := seedDB(t)
-	root := newRootCmd()
-	root.SetArgs([]string{"export", "--db", dbPath, "--to", "jsonl"})
-	var buf strings.Builder
-	root.SetOut(&buf)
-	require.NoError(t, root.Execute())
-	assert.NotEmpty(t, buf.String())
-}
-
-func TestExportSinkStoreGraphsError(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "g.db")
-	require.NoError(t, err)
-	_ = f.Close()
-	fe := &fakeExporter{}
-	deps := exportDeps{
-		open: func(string) (store.Store, error) {
-			return &obsErrStore{}, nil
-		},
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err = runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath:      f.Name(),
-		to:          "postgres",
-		postgresDSN: "x",
-	})
-	require.Error(t, err)
-	assert.True(t, fe.shutdownCalled)
-}
-
-func TestExportJSONLToFile(t *testing.T) {
-	dbPath := seedDB(t)
-	outPath := filepath.Join(t.TempDir(), "out.jsonl")
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-		out:    outPath,
-	})
-	require.NoError(t, err)
-	info, err := os.Stat(outPath)
-	require.NoError(t, err)
-	assert.Positive(t, info.Size())
-}
-
-func TestExportJSONLBadOutPath(t *testing.T) {
-	dbPath := seedDB(t)
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-		out:    "/no/such/dir/x.jsonl",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export create")
-}
-
-func TestExportShutdownError(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{shutdownErr: errors.New("shutdown fail")}
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export shutdown")
-}
-
-func TestExportRunFilter(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{}
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	s, err := store.OpenSQLiteReadOnly(dbPath)
-	require.NoError(t, err)
-	graphs, err := storeGraphs(s, newPricer())
-	require.NoError(t, err)
-	_ = s.Close()
-	runs := collectRuns(graphs)
-	require.NotEmpty(t, runs)
-	runID := runs[0].ID
-
-	var buf strings.Builder
-	err = runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-		runID:       runID,
-	})
-	require.NoError(t, err)
-	assert.True(t, fe.snapshotCalled)
-	for _, id := range fe.flushCalls {
-		assert.Equal(t, runID, id)
-	}
-}
-
-func TestExportJSONLEventsRunFilter(t *testing.T) {
-	dbPath := seedDB(t)
-	s, err := store.OpenSQLiteReadOnly(dbPath)
-	require.NoError(t, err)
-	graphs, err := storeGraphs(s, newPricer())
-	require.NoError(t, err)
-	_ = s.Close()
-	runs := collectRuns(graphs)
-	require.NotEmpty(t, runs)
-	runID := runs[0].ID
-
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err = runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-		mode:   "events",
-		runID:  runID,
-	})
-	require.NoError(t, err)
-	scanner := bufio.NewScanner(strings.NewReader(buf.String()))
-	count := 0
-	for scanner.Scan() {
-		var o model.Observation
-		require.NoError(t, json.Unmarshal(scanner.Bytes(), &o))
-		assert.Equal(t, runID, o.RunID)
-		count++
-	}
-	assert.Positive(t, count)
-}
-
-type errWriter struct{}
-
-func (e *errWriter) Write(_ []byte) (int, error) { return 0, errors.New("write fail") }
-
-func TestExportObservationsEncodeError(t *testing.T) {
-	dbPath := seedDB(t)
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), &errWriter{}, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-		mode:   "events",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export encode")
-}
-
-func TestExportObservationsStoreReadError(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "g.db")
-	require.NoError(t, err)
-	_ = f.Close()
-	deps := exportDeps{
-		open: func(string) (store.Store, error) {
-			return &obsErrStore{}, nil
-		},
-		newPricer: newPricer,
-	}
-	err = runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: f.Name(),
-		to:     "jsonl",
-		mode:   "events",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "store read")
-}
-
-func TestExportObservationsRunIDNoMatch(t *testing.T) {
-	dbPath := seedDB(t)
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "jsonl",
-		mode:   "events",
-		runID:  "nonexistent-run-id",
-	})
-	require.NoError(t, err)
-	assert.Empty(t, buf.String())
-}
-
-func TestExportSinkRunIDSkipsOtherRuns(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeExporter{}
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-		runID:       "nonexistent-run-id",
-	})
-	require.NoError(t, err)
-	assert.True(t, fe.snapshotCalled)
-	assert.Empty(t, fe.flushCalls)
-	assert.True(t, fe.shutdownCalled)
-}
-
-func TestExportJSONLStoreGraphsError(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "g.db")
-	require.NoError(t, err)
-	_ = f.Close()
-	deps := exportDeps{
-		open: func(string) (store.Store, error) {
-			return &obsErrStore{}, nil
-		},
-		newPricer: newPricer,
-	}
-	err = runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: f.Name(),
-		to:     "jsonl",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "store read")
-}
-
-func TestRealNewOTLPBuildsExporter(t *testing.T) {
-	exp, err := realNewOTLP(context.Background(), "grpc://localhost:1")
-	require.NoError(t, err)
-	require.NotNil(t, exp)
-	_ = exp.Shutdown(context.Background())
-}
-
-func TestRealNewNeo4jBuildsExporter(t *testing.T) {
-	exp, err := realNewNeo4j(context.Background(), "bolt://localhost:1", "", "")
-	require.NoError(t, err)
-	require.NotNil(t, exp)
-	_ = exp.Shutdown(context.Background())
-}
-
-func TestRealNewPostgresBadDSN(t *testing.T) {
-	_, err := realNewPostgres(context.Background(), "not-a-valid-dsn")
-	require.Error(t, err)
-}
-
-func TestExportAgentevals(t *testing.T) {
-	dbPath := seedDB(t)
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "agentevals",
-	})
-	require.NoError(t, err)
-	out := buf.String()
-	assert.True(t, strings.Contains(out, "user") || strings.Contains(out, "assistant") || strings.Contains(out, "tool") || out == "[]\n")
-}
-
-func TestExportEvalview(t *testing.T) {
-	dbPath := seedDB(t)
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "evalview",
-	})
-	require.NoError(t, err)
-	out := buf.String()
-	assert.Contains(t, out, "trace_start")
-	assert.Contains(t, out, "trace_spec_version")
-	assert.Contains(t, out, "1.0")
-	assert.Contains(t, out, "trace_end")
-}
-
-func TestExportSerializerEventsModeRejected(t *testing.T) {
-	dbPath := seedDB(t)
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	for _, to := range []string{"agentevals", "evalview"} {
-		err := runExport(context.Background(), io.Discard, deps, exportArgs{
-			dbPath: dbPath,
-			to:     to,
-			mode:   "events",
-		})
-		assert.True(t, errors.Is(err, ErrModeUnsupported), "to=%s", to)
-	}
-}
-
-func TestExportSerializerToFile(t *testing.T) {
-	dbPath := seedDB(t)
-	outPath := filepath.Join(t.TempDir(), "out.json")
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "agentevals",
-		out:    outPath,
-	})
-	require.NoError(t, err)
-	info, err := os.Stat(outPath)
-	require.NoError(t, err)
-	assert.Positive(t, info.Size())
-}
-
-func TestExportSerializerBadOutPath(t *testing.T) {
-	dbPath := seedDB(t)
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: dbPath,
-		to:     "evalview",
-		out:    "/no/such/dir/x.json",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export create")
-}
-
-func TestExportSerializerStoreGraphsError(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "g.db")
-	require.NoError(t, err)
-	_ = f.Close()
-	deps := exportDeps{
-		open: func(string) (store.Store, error) {
-			return &obsErrStore{}, nil
-		},
-		newPricer: newPricer,
-	}
-	err = runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath: f.Name(),
-		to:     "agentevals",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "store read")
-}
-
-func TestExportSinkCallsSnapshotRunsForRunExporter(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeRunExporterSink{}
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-	})
-	require.NoError(t, err)
-	assert.True(t, fe.snapshotRunsCalled, "SnapshotRuns must be called for RunExporter")
-}
-
-func TestExportSinkSnapshotRunsError(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeRunExporterSink{snapshotRunsErr: errors.New("snap runs fail")}
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), io.Discard, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "export snapshot runs")
-	assert.True(t, fe.shutdownCalled)
-}
-
-func TestExportSinkSnapshotRunsRunIDFilter(t *testing.T) {
-	dbPath := seedDB(t)
-	fe := &fakeRunExporterSink{}
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err := runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-		runID:       "nonexistent-run-id",
-	})
-	require.NoError(t, err)
-	assert.True(t, fe.snapshotRunsCalled)
-}
-
-func TestExportSinkSnapshotRunsRunIDMatch(t *testing.T) {
-	dbPath := seedDB(t)
-	s, err := store.OpenSQLiteReadOnly(dbPath)
-	require.NoError(t, err)
-	graphs, err := storeGraphs(s, newPricer())
-	require.NoError(t, err)
-	_ = s.Close()
-	runs := collectRuns(graphs)
-	require.NotEmpty(t, runs)
-	runID := runs[0].ID
-
-	fe := &fakeRunExporterSink{}
-	var buf strings.Builder
-	deps := exportDeps{
-		open:      store.OpenSQLiteReadOnly,
-		newPricer: newPricer,
-		newPostgres: func(_ context.Context, _ string) (exportiface.Exporter, error) {
-			return fe, nil
-		},
-	}
-	err = runExport(context.Background(), &buf, deps, exportArgs{
-		dbPath:      dbPath,
-		to:          "postgres",
-		postgresDSN: "x",
-		runID:       runID,
-	})
-	require.NoError(t, err)
-	assert.True(t, fe.snapshotRunsCalled)
 }
