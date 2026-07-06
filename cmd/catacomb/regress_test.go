@@ -185,7 +185,7 @@ func TestRegressJSONRenderError(t *testing.T) {
 
 func TestRegressNameSelectorResolves(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 
 	var buf strings.Builder
 	err := runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, regressFlags{
@@ -393,7 +393,7 @@ func seedV1RegressDB(t *testing.T) string {
 func seedV2RegressDB(t *testing.T) string {
 	t.Helper()
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE regress_results")
@@ -428,7 +428,7 @@ func TestRegressNameSelectorCurrentVersionMissingBaselinesTable(t *testing.T) {
 
 func TestRegressNameSelectorLoadError(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE observations")
@@ -702,7 +702,7 @@ func TestRegressRecordBadBaselineSelector(t *testing.T) {
 func TestRegressRecordPreservesRegressionExit(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
 	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
@@ -724,7 +724,7 @@ func TestRegressRecordPreservesRegressionExit(t *testing.T) {
 func TestRegressRecordStampsVersionAndBaseline(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
 	ts := pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 
 	var out, errBuf bytes.Buffer
 	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf))
@@ -745,7 +745,7 @@ func TestRegressRecordStampsVersionAndBaseline(t *testing.T) {
 func TestRegressRecordDoesNotAlterOutput(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
 	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 
 	var withRec, withRecErr bytes.Buffer
 	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &withRec, &withRecErr))
@@ -758,7 +758,7 @@ func TestRegressRecordDoesNotAlterOutput(t *testing.T) {
 
 func TestRegressRecordMarshalError(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 	orig := marshalRecord
 	marshalRecord = func(any) ([]byte, error) { return nil, errors.New("boom-marshal") }
 	t.Cleanup(func() { marshalRecord = orig })
@@ -773,7 +773,7 @@ func TestRegressRecordMarshalError(t *testing.T) {
 
 func TestRegressRecordAppendErrorOverridesVerdict(t *testing.T) {
 	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
 	opener := func(path string) (store.Store, error) {
 		s, err := store.OpenSQLite(path)
 		if err != nil {
