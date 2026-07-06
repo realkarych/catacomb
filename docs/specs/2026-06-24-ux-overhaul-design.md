@@ -1,6 +1,6 @@
 # UX overhaul — session-first observability design
 
-**Status:** approved (owner-confirmed scope; ready to decompose into per-milestone plans)
+**Status:** Superseded by [ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — the web UI and TUI this spec designs were deleted in PV-3; historical record only
 **Date:** 2026-06-24
 **Supersedes (UI only):** [`2026-06-22-m5-webui-design.md`](2026-06-22-m5-webui-design.md) — the vanilla-JS/SVG web UI it shipped is deleted and rebuilt; the M5 Go serve path, `authedAllowQuery`, and `catacomb ui` survive.
 **Consumes:** the M1c CDC bus (`cdc.Bus`/`Consumer`/`GraphDelta`), the M3a SSE subscription core (`daemon.SubFilter`/`Subscribe`/`Subscription`), the deterministic reducer (`reduce.Graph`), the loopback+bearer trust boundary (ADR-0013), the redaction policy (ADR-0008/ADR-0020).

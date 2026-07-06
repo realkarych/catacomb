@@ -1,6 +1,6 @@
 # Catacomb — Design Spec
 
-**Status:** Draft for review
+**Status:** Superseded in part by [ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — daemon/web UI/TUI/exporter sections are historical; the graph model, reduction, and eval-layer sections remain the reference
 **Date:** 2026-06-20
 **License:** Apache-2.0
 **Language:** Go

@@ -6,7 +6,7 @@ Real-time execution-graph observability for Claude Code agentic pipelines. A sid
 - Architecture decisions → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)
 
-**Status:** observability substrate, eval-management layer, and post-review hardening all shipped (M0–M5, eval-core, ADR-0022 baskets/aggregation/regression gates, ADR-0023–0025 hardening; PRs #1–#111). Current state and open follow-ups live in the [post-review hardening roadmap](docs/superpowers/plans/2026-07-02-post-review-hardening-roadmap.md) and the [post-P0 CTO review](docs/reviews/2026-07-02-post-p0-cto-design-review.md).
+**Status:** pivoting per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb narrows to the offline eval gate (`bench → transcript JSONL → reduce → step/phase keys → aggregate → regress`); observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores) and PV-3 (viewer deletion) have landed; PV-4/PV-5 (daemon/ingest/exporter deletion, repositioning) are next. Sequence and gates live in the [pivot roadmap](docs/superpowers/plans/2026-07-06-pivot-roadmap.md).
 
 ## Principles
 
