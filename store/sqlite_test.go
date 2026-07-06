@@ -151,6 +151,14 @@ func TestOpenSQLiteCreatesParentDir(t *testing.T) {
 	require.NoError(t, s.Close())
 }
 
+func TestOpenSQLiteMkdirError(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "nodir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+	_, err := OpenSQLite(filepath.Join(blocker, "g.db"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mkdir")
+}
+
 func TestAppendDeltasInsertsObservation(t *testing.T) {
 	s := fileStore(t)
 	o := model.Observation{ObsID: "o1", RunID: "s1", ExecutionID: "exec1", Seq: 1}
