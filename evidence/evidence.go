@@ -43,7 +43,7 @@ type Run struct {
 }
 
 func Write(dir string, m Meta, files []SourceFile) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := replaceDir(dir); err != nil {
 		return fmt.Errorf("evidence.Write: %w", err)
 	}
 	for _, f := range files {
@@ -59,6 +59,13 @@ func Write(dir string, m Meta, files []SourceFile) error {
 		return fmt.Errorf("evidence.Write: %w", err)
 	}
 	return nil
+}
+
+func replaceDir(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, 0o700)
 }
 
 func copyRedacted(src, dst string) error {

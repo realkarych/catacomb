@@ -46,6 +46,25 @@ func TestWriteNestedRelAndErrors(t *testing.T) {
 	require.Error(t, evidence.Write(filepath.Join(t.TempDir(), "run-3"), sampleMeta("run-3", "base"), []evidence.SourceFile{{Src: filepath.Join(t.TempDir(), "missing.jsonl"), Rel: "session.jsonl"}}))
 }
 
+func TestWriteRemovesStaleFiles(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl")
+	require.NoError(t, os.WriteFile(src, []byte("{}\n"), 0o600))
+	dir := filepath.Join(t.TempDir(), "run-1")
+	require.NoError(t, evidence.Write(dir, sampleMeta("run-1", "base"), []evidence.SourceFile{
+		{Src: src, Rel: "session.jsonl"},
+		{Src: src, Rel: filepath.Join("subagents", "agent-1.jsonl")},
+	}))
+	require.NoError(t, evidence.Write(dir, sampleMeta("run-1", "base"), []evidence.SourceFile{
+		{Src: src, Rel: "session.jsonl"},
+	}))
+	_, err := os.Stat(filepath.Join(dir, "subagents", "agent-1.jsonl"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(dir, "session.jsonl"))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(dir, "meta.json"))
+	require.NoError(t, err)
+}
+
 func TestReadMetaErrors(t *testing.T) {
 	_, err := evidence.ReadMeta(t.TempDir())
 	require.Error(t, err)
@@ -79,7 +98,7 @@ func TestScanRunsSkipsPlainFiles(t *testing.T) {
 	require.Empty(t, runs)
 }
 
-func TestWriteMkdirError(t *testing.T) {
+func TestWriteReplaceDirError(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 	require.Error(t, evidence.Write(filepath.Join(blocker, "run-x"), sampleMeta("run-x", "base"), nil))
@@ -92,20 +111,24 @@ func TestWriteMarshalError(t *testing.T) {
 }
 
 func TestWriteMetaFileError(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl")
+	require.NoError(t, os.WriteFile(src, []byte("{}\n"), 0o600))
 	dir := filepath.Join(t.TempDir(), "run-x")
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "meta.json"), 0o700))
-	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "alt"), nil))
+	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "alt"), []evidence.SourceFile{{Src: src, Rel: filepath.Join("meta.json", "x.jsonl")}}))
 }
 
 func TestWriteCopyDestErrors(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "in.jsonl")
 	require.NoError(t, os.WriteFile(src, []byte("{}\n"), 0o600))
 	dir := filepath.Join(t.TempDir(), "run-x")
-	require.NoError(t, os.MkdirAll(dir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub"), []byte("x"), 0o600))
-	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{{Src: src, Rel: filepath.Join("sub", "a.jsonl")}}))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "taken"), 0o700))
-	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{{Src: src, Rel: "taken"}}))
+	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{
+		{Src: src, Rel: "sub"},
+		{Src: src, Rel: filepath.Join("sub", "a.jsonl")},
+	}))
+	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{
+		{Src: src, Rel: filepath.Join("taken", "x.jsonl")},
+		{Src: src, Rel: "taken"},
+	}))
 }
 
 func TestWriteSrcReadError(t *testing.T) {
