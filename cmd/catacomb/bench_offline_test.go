@@ -50,6 +50,14 @@ func fixturePath(t *testing.T) string {
 	return p
 }
 
+func TestOfflineEnvCarriesLabelsAndRunID(t *testing.T) {
+	cell := offlineCell("run-42", bench.Task{ID: "t1", Env: map[string]string{"FOO": "bar"}}, bench.Variant{ID: "base"})
+	env := offlineEnv(cell, map[string]string{"basket": "b", "variant": "base"})
+	assert.Contains(t, env, "FOO=bar")
+	assert.Contains(t, env, "CATACOMB_LABELS=basket=b,variant=base")
+	assert.Contains(t, env, "CATACOMB_RUN_ID=run-42")
+}
+
 func TestBenchOfflineEndToEnd(t *testing.T) {
 	projects := t.TempDir()
 	runs := t.TempDir()

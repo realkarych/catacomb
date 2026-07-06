@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
 )
 
@@ -147,6 +148,41 @@ func TestEvidenceRunGraphRunWindowFromMarkerTimes(t *testing.T) {
 	require.NotNil(t, rg.Run.EndedAt)
 	assert.Equal(t, m.MarkerStart, *rg.Run.StartedAt)
 	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
+}
+
+func TestEvidenceRunGraphOverlaysStatusAndModel(t *testing.T) {
+	root := t.TempDir()
+	m := evidence.Meta{
+		RunID:       "r3",
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": "base"},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	require.NoError(t, evidence.Write(filepath.Join(root, "r3"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session_marked.jsonl"), Rel: "session.jsonl"}}))
+	rg, err := evidenceRunGraph(filepath.Join(root, "r3"), m, newPricer())
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusRunning, rg.Run.Status)
+	assert.Equal(t, "claude-opus-4-8", rg.Run.ModelID)
+	require.NotNil(t, rg.Run.StartedAt)
+	require.NotNil(t, rg.Run.EndedAt)
+	assert.Equal(t, m.MarkerStart, *rg.Run.StartedAt)
+	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
+}
+
+func TestEvidenceRunGraphEmptySnapshotLeavesRunZero(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r4")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), nil, 0o600))
+	m := evidence.Meta{RunID: "r4", SessionID: "s1"}
+	rg, err := evidenceRunGraph(dir, m, newPricer())
+	require.NoError(t, err)
+	assert.Empty(t, rg.Run.Status)
+	assert.Empty(t, rg.Run.ModelID)
+	assert.Nil(t, rg.Run.StartedAt)
+	assert.Nil(t, rg.Run.EndedAt)
 }
 
 func TestEvidenceRunGraphMergesSubagents(t *testing.T) {
