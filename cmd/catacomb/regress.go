@@ -28,6 +28,7 @@ type regressFlags struct {
 	baseline    string
 	candidate   string
 	dbPath      string
+	runsDir     string
 	asJSON      bool
 	strict      bool
 	record      bool
@@ -58,6 +59,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().StringVar(&f.baseline, "baseline", "", "baseline selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.candidate, "candidate", "", "candidate selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&f.runsDir, "runs-dir", "", "resolve label: selectors from evidence dirs instead of the store (offline; name: and --record land in PV-2)")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat insufficient data as failure (exit 1)")
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
@@ -82,6 +84,9 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	specs, keys, err := parseAnnotationFlags(f.annotations)
 	if err != nil {
 		return operational(err)
+	}
+	if f.runsDir != "" {
+		return runRegressRunsDir(out, errOut, mkPricer, f, specs, keys)
 	}
 	baselineName, err := recordBaselineName(f)
 	if err != nil {
@@ -109,6 +114,39 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		return operational(fmt.Errorf("regress candidate %q: %w", f.candidate, ErrEmptyGroup))
 	}
 
+	rep, err := regressReport(out, errOut, f, specs, keys, baseGroup, candGroup)
+	if err != nil {
+		return err
+	}
+	if f.record {
+		if err := appendRecord(s, baselineName, baseline.CreatedAt, f, specs, rep); err != nil {
+			return operational(err)
+		}
+	}
+	return verdictError(rep, f.strict)
+}
+
+func runRegressRunsDir(out, errOut io.Writer, mkPricer func() reduce.Pricer, f regressFlags, specs []regress.AnnotationSpec, keys []string) error {
+	if f.record {
+		return operational(errors.New("regress --record requires the store; offline baselines land in PV-2"))
+	}
+	pricer := mkPricer()
+	baseGroup, err := resolveSelectorRunsDir(f.runsDir, pricer, f.baseline)
+	if err != nil {
+		return err
+	}
+	candGroup, err := resolveSelectorRunsDir(f.runsDir, pricer, f.candidate)
+	if err != nil {
+		return err
+	}
+	rep, err := regressReport(out, errOut, f, specs, keys, baseGroup, candGroup)
+	if err != nil {
+		return err
+	}
+	return verdictError(rep, f.strict)
+}
+
+func regressReport(out, errOut io.Writer, f regressFlags, specs []regress.AnnotationSpec, keys []string, baseGroup, candGroup []aggregate.RunGraph) (regress.Report, error) {
 	opts := aggregate.Options{AnnotationKeys: keys}
 	baseAgg := aggregate.Aggregate(baseGroup, opts)
 	candAgg := aggregate.Aggregate(candGroup, opts)
@@ -118,20 +156,14 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		Annotations: specs,
 	}, f.thresholds)
 	warnUnfiredAnnotations(errOut, specs, baseAgg, candAgg)
-
 	if f.asJSON {
 		if err := regress.RenderJSON(rep, out); err != nil {
-			return operational(err)
+			return regress.Report{}, operational(err)
 		}
 	} else {
 		regress.RenderHuman(rep, out)
 	}
-	if f.record {
-		if err := appendRecord(s, baselineName, baseline.CreatedAt, f, specs, rep); err != nil {
-			return operational(err)
-		}
-	}
-	return verdictError(rep, f.strict)
+	return rep, nil
 }
 
 func recordBaselineName(f regressFlags) (string, error) {
