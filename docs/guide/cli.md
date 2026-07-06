@@ -546,6 +546,9 @@ catacomb bench <basket.yaml> [flags]
 | `--resume` | false | Skip cells already recorded in the manifest |
 | `--fail-fast` | false | Stop at the first failing cell |
 | `--dry-run` | false | Print the cell expansion table and exit without executing |
+| `--offline` | false | Run daemonless: read Claude transcripts and write evidence dirs (see [Offline mode](#offline-mode)) |
+| `--projects-dir` | `~/.claude/projects` | Claude projects directory holding session transcripts (`--offline` only) |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence output directory for `--offline` runs |
 
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
 combination, and cells run sequentially:
@@ -614,9 +617,9 @@ features. Setup inherits **only the parent process environment** — not the tas
 must be **idempotent** (a `git checkout <branch>` is fine; an `echo >> file` that accumulates is
 not).
 
-`bench` requires a running daemon: at start (except for `--dry-run`) it reads the discovery file
-and pings `/healthz`, exiting `2` with a hint to `catacomb up` if the daemon is missing or
-unreachable. If the manifest already has entries and you pass neither `--resume` nor a fresh
+Without `--offline`, `bench` requires a running daemon: at start (except for `--dry-run`) it
+reads the discovery file and pings `/healthz`, exiting `2` with a hint to `catacomb up` if the
+daemon is missing or unreachable. If the manifest already has entries and you pass neither `--resume` nor a fresh
 `--manifest`, `bench` refuses (exit `2`) rather than silently appending a second run's cells.
 
 Cells finalize from the child's stream `result` event, so run status, `ended_at`, and run-scope
@@ -635,10 +638,38 @@ declares `reps < 5`, the epilogue also appends a one-line note recommending `rep
 because the rate gate cannot fire reliably below that (see
 [Gate sensitivity at small k](workflows.md#gate-sensitivity-at-small-k)).
 
+#### Offline mode
+
+`--offline` runs the same basket with no daemon at all: no discovery file, no `/healthz`
+preflight, no stream forward, no marker POSTs. The child runs as a plain local process while
+the runner peeks its stdout for the stream-json `session_id` and the terminal `result` event's
+`total_cost_usd` — the task `cmd` must emit stream-json (`claude -p <prompt> --output-format
+stream-json`), exactly as the daemon path already needs for the session id. After the child
+exits the runner resolves the session's transcripts under `--projects-dir` — the main
+`<session-id>.jsonl` plus any `subagents/agent-*.jsonl` — retrying for up to ~3 s while the
+file lands; a session id matching no transcript (or more than one) records the reason in the
+cell's manifest `note` and skips verification and evidence for that cell.
+
+The `task:<id>` phase markers are synthesized from the child's wall-clock start and end instead
+of being POSTed, so a slow daemon can no longer add ~4 s per cell, and declared `checkpoints:`
+are verified in-process against the graph rebuilt from the transcripts — same
+`missing_checkpoints` manifest field, stderr warnings, and `checkpoints[<task>]` rollup as the
+daemon path, minus the lossy-stream false-miss caveat, since the transcript is read directly.
+Each cell then writes an evidence directory `<runs-dir>/<run-id>/` holding secret-redacted
+copies of the transcripts (`session.jsonl`, `subagents/agent-*.jsonl`) plus a `meta.json` (run
+id, task, variant, rep, session id, labels, exit code, `cost_usd`, basket hash, and the
+`task:<id>` marker window); the manifest entry gains `cost_usd` (from the `result` event) and
+`evidence_dir`. An evidence-write failure keeps the cell's result and notes the error. On
+success the epilogue prints a copy-pasteable [`regress --runs-dir`](#regress) comparing the
+first two variants over these evidence directories — no `baseline set` step, because offline
+baselines land in PV-2. When the home directory cannot be resolved, `--projects-dir` and
+`--runs-dir` must be set explicitly (exit `2`). Offline mode is the PV-1 slice of ADR-0026.
+
 ```sh
 catacomb bench checkout.yaml
 catacomb bench checkout.yaml --dry-run
 catacomb bench checkout.yaml --resume --fail-fast
+catacomb bench checkout.yaml --offline
 ```
 
 ---
@@ -728,6 +759,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--baseline` | (empty) | Baseline selector: `label:k=v[,k=v...]` or `name:<baseline>` |
 | `--candidate` | (empty) | Candidate selector (same grammar) |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--runs-dir` | (none) | Resolve `label:` selectors from [`bench --offline`](#bench) evidence dirs instead of the store (see [Comparing offline evidence](#comparing-offline-evidence)) |
 | `--json` | false | Emit the full report as JSON |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit 1) |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
@@ -766,6 +798,17 @@ stdout and `--json` output stay clean. Groups are aggregated and compared per
   checkpoint (phase) level carries the verdict (under `--fail-on-notable` those downgraded
   findings still gate).
 - Groups below `--min-support` yield an `insufficient` verdict instead of a guess.
+
+#### Comparing offline evidence
+
+`--runs-dir` resolves the run groups from [`bench --offline`](#bench) evidence directories
+instead of the store — no daemon, no database (`--db` is ignored). It scans
+`<runs-dir>/*/meta.json`, matches `label:` selectors against each run's recorded labels (all
+terms ANDed), and rebuilds every matching run's graph from its redacted transcripts,
+re-applying the `task:<id>` marker window from `meta.json` so checkpoint phases and run timing
+carry over. Aggregation, thresholds, scopes, output, and exit codes are unchanged. `name:`
+selectors and `--record` still require the store — offline baselines land in PV-2 — and are
+operational errors (exit `2`) under `--runs-dir`.
 
 #### Gating on external scores
 
@@ -824,6 +867,8 @@ catacomb regress --baseline label:variant=main --candidate label:variant=candida
 catacomb regress --baseline name:golden --candidate label:variant=candidate \
   --annotation deepeval.tool_correctness
 catacomb regress --baseline name:golden --candidate label:variant=candidate --record
+catacomb regress --runs-dir ~/.catacomb/runs \
+  --baseline label:basket=checkout,variant=main --candidate label:basket=checkout,variant=candidate
 ```
 
 ---
