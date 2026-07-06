@@ -60,8 +60,6 @@ Run 'catacomb <command> --help' for details on any command.`,
 	root.AddCommand(advanced(newHookCmd()))
 	root.AddCommand(advanced(newMarkCmd()))
 	root.AddCommand(advanced(newMCPCmd()))
-	root.AddCommand(advanced(newIngestCmd()))
-	root.AddCommand(advanced(newRunCmd()))
 	root.AddCommand(advanced(newReplayCmd()))
 	root.AddCommand(advanced(newDiffCmd()))
 	root.AddCommand(advanced(newSubgraphCmd()))

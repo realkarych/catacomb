@@ -50,8 +50,6 @@ func TestCommandGroupAssignments(t *testing.T) {
 	assert.Equal(t, "setup", groups["install-hooks"])
 	assert.Equal(t, "setup", groups["env"])
 	assert.Equal(t, "advanced", groups["hook"])
-	assert.Equal(t, "advanced", groups["ingest"])
-	assert.Equal(t, "advanced", groups["run"])
 	assert.Equal(t, "advanced", groups["replay"])
 	assert.Equal(t, "advanced", groups["demo"])
 	assert.Equal(t, "advanced", groups["runs"])
@@ -68,6 +66,17 @@ func TestViewerCommandsRemoved(t *testing.T) {
 		names[sub.Name()] = true
 	}
 	for _, gone := range []string{"observe", "ui", "watch"} {
+		assert.False(t, names[gone], "command %q must not be registered", gone)
+	}
+}
+
+func TestRunIngestCommandsRemoved(t *testing.T) {
+	root := newRootCmd()
+	names := make(map[string]bool)
+	for _, sub := range root.Commands() {
+		names[sub.Name()] = true
+	}
+	for _, gone := range []string{"run", "ingest"} {
 		assert.False(t, names[gone], "command %q must not be registered", gone)
 	}
 }
