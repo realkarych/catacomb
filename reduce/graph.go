@@ -1,7 +1,6 @@
 package reduce
 
 import (
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/stepkey"
 )
@@ -57,7 +56,7 @@ type Graph struct {
 	spanChildren     map[string]bool
 	stamps           map[string]*fieldStamps
 	execs            map[string]*execState
-	deltas           []cdc.GraphDelta
+	deltas           []GraphDelta
 	pricer           Pricer
 	synthMarkerNodes map[string]bool
 	synthMarkerEdges map[string]bool
@@ -117,11 +116,11 @@ func (g *Graph) node(id, runID string, t model.NodeType) *model.Node {
 	return n
 }
 
-func (g *Graph) emit(d cdc.GraphDelta) {
+func (g *Graph) emit(d GraphDelta) {
 	g.deltas = append(g.deltas, d)
 }
 
-func (g *Graph) DrainDeltas() []cdc.GraphDelta {
+func (g *Graph) DrainDeltas() []GraphDelta {
 	d := g.deltas
 	g.deltas = nil
 	return d
@@ -136,12 +135,12 @@ func (g *Graph) upsertEdge(executionID, runID, src, dst string, seq uint64) {
 	if !ok {
 		e = &model.Edge{ID: id, RunID: runID, Type: model.EdgeParentChild, Src: src, Dst: dst, Rev: seq}
 		g.Edges[id] = e
-		g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: seq, Edge: e, RunID: runID, ExecutionID: executionID})
+		g.emit(GraphDelta{Kind: DeltaEdgeUpsert, Rev: seq, Edge: e, RunID: runID, ExecutionID: executionID})
 		return
 	}
 	if seq > e.Rev {
 		e.Rev = seq
-		g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeUpsert, Rev: seq, Edge: e, RunID: runID, ExecutionID: executionID})
+		g.emit(GraphDelta{Kind: DeltaEdgeUpsert, Rev: seq, Edge: e, RunID: runID, ExecutionID: executionID})
 	}
 }
 

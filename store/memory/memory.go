@@ -6,8 +6,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 type annKey struct {
@@ -55,7 +55,7 @@ func (s *Store) Persist(obs []model.Observation, nodes []*model.Node, edges []*m
 	return nil
 }
 
-func (s *Store) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta) error {
+func (s *Store) AppendDeltas(o model.Observation, deltas []reduce.GraphDelta) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.obs = append(s.obs, o)
@@ -65,24 +65,24 @@ func (s *Store) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta) error
 	return nil
 }
 
-func (s *Store) applyDelta(d cdc.GraphDelta) {
+func (s *Store) applyDelta(d reduce.GraphDelta) {
 	switch d.Kind {
-	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus:
+	case reduce.DeltaNodeUpsert, reduce.DeltaNodeStatus:
 		if d.Node != nil {
 			s.nodes[d.Node.ID] = d.Node
 		}
-	case cdc.DeltaNodeMerge:
+	case reduce.DeltaNodeMerge:
 		if d.Node != nil {
 			if d.OldID != "" {
 				delete(s.nodes, d.OldID)
 			}
 			s.nodes[d.Node.ID] = d.Node
 		}
-	case cdc.DeltaEdgeUpsert:
+	case reduce.DeltaEdgeUpsert:
 		if d.Edge != nil {
 			s.edges[d.Edge.ID] = d.Edge
 		}
-	case cdc.DeltaEdgeDelete:
+	case reduce.DeltaEdgeDelete:
 		if d.Edge != nil {
 			delete(s.edges, d.Edge.ID)
 		}

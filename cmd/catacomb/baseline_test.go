@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -140,7 +140,7 @@ func (f *fakeStore) Persist([]model.Observation, []*model.Node, []*model.Edge) e
 
 func (f *fakeStore) Close() error { return nil }
 
-func (f *fakeStore) AppendDeltas(model.Observation, []cdc.GraphDelta) error { return nil }
+func (f *fakeStore) AppendDeltas(model.Observation, []reduce.GraphDelta) error { return nil }
 
 func (f *fakeStore) MaxSeq() (uint64, error) { return 0, nil }
 

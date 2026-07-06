@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -42,20 +42,20 @@ func RunStoreContract(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 	t.Run("delta kinds", func(t *testing.T) {
 		s := newStore(t)
-		require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "d1", RunID: "r1", ExecutionID: "e1", Seq: 1}, []cdc.GraphDelta{
-			{Kind: cdc.DeltaNodeUpsert, Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeSession}},
-			{Kind: cdc.DeltaNodeStatus, Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK}},
-			{Kind: cdc.DeltaEdgeUpsert, Edge: &model.Edge{ID: "x1", RunID: "r1", Src: "n1", Dst: "n2"}},
-			{Kind: cdc.DeltaEdgeDelete, Edge: &model.Edge{ID: "x1"}},
-			{Kind: cdc.DeltaNodeMerge, OldID: "n1", NewID: "n2", Node: &model.Node{ID: "n2", RunID: "r1", Type: model.NodeSession}},
+		require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "d1", RunID: "r1", ExecutionID: "e1", Seq: 1}, []reduce.GraphDelta{
+			{Kind: reduce.DeltaNodeUpsert, Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeSession}},
+			{Kind: reduce.DeltaNodeStatus, Node: &model.Node{ID: "n1", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK}},
+			{Kind: reduce.DeltaEdgeUpsert, Edge: &model.Edge{ID: "x1", RunID: "r1", Src: "n1", Dst: "n2"}},
+			{Kind: reduce.DeltaEdgeDelete, Edge: &model.Edge{ID: "x1"}},
+			{Kind: reduce.DeltaNodeMerge, OldID: "n1", NewID: "n2", Node: &model.Node{ID: "n2", RunID: "r1", Type: model.NodeSession}},
 		}))
-		require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "d2", RunID: "r1", ExecutionID: "e1", Seq: 2}, []cdc.GraphDelta{
-			{Kind: cdc.DeltaNodeUpsert},
-			{Kind: cdc.DeltaNodeMerge},
-			{Kind: cdc.DeltaEdgeUpsert},
-			{Kind: cdc.DeltaEdgeDelete},
-			{Kind: cdc.DeltaNodeMerge, Node: &model.Node{ID: "n3", RunID: "r1", Type: model.NodeToolCall}},
-			{Kind: cdc.DeltaRunStarted, RunID: "r1"},
+		require.NoError(t, s.AppendDeltas(model.Observation{ObsID: "d2", RunID: "r1", ExecutionID: "e1", Seq: 2}, []reduce.GraphDelta{
+			{Kind: reduce.DeltaNodeUpsert},
+			{Kind: reduce.DeltaNodeMerge},
+			{Kind: reduce.DeltaEdgeUpsert},
+			{Kind: reduce.DeltaEdgeDelete},
+			{Kind: reduce.DeltaNodeMerge, Node: &model.Node{ID: "n3", RunID: "r1", Type: model.NodeToolCall}},
+			{Kind: reduce.DeltaRunStarted, RunID: "r1"},
 		}))
 		obs, err := s.ObservationsSince(0)
 		require.NoError(t, err)

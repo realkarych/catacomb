@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/aggregate"
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/ingest/jsonl"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/pricing"
@@ -1147,8 +1146,8 @@ func canonGraph(g *Graph) string {
 	return string(b)
 }
 
-func deltaByKind(ds []cdc.GraphDelta, k cdc.GraphDeltaKind) []cdc.GraphDelta {
-	var out []cdc.GraphDelta
+func deltaByKind(ds []GraphDelta, k GraphDeltaKind) []GraphDelta {
+	var out []GraphDelta
 	for _, d := range ds {
 		if d.Kind == k {
 			out = append(out, d)
@@ -1161,7 +1160,7 @@ func TestEmitNodeUpsertOnSessionStart(t *testing.T) {
 	g := NewGraph()
 	g.Apply(sessionStartObs("e1", "s1", 1))
 	ds := g.DrainDeltas()
-	ups := deltaByKind(ds, cdc.DeltaNodeUpsert)
+	ups := deltaByKind(ds, DeltaNodeUpsert)
 	require.NotEmpty(t, ups)
 	found := false
 	for _, d := range ups {
@@ -1188,7 +1187,7 @@ func TestEmitRunStartedOnceOnFirstObs(t *testing.T) {
 	g.Apply(sessionStartObs("e1", "s1", 1))
 	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 2))
 	ds := g.DrainDeltas()
-	starts := deltaByKind(ds, cdc.DeltaRunStarted)
+	starts := deltaByKind(ds, DeltaRunStarted)
 	require.Len(t, starts, 1)
 	assert.Equal(t, "s1", starts[0].RunID)
 }
@@ -1197,7 +1196,7 @@ func TestEmitEdgeUpsertOnNewEdge(t *testing.T) {
 	g := NewGraph()
 	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
 	ds := g.DrainDeltas()
-	edges := deltaByKind(ds, cdc.DeltaEdgeUpsert)
+	edges := deltaByKind(ds, DeltaEdgeUpsert)
 	require.NotEmpty(t, edges)
 	assert.Equal(t, uint64(1), edges[0].Rev)
 	assert.NotNil(t, edges[0].Edge)
@@ -1209,8 +1208,8 @@ func TestEmitSessionEndedOnSessionEnd(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.Apply(sessionEndObs("e1", "s1", 2))
 	ds := g.DrainDeltas()
-	require.Len(t, deltaByKind(ds, cdc.DeltaSessionEnded), 1)
-	assert.Equal(t, "s1", deltaByKind(ds, cdc.DeltaSessionEnded)[0].RunID)
+	require.Len(t, deltaByKind(ds, DeltaSessionEnded), 1)
+	assert.Equal(t, "s1", deltaByKind(ds, DeltaSessionEnded)[0].RunID)
 }
 
 func TestEmitRunEndedOnRunEnded(t *testing.T) {
@@ -1219,7 +1218,7 @@ func TestEmitRunEndedOnRunEnded(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
 	ds := g.DrainDeltas()
-	require.Len(t, deltaByKind(ds, cdc.DeltaRunEnded), 1)
+	require.Len(t, deltaByKind(ds, DeltaRunEnded), 1)
 }
 
 func TestRunEndedEarlyReturnEmitsNoRunEnded(t *testing.T) {
@@ -1231,7 +1230,7 @@ func TestRunEndedEarlyReturnEmitsNoRunEnded(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.Apply(runEndedObs("e1", "s1", "timeout", 3))
 	ds := g.DrainDeltas()
-	assert.Empty(t, deltaByKind(ds, cdc.DeltaRunEnded))
+	assert.Empty(t, deltaByKind(ds, DeltaRunEnded))
 }
 
 func TestCascadeEmitsNodeStatusWithTriggeringSeq(t *testing.T) {
@@ -1242,7 +1241,7 @@ func TestCascadeEmitsNodeStatusWithTriggeringSeq(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.cascadeStatus("root", model.StatusCancelled, 42)
 	ds := g.DrainDeltas()
-	st := deltaByKind(ds, cdc.DeltaNodeStatus)
+	st := deltaByKind(ds, DeltaNodeStatus)
 	require.Len(t, st, 1)
 	assert.Equal(t, "child", st[0].Node.ID)
 	assert.Equal(t, model.StatusCancelled, st[0].Node.Status)
@@ -1257,7 +1256,7 @@ func TestCascadeUnknownCloseEmitsNodeStatus(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 7)
 	ds := g.DrainDeltas()
-	st := deltaByKind(ds, cdc.DeltaNodeStatus)
+	st := deltaByKind(ds, DeltaNodeStatus)
 	require.Len(t, st, 1)
 	assert.Equal(t, "child", st[0].Node.ID)
 	assert.Equal(t, model.StatusUnknown, st[0].Node.Status)
@@ -1270,7 +1269,7 @@ func TestCloseIfOpenNoChangeEmitsNothing(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.closeIfOpen("done", model.StatusUnknown, 5)
 	ds := g.DrainDeltas()
-	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
+	assert.Empty(t, deltaByKind(ds, DeltaNodeStatus))
 }
 
 func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
@@ -1281,7 +1280,7 @@ func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.cascadeStatus("root", model.StatusCancelled, 9)
 	ds := g.DrainDeltas()
-	assert.Empty(t, deltaByKind(ds, cdc.DeltaNodeStatus))
+	assert.Empty(t, deltaByKind(ds, DeltaNodeStatus))
 }
 
 func TestSourceRankFourLiveTiers(t *testing.T) {
@@ -1586,7 +1585,7 @@ func TestReparentEmitsEdgeDelete(t *testing.T) {
 	oldID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child"))
 	deletedOld := false
 	for _, d := range g.DrainDeltas() {
-		if d.Kind == cdc.DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == oldID {
+		if d.Kind == DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == oldID {
 			deletedOld = true
 		}
 	}
@@ -1627,7 +1626,7 @@ func TestHookSessionReparentedToTurnByJSONL(t *testing.T) {
 
 	deletedSession := false
 	for _, d := range g.DrainDeltas() {
-		if d.Kind == cdc.DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
+		if d.Kind == DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
 			deletedSession = true
 		}
 	}
@@ -1645,9 +1644,9 @@ func TestStructReparentDeleteRevNotBelowDeletedEdgeRev(t *testing.T) {
 
 	g.Apply(jsonlToolTurn(2))
 
-	var del *cdc.GraphDelta
+	var del *GraphDelta
 	for _, d := range g.DrainDeltas() {
-		if d.Kind == cdc.DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
+		if d.Kind == DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
 			dd := d
 			del = &dd
 		}
@@ -2329,7 +2328,7 @@ func TestLatePromptReparentsTurnFromSession(t *testing.T) {
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, prompt, turn))
 
 	ds := g.DrainDeltas()
-	dels := deltaByKind(ds, cdc.DeltaEdgeDelete)
+	dels := deltaByKind(ds, DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	require.NotNil(t, dels[0].Edge)
 	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
@@ -2346,7 +2345,7 @@ func TestTurnReparentDeleteRevNotBelowDeletedEdgeRev(t *testing.T) {
 
 	g.Apply(promptObs("u1", 1))
 
-	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	require.NotNil(t, dels[0].Edge)
 	require.Equal(t, sessionEdge, dels[0].Edge.ID)
@@ -2368,7 +2367,7 @@ func TestLatePromptReparentsTurnFromEarlierPrompt(t *testing.T) {
 	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u2"), turn))
 
-	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn), dels[0].Edge.ID)
 }
@@ -2384,7 +2383,7 @@ func TestLatePromptAfterTurnDoesNotReparentEarlierTurn(t *testing.T) {
 
 	g.Apply(promptObs("u2", 5))
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
-	assert.Empty(t, deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete))
+	assert.Empty(t, deltaByKind(g.DrainDeltas(), DeltaEdgeDelete))
 }
 
 func TestToolStillParentsToTurnUnderReparentedTurn(t *testing.T) {
@@ -2523,7 +2522,7 @@ func TestSubagentMetaUpgradesSessionParentDropsStaleEdge(t *testing.T) {
 	assert.Contains(t, g.Edges, toolEdge)
 	assert.NotContains(t, g.Edges, sessionEdge)
 
-	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	require.NotNil(t, dels[0].Edge)
 	assert.Equal(t, sessionEdge, dels[0].Edge.ID)
@@ -2547,7 +2546,7 @@ func TestSubagentSessionStopAfterMetaLeavesNoStaleEdge(t *testing.T) {
 
 	assert.Contains(t, g.Edges, toolEdge)
 	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), sub))
-	assert.Empty(t, deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete))
+	assert.Empty(t, deltaByKind(g.DrainDeltas(), DeltaEdgeDelete))
 
 	edges := 0
 	for id, e := range g.Edges {
@@ -2649,7 +2648,7 @@ func TestSubagentTurnReparentsToInnerPrompt(t *testing.T) {
 	assert.Contains(t, g.Edges, pcEdge(prompt, turn))
 	assert.NotContains(t, g.Edges, subEdge)
 
-	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	assert.Equal(t, subEdge, dels[0].Edge.ID)
 }
@@ -2765,7 +2764,7 @@ func TestMainSessionRegressionByteIdentical(t *testing.T) {
 		pcEdge(model.SessionNodeID("e1"), model.AssistantTurnID("e1", "m1")): 2,
 	}
 	gotDeletes := map[string]uint64{}
-	for _, d := range deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete) {
+	for _, d := range deltaByKind(g.DrainDeltas(), DeltaEdgeDelete) {
 		gotDeletes[d.Edge.ID] = d.Rev
 	}
 	assert.Equal(t, wantDeletes, gotDeletes)
@@ -2875,7 +2874,7 @@ func TestNearLinearReparentsOnlyAffectedTurns(t *testing.T) {
 
 	assert.Equal(t, revBeforeM1, g.Edges[m1EdgeID].Rev, "m1 edge Rev must not change when turn is not in affected interval")
 
-	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	assert.Equal(t, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m3")), dels[0].Edge.ID)
 }
@@ -2904,7 +2903,7 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 	g.Apply(promptObs("u0", 1))
 	u0 := model.UserPromptID("e1", "u0")
 	assert.Contains(t, g.Edges, pcEdge(u0, turn), "turn must reparent to prompt before it after repositionTurn")
-	dels := deltaByKind(g.DrainDeltas(), cdc.DeltaEdgeDelete)
+	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
 	require.Len(t, dels, 1)
 	assert.Equal(t, pcEdge(model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
 }
@@ -3038,7 +3037,7 @@ func TestEmitRunStartedDeltaCarriesRun(t *testing.T) {
 	g := NewGraph()
 	g.Apply(sessionStartObs("e1", "s1", 1))
 	ds := g.DrainDeltas()
-	starts := deltaByKind(ds, cdc.DeltaRunStarted)
+	starts := deltaByKind(ds, DeltaRunStarted)
 	require.Len(t, starts, 1)
 	require.NotNil(t, starts[0].Run)
 	assert.Equal(t, "s1", starts[0].Run.ID)
@@ -3051,7 +3050,7 @@ func TestEmitRunEndedDeltaCarriesRun(t *testing.T) {
 	_ = g.DrainDeltas()
 	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
 	ds := g.DrainDeltas()
-	ended := deltaByKind(ds, cdc.DeltaRunEnded)
+	ended := deltaByKind(ds, DeltaRunEnded)
 	require.Len(t, ended, 1)
 	require.NotNil(t, ended[0].Run)
 	assert.Equal(t, "s1", ended[0].Run.ID)

@@ -14,8 +14,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 type sqliteStore struct {
@@ -186,7 +186,7 @@ func (s *sqliteStore) Persist(obs []model.Observation, nodes []*model.Node, edge
 	return tx.Commit()
 }
 
-func (s *sqliteStore) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta) error {
+func (s *sqliteStore) AppendDeltas(o model.Observation, deltas []reduce.GraphDelta) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("store.AppendDeltas begin: %w", err)
@@ -204,14 +204,14 @@ func (s *sqliteStore) AppendDeltas(o model.Observation, deltas []cdc.GraphDelta)
 	return tx.Commit()
 }
 
-func (s *sqliteStore) applyDelta(tx *sql.Tx, d cdc.GraphDelta) error {
+func (s *sqliteStore) applyDelta(tx *sql.Tx, d reduce.GraphDelta) error {
 	switch d.Kind {
-	case cdc.DeltaNodeUpsert, cdc.DeltaNodeStatus:
+	case reduce.DeltaNodeUpsert, reduce.DeltaNodeStatus:
 		if d.Node == nil {
 			return nil
 		}
 		return s.write(tx, upsertNode, d.Node, d.Node.ID, d.Node.RunID)
-	case cdc.DeltaNodeMerge:
+	case reduce.DeltaNodeMerge:
 		if d.Node == nil {
 			return nil
 		}
@@ -221,12 +221,12 @@ func (s *sqliteStore) applyDelta(tx *sql.Tx, d cdc.GraphDelta) error {
 			}
 		}
 		return s.write(tx, upsertNode, d.Node, d.Node.ID, d.Node.RunID)
-	case cdc.DeltaEdgeUpsert:
+	case reduce.DeltaEdgeUpsert:
 		if d.Edge == nil {
 			return nil
 		}
 		return s.write(tx, upsertEdge, d.Edge, d.Edge.ID, d.Edge.RunID)
-	case cdc.DeltaEdgeDelete:
+	case reduce.DeltaEdgeDelete:
 		if d.Edge == nil {
 			return nil
 		}
