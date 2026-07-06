@@ -14,7 +14,7 @@ func newRootCmd() *cobra.Command {
 		Short: "Execution-graph observability for Claude Code agentic pipelines",
 		Long: `Catacomb builds a real-time execution graph of your Claude Code sessions —
 prompts, turns, tool calls, MCP calls, and subagents — and serves it in a
-web UI and a terminal observer.
+web UI.
 
 Common recipes:
   Observe every session (all projects):
@@ -52,10 +52,7 @@ Run 'catacomb <command> --help' for details on any command.`,
 	root.AddCommand(observe(newUpCmd()))
 	root.AddCommand(observe(newDownCmd()))
 	root.AddCommand(observe(newRestartCmd()))
-	root.AddCommand(observe(newUICmd()))
-	root.AddCommand(observe(newWatchCmd()))
 	root.AddCommand(observe(newStatusCmd()))
-	root.AddCommand(observe(newObserveCmd()))
 	root.AddCommand(observe(newLogsCmd()))
 	root.AddCommand(setup(newDaemonCmd()))
 	root.AddCommand(setup(newInstallHooksCmd()))

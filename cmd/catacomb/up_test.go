@@ -1251,3 +1251,57 @@ func TestUpPollHealthzTimesOutOnBlockedDaemon(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDaemonUnreachable))
 }
+
+func TestBrowserCommandArgs(t *testing.T) {
+	tests := []struct {
+		goos     string
+		wantArgs []string
+	}{
+		{
+			goos:     "darwin",
+			wantArgs: []string{"open", "http://example.com"},
+		},
+		{
+			goos:     "windows",
+			wantArgs: []string{"rundll32", "url.dll,FileProtocolHandler", "http://example.com"},
+		},
+		{
+			goos:     "linux",
+			wantArgs: []string{"xdg-open", "http://example.com"},
+		},
+		{
+			goos:     "freebsd",
+			wantArgs: []string{"xdg-open", "http://example.com"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.goos, func(t *testing.T) {
+			cmd := browserCommand(tc.goos, "http://example.com")
+			require.NotNil(t, cmd)
+			assert.Equal(t, tc.wantArgs, cmd.Args)
+		})
+	}
+}
+
+func TestOpenBrowserVarIsNotNil(t *testing.T) {
+	assert.NotNil(t, openBrowser)
+}
+
+func TestOpenBrowserCallsStartCmd(t *testing.T) {
+	var started bool
+	orig := startCmd
+	startCmd = func(_ *exec.Cmd) error {
+		started = true
+		return nil
+	}
+	t.Cleanup(func() { startCmd = orig })
+
+	require.NoError(t, openBrowser("http://example.com"))
+	assert.True(t, started)
+}
+
+type failWriter struct{}
+
+func (failWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
+}

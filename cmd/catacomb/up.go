@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +20,23 @@ import (
 
 	"github.com/realkarych/catacomb/daemon"
 )
+
+func browserCommand(goos, rawURL string) *exec.Cmd {
+	switch goos {
+	case "darwin":
+		return exec.Command("open", rawURL)
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
+	default:
+		return exec.Command("xdg-open", rawURL)
+	}
+}
+
+var startCmd = func(c *exec.Cmd) error { return c.Start() }
+
+var openBrowser = func(rawURL string) error {
+	return startCmd(browserCommand(runtime.GOOS, rawURL))
+}
 
 type upDeps struct {
 	readDiscovery func(string) (daemon.Discovery, error)

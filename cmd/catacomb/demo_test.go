@@ -48,7 +48,8 @@ func TestRunDemoSuccess(t *testing.T) {
 	}
 	require.NoError(t, runDemo(context.Background(), &out, deps))
 	assert.Contains(t, out.String(), "demo-0001")
-	assert.Contains(t, out.String(), "catacomb ui")
+	assert.Contains(t, out.String(), "View it:")
+	assert.NotContains(t, out.String(), "catacomb ui")
 }
 
 func TestRunDemoNoDaemon(t *testing.T) {

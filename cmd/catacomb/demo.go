@@ -80,6 +80,6 @@ func runDemo(ctx context.Context, out io.Writer, deps demoDeps) error {
 		Fragment: "/s/" + demoSessionID,
 	}).String()
 
-	_, err = fmt.Fprintf(out, "Demo session %s ingested. View it: %s\nOr open the UI: catacomb ui\n", demoSessionID, uiURL)
+	_, err = fmt.Fprintf(out, "Demo session %s ingested. View it: %s\n", demoSessionID, uiURL)
 	return err
 }
