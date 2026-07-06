@@ -61,8 +61,15 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 	nodes, edges := g.Snapshot()
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	run := model.Run{ID: m.RunID, SessionIDs: []string{m.SessionID}, Labels: m.Labels}
+	if !m.MarkerStart.IsZero() {
+		run.StartedAt = &m.MarkerStart
+	}
+	if !m.MarkerEnd.IsZero() {
+		run.EndedAt = &m.MarkerEnd
+	}
 	return aggregate.RunGraph{
-		Run:   model.Run{ID: m.RunID, SessionIDs: []string{m.SessionID}, Labels: m.Labels},
+		Run:   run,
 		Nodes: nodes,
 		Edges: edges,
 	}, nil

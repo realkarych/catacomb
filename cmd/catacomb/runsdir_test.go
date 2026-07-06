@@ -125,6 +125,28 @@ func TestEvidenceRunGraphNoMarker(t *testing.T) {
 	}
 	_, ok := names["task:t1"]
 	assert.False(t, ok, "no synthesized marker when MarkerName empty")
+	assert.Nil(t, rg.Run.StartedAt)
+	assert.Nil(t, rg.Run.EndedAt)
+}
+
+func TestEvidenceRunGraphRunWindowFromMarkerTimes(t *testing.T) {
+	root := t.TempDir()
+	m := evidence.Meta{
+		RunID:       "r2",
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": "base"},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	require.NoError(t, evidence.Write(filepath.Join(root, "r2"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session.jsonl"), Rel: "session.jsonl"}}))
+	rg, err := evidenceRunGraph(filepath.Join(root, "r2"), m, newPricer())
+	require.NoError(t, err)
+	require.NotNil(t, rg.Run.StartedAt)
+	require.NotNil(t, rg.Run.EndedAt)
+	assert.Equal(t, m.MarkerStart, *rg.Run.StartedAt)
+	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
 }
 
 func TestEvidenceRunGraphMergesSubagents(t *testing.T) {
