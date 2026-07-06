@@ -23,28 +23,28 @@ type trendsEntry struct {
 	Record regress.Record `json:"record"`
 }
 
-func trendsSeedRuns() []seedRun {
-	runs := make([]seedRun, 0, 15)
+func trendsRunsDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
 	for i := 0; i < 5; i++ {
-		runs = append(runs,
-			seedRun{session: fmt.Sprintf("base-%d", i), labels: "variant=base", tools: 1, tokens: 100, durationMS: 1000},
-			seedRun{session: fmt.Sprintf("c1-%d", i), labels: "variant=cand1", tools: 1, tokens: 100, durationMS: 1000},
-			seedRun{session: fmt.Sprintf("c2-%d", i), labels: "variant=cand2", tools: 1, tokens: 5000, durationMS: 1000},
-		)
+		writeTokenEvidenceRun(t, root, fmt.Sprintf("base-%d", i), "base", 100)
+		writeTokenEvidenceRun(t, root, fmt.Sprintf("c1-%d", i), "cand1", 100)
+		writeTokenEvidenceRun(t, root, fmt.Sprintf("c2-%d", i), "cand2", 5000)
 	}
-	return runs
+	return root
 }
 
 func recordedTrendsDB(t *testing.T) (string, time.Time) {
 	t.Helper()
-	dbPath := seedRegressDB(t, trendsSeedRuns())
+	root := trendsRunsDir(t)
+	dbPath := emptyStoreDB(t)
 	ts := pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 	var out, errBuf bytes.Buffer
-	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf))
+	require.Equal(t, 0, run([]string{"regress", "--record", "--runs-dir", root, "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf), errBuf.String())
 	out.Reset()
 	errBuf.Reset()
-	require.Equal(t, 1, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand2"}, &out, &errBuf))
+	require.Equal(t, 1, run([]string{"regress", "--record", "--runs-dir", root, "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand2"}, &out, &errBuf))
 	return dbPath, ts
 }
 
@@ -86,14 +86,15 @@ func TestTrendsRecordFlowEndToEnd(t *testing.T) {
 }
 
 func TestTrendsRecordAnnotationsRoundTrip(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.9)
+	root := trendsRunsDir(t)
+	dbPath := emptyStoreDB(t)
 	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{
-		"regress", "--record", "--db", dbPath,
-		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+		"regress", "--record", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand1",
 		"--annotation", "deepeval.tool_correctness:higher-better",
 	}, &out, &errBuf)
 	require.Equal(t, 0, code, errBuf.String())
@@ -125,7 +126,7 @@ func TestTrendsNarrowedTable(t *testing.T) {
 }
 
 func TestTrendsMetricValidation(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	dbPath := seedRegressDB(t, baseCandRuns())
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "golden", "--db", dbPath, "--metric", "bogus"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
@@ -134,7 +135,7 @@ func TestTrendsMetricValidation(t *testing.T) {
 }
 
 func TestTrendsUnknownBaseline(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	dbPath := seedRegressDB(t, baseCandRuns())
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "nope", "--db", dbPath}, &out, &errBuf)
 	assert.Equal(t, 2, code)
@@ -142,8 +143,8 @@ func TestTrendsUnknownBaseline(t *testing.T) {
 }
 
 func TestTrendsZeroRecordsDistinctMessage(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	dbPath := emptyStoreDB(t)
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
 	assert.Equal(t, 2, code)
@@ -152,8 +153,8 @@ func TestTrendsZeroRecordsDistinctMessage(t *testing.T) {
 }
 
 func TestTrendsMalformedBodyNamesSeq(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	dbPath := emptyStoreDB(t)
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	s, err := store.OpenSQLite(dbPath)
 	require.NoError(t, err)
 	_, err = s.AppendRegressResult("golden", json.RawMessage(`not-json`))
@@ -168,8 +169,8 @@ func TestTrendsMalformedBodyNamesSeq(t *testing.T) {
 }
 
 func TestTrendsUnsupportedVersionEndToEnd(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	dbPath := emptyStoreDB(t)
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	s, err := store.OpenSQLite(dbPath)
 	require.NoError(t, err)
 	_, err = s.AppendRegressResult("golden", json.RawMessage(`{"v":2,"created_at":"2026-01-01T00:00:00Z"}`))
@@ -184,23 +185,24 @@ func TestTrendsUnsupportedVersionEndToEnd(t *testing.T) {
 }
 
 func TestTrendsMarksSplicedBaseline(t *testing.T) {
-	dbPath := seedRegressDB(t, trendsSeedRuns())
+	root := trendsRunsDir(t)
+	dbPath := emptyStoreDB(t)
 	orig := nowFn
 	t.Cleanup(func() { nowFn = orig })
 
 	ts1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	nowFn = func() time.Time { return ts1 }
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 	var out, errBuf bytes.Buffer
-	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf))
+	require.Equal(t, 0, run([]string{"regress", "--record", "--runs-dir", root, "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf), errBuf.String())
 
 	ts2 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	nowFn = func() time.Time { return ts2 }
 	require.NoError(t, runBaselineRm(io.Discard, store.OpenSQLite, dbPath, "golden"))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 	out.Reset()
 	errBuf.Reset()
-	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf))
+	require.Equal(t, 0, run([]string{"regress", "--record", "--runs-dir", root, "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf), errBuf.String())
 
 	out.Reset()
 	errBuf.Reset()
@@ -231,7 +233,7 @@ func TestTrendsStoreMissing(t *testing.T) {
 }
 
 func TestTrendsGetBaselineError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	dbPath := seedRegressDB(t, baseCandRuns())
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO baselines(name, body) VALUES('x','not-json')`)
@@ -253,8 +255,8 @@ func TestTrendsV1SchemaOutdated(t *testing.T) {
 }
 
 func TestTrendsResultsScanError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	dbPath := emptyStoreDB(t)
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE regress_results")
@@ -288,8 +290,8 @@ func TestTrendsCurrentVersionMissingBaselinesTable(t *testing.T) {
 }
 
 func TestTrendsCurrentVersionMissingRegressResultsTable(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	dbPath := emptyStoreDB(t)
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE regress_results")

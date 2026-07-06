@@ -100,12 +100,12 @@ func seedRegressDB(t *testing.T, runs []seedRun) string {
 	return dbPath
 }
 
-func baseCandRuns(count int, candErr bool, candTok int64) []seedRun {
-	runs := make([]seedRun, 0, count*2)
-	for i := 0; i < count; i++ {
+func baseCandRuns() []seedRun {
+	runs := make([]seedRun, 0, 10)
+	for i := 0; i < 5; i++ {
 		runs = append(runs,
 			seedRun{session: fmt.Sprintf("base-%d", i), labels: "variant=base", tools: 1, tokens: 100, durationMS: 1000},
-			seedRun{session: fmt.Sprintf("cand-%d", i), labels: "variant=cand", tools: 1, isError: candErr, tokens: candTok, durationMS: 1000},
+			seedRun{session: fmt.Sprintf("cand-%d", i), labels: "variant=cand", tools: 1, tokens: 100, durationMS: 1000},
 		)
 	}
 	return runs
@@ -115,202 +115,45 @@ func openStore(s store.Store) storeOpener {
 	return func(string) (store.Store, error) { return s, nil }
 }
 
-func defaultRegressFlags(dbPath string) regressFlags {
-	return regressFlags{
-		baseline:   "label:variant=base",
-		candidate:  "label:variant=cand",
-		dbPath:     dbPath,
-		thresholds: regress.DefaultThresholds(),
-	}
-}
-
-func TestRegressIdenticalGroupsOK(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var buf strings.Builder
-	err := runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, defaultRegressFlags(dbPath))
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "overall ok")
-}
-
-func TestRegressIdenticalExitZeroViaRun(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.Empty(t, errBuf.String())
-}
-
-func TestRegressErrorJumpRegressionExitOne(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, out.String(), "overall regression")
-	assert.Empty(t, errBuf.String())
-}
-
-func TestRegressMetricRelDeltaFlagReachesCompare(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 5000))
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 1, code)
-
-	out.Reset()
-	errBuf.Reset()
-	code = run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--metric-rel-delta", "1000"}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-}
-
-func TestRegressJSONParses(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
-	f := defaultRegressFlags(dbPath)
-	f.asJSON = true
-	var buf bytes.Buffer
-	err := runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, f)
-	require.ErrorIs(t, err, errRegressionDetected)
-	var rep regress.Report
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
-	assert.Equal(t, regress.VerdictRegression, rep.OverallVerdict)
-	assert.Equal(t, 5, rep.BaselineRuns)
-}
-
-func TestRegressJSONRenderError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	f := defaultRegressFlags(dbPath)
-	f.asJSON = true
-	err := runRegress(failWriter{}, io.Discard, store.OpenSQLiteReadOnly, newPricer, f)
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, errRegressionDetected)
-}
-
-func TestRegressNameSelectorResolves(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-
-	var buf strings.Builder
-	err := runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, regressFlags{
-		baseline:   "name:golden",
-		candidate:  "label:variant=cand",
-		dbPath:     dbPath,
-		thresholds: regress.DefaultThresholds(),
-	})
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "baseline runs 5")
-}
-
-func TestRegressUnknownNameOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:nope", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "baseline not found")
-}
-
-func TestRegressStrictInsufficientExitOne(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(2, false, 100))
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.Contains(t, out.String(), "overall insufficient")
-
-	out.Reset()
-	errBuf.Reset()
-	code = run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--strict"}, &out, &errBuf)
-	assert.Equal(t, 1, code)
-}
-
-func TestRegressStoreMissingOperational(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "nope.db")
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", missing, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "no catacomb store")
-}
-
-func TestRegressBadBaselineSelectorOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "bogus", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "invalid selector")
-}
-
-func TestRegressBadCandidateSelectorOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "bogus"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "invalid selector")
-}
-
-func TestRegressUnknownPrefixOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	_, _, err := resolveSelector(io.Discard, nil, newPricer(), "phase:x=y")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown prefix")
-	_ = dbPath
-}
-
-func TestRegressBadLabelSelectorOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:BAD=x", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "invalid --label")
-}
-
-func TestRegressEmptyBaselineGroupOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=none", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "matched no runs")
-}
-
-func TestRegressEmptyCandidateGroupOperational(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=none"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "matched no runs")
-}
-
-func TestRegressLabelLoadError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+func seedV1RegressDB(t *testing.T) string {
+	t.Helper()
+	dbPath := seedRegressDB(t, baseCandRuns())
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec("DROP TABLE observations")
+	_, err = db.Exec("DROP TABLE baselines")
+	require.NoError(t, err)
+	_, err = db.Exec("PRAGMA user_version = 1")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "store read")
+	return dbPath
 }
 
-func TestRegressGetBaselineError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+func seedV2RegressDB(t *testing.T) string {
+	t.Helper()
+	dbPath := seedRegressDB(t, baseCandRuns())
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO baselines(name, body) VALUES('x','not-json')`)
+	_, err = db.Exec("DROP TABLE regress_results")
+	require.NoError(t, err)
+	_, err = db.Exec("PRAGMA user_version = 2")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:x", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "get baseline")
+	return dbPath
 }
 
-func TestRegressMinSupportGuard(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--min-support", "0"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "min-support")
+func seedCurrentVersionDropTable(t *testing.T, table string) string {
+	t.Helper()
+	dbPath := seedRegressDB(t, baseCandRuns())
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec("DROP TABLE " + table)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	return dbPath
 }
 
 func TestRegressThresholdFlagsMapToFields(t *testing.T) {
@@ -344,160 +187,72 @@ func TestRegressFailOnNotableFlagMaps(t *testing.T) {
 	assert.True(t, f.thresholds.FailOnNotable)
 }
 
-func TestRegressZFlagRejectsNonPositive(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(3, false, 100))
+func TestRegressRunsDirDefault(t *testing.T) {
+	var f regressFlags
+	cmd := &cobra.Command{Use: "regress"}
+	bindRegressFlags(cmd, &f)
+	rd := cmd.Flags().Lookup("runs-dir")
+	require.NotNil(t, rd)
+	assert.True(t, strings.HasSuffix(rd.DefValue, filepath.Join(".catacomb", "runs")) || rd.DefValue == "")
+}
+
+func TestRegressRequiresRunsDir(t *testing.T) {
+	f := regressFlags{baseline: "label:variant=base", candidate: "label:variant=cand", thresholds: regress.DefaultThresholds()}
+	err := runRegress(io.Discard, io.Discard, openStore(nil), newPricer, f)
+	require.ErrorIs(t, err, errRegressNoRunsDir)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
+func TestRegressMinSupportGuard(t *testing.T) {
+	root := evidenceRoot(t)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "0"}, &out, &errBuf)
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--min-support", "0"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "min-support")
+}
+
+func TestRegressZFlagRejectsNonPositive(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "0"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "--z must be > 0")
 }
 
-func TestRegressDefaultZFlipRegressionExitOne(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(3, true, 100))
+func TestRegressStrictInsufficientExitOne(t *testing.T) {
+	root := evidenceRoot(t)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, out.String(), "overall regression")
-	assert.Empty(t, errBuf.String())
-}
-
-func TestRegressZWidensToNotableFailOnNotableEscalates(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(3, true, 100))
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "1.96"}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.Contains(t, out.String(), "overall ok")
-	assert.Empty(t, errBuf.String())
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, out.String(), "overall insufficient")
 
 	out.Reset()
 	errBuf.Reset()
-	code = run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "1.96", "--fail-on-notable"}, &out, &errBuf)
+	code = run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--strict"}, &out, &errBuf)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, out.String(), "overall regression")
-	assert.Empty(t, errBuf.String())
 }
 
-func seedV1RegressDB(t *testing.T) string {
-	t.Helper()
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	db, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-	_, err = db.Exec("DROP TABLE baselines")
-	require.NoError(t, err)
-	_, err = db.Exec("PRAGMA user_version = 1")
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	return dbPath
-}
-
-func seedV2RegressDB(t *testing.T) string {
-	t.Helper()
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-	db, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-	_, err = db.Exec("DROP TABLE regress_results")
-	require.NoError(t, err)
-	_, err = db.Exec("PRAGMA user_version = 2")
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	return dbPath
-}
-
-func seedCurrentVersionDropTable(t *testing.T, table string) string {
-	t.Helper()
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	db, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-	_, err = db.Exec("DROP TABLE " + table)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	s, err := store.OpenSQLiteReadOnly(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, s.Close())
-	return dbPath
-}
-
-func TestRegressNameSelectorCurrentVersionMissingBaselinesTable(t *testing.T) {
-	dbPath := seedCurrentVersionDropTable(t, "baselines")
+func TestRegressBadAnnotationExitTwo(t *testing.T) {
+	root := evidenceRoot(t)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--annotation", "deepeval.tool_correctness:sideways"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "older than this binary")
+	assert.Contains(t, errBuf.String(), "sideways")
 }
 
-func TestRegressNameSelectorLoadError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-	db, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-	_, err = db.Exec("DROP TABLE observations")
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-
+func TestRegressUnfiredAnnotationWarns(t *testing.T) {
+	root := scoresEvidenceRoot(t)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "store read")
-}
-
-func TestRegressNameSelectorV1StoreHint(t *testing.T) {
-	dbPath := seedV1RegressDB(t)
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "older than this binary")
-}
-
-func TestRegressLabelOnlyV1StoreHint(t *testing.T) {
-	dbPath := seedV1RegressDB(t)
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "older than this binary")
-}
-
-func TestRegressNameSelectorFewerRunsWarns(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	s, err := store.OpenSQLite(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, s.UpsertBaseline(model.Baseline{Name: "golden", RunIDs: []string{"base-0", "ghost-1"}}))
-	require.NoError(t, s.Close())
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.Contains(t, errBuf.String(), "resolved 1 < stored 2")
-}
-
-func TestRegressNameSelectorStampsZeroStrictRefuses(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	s, err := store.OpenSQLite(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, s.UpsertBaseline(model.Baseline{Name: "golden", RunIDs: []string{"base-0"}}))
-	require.NoError(t, s.Close())
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--strict", "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "no version stamps")
-}
-
-func TestRegressNameSelectorStampsMismatchStrictRefuses(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	s, err := store.OpenSQLite(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, s.UpsertBaseline(model.Baseline{
-		Name: "golden", RunIDs: []string{"base-0"},
-		Stamps: model.Stamps{CatacombVersion: "old", StepKeyScheme: "stepkey/v1"},
-	}))
-	require.NoError(t, s.Close())
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--db", dbPath, "--strict", "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "version stamps differ")
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", filepath.Join(t.TempDir(), "nope.db"),
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--annotation", "owner.never",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.NotContains(t, out.String(), "ann:")
+	assert.Contains(t, errBuf.String(), `annotation "owner.never" produced no findings`)
+	assert.Contains(t, errBuf.String(), "step-key-eligible")
 }
 
 func TestParseAnnotationFlags(t *testing.T) {
@@ -513,6 +268,12 @@ func TestParseAnnotationFlags(t *testing.T) {
 		{Key: "c.d", HigherBetter: false},
 	}, specs)
 	assert.Equal(t, []string{"a.b", "c.d"}, keys)
+}
+
+func TestParseSelectorUnknownPrefix(t *testing.T) {
+	_, _, err := parseSelector("phase:x=y")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown prefix")
 }
 
 func TestParseAnnotationFlagsEmpty(t *testing.T) {
@@ -549,153 +310,6 @@ func TestParseAnnotationFlagsErrors(t *testing.T) {
 	}
 }
 
-func seedRegressAnnDB(t *testing.T, key string, candScore float64) string {
-	t.Helper()
-	const baseScore = 0.9
-	runs := baseCandRuns(5, false, 100)
-	dbPath := seedRegressDB(t, runs)
-	s, err := store.OpenSQLite(dbPath)
-	require.NoError(t, err)
-	for i, r := range runs {
-		score := candScore
-		if strings.HasPrefix(r.session, "base-") {
-			score = baseScore
-		}
-		val, err := json.Marshal(score)
-		require.NoError(t, err)
-		require.NoError(t, s.UpsertAnnotation(model.Annotation{
-			ExecutionID: fmt.Sprintf("exec-%03d", i),
-			SourceKey:   fmt.Sprintf("tu-%s-0", r.session),
-			Owner:       "deepeval",
-			Key:         key,
-			Value:       json.RawMessage(val),
-			WriteSeq:    1,
-		}))
-	}
-	require.NoError(t, s.Close())
-	return dbPath
-}
-
-func TestRegressAnnotationHigherBetterRegression(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
-	f := defaultRegressFlags(dbPath)
-	f.annotations = []string{"deepeval.tool_correctness"}
-	f.asJSON = true
-	var buf bytes.Buffer
-	err := runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, f)
-	require.ErrorIs(t, err, errRegressionDetected)
-
-	var rep regress.Report
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
-	assert.Equal(t, regress.VerdictRegression, rep.OverallVerdict)
-	found := false
-	for _, fd := range rep.Findings {
-		if fd.Metric == "ann:deepeval.tool_correctness" {
-			found = true
-			assert.Equal(t, "step", fd.Scope)
-			assert.Equal(t, regress.VerdictRegression, fd.Verdict)
-		}
-	}
-	assert.True(t, found, "ann finding present")
-}
-
-func TestRegressAnnotationExitOneViaRun(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
-	var out, errBuf bytes.Buffer
-	code := run([]string{
-		"regress", "--db", dbPath,
-		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
-		"--annotation", "deepeval.tool_correctness",
-	}, &out, &errBuf)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, out.String(), "overall regression")
-	assert.Contains(t, out.String(), "ann:deepeval.tool_correctness")
-	assert.Empty(t, errBuf.String())
-}
-
-func TestRegressAnnotationLowerBetterInverts(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "latency_penalty", 0.4)
-	f := defaultRegressFlags(dbPath)
-	f.annotations = []string{"deepeval.latency_penalty:lower-better"}
-	f.asJSON = true
-	var buf bytes.Buffer
-	err := runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, f)
-	require.NoError(t, err)
-
-	var rep regress.Report
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
-	assert.Equal(t, regress.VerdictOK, rep.OverallVerdict)
-	for _, fd := range rep.Findings {
-		if fd.Metric == "ann:deepeval.latency_penalty" {
-			assert.Equal(t, regress.VerdictImprovement, fd.Verdict)
-		}
-	}
-}
-
-func TestRegressAnnotationBadSuffixExitTwo(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
-	var out, errBuf bytes.Buffer
-	code := run([]string{
-		"regress", "--db", dbPath,
-		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
-		"--annotation", "deepeval.tool_correctness:sideways",
-	}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "sideways")
-}
-
-func TestRegressAnnotationDuplicateExitTwo(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
-	var out, errBuf bytes.Buffer
-	code := run([]string{
-		"regress", "--db", dbPath,
-		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
-		"--annotation", "deepeval.tool_correctness",
-		"--annotation", "deepeval.tool_correctness:lower-better",
-	}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "duplicate --annotation key")
-}
-
-func TestRegressAnnotationNoFlagByteIdentical(t *testing.T) {
-	annDB := seedRegressAnnDB(t, "tool_correctness", 0.4)
-	plainDB := seedRegressDB(t, baseCandRuns(5, false, 100))
-
-	render := func(dbPath string) string {
-		var buf bytes.Buffer
-		require.NoError(t, runRegress(&buf, io.Discard, store.OpenSQLiteReadOnly, newPricer, defaultRegressFlags(dbPath)))
-		return buf.String()
-	}
-	assert.Equal(t, render(plainDB), render(annDB))
-}
-
-func TestRegressAnnotationUnknownKeyWarns(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.4)
-	var out, errBuf bytes.Buffer
-	code := run([]string{
-		"regress", "--db", dbPath,
-		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
-		"--annotation", "deepeval.typo",
-	}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.NotContains(t, out.String(), "ann:")
-	assert.Contains(t, errBuf.String(), `annotation "deepeval.typo" produced no findings`)
-	assert.Contains(t, errBuf.String(), "step-key-eligible")
-}
-
-func TestRegressAnnotationHealthyOKNoWarning(t *testing.T) {
-	dbPath := seedRegressAnnDB(t, "tool_correctness", 0.9)
-	var out, errBuf bytes.Buffer
-	code := run([]string{
-		"regress", "--db", dbPath,
-		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
-		"--annotation", "deepeval.tool_correctness", "--json",
-	}, &out, &errBuf)
-	assert.Equal(t, 0, code)
-	assert.NotContains(t, out.String(), "ann:")
-	assert.Empty(t, errBuf.String())
-}
-
 func TestRegressCmdWiredAndGrouped(t *testing.T) {
 	root := newRootCmd()
 	groups := make(map[string]string)
@@ -713,112 +327,31 @@ func (a *appendErrStore) AppendRegressResult(string, json.RawMessage) (int, erro
 	return 0, errors.New("boom-append")
 }
 
-func TestRegressRecordRequiresNameSelector(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "name:")
-}
-
 func TestRegressRecordBadBaselineSelector(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	root := evidenceRoot(t)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "bogus", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", filepath.Join(t.TempDir(), "b.db"),
+		"--record", "--baseline", "bogus", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "invalid selector")
 }
 
-func TestRegressRecordPreservesRegressionExit(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
-	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
-	assert.Equal(t, 1, code)
-	assert.Contains(t, out.String(), "overall regression")
-
-	s, err := store.OpenSQLiteReadOnly(dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	res, err := s.RegressResultsFor("golden")
-	require.NoError(t, err)
-	require.Len(t, res, 1)
-	var rec regress.Record
-	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
-	assert.Equal(t, regress.VerdictRegression, rec.Report.OverallVerdict)
-	assert.Equal(t, "label:variant=cand", rec.CandidateSelector)
-}
-
-func TestRegressRecordStampsVersionAndBaseline(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	ts := pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-
-	var out, errBuf bytes.Buffer
-	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf))
-
-	s, err := store.OpenSQLiteReadOnly(dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	res, err := s.RegressResultsFor("golden")
-	require.NoError(t, err)
-	require.Len(t, res, 1)
-	var rec regress.Record
-	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
-	assert.Equal(t, regress.RecordVersion, rec.V)
-	assert.True(t, rec.BaselineCreatedAt.Equal(ts))
-	assert.Equal(t, ts.UTC(), rec.CreatedAt.UTC())
-}
-
-func TestRegressRecordDoesNotAlterOutput(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-
-	var withRec, withRecErr bytes.Buffer
-	require.Equal(t, 0, run([]string{"regress", "--record", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &withRec, &withRecErr))
-
-	var plain, plainErr bytes.Buffer
-	require.Equal(t, 0, run([]string{"regress", "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &plain, &plainErr))
-
-	assert.Equal(t, plain.String(), withRec.String())
-}
-
 func TestRegressRecordMarshalError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
+	root := evidenceRoot(t)
+	dbPath := emptyStoreDB(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 	orig := marshalRecord
 	marshalRecord = func(any) ([]byte, error) { return nil, errors.New("boom-marshal") }
 	t.Cleanup(func() { marshalRecord = orig })
 
-	f := regressFlags{baseline: "name:golden", candidate: "label:variant=cand", dbPath: dbPath, thresholds: regress.DefaultThresholds(), record: true}
+	f := regressFlags{runsDir: root, dbPath: dbPath, baseline: "name:golden", candidate: "label:variant=cand", thresholds: regress.DefaultThresholds(), record: true}
 	err := runRegress(io.Discard, io.Discard, store.OpenSQLite, newPricer, f)
 	require.Error(t, err)
 	var opErr *operationalError
 	require.ErrorAs(t, err, &opErr)
 	assert.Contains(t, err.Error(), "boom-marshal")
-}
-
-func TestRegressRecordAppendErrorOverridesVerdict(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, true, 100))
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))
-	opener := func(path string) (store.Store, error) {
-		s, err := store.OpenSQLite(path)
-		if err != nil {
-			return nil, err
-		}
-		return &appendErrStore{Store: s}, nil
-	}
-
-	f := regressFlags{baseline: "name:golden", candidate: "label:variant=cand", dbPath: dbPath, thresholds: regress.DefaultThresholds(), record: true}
-	err := runRegress(io.Discard, io.Discard, opener, newPricer, f)
-	require.Error(t, err)
-	var opErr *operationalError
-	require.ErrorAs(t, err, &opErr)
-	assert.NotErrorIs(t, err, errRegressionDetected)
-	assert.Contains(t, err.Error(), "boom-append")
 }
 
 func scoresEvidenceRoot(t *testing.T) string {
@@ -900,31 +433,17 @@ func TestRegressScoresOfflineBadFileExitTwo(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "line 2")
 }
 
-func TestRegressScoresStorePathSmoke(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+func TestRegressScoresMatchedNoNodeWarns(t *testing.T) {
+	root := scoresEvidenceRoot(t)
 	scores := writeScoresFile(t, `{"step_key":"ghost","key":"owner.quality","value":1}`)
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{
-		"regress", "--db", dbPath,
+		"regress", "--runs-dir", root, "--db", filepath.Join(t.TempDir(), "nope.db"),
 		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
 		"--scores", scores,
 	}, &out, &errBuf)
 	assert.Equal(t, 0, code, errBuf.String())
 	assert.Contains(t, out.String(), "overall ok")
 	assert.Contains(t, errBuf.String(), "matched no node")
-}
-
-func TestRegressScoresStorePathBadFileExitTwo(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns(3, false, 100))
-	scores := writeScoresFile(t, "{bad")
-
-	var out, errBuf bytes.Buffer
-	code := run([]string{
-		"regress", "--db", dbPath,
-		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
-		"--scores", scores,
-	}, &out, &errBuf)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "line 1")
 }

@@ -50,6 +50,28 @@ func evidenceRoot(t *testing.T) string {
 	return root
 }
 
+func writeTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens int) {
+	t.Helper()
+	transcript := fmt.Sprintf(`{"type":"assistant","uuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"msg_1","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":%d,"output_tokens":5}}}
+{"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}
+`, inputTokens)
+	src := filepath.Join(t.TempDir(), id+".jsonl")
+	require.NoError(t, os.WriteFile(src, []byte(transcript), 0o600))
+	m := evidence.Meta{
+		RunID:       id,
+		Task:        "t1",
+		Variant:     variant,
+		Rep:         1,
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": variant},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	require.NoError(t, evidence.Write(filepath.Join(root, id), m, []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}}))
+}
+
 func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 	root := evidenceRoot(t)
 	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
@@ -120,7 +142,7 @@ func upsertBaselineRunsDir(t *testing.T, dbPath string, b model.Baseline) {
 func TestRunsDirNameSelectorResolvesOffline(t *testing.T) {
 	root := evidenceRoot(t)
 	dbPath := filepath.Join(t.TempDir(), "b.db")
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{
@@ -218,7 +240,7 @@ func TestRunsDirNameSelectorMissingRunDir(t *testing.T) {
 func TestRunRegressRunsDirDeletedRunDirNamesRunAndDir(t *testing.T) {
 	root := evidenceRoot(t)
 	dbPath := filepath.Join(t.TempDir(), "b.db")
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 	require.NoError(t, os.RemoveAll(filepath.Join(root, "base-1")))
 
 	var out, errBuf bytes.Buffer
@@ -416,7 +438,7 @@ func TestRegressRunsDirRecordRoundtrip(t *testing.T) {
 	root := evidenceRoot(t)
 	dbPath := filepath.Join(t.TempDir(), "b.db")
 	pinBaselineNow(t)
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{
@@ -441,7 +463,7 @@ func TestRegressRunsDirRecordRoundtrip(t *testing.T) {
 func TestRegressRunsDirRecordAppendError(t *testing.T) {
 	root := evidenceRoot(t)
 	dbPath := filepath.Join(t.TempDir(), "b.db")
-	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
 	opener := func(path string) (store.Store, error) {
 		s, err := store.OpenSQLite(path)
 		if err != nil {

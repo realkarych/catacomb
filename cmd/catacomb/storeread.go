@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 
-	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/pricing"
 	"github.com/realkarych/catacomb/reduce"
@@ -59,70 +58,6 @@ func storeGraphsWithIDs(s store.Store, pricer reduce.Pricer) ([]*reduce.Graph, [
 		graphs = append(graphs, g)
 	}
 	return graphs, order, nil
-}
-
-func loadRunGroup(s store.Store, pricer reduce.Pricer, selector map[string]string) ([]aggregate.RunGraph, error) {
-	return loadRunGroupBy(s, pricer, func(r model.Run) bool {
-		return model.MatchLabels(r.Labels, selector)
-	})
-}
-
-func loadRunGroupByIDs(s store.Store, pricer reduce.Pricer, ids []string) ([]aggregate.RunGraph, error) {
-	want := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		want[id] = struct{}{}
-	}
-	return loadRunGroupBy(s, pricer, func(r model.Run) bool {
-		_, ok := want[r.ID]
-		return ok
-	})
-}
-
-func loadRunGroupBy(s store.Store, pricer reduce.Pricer, keep func(model.Run) bool) ([]aggregate.RunGraph, error) {
-	graphs, ids, err := storeGraphsWithIDs(s, pricer)
-	if err != nil {
-		return nil, err
-	}
-	for i, g := range graphs {
-		anns, err := s.AnnotationsForExecution(ids[i])
-		if err != nil {
-			return nil, fmt.Errorf("store annotations: %w", err)
-		}
-		g.ApplyAnnotations(anns)
-	}
-	var kept []model.Run
-	keepIDs := map[string]bool{}
-	for _, r := range collectRuns(graphs) {
-		if !keep(r) {
-			continue
-		}
-		kept = append(kept, r)
-		keepIDs[r.ID] = true
-	}
-	nodesByRun := map[string][]*model.Node{}
-	edgesByRun := map[string][]*model.Edge{}
-	for _, g := range graphs {
-		ns, es := g.Snapshot()
-		for _, n := range ns {
-			if keepIDs[n.RunID] {
-				nodesByRun[n.RunID] = append(nodesByRun[n.RunID], n)
-			}
-		}
-		for _, e := range es {
-			if keepIDs[e.RunID] {
-				edgesByRun[e.RunID] = append(edgesByRun[e.RunID], e)
-			}
-		}
-	}
-	var out []aggregate.RunGraph
-	for _, r := range kept {
-		nodes := nodesByRun[r.ID]
-		edges := edgesByRun[r.ID]
-		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-		sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
-		out = append(out, aggregate.RunGraph{Run: r, Nodes: nodes, Edges: edges})
-	}
-	return out, nil
 }
 
 func collectRuns(graphs []*reduce.Graph) []model.Run {
