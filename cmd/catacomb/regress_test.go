@@ -18,8 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/realkarych/catacomb/ingest/hook"
-	"github.com/realkarych/catacomb/ingest/streamjson"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
 	"github.com/realkarych/catacomb/store"
@@ -68,31 +66,37 @@ func seedRegressDB(t *testing.T, runs []seedRun) string {
 		execID := fmt.Sprintf("exec-%03d", i)
 		end := t0.Add(time.Duration(r.durationMS) * time.Millisecond)
 
-		ss, _, err := hook.Parse("SessionStart", []byte(fmt.Sprintf(`{"session_id":%q}`, r.session)), execID, next)
-		require.NoError(t, err)
+		mk := func(source model.Source, kind string, corr model.Correlation, attrs map[string]any) model.Observation {
+			s := next()
+			return model.Observation{
+				ObsID: fmt.Sprintf("obs-%s-%d", execID, s), RunID: r.session, ExecutionID: execID,
+				Source: source, Kind: kind, Correlation: corr, Attrs: attrs, Seq: s,
+			}
+		}
+		msgID := "m-" + r.session
+
+		ss := []model.Observation{mk(model.SourceHook, "session_start", model.Correlation{SessionID: r.session}, nil)}
 		all = append(all, stampObs(ss, t0, r.labels, r.cwd)...)
 
-		blocks, results := "", ""
+		turn := []model.Observation{mk(model.SourceStreamJSON, "assistant_turn", model.Correlation{SessionID: r.session, MessageID: msgID}, map[string]any{"model": "claude-3", "tokens_in": r.tokens, "tokens_out": r.tokens})}
 		for j := 0; j < r.tools; j++ {
-			if j > 0 {
-				blocks += ","
-				results += ","
-			}
-			blocks += fmt.Sprintf(`{"type":"tool_use","id":"tu-%s-%d","name":"Bash","input":{}}`, r.session, j)
-			results += fmt.Sprintf(`{"type":"tool_result","tool_use_id":"tu-%s-%d","is_error":%t,"content":"x"}`, r.session, j, r.isError)
+			toolID := fmt.Sprintf("tu-%s-%d", r.session, j)
+			turn = append(turn, mk(model.SourceStreamJSON, "assistant_tool_use", model.Correlation{SessionID: r.session, MessageID: msgID, ToolUseID: toolID}, map[string]any{"name": "Bash"}))
 		}
-		asst := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"id":"m-%s","model":"claude-3","content":[%s],"usage":{"input_tokens":%d,"output_tokens":%d}}}`, r.session, r.session, blocks, r.tokens, r.tokens)
-		ao, _, err := streamjson.Parse([]byte(asst), execID, next)
-		require.NoError(t, err)
-		all = append(all, stampObs(ao, t0, r.labels, r.cwd)...)
+		all = append(all, stampObs(turn, t0, r.labels, r.cwd)...)
 
-		usr := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[%s]}}`, r.session, results)
-		uo, _, err := streamjson.Parse([]byte(usr), execID, next)
-		require.NoError(t, err)
-		all = append(all, stampObs(uo, t0, r.labels, r.cwd)...)
+		status := string(model.StatusOK)
+		if r.isError {
+			status = string(model.StatusError)
+		}
+		var res []model.Observation
+		for j := 0; j < r.tools; j++ {
+			toolID := fmt.Sprintf("tu-%s-%d", r.session, j)
+			res = append(res, mk(model.SourceStreamJSON, "tool_result", model.Correlation{SessionID: r.session, ToolUseID: toolID}, map[string]any{"status": status}))
+		}
+		all = append(all, stampObs(res, t0, r.labels, r.cwd)...)
 
-		se, _, err := hook.Parse("SessionEnd", []byte(fmt.Sprintf(`{"session_id":%q,"reason":"clear"}`, r.session)), execID, next)
-		require.NoError(t, err)
+		se := []model.Observation{mk(model.SourceHook, "session_end", model.Correlation{SessionID: r.session}, map[string]any{"reason": "clear"})}
 		all = append(all, stampObs(se, end, r.labels, r.cwd)...)
 	}
 	require.NoError(t, s.Persist(all, nil, nil))

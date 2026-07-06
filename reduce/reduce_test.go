@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/cdc"
-	"github.com/realkarych/catacomb/ingest/streamjson"
+	"github.com/realkarych/catacomb/ingest/jsonl"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/pricing"
 )
@@ -1823,22 +1824,13 @@ func TestReductionCommutativityWithParentToolEdge(t *testing.T) {
 	}
 }
 
-func seq() func() uint64 {
-	var n uint64
-	return func() uint64 {
-		n++
-		return n
-	}
-}
-
 func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
-	parentLine := []byte(`{"type":"assistant","session_id":"s1","message":{"id":"msg_parent","content":[{"type":"tool_use","id":"toolu_parent","name":"Task","input":{}}]}}`)
-	childLine := []byte(`{"type":"assistant","session_id":"s1","parent_tool_use_id":"toolu_parent","message":{"id":"msg_child","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}`)
+	parentLine := `{"type":"assistant","sessionId":"s1","message":{"role":"assistant","id":"msg_parent","content":[{"type":"tool_use","id":"toolu_parent","name":"Task","input":{}}]}}` + "\n"
+	childLine := `{"type":"assistant","sessionId":"s1","parent_tool_use_id":"toolu_parent","message":{"role":"assistant","id":"msg_child","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}` + "\n"
 
-	sq := seq()
-	parentObs, _, err := streamjson.Parse(parentLine, "exec_i1", sq)
+	parentObs, err := jsonl.ParseReader(strings.NewReader(parentLine), "exec_i1")
 	require.NoError(t, err)
-	childObs, _, err := streamjson.Parse(childLine, "exec_i1", sq)
+	childObs, err := jsonl.ParseReader(strings.NewReader(childLine), "exec_i1")
 	require.NoError(t, err)
 
 	g := NewGraph()
@@ -1853,20 +1845,6 @@ func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
 	require.NotNil(t, g.Edges[edgeID], "parent_child edge must be created from real assistant envelope")
 	assert.Equal(t, model.ToolCallID("exec_i1", "toolu_parent"), g.Edges[edgeID].Src)
 	assert.Equal(t, model.ToolCallID("exec_i1", "toolu_child"), g.Edges[edgeID].Dst)
-}
-
-func TestStreamEventCreatesNoJunkEmptyToolNode(t *testing.T) {
-	line := []byte(`{"type":"stream_event","session_id":"s1","parent_tool_use_id":"toolu_parent","uuid":"u1"}`)
-
-	sq := seq()
-	obs, _, err := streamjson.Parse(line, "exec_i2", sq)
-	require.NoError(t, err)
-	require.Empty(t, obs, "stream_event must yield zero observations")
-
-	g := NewGraph()
-	g.ApplyAll(obs)
-	junkID := model.ToolCallID("exec_i2", "")
-	assert.NotContains(t, g.Nodes, junkID, "no junk empty-tool node must exist after stream_event")
 }
 
 func TestToolCallStampsEndAndDuration(t *testing.T) {
@@ -2248,13 +2226,24 @@ func TestApplyAssistantTurnResultDoesNotClobberText(t *testing.T) {
 }
 
 func TestCumulativeCostNoDoubleCount(t *testing.T) {
-	sq := seq()
-	line1 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.10}`)
-	line2 := []byte(`{"type":"result","session_id":"s1","total_cost_usd":0.30}`)
-	obs1, _, err := streamjson.Parse(line1, execID, sq)
-	require.NoError(t, err)
-	obs2, _, err := streamjson.Parse(line2, execID, sq)
-	require.NoError(t, err)
+	result := func(seq uint64, cost float64) []model.Observation {
+		return []model.Observation{
+			{
+				ObsID: "turn" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: execID,
+				Source: model.SourceStreamJSON, Kind: "assistant_turn",
+				Correlation: model.Correlation{SessionID: "s1"},
+				Attrs:       map[string]any{"session_total": true, "cost_usd": cost}, Seq: seq,
+			},
+			{
+				ObsID: "end" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: execID,
+				Source: model.SourceStreamJSON, Kind: "session_end",
+				Correlation: model.Correlation{SessionID: "s1"},
+				Attrs:       map[string]any{"reason": ""}, Seq: seq + 1,
+			},
+		}
+	}
+	obs1 := result(1, 0.10)
+	obs2 := result(3, 0.30)
 
 	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
 		if in.ReportedUSD != nil {
@@ -2940,6 +2929,19 @@ func TestSetIfEmpty(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestEnsureRunCwdWithoutVersionInitsRepro(t *testing.T) {
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{{
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
+		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
+		Attrs: map[string]any{"cwd": "/work"}, Seq: 1,
+	}})
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	require.NotNil(t, r.Repro)
+	assert.Equal(t, "/work", r.Repro.Cwd)
 }
 
 func TestApplyReproMetaNilRun(t *testing.T) {
