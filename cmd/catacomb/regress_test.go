@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -23,96 +22,13 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
-type seedRun struct {
-	session    string
-	labels     string
-	tools      int
-	isError    bool
-	tokens     int64
-	durationMS int64
-	cwd        string
-}
-
-func stampObs(obs []model.Observation, at time.Time, labels, cwd string) []model.Observation {
-	for i := range obs {
-		obs[i].EventTime = at
-		obs[i].ObservedAt = at
-		if labels == "" && cwd == "" {
-			continue
-		}
-		if obs[i].Attrs == nil {
-			obs[i].Attrs = map[string]any{}
-		}
-		if labels != "" {
-			obs[i].Attrs["catacomb.labels"] = labels
-		}
-		if cwd != "" {
-			obs[i].Attrs["cwd"] = cwd
-		}
-	}
-	return obs
-}
-
-func seedRegressDB(t *testing.T, runs []seedRun) string {
+func seedRegressDB(t *testing.T) string {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "r.db")
 	s, err := store.OpenSQLite(dbPath)
 	require.NoError(t, err)
-	var seq uint64
-	next := func() uint64 { seq++; return seq }
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	var all []model.Observation
-	for i, r := range runs {
-		execID := fmt.Sprintf("exec-%03d", i)
-		end := t0.Add(time.Duration(r.durationMS) * time.Millisecond)
-
-		mk := func(source model.Source, kind string, corr model.Correlation, attrs map[string]any) model.Observation {
-			s := next()
-			return model.Observation{
-				ObsID: fmt.Sprintf("obs-%s-%d", execID, s), RunID: r.session, ExecutionID: execID,
-				Source: source, Kind: kind, Correlation: corr, Attrs: attrs, Seq: s,
-			}
-		}
-		msgID := "m-" + r.session
-
-		ss := []model.Observation{mk(model.SourceHook, "session_start", model.Correlation{SessionID: r.session}, nil)}
-		all = append(all, stampObs(ss, t0, r.labels, r.cwd)...)
-
-		turn := []model.Observation{mk(model.SourceStreamJSON, "assistant_turn", model.Correlation{SessionID: r.session, MessageID: msgID}, map[string]any{"model": "claude-3", "tokens_in": r.tokens, "tokens_out": r.tokens})}
-		for j := 0; j < r.tools; j++ {
-			toolID := fmt.Sprintf("tu-%s-%d", r.session, j)
-			turn = append(turn, mk(model.SourceStreamJSON, "assistant_tool_use", model.Correlation{SessionID: r.session, MessageID: msgID, ToolUseID: toolID}, map[string]any{"name": "Bash"}))
-		}
-		all = append(all, stampObs(turn, t0, r.labels, r.cwd)...)
-
-		status := string(model.StatusOK)
-		if r.isError {
-			status = string(model.StatusError)
-		}
-		var res []model.Observation
-		for j := 0; j < r.tools; j++ {
-			toolID := fmt.Sprintf("tu-%s-%d", r.session, j)
-			res = append(res, mk(model.SourceStreamJSON, "tool_result", model.Correlation{SessionID: r.session, ToolUseID: toolID}, map[string]any{"status": status}))
-		}
-		all = append(all, stampObs(res, t0, r.labels, r.cwd)...)
-
-		se := []model.Observation{mk(model.SourceHook, "session_end", model.Correlation{SessionID: r.session}, map[string]any{"reason": "clear"})}
-		all = append(all, stampObs(se, end, r.labels, r.cwd)...)
-	}
-	require.NoError(t, s.Persist(all, nil, nil))
 	require.NoError(t, s.Close())
 	return dbPath
-}
-
-func baseCandRuns() []seedRun {
-	runs := make([]seedRun, 0, 10)
-	for i := 0; i < 5; i++ {
-		runs = append(runs,
-			seedRun{session: fmt.Sprintf("base-%d", i), labels: "variant=base", tools: 1, tokens: 100, durationMS: 1000},
-			seedRun{session: fmt.Sprintf("cand-%d", i), labels: "variant=cand", tools: 1, tokens: 100, durationMS: 1000},
-		)
-	}
-	return runs
 }
 
 func openStore(s store.Store) storeOpener {
@@ -121,7 +37,7 @@ func openStore(s store.Store) storeOpener {
 
 func seedV1RegressDB(t *testing.T) string {
 	t.Helper()
-	dbPath := seedRegressDB(t, baseCandRuns())
+	dbPath := seedRegressDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE baselines")
@@ -134,7 +50,7 @@ func seedV1RegressDB(t *testing.T) string {
 
 func seedV2RegressDB(t *testing.T) string {
 	t.Helper()
-	dbPath := seedRegressDB(t, baseCandRuns())
+	dbPath := seedRegressDB(t)
 	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
@@ -148,7 +64,7 @@ func seedV2RegressDB(t *testing.T) string {
 
 func seedCurrentVersionDropTable(t *testing.T, table string) string {
 	t.Helper()
-	dbPath := seedRegressDB(t, baseCandRuns())
+	dbPath := seedRegressDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec("DROP TABLE " + table)

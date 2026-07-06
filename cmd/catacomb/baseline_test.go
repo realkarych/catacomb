@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
-	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
@@ -136,37 +135,7 @@ func TestBaselineSetRequiresRunsDir(t *testing.T) {
 
 type fakeStore struct{}
 
-func (f *fakeStore) Persist([]model.Observation, []*model.Node, []*model.Edge) error { return nil }
-
 func (f *fakeStore) Close() error { return nil }
-
-func (f *fakeStore) AppendDeltas(model.Observation, []reduce.GraphDelta) error { return nil }
-
-func (f *fakeStore) MaxSeq() (uint64, error) { return 0, nil }
-
-func (f *fakeStore) ObservationsSince(uint64) ([]model.Observation, error) { return nil, nil }
-
-func (f *fakeStore) ObservationsForExecution(string) ([]model.Observation, error) { return nil, nil }
-
-func (f *fakeStore) UpsertRun(model.Run) error { return nil }
-
-func (f *fakeStore) ListOpenRuns() ([]model.Run, error) { return nil, nil }
-
-func (f *fakeStore) Runs() ([]model.Run, error) { return nil, nil }
-
-func (f *fakeStore) Quarantine(model.QuarantineRecord) error { return nil }
-
-func (f *fakeStore) QuarantineCount() (int64, error) { return 0, nil }
-
-func (f *fakeStore) UpsertTailCursor(model.TailCursor) error { return nil }
-
-func (f *fakeStore) LoadTailCursors() ([]model.TailCursor, error) { return nil, nil }
-
-func (f *fakeStore) UpsertAnnotation(model.Annotation) error { return nil }
-
-func (f *fakeStore) AnnotationsForExecution(string) ([]model.Annotation, error) { return nil, nil }
-
-func (f *fakeStore) MoveAnnotations(string, string, string) error { return nil }
 
 func (f *fakeStore) UpsertBaseline(model.Baseline) error { return nil }
 

@@ -126,7 +126,7 @@ func TestTrendsNarrowedTable(t *testing.T) {
 }
 
 func TestTrendsMetricValidation(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns())
+	dbPath := seedRegressDB(t)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "golden", "--db", dbPath, "--metric", "bogus"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
@@ -135,7 +135,7 @@ func TestTrendsMetricValidation(t *testing.T) {
 }
 
 func TestTrendsUnknownBaseline(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns())
+	dbPath := seedRegressDB(t)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "nope", "--db", dbPath}, &out, &errBuf)
 	assert.Equal(t, 2, code)
@@ -233,7 +233,7 @@ func TestTrendsStoreMissing(t *testing.T) {
 }
 
 func TestTrendsGetBaselineError(t *testing.T) {
-	dbPath := seedRegressDB(t, baseCandRuns())
+	dbPath := seedRegressDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO baselines(name, body) VALUES('x','not-json')`)
