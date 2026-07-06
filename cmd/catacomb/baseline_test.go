@@ -328,6 +328,34 @@ func TestBaselineSetRunsDirScanError(t *testing.T) {
 	assert.Contains(t, err.Error(), "runs-dir")
 }
 
+func TestBaselineSetRunsDirCreatesStoreOnFreshMachine(t *testing.T) {
+	runsDir := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "fresh", "catacomb.db")
+
+	var buf bytes.Buffer
+	require.NoError(t, runBaselineSet(&buf, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, runsDir))
+	assert.Contains(t, buf.String(), `baseline "golden" set: 2 runs`)
+
+	_, statErr := os.Stat(dbPath)
+	require.NoError(t, statErr)
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	b, ok, err := s.GetBaseline("golden")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"base-0", "base-1"}, b.RunIDs)
+}
+
+func TestBaselineSetRunsDirOpenError(t *testing.T) {
+	runsDir := evidenceRoot(t)
+	failing := func(string) (store.Store, error) { return nil, errors.New("boom-open") }
+	err := runBaselineSet(io.Discard, failing, newPricer, filepath.Join(t.TempDir(), "x.db"), "golden", []string{"variant=base"}, runsDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom-open")
+}
+
 func TestBaselineSetStorePathCarriesStamps(t *testing.T) {
 	dbPath := seedRegressDB(t, labeledRuns())
 	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, ""))

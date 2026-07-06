@@ -86,7 +86,7 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 	if err := validateLabelTerms(labels); err != nil {
 		return operational(err)
 	}
-	s, err := openReadStore(open, dbPath)
+	s, err := openBaselineStore(open, dbPath, runsDir)
 	if err != nil {
 		return operational(err)
 	}
@@ -103,6 +103,13 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 	}
 	fmt.Fprintf(out, "baseline %q set: %d runs\n", name, len(ids))
 	return nil
+}
+
+func openBaselineStore(open storeOpener, dbPath, runsDir string) (store.Store, error) {
+	if runsDir != "" {
+		return openWriteStore(open, dbPath)
+	}
+	return openReadStore(open, dbPath)
 }
 
 func resolveBaselineRuns(s store.Store, mkPricer func() reduce.Pricer, name string, selector map[string]string, runsDir string) ([]string, map[string]*model.ReproMeta, error) {

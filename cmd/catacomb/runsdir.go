@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,22 +12,23 @@ import (
 	"github.com/realkarych/catacomb/evidence"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
+	"github.com/realkarych/catacomb/store"
 )
 
-func resolveSelectorRunsDir(runsDir string, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, error) {
+func resolveSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, model.Baseline, error) {
 	kind, val, err := parseSelector(sel)
 	if err != nil {
-		return nil, operational(err)
+		return nil, model.Baseline{}, operational(err)
 	}
 	if kind == selectorName {
-		return nil, operational(errors.New("name: selectors require the store; use label: with --runs-dir (baselines migrate in PV-2)"))
+		return resolveNameSelectorRunsDir(errOut, dbPath, runsDir, pricer, val)
 	}
 	if verr := validateLabelTerms(strings.Split(val, ",")); verr != nil {
-		return nil, operational(verr)
+		return nil, model.Baseline{}, operational(verr)
 	}
 	runs, err := evidence.ScanRuns(runsDir)
 	if err != nil {
-		return nil, operational(fmt.Errorf("regress --runs-dir: %w", err))
+		return nil, model.Baseline{}, operational(fmt.Errorf("regress --runs-dir: %w", err))
 	}
 	want := model.ParseLabels(val)
 	var group []aggregate.RunGraph
@@ -36,12 +38,58 @@ func resolveSelectorRunsDir(runsDir string, pricer reduce.Pricer, sel string) ([
 		}
 		rg, rerr := evidenceRunGraph(r.Dir, r.Meta, pricer)
 		if rerr != nil {
-			return nil, operational(rerr)
+			return nil, model.Baseline{}, operational(rerr)
 		}
 		group = append(group, rg)
 	}
 	if len(group) == 0 {
-		return nil, operational(fmt.Errorf("regress selector %q: %w", sel, ErrEmptyGroup))
+		return nil, model.Baseline{}, operational(fmt.Errorf("regress selector %q: %w", sel, ErrEmptyGroup))
+	}
+	return group, model.Baseline{}, nil
+}
+
+func resolveNameSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, model.Baseline, error) {
+	s, err := openReadStore(store.OpenSQLiteReadOnly, dbPath)
+	if err != nil {
+		return nil, model.Baseline{}, operational(err)
+	}
+	defer func() { _ = s.Close() }()
+	b, ok, err := s.GetBaseline(name)
+	if err != nil {
+		if errors.Is(err, store.ErrSchemaOutdated) {
+			return nil, model.Baseline{}, operational(store.ErrSchemaOutdated)
+		}
+		return nil, model.Baseline{}, operational(fmt.Errorf("regress get baseline %q: %w", name, err))
+	}
+	if !ok {
+		return nil, model.Baseline{}, operational(fmt.Errorf("%w: %q", ErrBaselineNotFound, name))
+	}
+	if b.RunsDir != "" && b.RunsDir != runsDir {
+		fmt.Fprintf(errOut, "warning: baseline %q recorded runs-dir %q; using --runs-dir %q\n", name, b.RunsDir, runsDir)
+	}
+	group, err := runGroupFromDirs(runsDir, name, b.RunIDs, pricer)
+	if err != nil {
+		return nil, model.Baseline{}, err
+	}
+	if len(group) == 0 {
+		return nil, model.Baseline{}, operational(fmt.Errorf("regress name:%s: %w", name, ErrEmptyGroup))
+	}
+	return group, b, nil
+}
+
+func runGroupFromDirs(runsDir, name string, ids []string, pricer reduce.Pricer) ([]aggregate.RunGraph, error) {
+	group := make([]aggregate.RunGraph, 0, len(ids))
+	for _, id := range ids {
+		dir := filepath.Join(runsDir, id)
+		m, err := evidence.ReadMeta(dir)
+		if err != nil {
+			return nil, operational(fmt.Errorf("regress name:%s: run %q dir %q: %w", name, id, dir, err))
+		}
+		rg, err := evidenceRunGraph(dir, m, pricer)
+		if err != nil {
+			return nil, operational(fmt.Errorf("regress name:%s: run %q dir %q: %w", name, id, dir, err))
+		}
+		group = append(group, rg)
 	}
 	return group, nil
 }

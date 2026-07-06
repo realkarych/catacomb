@@ -470,6 +470,35 @@ func TestRegressNameSelectorFewerRunsWarns(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "resolved 1 < stored 2")
 }
 
+func TestRegressNameSelectorStampsZeroStrictRefuses(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertBaseline(model.Baseline{Name: "golden", RunIDs: []string{"base-0"}}))
+	require.NoError(t, s.Close())
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--db", dbPath, "--strict", "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "no version stamps")
+}
+
+func TestRegressNameSelectorStampsMismatchStrictRefuses(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertBaseline(model.Baseline{
+		Name: "golden", RunIDs: []string{"base-0"},
+		Stamps: model.Stamps{CatacombVersion: "old", StepKeyScheme: "stepkey/v1"},
+	}))
+	require.NoError(t, s.Close())
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--db", dbPath, "--strict", "--baseline", "name:golden", "--candidate", "label:variant=cand"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "version stamps differ")
+}
+
 func TestParseAnnotationFlags(t *testing.T) {
 	specs, keys, err := parseAnnotationFlags([]string{"deepeval.tool_correctness"})
 	require.NoError(t, err)
