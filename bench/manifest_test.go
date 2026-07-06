@@ -70,6 +70,44 @@ func TestManifestEntryMissingCheckpointsJSON(t *testing.T) {
 	assert.NotContains(t, string(without), "missing_checkpoints")
 }
 
+func TestManifestEntryOfflineFieldsJSON(t *testing.T) {
+	cost := 0.42
+	with := bench.ManifestEntry{RunID: "r", CostUSD: &cost, EvidenceDir: "/runs/r"}
+	data, err := json.Marshal(with)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"cost_usd":0.42`)
+	assert.Contains(t, string(data), `"evidence_dir":"/runs/r"`)
+
+	var back bench.ManifestEntry
+	require.NoError(t, json.Unmarshal(data, &back))
+	require.NotNil(t, back.CostUSD)
+	assert.InDelta(t, 0.42, *back.CostUSD, 1e-9)
+	assert.Equal(t, "/runs/r", back.EvidenceDir)
+
+	without, err := json.Marshal(bench.ManifestEntry{RunID: "r"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(without), "cost_usd")
+	assert.NotContains(t, string(without), "evidence_dir")
+}
+
+func TestManifestOfflineRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.jsonl")
+	m := bench.Manifest{Path: path}
+	cost := 1.25
+	e := bench.ManifestEntry{
+		RunID: "bench-b-t1-base-r1", Task: "t1", Variant: "base", Rep: 1,
+		CostUSD: &cost, EvidenceDir: "/runs/bench-b-t1-base-r1", BasketHash: "h",
+		FinishedAt: time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC),
+	}
+	require.NoError(t, m.Append(e))
+	done, err := m.Completed()
+	require.NoError(t, err)
+	got := done["bench-b-t1-base-r1"]
+	require.NotNil(t, got.CostUSD)
+	assert.InDelta(t, 1.25, *got.CostUSD, 1e-9)
+	assert.Equal(t, "/runs/bench-b-t1-base-r1", got.EvidenceDir)
+}
+
 func TestManifestCompletedLastWins(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.jsonl")
 	m := bench.Manifest{Path: path}
