@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -215,6 +216,20 @@ func TestExportRedactsSecretBearingTranscript(t *testing.T) {
 	out := buf.String()
 	assert.NotContains(t, out, "kesha_dev_password")
 	assert.Contains(t, out, "‹redacted:connection-string›")
+}
+
+func TestExportMissingInputIsOperational(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := run([]string{"export", filepath.Join(t.TempDir(), "nope.jsonl")}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "export input")
+}
+
+func TestExportUnknownSinkIsOperational(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := run([]string{"export", "testdata/session.jsonl", "--to", "otlp"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "unknown export format")
 }
 
 func TestExportCmdWired(t *testing.T) {

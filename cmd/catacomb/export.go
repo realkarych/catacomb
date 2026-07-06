@@ -27,7 +27,7 @@ func newExportCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, positional []string) error {
 			a.input = positional[0]
-			return runExport(cmd.OutOrStdout(), a)
+			return operational(runExport(cmd.OutOrStdout(), a))
 		},
 	}
 	cmd.Flags().StringVar(&a.to, "to", "jsonl", "export format: jsonl")

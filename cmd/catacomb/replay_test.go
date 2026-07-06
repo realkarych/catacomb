@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,4 +90,20 @@ func TestReplayCommandError(t *testing.T) {
 	root := newRootCmd()
 	root.SetArgs([]string{"replay", filepath.Join(t.TempDir(), "nope.jsonl")})
 	require.Error(t, root.Execute())
+}
+
+func TestReplayMissingInputIsOperational(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := run([]string{"replay", filepath.Join(t.TempDir(), "nope.jsonl")}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "open")
+}
+
+func TestReplayMalformedInputIsOperational(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "bad.jsonl")
+	require.NoError(t, os.WriteFile(bad, []byte("{not json}\n"), 0o600))
+	var out, errBuf bytes.Buffer
+	code := run([]string{"replay", bad}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.NotEmpty(t, errBuf.String())
 }

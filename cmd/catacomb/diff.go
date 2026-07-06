@@ -62,10 +62,10 @@ func newDiffCmd() *cobra.Command {
 			args.b = positional[1]
 			result, err := runDiff(args)
 			if err != nil {
-				return err
+				return operational(err)
 			}
 			if args.json {
-				return writeDiffJSON(cmd, result)
+				return operational(writeDiffJSON(cmd, result))
 			}
 			renderDiff(cmd, result)
 			return nil

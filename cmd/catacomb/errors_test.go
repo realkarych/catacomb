@@ -19,6 +19,10 @@ func TestRenderErrDiffInput(t *testing.T) {
 	assert.Equal(t, wrapped.Error(), renderErr(wrapped))
 }
 
+func TestOperationalNilPassesThrough(t *testing.T) {
+	assert.Nil(t, operational(nil))
+}
+
 func TestRenderErrOperationalKeepsMessage(t *testing.T) {
 	err := operational(fmt.Errorf("regress name:g: run %q dir %q: %w", "ghost-1", "/runs/ghost-1", os.ErrNotExist))
 	assert.Equal(t, err.Error(), renderErr(err))

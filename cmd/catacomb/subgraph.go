@@ -28,12 +28,12 @@ func newSubgraphCmd() *cobra.Command {
 			a.input = positional[0]
 			nodes, edges, err := runSubgraph(a)
 			if err != nil {
-				return err
+				return operational(err)
 			}
 			if a.json {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{"nodes": nodes, "edges": edges})
+				return operational(enc.Encode(map[string]any{"nodes": nodes, "edges": edges}))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "nodes: %d  edges: %d\n", len(nodes), len(edges))
 			for _, n := range nodes {

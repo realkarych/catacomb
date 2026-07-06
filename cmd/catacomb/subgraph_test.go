@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -59,4 +61,18 @@ func TestRunSubgraphMissingFile(t *testing.T) {
 func TestRunSubgraphEmptySpec(t *testing.T) {
 	_, _, err := runSubgraph(subgraphArgs{input: "testdata/session_marked.jsonl"})
 	assert.ErrorIs(t, err, subgraph.ErrInvalidSelector)
+}
+
+func TestSubgraphMissingInputIsOperational(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := run([]string{"subgraph", "--phase", "plan", filepath.Join(t.TempDir(), "nope.jsonl")}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.NotEmpty(t, errBuf.String())
+}
+
+func TestSubgraphUnknownPhaseIsOperational(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := run([]string{"subgraph", "--phase", "ghost", "testdata/session_marked.jsonl"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "phase not found")
 }

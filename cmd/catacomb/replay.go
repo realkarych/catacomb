@@ -32,7 +32,7 @@ JSONL snapshot.`,
 			args.input = positional[0]
 			g, err := runReplay(args)
 			if err != nil {
-				return err
+				return operational(err)
 			}
 			cmd.Printf("replayed %s -> %d nodes, %d edges\n", args.input, len(g.Nodes), len(g.Edges))
 			return nil

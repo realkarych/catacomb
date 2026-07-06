@@ -17,7 +17,12 @@ func (e *operationalError) Error() string { return e.err.Error() }
 
 func (e *operationalError) Unwrap() error { return e.err }
 
-func operational(err error) error { return &operationalError{err: err} }
+func operational(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &operationalError{err: err}
+}
 
 func renderErr(err error) string {
 	return err.Error()

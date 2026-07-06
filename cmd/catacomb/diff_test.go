@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -76,6 +77,22 @@ func TestDiffCommandErrorPropagated(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDiffInput))
+}
+
+func TestDiffMissingInputIsOperational(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := run([]string{"diff", filepath.Join(t.TempDir(), "nope.jsonl"), "testdata/session.jsonl"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.NotEmpty(t, errBuf.String())
+}
+
+func TestDiffMalformedInputIsOperational(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "bad.jsonl")
+	require.NoError(t, os.WriteFile(bad, []byte("{not json}\n"), 0o600))
+	var out, errBuf bytes.Buffer
+	code := run([]string{"diff", "testdata/session.jsonl", bad}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.NotEmpty(t, errBuf.String())
 }
 
 func TestDiffCommandShowsAddedRemoved(t *testing.T) {
