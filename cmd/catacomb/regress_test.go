@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -818,4 +819,112 @@ func TestRegressRecordAppendErrorOverridesVerdict(t *testing.T) {
 	require.ErrorAs(t, err, &opErr)
 	assert.NotErrorIs(t, err, errRegressionDetected)
 	assert.Contains(t, err.Error(), "boom-append")
+}
+
+func scoresEvidenceRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for i := 0; i < 3; i++ {
+		writeEvidenceRun(t, root, fmt.Sprintf("base-%d", i), "base", "session.jsonl")
+		writeEvidenceRun(t, root, fmt.Sprintf("cand-%d", i), "cand", "session.jsonl")
+	}
+	return root
+}
+
+func fixtureStepKey(t *testing.T) string {
+	t.Helper()
+	g, err := loadGraphOffline(filepath.Join("testdata", "session.jsonl"), nil, newExecutionID(), newPricer(), nil)
+	require.NoError(t, err)
+	nodes, _ := g.Snapshot()
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	for _, n := range nodes {
+		if n.StepKey != "" {
+			return n.StepKey
+		}
+	}
+	t.Fatal("fixture has no step-key-eligible node")
+	return ""
+}
+
+func TestRegressScoresOfflineAnnotationRegression(t *testing.T) {
+	root := scoresEvidenceRoot(t)
+	sk := fixtureStepKey(t)
+	lines := make([]string, 0, 6)
+	for i := 0; i < 3; i++ {
+		lines = append(lines,
+			fmt.Sprintf(`{"step_key":%q,"key":"owner.quality","value":1,"run_id":"base-%d"}`, sk, i),
+			fmt.Sprintf(`{"step_key":%q,"key":"owner.quality","value":0,"run_id":"cand-%d"}`, sk, i),
+		)
+	}
+	scores := writeScoresFile(t, strings.Join(lines, "\n"))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", filepath.Join(t.TempDir(), "nope.db"),
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--scores", scores, "--annotation", "owner.quality:higher-better",
+	}, &out, &errBuf)
+	assert.Equal(t, 1, code, out.String()+errBuf.String())
+	assert.Contains(t, out.String(), "overall regression")
+	assert.Contains(t, out.String(), "ann:owner.quality")
+	assert.Empty(t, errBuf.String())
+}
+
+func TestRegressScoresOfflineAvsAOK(t *testing.T) {
+	root := scoresEvidenceRoot(t)
+	sk := fixtureStepKey(t)
+	scores := writeScoresFile(t, fmt.Sprintf(`{"step_key":%q,"key":"owner.quality","value":1}`, sk))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", filepath.Join(t.TempDir(), "nope.db"),
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--scores", scores, "--annotation", "owner.quality:higher-better",
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, out.String()+errBuf.String())
+	assert.Contains(t, out.String(), "overall ok")
+	assert.Empty(t, errBuf.String())
+}
+
+func TestRegressScoresOfflineBadFileExitTwo(t *testing.T) {
+	root := evidenceRoot(t)
+	scores := writeScoresFile(t, `{"step_key":"sk","key":"owner.quality","value":1}`+"\n"+"{bad")
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", filepath.Join(t.TempDir(), "nope.db"),
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--scores", scores,
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "line 2")
+}
+
+func TestRegressScoresStorePathSmoke(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(5, false, 100))
+	scores := writeScoresFile(t, `{"step_key":"ghost","key":"owner.quality","value":1}`)
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--db", dbPath,
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--scores", scores,
+	}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, out.String(), "overall ok")
+	assert.Contains(t, errBuf.String(), "matched no node")
+}
+
+func TestRegressScoresStorePathBadFileExitTwo(t *testing.T) {
+	dbPath := seedRegressDB(t, baseCandRuns(3, false, 100))
+	scores := writeScoresFile(t, "{bad")
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--db", dbPath,
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--scores", scores,
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "line 1")
 }

@@ -33,6 +33,7 @@ type regressFlags struct {
 	strict      bool
 	record      bool
 	annotations []string
+	scores      string
 	thresholds  regress.Thresholds
 }
 
@@ -64,6 +65,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat insufficient data as failure (exit 1)")
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
 	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
+	cmd.Flags().StringVar(&f.scores, "scores", "", "JSONL file of external scores applied as node annotations before comparison; one {\"step_key\",\"key\",\"value\"[,\"run_id\"]} object per line")
 	cmd.Flags().IntVar(&f.thresholds.MinSupport, "min-support", def.MinSupport, "minimum runs per group for a trusted comparison")
 	cmd.Flags().Float64Var(&f.thresholds.PresenceDelta, "presence-delta", def.PresenceDelta, "presence rate delta threshold")
 	cmd.Flags().Float64Var(&f.thresholds.ErrorRateDelta, "error-delta", def.ErrorRateDelta, "error rate delta threshold")
@@ -116,6 +118,9 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	if len(candGroup) == 0 {
 		return operational(fmt.Errorf("regress candidate %q: %w", f.candidate, ErrEmptyGroup))
 	}
+	if serr := applyScoresFile(errOut, f.scores, baseGroup, candGroup); serr != nil {
+		return serr
+	}
 
 	rep, err := regressReport(out, errOut, f, specs, keys, baseGroup, candGroup)
 	if err != nil {
@@ -145,6 +150,9 @@ func runRegressRunsDir(out, errOut io.Writer, open storeOpener, mkPricer func() 
 	candGroup, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.candidate)
 	if err != nil {
 		return err
+	}
+	if serr := applyScoresFile(errOut, f.scores, baseGroup, candGroup); serr != nil {
+		return serr
 	}
 	rep, err := regressReport(out, errOut, f, specs, keys, baseGroup, candGroup)
 	if err != nil {
@@ -284,11 +292,15 @@ func parseAnnotationSpec(v string) (regress.AnnotationSpec, error) {
 	if key == "" {
 		return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: empty key", v)
 	}
-	owner, rest, found := strings.Cut(key, ".")
-	if !found || owner == "" || rest == "" || strings.Contains(rest, ".") {
+	if !validAnnotationKey(key) {
 		return regress.AnnotationSpec{}, fmt.Errorf("invalid --annotation %q: key %q must be owner.key", v, key)
 	}
 	return regress.AnnotationSpec{Key: key, HigherBetter: higherBetter}, nil
+}
+
+func validAnnotationKey(key string) bool {
+	owner, rest, found := strings.Cut(key, ".")
+	return found && owner != "" && rest != "" && !strings.Contains(rest, ".")
 }
 
 func warnUnfiredAnnotations(errOut io.Writer, specs []regress.AnnotationSpec, base, cand aggregate.Report) {
