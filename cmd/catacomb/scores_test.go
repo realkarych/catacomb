@@ -70,6 +70,20 @@ func TestScoresLoadFileAbsent(t *testing.T) {
 	assert.Contains(t, err.Error(), "scores")
 }
 
+func TestRunRegressScoresMissingFileNamesPath(t *testing.T) {
+	root := evidenceRoot(t)
+	missing := filepath.Join(t.TempDir(), "typo.jsonl")
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root,
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--scores", missing,
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), missing)
+	assert.NotContains(t, errBuf.String(), "daemon")
+}
+
 func scoreGraph(runID string, stepKeys ...string) aggregate.RunGraph {
 	nodes := make([]*model.Node, 0, len(stepKeys))
 	for i, k := range stepKeys {

@@ -215,6 +215,23 @@ func TestRunsDirNameSelectorMissingRunDir(t *testing.T) {
 	require.ErrorAs(t, err, &opErr)
 }
 
+func TestRunRegressRunsDirDeletedRunDirNamesRunAndDir(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, newPricer, dbPath, "golden", []string{"variant=base"}, root))
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "base-1")))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath,
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), `run "base-1"`)
+	assert.Contains(t, errBuf.String(), filepath.Join(root, "base-1"))
+	assert.NotContains(t, errBuf.String(), "daemon")
+}
+
 func TestRunsDirNameSelectorBrokenEvidence(t *testing.T) {
 	root := evidenceRoot(t)
 	broken := evidence.Meta{RunID: "broken", SessionID: "s1", Labels: map[string]string{"variant": "base"}}
