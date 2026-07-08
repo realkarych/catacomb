@@ -1,125 +1,54 @@
 # Configuration
 
-Catacomb reads settings from four layers applied in this order — later layers win:
+Catacomb has no config file and no daemon to configure. Every setting is a command-line
+flag with a sensible default; the only environment variables are the two `bench` uses to
+tag runs.
 
-1. Built-in defaults.
-2. The config file (`~/.catacomb/config.yaml` by default; override with `--config <path>`).
-3. Environment variables.
-4. Command-line flags.
+## Default paths
 
-Pass `--config` to `catacomb daemon` to use a non-default path. (`catacomb up` starts the daemon using the default config path; it does not accept `--config` itself.)
+| Setting | Default | Used by | Override |
+| --- | --- | --- | --- |
+| Claude projects dir (transcripts) | `~/.claude/projects` | `bench` | `--projects-dir` |
+| Evidence runs dir | `~/.catacomb/runs` | `bench`, `regress`, `baseline set` | `--runs-dir` |
+| SQLite store | `~/.catacomb/catacomb.db` | `baseline`, `regress` (`name:`/`--record`), `trends` | `--db` |
+| Bench manifest | `<basket>.manifest.jsonl` | `bench` | `--manifest` |
 
-## Config file schema
-
-The file is YAML. All keys are optional; omit any section to accept its defaults.
-
-```yaml
-daemon:
-  discovery: ""                 # discovery file path (else resolved, see below)
-  reaper_window: 30m            # idle window before a run is abandoned
-  max_shards: 4096              # soft cap on in-memory execution shards
-  allow_payload_access: false   # enable the payload content endpoint
-  allow_annotations: false      # enable the annotation write endpoint
-store:
-  backend: sqlite               # sqlite | memory | postgres
-  sqlite:
-    path: ~/.catacomb/catacomb.db
-  postgres:
-    dsn: ""                     # when backend: postgres
-sources:
-  hooks:       { enabled: true }
-  otel:        { enabled: true }
-  stream_json: { enabled: true }
-  jsonl:
-    enabled: false
-    transcript_dir: ~/.claude/projects
-    exclude: []                 # globs never tailed (db + cwd always excluded)
-sinks:                          # zero or more live export sinks
-  - type: postgres              # postgres|neo4j|otlp|jsonl
-    dsn: "postgres://..."
-  - type: neo4j
-    uri: "bolt://localhost:7687"
-    user: "neo4j"
-    password: "..."
-  - type: otlp
-    endpoint: "grpc://host:4317"  # or http(s)://...
-    project: "catacomb"
-  - type: jsonl
-    path: "/path/out.jsonl"
-payloads:
-  mode: redact                  # redact | refs | all
-  max_bytes: 262144             # per-side payload cap; overflow becomes a typed ref
-```
-
-## Store backends
-
-The default backend is **sqlite**, writing to `~/.catacomb/catacomb.db` as configured in `store.sqlite.path`. The `--db` flag overrides this path; its default is `~/.catacomb/catacomb.db` (same as `store.sqlite.path`).
-
-The **memory** backend holds the graph only in process memory. Nothing is persisted across restarts; it is intended for testing or ephemeral use.
-
-**postgres** as a primary store (`backend: postgres`) may not be available in all builds (`ErrBackendNotImplemented`). Use sqlite as the primary store and configure postgres as a sink instead — the sink path is fully supported and streams deltas as they happen.
-
-## Sinks
-
-The `sinks:` list defines live export destinations. Deltas are forwarded in real time as the graph grows. Each entry requires its sink-specific field:
-
-- `postgres` — `dsn`
-- `neo4j` — `uri`, `user`, `password`
-- `otlp` — `endpoint` (`grpc://` or `http(s)://`)
-- `jsonl` — `path`
-
-Duplicates are rejected at startup. For one-shot export from the stored database, see the `catacomb export` command in [`cli.md`](cli.md).
-
-## Payload redaction and caps
-
-`payloads.mode` controls what payload content is persisted
-([ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md)):
-`redact` (default) stores redacted payloads; `refs` stores only typed
-`‹ref:len,hash›` references plus post-redaction hashes; `all` stores raw
-payloads (startup warning; serve/export-time redaction still applies;
-oversized sides are still capped to typed refs).
-`payloads.max_bytes` (default 262144) caps each payload side after redaction;
-oversized sides are replaced by a typed reference. `max_bytes: 0` means the
-default 262144, not zero. `catacomb replay` always
-uses the defaults (`redact`/262144). See
-[Privacy and operations](privacy-and-operations.md) for the redaction rules
-and the at-rest guarantees.
-
-## Discovery file
-
-The discovery file is a small JSON file written by the daemon so that clients — hooks, `catacomb env`, `catacomb status`, and others — can locate the running daemon without a fixed port.
-
-Resolution order (first path that can be written wins):
-
-1. `$CATACOMB_DISCOVERY`
-2. `$XDG_RUNTIME_DIR/catacomb/daemon.json`
-3. `~/.catacomb/run/daemon.json`
-4. `/tmp/catacomb/daemon.json`
-
-The file and its parent directory are created with permissions 0600/0700. It contains: `Addr`, `Token`, `GRPCAddr`, `Pid`, `StartedAt`, `TranscriptDir`, `DBPath`, `AllowPayloadAccess`, `AllowAnnotations`. The daemon removes it on shutdown or `catacomb down`.
+When the home directory cannot be resolved, the path-flag defaults are empty and the
+commands that need them error out with exit `2` until the flags are set explicitly.
 
 ## Environment variables
 
 | Variable | Effect |
 | --- | --- |
-| `CATACOMB_DISCOVERY` | Path to the discovery file. Clients and installed hooks read this to locate the daemon. |
-| `CATACOMB_RUN_ID` | Groups multiple sessions under one run id. Set by `catacomb run --run-id` (and inherited by hooks); the forwarders send it on `X-Catacomb-Run-ID` and the daemon tags every event with it. Sessions sharing the value form one run (folded at read time): status is the most severe/live across sessions, `ended_at` is the last session to end. Must match `[A-Za-z0-9._-]{1,256}`; an invalid value falls back to per-session grouping. Query with `catacomb runs --run-id <id>`. |
+| `CATACOMB_LABELS` | Comma-separated `k=v` list of ambient run labels. `bench` reads it and merges the pairs under each cell's own `basket`/`task`/`variant`/`rep` labels (cell labels win per key); the merged set is recorded in the cell's evidence `meta.json` and matched by `label:` selectors. Keys must match `[a-z0-9_.-]{1,64}`; values are capped at 256 bytes. |
+| `CATACOMB_RUN_ID` | Set *by* `bench` in each cell's child environment (alongside the merged `CATACOMB_LABELS`) to the cell's run-id, so tooling running inside the cell can correlate itself with the evidence directory. |
 
-The `OTEL_*` and `CLAUDE_CODE_*` variables are emitted by `catacomb env` and are covered in [ingestion.md](ingestion.md).
+## The store
 
-## Defaults
+The SQLite database at `--db` holds exactly two things: named **baselines**
+(`baseline set`) and the append-only **regression history** (`regress --record`,
+replayed by `trends`). Graphs are never persisted — they are rebuilt from transcripts on
+every command.
 
-| Setting | Default | Override |
-| --- | --- | --- |
-| Config file | `~/.catacomb/config.yaml` | `--config` |
-| Discovery file | `$XDG_RUNTIME_DIR/catacomb/daemon.json` → `~/.catacomb/run/daemon.json` → `/tmp/catacomb/daemon.json` | `$CATACOMB_DISCOVERY` / `--discovery` |
-| SQLite DB | `~/.catacomb/catacomb.db` | `--db` / `store.sqlite.path` |
-| Transcript tailing | off | `--transcript-dir` / `sources.jsonl` / `up --history` |
-| Payload access | off (403) | `--allow-payload-access` / `daemon.allow_payload_access` |
-| Annotations | off (403) | `--allow-annotations` / `daemon.allow_annotations` |
-| Reaper window | 30m | `--reaper-window` / `daemon.reaper_window` |
-| Max shards | 4096 | `--max-shards` / `daemon.max_shards` |
-| Payload mode | `redact` | `payloads.mode` |
-| Payload cap | 262144 bytes | `payloads.max_bytes` |
+- The store is created on first write by `baseline set` (in an offline loop that is
+  always the first store-touching command; `regress --record` requires a `name:`
+  baseline, so it never creates the store).
+- Write-path opens (`baseline set`, `baseline rm`) migrate an older on-disk schema
+  forward automatically. Read-only opens (`baseline list`, `trends`, and `regress`
+  `name:` resolution) refuse an older schema with a hint to run a write-path command,
+  and every command refuses a schema newer than the binary (upgrade catacomb).
+- The current schema version is 4.
 
-For the full CLI flags reference, see [`cli.md`](cli.md). For wiring ingestion sources, see [`ingestion.md`](ingestion.md).
+## Fixed policies
+
+Two behaviors are deliberately not configurable:
+
+- **Redaction** always runs: on the copies written into evidence dirs and on every
+  observation parsed into a graph, with payload sides capped at 256 KiB (oversized
+  content becomes a typed `‹ref:len,hash›` reference). See
+  [Privacy and operations](privacy-and-operations.md).
+- **Step-key scheme** (`stepkey/v1`) is versioned, not tunable; baselines record it as a
+  [version stamp](cli.md#baseline-version-stamps) so a scheme change is detected instead
+  of silently misaligning runs.
+
+For the full per-command flag reference, see [`cli.md`](cli.md).

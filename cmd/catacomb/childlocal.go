@@ -1,10 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 )
+
+var execCommand = exec.Command
+
+const maxObserverBuffer = 1 << 20
 
 type streamPeek struct {
 	sessionID string
@@ -26,6 +32,40 @@ func (p *streamPeek) onLine(line []byte) {
 	if e.Type == "result" && e.TotalCostUSD != nil {
 		p.costUSD = e.TotalCostUSD
 	}
+}
+
+type lineObserver struct {
+	buf     []byte
+	stopped bool
+	observe func(line []byte)
+}
+
+func (w *lineObserver) Write(p []byte) (int, error) {
+	if w.stopped {
+		return len(p), nil
+	}
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		w.observe(w.buf[:i])
+		w.buf = w.buf[i+1:]
+	}
+	if len(w.buf) > maxObserverBuffer {
+		w.buf = nil
+		w.stopped = true
+	}
+	return len(p), nil
+}
+
+func (w *lineObserver) flush() {
+	if w.stopped || len(w.buf) == 0 {
+		return
+	}
+	w.observe(w.buf)
+	w.buf = nil
 }
 
 func runChildLocal(stdout, stderr io.Writer, args []string, dir string, extraEnv []string, observe func(line []byte)) error {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,4 +74,39 @@ func TestHelperOfflineChild(t *testing.T) {
 	fmt.Println(`{"type":"system","session_id":"sess-h"}`)
 	fmt.Println(`{"type":"result","total_cost_usd":0.25}`)
 	os.Exit(0)
+}
+
+func TestLineObserverFlushesUnterminatedLine(t *testing.T) {
+	var got []string
+	w := &lineObserver{observe: func(line []byte) { got = append(got, string(line)) }}
+	n, err := w.Write([]byte("no newline here"))
+	require.NoError(t, err)
+	assert.Equal(t, len("no newline here"), n)
+	assert.Empty(t, got)
+
+	w.flush()
+	require.Len(t, got, 1)
+	assert.Equal(t, "no newline here", got[0])
+
+	w.flush()
+	assert.Len(t, got, 1)
+}
+
+func TestLineObserverOverflowStopsObserving(t *testing.T) {
+	var calls int
+	w := &lineObserver{observe: func([]byte) { calls++ }}
+	big := bytes.Repeat([]byte("a"), maxObserverBuffer+1)
+
+	n, err := w.Write(big)
+	require.NoError(t, err)
+	assert.Equal(t, len(big), n)
+	assert.Zero(t, calls)
+
+	n, err = w.Write([]byte(`{"session_id":"s1"}` + "\n"))
+	require.NoError(t, err)
+	assert.Equal(t, len(`{"session_id":"s1"}`)+1, n)
+	assert.Zero(t, calls)
+
+	w.flush()
+	assert.Zero(t, calls)
 }

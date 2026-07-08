@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -23,6 +24,8 @@ const (
 )
 
 var marshalRecord = json.Marshal
+
+var errRegressNoRunsDir = errors.New("regress: --runs-dir is required (home directory could not be resolved; set it explicitly)")
 
 type regressFlags struct {
 	baseline    string
@@ -57,10 +60,11 @@ func newRegressCmd() *cobra.Command {
 
 func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	def := regress.DefaultThresholds()
+	home, _ := os.UserHomeDir()
 	cmd.Flags().StringVar(&f.baseline, "baseline", "", "baseline selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.candidate, "candidate", "", "candidate selector: label:k=v[,k=v...] or name:<baseline>")
-	cmd.Flags().StringVar(&f.dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
-	cmd.Flags().StringVar(&f.runsDir, "runs-dir", "", "resolve selectors from evidence dirs instead of the store (offline; name: reads the baselines table, --record appends there)")
+	cmd.Flags().StringVar(&f.dbPath, "db", defaultDBPath(), "SQLite database path for name:/--record (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve selectors from: label: scans it, name: reads --db's baselines table, --record appends there")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat insufficient data as failure (exit 1)")
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
@@ -83,58 +87,13 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	if f.thresholds.Z <= 0 {
 		return operational(fmt.Errorf("regress: --z must be > 0, got %g", f.thresholds.Z))
 	}
+	if f.runsDir == "" {
+		return operational(errRegressNoRunsDir)
+	}
 	specs, keys, err := parseAnnotationFlags(f.annotations)
 	if err != nil {
 		return operational(err)
 	}
-	if f.runsDir != "" {
-		return runRegressRunsDir(out, errOut, open, mkPricer, f, specs, keys)
-	}
-	baselineName, err := recordBaselineName(f)
-	if err != nil {
-		return operational(err)
-	}
-	s, err := openReadStore(open, f.dbPath)
-	if err != nil {
-		return operational(err)
-	}
-	defer func() { _ = s.Close() }()
-
-	pricer := mkPricer()
-	baseGroup, baseline, err := resolveSelector(errOut, s, pricer, f.baseline)
-	if err != nil {
-		return err
-	}
-	if serr := checkBaselineStamps(errOut, baseline, f.strict); serr != nil {
-		return serr
-	}
-	if len(baseGroup) == 0 {
-		return operational(fmt.Errorf("regress baseline %q: %w", f.baseline, ErrEmptyGroup))
-	}
-	candGroup, _, err := resolveSelector(errOut, s, pricer, f.candidate)
-	if err != nil {
-		return err
-	}
-	if len(candGroup) == 0 {
-		return operational(fmt.Errorf("regress candidate %q: %w", f.candidate, ErrEmptyGroup))
-	}
-	if serr := applyScoresFile(errOut, f.scores, baseGroup, candGroup); serr != nil {
-		return serr
-	}
-
-	rep, err := regressReport(out, errOut, f, specs, keys, baseGroup, candGroup)
-	if err != nil {
-		return err
-	}
-	if f.record {
-		if err := appendRecord(s, baselineName, baseline.CreatedAt, f, specs, rep); err != nil {
-			return operational(err)
-		}
-	}
-	return verdictError(rep, f.strict)
-}
-
-func runRegressRunsDir(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.Pricer, f regressFlags, specs []regress.AnnotationSpec, keys []string) error {
 	baselineName, err := recordBaselineName(f)
 	if err != nil {
 		return operational(err)
@@ -331,18 +290,6 @@ func verdictError(rep regress.Report, strict bool) error {
 	return nil
 }
 
-func resolveSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, model.Baseline, error) {
-	kind, val, err := parseSelector(sel)
-	if err != nil {
-		return nil, model.Baseline{}, operational(err)
-	}
-	if kind == selectorName {
-		return resolveNameSelector(errOut, s, pricer, val)
-	}
-	group, err := resolveLabelSelector(s, pricer, val)
-	return group, model.Baseline{}, err
-}
-
 func parseSelector(sel string) (string, string, error) {
 	kind, val, found := strings.Cut(sel, ":")
 	if !found || val == "" {
@@ -352,36 +299,4 @@ func parseSelector(sel string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid selector %q: unknown prefix %q (want label: or name:)", sel, kind)
 	}
 	return kind, val, nil
-}
-
-func resolveLabelSelector(s store.Store, pricer reduce.Pricer, val string) ([]aggregate.RunGraph, error) {
-	if err := validateLabelTerms(strings.Split(val, ",")); err != nil {
-		return nil, operational(err)
-	}
-	group, err := loadRunGroup(s, pricer, model.ParseLabels(val))
-	if err != nil {
-		return nil, operational(err)
-	}
-	return group, nil
-}
-
-func resolveNameSelector(errOut io.Writer, s store.Store, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, model.Baseline, error) {
-	b, ok, err := s.GetBaseline(name)
-	if err != nil {
-		if errors.Is(err, store.ErrSchemaOutdated) {
-			return nil, model.Baseline{}, operational(store.ErrSchemaOutdated)
-		}
-		return nil, model.Baseline{}, operational(fmt.Errorf("regress get baseline %q: %w", name, err))
-	}
-	if !ok {
-		return nil, model.Baseline{}, operational(fmt.Errorf("%w: %q", ErrBaselineNotFound, name))
-	}
-	group, err := loadRunGroupByIDs(s, pricer, b.RunIDs)
-	if err != nil {
-		return nil, model.Baseline{}, operational(err)
-	}
-	if len(group) < len(b.RunIDs) {
-		fmt.Fprintf(errOut, "warning: baseline %q resolved %d < stored %d runs\n", name, len(group), len(b.RunIDs))
-	}
-	return group, b, nil
 }

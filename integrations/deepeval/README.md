@@ -16,20 +16,23 @@ both apply only to Go packages.
 
 ## Producing the input
 
-Export a session from catacomb:
+Export a session from catacomb — the input is a recorded Claude Code
+transcript (`~/.claude/projects/<project>/<session>.jsonl`) or an evidence
+directory produced by `catacomb bench` (`~/.catacomb/runs/<run-id>`):
 
 ```bash
-catacomb export --to jsonl \
-  --run <run-id> \
+catacomb export <transcript.jsonl | evidence-dir> --to jsonl \
   --out session.jsonl
 ```
 
+An evidence directory exports the whole run: the main session, its subagent
+transcripts, and the checkpoint boundary markers from `meta.json`. When the
+export contains multiple runs, pick one with `catacomb-deepeval --run`.
+
 The export includes node payload content (tool inputs and outputs,
-secret-redacted) automatically whenever the ingest source captured it — no
-flag is needed. The daemon's `--allow-payload-access` flag gates only the
-live payload HTTP endpoint, not the export. When a payload was not captured,
-tool `input_parameters` and `output` will be `null`, which limits evaluation
-to name-match mode.
+secret-redacted) automatically whenever the transcript captured it — no
+flag is needed. When a payload was not captured, tool `input_parameters`
+and `output` will be `null`, which limits evaluation to name-match mode.
 
 ## Writing expected-tools JSON
 

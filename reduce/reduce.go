@@ -5,12 +5,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/realkarych/catacomb/cdc"
 	"github.com/realkarych/catacomb/model"
 )
 
 func (g *Graph) emitNode(n *model.Node, o model.Observation) {
-	g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeUpsert, Rev: o.Seq, Node: n, RunID: o.RunID, ExecutionID: o.ExecutionID})
+	g.emit(GraphDelta{Kind: DeltaNodeUpsert, Rev: o.Seq, Node: n, RunID: o.RunID, ExecutionID: o.ExecutionID})
 }
 
 func setAgentID(n *model.Node, o model.Observation) {
@@ -53,7 +52,7 @@ func (g *Graph) Apply(o model.Observation) {
 		ended := *n.TEnd
 		r.EndedAt = &ended
 		r.EndReason = "session_ended"
-		g.emit(cdc.GraphDelta{Kind: cdc.DeltaSessionEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
+		g.emit(GraphDelta{Kind: DeltaSessionEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
 	case "user_prompt":
 		n := g.node(model.UserPromptID(o.ExecutionID, nodeKey(o.Correlation.UUID, "", o.ObsID)), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
@@ -289,7 +288,7 @@ func (g *Graph) setStructParent(o model.Observation, kind int, src, dst string) 
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, fs.structSrc, dst)
 		if old, ok := g.Edges[oldID]; ok {
 			delete(g.Edges, oldID)
-			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
+			g.emit(GraphDelta{Kind: DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
 		}
 	}
 	fs.structKind = kind
@@ -375,7 +374,7 @@ func (g *Graph) setTurnParent(o model.Observation, t *turnRef, parent string) {
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, t.parent, t.id)
 		if old, ok := g.Edges[oldID]; ok {
 			delete(g.Edges, oldID)
-			g.emit(cdc.GraphDelta{Kind: cdc.DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
+			g.emit(GraphDelta{Kind: DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
 		}
 	}
 	t.parent = parent
@@ -588,7 +587,7 @@ func (g *Graph) ensureRun(o model.Observation) {
 		started := o.EventTime
 		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
 		g.Runs[o.RunID] = r
-		g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunStarted, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
+		g.emit(GraphDelta{Kind: DeltaRunStarted, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
 	}
 	if r.Status == model.StatusAbandoned {
 		r.Status = model.StatusRunning
@@ -639,7 +638,7 @@ func (g *Graph) applyRunEnded(o model.Observation) {
 	}
 	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
 	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
-	g.emit(cdc.GraphDelta{Kind: cdc.DeltaRunEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
+	g.emit(GraphDelta{Kind: DeltaRunEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
 }
 
 func appendUnique(xs []string, x string) []string {
@@ -689,7 +688,7 @@ func (g *Graph) applyCascade(id, rootID string, status model.Status, seq uint64)
 		n.Attrs = map[string]any{}
 	}
 	n.Attrs["cancel_cause"] = rootID
-	g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
+	g.emit(GraphDelta{Kind: DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
 }
 
 func (g *Graph) closeIfOpen(id string, status model.Status, seq uint64) {
@@ -699,7 +698,7 @@ func (g *Graph) closeIfOpen(id string, status model.Status, seq uint64) {
 	}
 	if n.Status == model.StatusRunning || n.Status == model.StatusPending {
 		n.Status = resolveStatus(n.Status, status)
-		g.emit(cdc.GraphDelta{Kind: cdc.DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
+		g.emit(GraphDelta{Kind: DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
 	}
 }
 

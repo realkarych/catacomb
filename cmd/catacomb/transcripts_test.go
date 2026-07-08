@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,4 +57,10 @@ func TestResolveTranscriptsRetry(t *testing.T) {
 	require.NotEmpty(t, ts.Main)
 	_, err = resolveTranscriptsRetry(t.TempDir(), "never", 2, time.Millisecond)
 	require.Error(t, err)
+}
+
+func TestRealSleep(t *testing.T) {
+	start := time.Now()
+	realSleep(2 * time.Millisecond)
+	assert.GreaterOrEqual(t, time.Since(start), 2*time.Millisecond)
 }

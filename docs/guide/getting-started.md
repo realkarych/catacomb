@@ -1,5 +1,9 @@
 # Getting started
 
+Catacomb is an offline eval gate: you declare a basket of agent tasks, run it once per
+variant, and gate the candidate against the baseline statistically. Everything happens
+on your machine with plain files — no daemon, no service, no network.
+
 ## Install
 
 Install the latest release:
@@ -14,75 +18,84 @@ Or build from source (requires Go 1.26):
 make build        # produces bin/catacomb
 ```
 
-## Start the daemon
+Other channels (Homebrew, Docker, APT, release archives) are listed in the
+[README](../../README.md).
 
-`catacomb up` starts the daemon if it is not already running, installs hook
-entries into `./.claude/settings.json` for the current directory, and prints
-the daemon address:
+## Declare a basket
 
-```sh
-catacomb up
+A basket is a YAML matrix of `tasks × variants × reps`. Each combination is one *cell*;
+the task `cmd` must emit stream-json so catacomb can find the session:
+
+```yaml
+# checkout.yaml
+basket: checkout
+reps: 5
+tasks:
+  - id: work-task
+    cmd: ["claude", "-p", "work the checkout task", "--output-format", "stream-json"]
+variants:
+  - id: main
+  - id: candidate
+    setup: ["git checkout candidate-branch"]
 ```
 
-Open Claude Code in the same directory and run a session. The daemon captures
-the action graph as the session runs; `catacomb status` shows session and node
-counts.
-
-## Observe every project
-
-By default, `catacomb up` installs hooks for the current directory only. To
-observe sessions in every project, pass `--global`:
+## Run it
 
 ```sh
-catacomb up --global
+catacomb bench checkout.yaml
 ```
 
-This writes hook entries into `~/.claude/settings.json` so any Claude Code
-session — from any directory — is observed.
+Each cell runs as a local process. After a cell exits, catacomb resolves the session's
+transcripts under `~/.claude/projects`, rebuilds the execution graph, and writes a
+secret-redacted evidence directory to `~/.catacomb/runs/<run-id>/` plus a line in
+`checkout.yaml.manifest.jsonl`. On success it prints a copy-pasteable `regress` command.
 
-## Load past sessions
-
-Hooks only capture sessions that start after they are installed. To backfill
-sessions you have already run, pass `--history`:
+## Gate the candidate
 
 ```sh
-catacomb up --history
+catacomb regress \
+  --baseline label:basket=checkout,variant=main \
+  --candidate label:basket=checkout,variant=candidate
 ```
 
-The daemon tails `~/.claude/projects`, reads every existing transcript on
-startup, then follows new ones live. Tail cursors are persisted so restarting
-the daemon does not duplicate history.
+`regress` scans the evidence directories, aggregates each group, and compares them
+statistically — presence and error rates, duration, cost, tokens — printing a verdict
+table. The exit code is the gate: `0` ok, `1` regression, `2` operational error. Pin
+the golden group by name (`catacomb baseline set`) and add `--record` to accumulate
+history for `catacomb trends`; see [Workflows](workflows.md).
 
-Combine both flags for full coverage:
+## Wire checkpoints (recommended)
+
+Give the agent the shipped MCP marker tool so it can name phases inside a run, and
+declare the phases you expect in the basket (`checkpoints: [plan, tests.pass]`):
+
+```json
+{"mcpServers":{"catacomb":{"command":"catacomb","args":["mcp"]}}}
+```
+
+Pass that file to `claude --mcp-config`; a CLAUDE.md instruction tells the agent when
+to call `mcp__catacomb__mark`. Phases give `regress` a stable comparison axis even when
+prompts change. See [Concepts](concepts.md#phases-and-checkpoints).
+
+## Look inside a single run
 
 ```sh
-catacomb up --global --history
+catacomb replay ~/.claude/projects/<project>/<session>.jsonl   # graph summary
+catacomb diff run-a.jsonl run-b.jsonl                          # step-by-step diff
+catacomb subgraph session.jsonl --phase plan                   # one phase's subgraph
+catacomb export ~/.catacomb/runs/<run-id> --out run.jsonl      # JSONL graph snapshot
 ```
 
 ## Watch runs in a UI
 
-Catacomb ships no viewer. To watch sessions live in a UI, feed them to a
-vendor substrate through that vendor's first-party Claude Code plugin —
-Phoenix is the recommended substrate
-([ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md) §2).
-
-## Reading message content
-
-Graph responses carry a content hash — not the conversation text. Payload
-bodies are redacted on the write path before being stored. To read message and
-tool content over the API, start the daemon with `--allow-payload-access`:
-
-```sh
-catacomb daemon --allow-payload-access
-```
-
-Content is served through a token-gated endpoint that redacts once more at
-serve time. See [Privacy and operations](privacy-and-operations.md) for what is
-redacted and how.
+Catacomb ships no viewer. To watch sessions live, feed them to a vendor substrate
+through that vendor's first-party Claude Code plugin — Phoenix is the recommended
+substrate ([ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md) §2).
 
 ## Next steps
 
-- [Concepts](concepts.md) — understand the action graph and how sources are reconciled
-- [Ingestion](ingestion.md) — wire OpenTelemetry and stream-json for richer data
-- [Workflows](workflows.md) — diff sessions, set checkpoints, and export the graph
+- [Concepts](concepts.md) — the action graph, step keys, and phases
+- [Workflows](workflows.md) — baselines, recorded history, trends, and external scores
 - [CLI reference](cli.md) — all commands and flags
+- [Privacy and operations](privacy-and-operations.md) — what is redacted, where, and
+  troubleshooting

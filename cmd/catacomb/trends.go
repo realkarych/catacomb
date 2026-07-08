@@ -42,7 +42,7 @@ func newTrendsCmd() *cobra.Command {
 			return runTrends(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, dbPath, args[0], metric, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&metric, "metric", "", "restrict to a total-scope metric: "+strings.Join(totalMetrics, "|"))
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd

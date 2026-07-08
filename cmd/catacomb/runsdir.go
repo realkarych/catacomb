@@ -15,6 +15,17 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
+func validateLabelTerms(terms []string) error {
+	for _, term := range terms {
+		for _, seg := range strings.Split(term, ",") {
+			if len(model.ParseLabels(seg)) != 1 {
+				return fmt.Errorf("invalid --label %q: expected k=v (key [a-z0-9_.-]{1,64}, value ≤256 bytes)", term)
+			}
+		}
+	}
+	return nil
+}
+
 func resolveSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, model.Baseline, error) {
 	kind, val, err := parseSelector(sel)
 	if err != nil {
@@ -106,9 +117,7 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 	if err != nil {
 		return aggregate.RunGraph{}, err
 	}
-	nodes, edges := g.Snapshot()
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	nodes, edges := sortedGraphSnapshot(g)
 	run := model.Run{ID: m.RunID, SessionIDs: []string{m.SessionID}, Labels: m.Labels}
 	for _, sr := range g.RunsSnapshot() {
 		if sr.ID == m.SessionID {

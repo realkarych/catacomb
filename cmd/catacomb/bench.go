@@ -1,13 +1,9 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,26 +15,22 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/bench"
-	"github.com/realkarych/catacomb/daemon"
 	"github.com/realkarych/catacomb/evidence"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 )
 
-const baselineNameMaxBytes = 128
-
 var errBenchRerun = errors.New("bench: manifest already has entries: pass --resume to continue or --manifest for a fresh run")
 
 var errBenchFailFast = errors.New("bench: stopped after a failing cell (--fail-fast)")
 
-var errBenchOfflineDirs = errors.New("bench: --offline requires --projects-dir and --runs-dir (home directory could not be resolved; set them explicitly)")
+var errBenchOfflineDirs = errors.New("bench: --projects-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
 
 type benchFlags struct {
 	manifest    string
 	resume      bool
 	failFast    bool
 	dryRun      bool
-	offline     bool
 	projectsDir string
 	runsDir     string
 }
@@ -50,7 +42,7 @@ func newBenchCmd() *cobra.Command {
 		Short: "Run a benchmark basket: expand cells, execute, mark phases, record a manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBench(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), clientDiscoveryPath(), args[0], f)
+			return runBench(cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], f)
 		},
 	}
 	home, _ := os.UserHomeDir()
@@ -58,9 +50,8 @@ func newBenchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.resume, "resume", false, "skip cells already recorded in the manifest")
 	cmd.Flags().BoolVar(&f.failFast, "fail-fast", false, "stop at the first failing cell")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print the cell expansion and exit without executing")
-	cmd.Flags().BoolVar(&f.offline, "offline", false, "run daemonless: read Claude transcripts and write evidence dirs")
-	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts (--offline)")
-	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir for --offline runs")
+	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts")
+	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir for bench runs")
 	return cmd
 }
 
@@ -73,7 +64,7 @@ func benchDefaultDir(home string, parts ...string) string {
 
 type cellRunner func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool)
 
-func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, basketPath string, f benchFlags) error {
+func runBench(stdout, stderr io.Writer, basketPath string, f benchFlags) error {
 	basket, hash, err := bench.Load(basketPath)
 	if err != nil {
 		return operational(err)
@@ -83,29 +74,20 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, discoveryPath, bask
 		printDryRun(stdout, cells)
 		return nil
 	}
-	cellFn, err := benchCellFunc(ctx, stdout, stderr, discoveryPath, hash, f)
+	cellFn, err := benchCellFunc(stdout, stderr, hash, f)
 	if err != nil {
 		return operational(err)
 	}
 	return runBenchCells(stdout, basketPath, basket, cells, hash, f, cellFn)
 }
 
-func benchCellFunc(ctx context.Context, stdout, stderr io.Writer, discoveryPath, hash string, f benchFlags) (cellRunner, error) {
-	if f.offline {
-		if f.projectsDir == "" || f.runsDir == "" {
-			return nil, errBenchOfflineDirs
-		}
-		o := offlineOpts{projectsDir: f.projectsDir, runsDir: f.runsDir, pricer: newPricer()}
-		return func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
-			return runBenchCellOffline(stdout, stderr, cell, hash, ambient, o)
-		}, nil
+func benchCellFunc(stdout, stderr io.Writer, hash string, f benchFlags) (cellRunner, error) {
+	if f.projectsDir == "" || f.runsDir == "" {
+		return nil, errBenchOfflineDirs
 	}
-	disc, err := benchPreflight(ctx, discoveryPath)
-	if err != nil {
-		return nil, err
-	}
+	o := offlineOpts{projectsDir: f.projectsDir, runsDir: f.runsDir, pricer: newPricer()}
 	return func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
-		return runBenchCell(ctx, stdout, stderr, discoveryPath, disc, cell, hash, ambient)
+		return runBenchCellOffline(stdout, stderr, cell, hash, ambient, o)
 	}, nil
 }
 
@@ -153,96 +135,8 @@ func runBenchCells(stdout io.Writer, basketPath string, basket bench.Basket, cel
 		fmt.Fprintf(stdout, "marked %d/%d cells\n", marked, executed)
 		printCheckpointSummary(stdout, basket, stats)
 	}
-	printBenchEpilogue(stdout, basket, f)
+	printOfflineEpilogue(stdout, basket, f.runsDir)
 	return nil
-}
-
-func printBenchEpilogue(out io.Writer, b bench.Basket, f benchFlags) {
-	if f.offline {
-		printOfflineEpilogue(out, b, f.runsDir)
-		return
-	}
-	printEpilogue(out, b)
-}
-
-func benchPreflight(ctx context.Context, discoveryPath string) (daemon.Discovery, error) {
-	disc, err := daemon.ReadDiscovery(discoveryPath)
-	if err != nil {
-		return daemon.Discovery{}, fmt.Errorf("bench: daemon not running (start it: catacomb up): %w", err)
-	}
-	if err := upPollHealthz(ctx, disc.Addr); err != nil {
-		return daemon.Discovery{}, fmt.Errorf("bench: daemon unreachable at %s (restart it: catacomb up): %w", disc.Addr, err)
-	}
-	return disc, nil
-}
-
-func verifyResumeHash(completed map[string]bench.ManifestEntry, hash string) error {
-	ids := make([]string, 0, len(completed))
-	for id := range completed {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if e := completed[id]; e.BasketHash != hash {
-			return fmt.Errorf("bench: manifest basket hash %s does not match current basket %s; delete the manifest or revert the basket", e.BasketHash, hash)
-		}
-	}
-	return nil
-}
-
-func runBenchCell(ctx context.Context, stdout, stderr io.Writer, discoveryPath string, disc daemon.Discovery, cell bench.Cell, hash string, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
-	entry := bench.ManifestEntry{
-		RunID:      cell.RunID,
-		Task:       cell.Task.ID,
-		Variant:    cell.Variant.ID,
-		Rep:        cell.Rep,
-		BasketHash: hash,
-	}
-	if code, ok := runSetup(stdout, stderr, cell); !ok {
-		entry.ExitCode = code
-		entry.Note = "setup failed"
-		entry.FinishedAt = nowFn()
-		return entry, true, false
-	}
-	labels := model.FormatLabels(model.MergeLabels(cloneLabels(ambient), cell.Labels))
-	marks := &markState{discoveryPath: discoveryPath, name: "task:" + cell.Task.ID}
-	err := runChildObserved(stdout, stderr, discoveryPath, cell.RunID, cell.Task.Cmd, labels, cell.Task.Dir, cellEnv(cell), marks.onLine)
-	marks.finish()
-	code, ok := exitInfo(err)
-	entry.ExitCode = code
-	entry.SessionID = marks.sessionID
-	entry.Marked = marks.marked()
-	if note := spawnFailure(err); note != "" {
-		entry.Note = note
-		fmt.Fprintf(stderr, "bench %s: %s\n", cell.RunID, note)
-	} else {
-		entry.Note = cellNote(marks)
-	}
-	verified := verifyCheckpoints(ctx, stderr, disc, cell, &entry)
-	entry.FinishedAt = nowFn()
-	return entry, !ok, verified
-}
-
-func verifyCheckpoints(ctx context.Context, stderr io.Writer, disc daemon.Discovery, cell bench.Cell, entry *bench.ManifestEntry) bool {
-	if len(cell.Task.Checkpoints) == 0 || entry.SessionID == "" {
-		return false
-	}
-	markers, err := fetchSessionMarkers(ctx, disc, entry.SessionID)
-	if err != nil {
-		entry.Note = appendNote(entry.Note, "checkpoint verification skipped: "+err.Error())
-		return false
-	}
-	var missing []string
-	for _, name := range cell.Task.Checkpoints {
-		if _, ok := markers[name]; !ok {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) > 0 {
-		entry.MissingCheckpoints = missing
-		fmt.Fprintf(stderr, "cell %s: missing checkpoints: %s\n", cell.RunID, strings.Join(missing, ", "))
-	}
-	return true
 }
 
 type offlineOpts struct {
@@ -392,42 +286,6 @@ func appendNote(existing, addition string) string {
 	return existing + "; " + addition
 }
 
-type graphEvent struct {
-	Kind string `json:"kind"`
-	Node *struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
-	} `json:"node"`
-}
-
-func fetchSessionMarkers(ctx context.Context, disc daemon.Discovery, sessionID string) (map[string]struct{}, error) {
-	endpoint := "http://" + disc.Addr + "/v1/sessions/" + url.PathEscape(sessionID) + "/graph"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+disc.Token)
-	resp, err := statusHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("graph unreachable: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("graph status %d", resp.StatusCode)
-	}
-	var evs []graphEvent
-	if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
-		return nil, fmt.Errorf("graph decode: %w", err)
-	}
-	markers := make(map[string]struct{}, len(evs))
-	for _, ev := range evs {
-		if ev.Kind == "node_upsert" && ev.Node != nil && ev.Node.Type == "marker" {
-			markers[ev.Node.Name] = struct{}{}
-		}
-	}
-	return markers, nil
-}
-
 type checkpointStats struct {
 	verified map[string]int
 	hits     map[string]map[string]int
@@ -505,47 +363,6 @@ func runSetup(stdout, stderr io.Writer, cell bench.Cell) (int, bool) {
 	return 0, true
 }
 
-type markState struct {
-	discoveryPath string
-	name          string
-	sessionID     string
-	startErr      error
-	endErr        error
-}
-
-func (m *markState) onLine(line []byte) {
-	if m.sessionID != "" {
-		return
-	}
-	id := peekSessionID(line)
-	if id == "" {
-		return
-	}
-	m.sessionID = id
-	m.startErr = runMark(markArgs{discoveryPath: m.discoveryPath, sessionID: id, name: m.name, boundary: "start"})
-}
-
-func (m *markState) finish() {
-	if m.sessionID == "" {
-		return
-	}
-	m.endErr = runMark(markArgs{discoveryPath: m.discoveryPath, sessionID: m.sessionID, name: m.name, boundary: "end"})
-}
-
-func (m *markState) marked() bool {
-	return m.sessionID != "" && m.startErr == nil && m.endErr == nil
-}
-
-func cellNote(m *markState) string {
-	if m.sessionID == "" {
-		return "no session id observed"
-	}
-	if m.startErr != nil || m.endErr != nil {
-		return "marker failed"
-	}
-	return ""
-}
-
 func exitInfo(err error) (int, bool) {
 	if err == nil {
 		return 0, true
@@ -555,16 +372,6 @@ func exitInfo(err error) (int, bool) {
 		return ee.ExitCode(), false
 	}
 	return -1, false
-}
-
-func peekSessionID(line []byte) string {
-	var e struct {
-		SessionID string `json:"session_id"`
-	}
-	if json.Unmarshal(line, &e) != nil {
-		return ""
-	}
-	return e.SessionID
 }
 
 func cellEnv(cell bench.Cell) []string {
@@ -599,23 +406,16 @@ func printDryRun(out io.Writer, cells []bench.Cell) {
 	_ = tw.Flush()
 }
 
-func printEpilogue(out io.Writer, b bench.Basket) {
-	first := b.Variants[0].ID
-	baselineName := truncateBaselineName(b.Name + "-" + first)
-	fmt.Fprintln(out, "Next steps:")
-	fmt.Fprintf(out, "  catacomb baseline set %s --label basket=%s,variant=%s\n", baselineName, b.Name, first)
-	if len(b.Variants) >= 2 {
-		second := b.Variants[1].ID
-		fmt.Fprintf(out, "  catacomb regress --baseline label:basket=%s,variant=%s --candidate label:basket=%s,variant=%s\n", b.Name, first, b.Name, second)
+func verifyResumeHash(completed map[string]bench.ManifestEntry, hash string) error {
+	ids := make([]string, 0, len(completed))
+	for id := range completed {
+		ids = append(ids, id)
 	}
-	if b.Reps < 5 {
-		fmt.Fprintf(out, "  note: reps=%d limits rate-gate sensitivity; prefer reps: 5 or more\n", b.Reps)
+	sort.Strings(ids)
+	for _, id := range ids {
+		if e := completed[id]; e.BasketHash != hash {
+			return fmt.Errorf("bench: manifest basket hash %s does not match current basket %s; delete the manifest or revert the basket", e.BasketHash, hash)
+		}
 	}
-}
-
-func truncateBaselineName(name string) string {
-	if len(name) > baselineNameMaxBytes {
-		return name[:baselineNameMaxBytes]
-	}
-	return name
+	return nil
 }

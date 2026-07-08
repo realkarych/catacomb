@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -13,11 +15,12 @@ import (
 
 	"github.com/realkarych/catacomb/evidence"
 	"github.com/realkarych/catacomb/model"
-	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
 )
 
 var nowFn = time.Now
+
+var errBaselineNoRunsDir = errors.New("baseline set: --runs-dir is required (home directory could not be resolved; set it explicitly)")
 
 func newBaselineCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -34,15 +37,16 @@ func newBaselineSetCmd() *cobra.Command {
 	var runsDir string
 	cmd := &cobra.Command{
 		Use:   "set <name>",
-		Short: "Create or replace a baseline from a label selector",
+		Short: "Create or replace a baseline from a label selector over evidence dirs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBaselineSet(cmd.OutOrStdout(), store.OpenSQLite, newPricer, dbPath, args[0], labels, runsDir)
+			return runBaselineSet(cmd.OutOrStdout(), store.OpenSQLite, dbPath, args[0], labels, runsDir)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	home, _ := os.UserHomeDir()
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path for the baselines table (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "k=v label selector (repeatable, AND)")
-	cmd.Flags().StringVar(&runsDir, "runs-dir", "", "resolve the label selector from evidence dirs instead of the store (offline)")
+	cmd.Flags().StringVar(&runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve the label selector from")
 	return cmd
 }
 
@@ -57,7 +61,7 @@ func newBaselineListCmd() *cobra.Command {
 			return runBaselineList(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, dbPath, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
 }
@@ -72,11 +76,11 @@ func newBaselineRmCmd() *cobra.Command {
 			return runBaselineRm(cmd.OutOrStdout(), store.OpenSQLite, dbPath, args[0])
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", defaultBatchDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	return cmd
 }
 
-func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pricer, dbPath, name string, labels []string, runsDir string) error {
+func runBaselineSet(out io.Writer, open storeOpener, dbPath, name string, labels []string, runsDir string) error {
 	if err := validateBaselineName(name); err != nil {
 		return operational(err)
 	}
@@ -86,54 +90,25 @@ func runBaselineSet(out io.Writer, open storeOpener, mkPricer func() reduce.Pric
 	if err := validateLabelTerms(labels); err != nil {
 		return operational(err)
 	}
-	s, err := openBaselineStore(open, dbPath, runsDir)
+	if runsDir == "" {
+		return operational(errBaselineNoRunsDir)
+	}
+	selector := model.ParseLabels(strings.Join(labels, ","))
+	ids, err := offlineBaselineRunIDs(runsDir, name, selector)
+	if err != nil {
+		return err
+	}
+	s, err := openWriteStore(open, dbPath)
 	if err != nil {
 		return operational(err)
 	}
 	defer func() { _ = s.Close() }()
-
-	selector := model.ParseLabels(strings.Join(labels, ","))
-	ids, repro, err := resolveBaselineRuns(s, mkPricer, name, selector, runsDir)
-	if err != nil {
-		return err
-	}
-	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn(), RunsDir: runsDir, Stamps: currentStamps(), Repro: repro}
+	b := model.Baseline{Name: name, RunIDs: ids, Selector: selector, CreatedAt: nowFn(), RunsDir: runsDir, Stamps: currentStamps()}
 	if err := s.UpsertBaseline(b); err != nil {
 		return operational(fmt.Errorf("baseline set: %w", err))
 	}
 	fmt.Fprintf(out, "baseline %q set: %d runs\n", name, len(ids))
 	return nil
-}
-
-func openBaselineStore(open storeOpener, dbPath, runsDir string) (store.Store, error) {
-	if runsDir != "" {
-		return openWriteStore(open, dbPath)
-	}
-	return openReadStore(open, dbPath)
-}
-
-func resolveBaselineRuns(s store.Store, mkPricer func() reduce.Pricer, name string, selector map[string]string, runsDir string) ([]string, map[string]*model.ReproMeta, error) {
-	if runsDir != "" {
-		ids, err := offlineBaselineRunIDs(runsDir, name, selector)
-		return ids, nil, err
-	}
-	group, err := loadRunGroup(s, mkPricer(), selector)
-	if err != nil {
-		return nil, nil, operational(err)
-	}
-	if len(group) == 0 {
-		return nil, nil, operational(fmt.Errorf("baseline set %q: %w", name, ErrEmptyGroup))
-	}
-	ids := make([]string, 0, len(group))
-	repro := make(map[string]*model.ReproMeta, len(group))
-	for _, rg := range group {
-		ids = append(ids, rg.Run.ID)
-		if rg.Run.Repro != nil {
-			repro[rg.Run.ID] = rg.Run.Repro
-		}
-	}
-	sort.Strings(ids)
-	return ids, repro, nil
 }
 
 func offlineBaselineRunIDs(runsDir, name string, selector map[string]string) ([]string, error) {

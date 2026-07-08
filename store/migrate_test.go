@@ -24,7 +24,7 @@ func tooNewDB(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "g.db")
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	seedRunRow(t, s.(*sqliteStore).db, "r1")
 	_, err = s.(*sqliteStore).db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion+1))
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
@@ -96,6 +96,27 @@ func userVersion(t *testing.T, db *sql.DB) int {
 	return v
 }
 
+func seedRunRow(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO runs(run_id, status, body) VALUES(?, 'running', ?)`, id, fmt.Sprintf(`{"id":%q,"status":"running"}`, id))
+	require.NoError(t, err)
+}
+
+func runIDs(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query("SELECT run_id FROM runs ORDER BY run_id")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	return ids
+}
+
 func TestOpenStampsFreshDBToCurrent(t *testing.T) {
 	s := fileStore(t)
 	assert.Equal(t, currentSchemaVersion, userVersion(t, s.db))
@@ -105,23 +126,21 @@ func TestReopenAtCurrentDoesNotRemigrate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	seedRunRow(t, s.(*sqliteStore).db, "r1")
 	require.NoError(t, s.Close())
 
 	again, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = again.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, again.(*sqliteStore).db))
-	runs, err := again.Runs()
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
+	assert.Equal(t, []string{"r1"}, runIDs(t, again.(*sqliteStore).db))
 }
 
 func TestOpenMigratesUnversionedDBPreservingData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	require.NoError(t, s.UpsertRun(model.Run{ID: "r1", Status: model.StatusRunning}))
+	seedRunRow(t, s.(*sqliteStore).db, "r1")
 	_, err = s.(*sqliteStore).db.Exec("PRAGMA user_version = 0")
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
@@ -130,10 +149,7 @@ func TestOpenMigratesUnversionedDBPreservingData(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
-	runs, err := migrated.Runs()
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	assert.Equal(t, "r1", runs[0].ID)
+	assert.Equal(t, []string{"r1"}, runIDs(t, migrated.(*sqliteStore).db))
 }
 
 func TestMigrateAppliesInOrder(t *testing.T) {
@@ -328,10 +344,7 @@ func TestOpenMigratesV1ToV2CreatingBaselines(t *testing.T) {
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
 
-	runs, err := migrated.Runs()
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	assert.Equal(t, "r1", runs[0].ID)
+	assert.Equal(t, []string{"r1"}, runIDs(t, migrated.(*sqliteStore).db))
 
 	require.NoError(t, migrated.UpsertBaseline(model.Baseline{Name: "base", RunIDs: []string{"r1"}}))
 	got, ok, err := migrated.GetBaseline("base")
@@ -407,10 +420,7 @@ func TestOpenMigratesV2ToV3CreatingRegressResults(t *testing.T) {
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
 
-	runs, err := migrated.Runs()
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
-	assert.Equal(t, "r1", runs[0].ID)
+	assert.Equal(t, []string{"r1"}, runIDs(t, migrated.(*sqliteStore).db))
 
 	seq, err := migrated.AppendRegressResult("base", json.RawMessage(`{"ok":true}`))
 	require.NoError(t, err)
