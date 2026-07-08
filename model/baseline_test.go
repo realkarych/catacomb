@@ -69,3 +69,11 @@ func TestBaselineUnmarshalLegacyEmptyStampsObject(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(legacy), &b))
 	assert.True(t, b.Stamps.Zero())
 }
+
+func TestBaselineUnmarshalLegacyBodyWithReproKey(t *testing.T) {
+	legacy := `{"name":"old","run_ids":["r1"],"created_at":"2023-11-14T22:13:20Z","repro":{"r1":{"cwd":"/work","prompts_hash":"abc123"}}}`
+	var b Baseline
+	require.NoError(t, json.Unmarshal([]byte(legacy), &b))
+	assert.Equal(t, "old", b.Name)
+	assert.Equal(t, []string{"r1"}, b.RunIDs)
+}

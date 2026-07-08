@@ -255,7 +255,6 @@ func TestBaselineSetRunsDirPersistsOffline(t *testing.T) {
 	assert.Equal(t, runsDir, b.RunsDir)
 	assert.Equal(t, model.Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"}, b.Stamps)
 	assert.True(t, b.CreatedAt.Equal(ts))
-	assert.Empty(t, b.Repro)
 }
 
 func TestBaselineSetRunsDirEmptyMatch(t *testing.T) {
