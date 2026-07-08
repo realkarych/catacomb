@@ -72,8 +72,8 @@ Staged PRs, each TDD with 100% coverage, subagent-driven, review cycle + green C
 | PV-1 | Additive spike: offline bench mode, runs-dir evidence copies, offline selector resolution, in-process verification. Deletes nothing | **Parity:** a calibration basket reproduces the dogfood verdicts (degraded variant → `regression` exit 1; A-vs-A → zero false regressions) |
 | PV-2 | Slim eval store (baselines/records), version stamps, `--scores` annotations | `regress`/`baseline`/`trends` free of the graph store |
 | PV-3 | Deletion I: webui + tui + `observe`/`ui`/`watch` | tag `v0-platform-final` first |
-| PV-4 | Deletion II: daemon, `ingest/{hook,otel,streamjson,tail}`, cdc, gRPC/proto, lifecycle commands, config slim | |
-| PV-5 | Deletion III: exporters (jsonl stays), CI slim, README/guide repositioning, ADR statuses | DeepEval bridge green on the new path |
+| PV-4 | Deletion II: daemon, `ingest/{hook,otel,streamjson,tail}`, cdc, gRPC/proto, lifecycle commands, config slim; absorbed PV-5's Deletion III — exporters (jsonl stays), CI slim, DeepEval retarget, README/guide repositioning (config sinks died with the daemon) | DeepEval bridge green on the new path |
+| PV-5 | Residual cleanup: dead `repro` OTLP fields, store schema v5 (daemon-era graph tables dropped + VACUUM), version watchlist reintroduced offline, ADR/doc status pass | fresh-db schema test green; version-ceiling warning on every transcript parse |
 | PV-6 | Extended calibration: 2–3 heterogeneous baskets, deliberate regressions of varying magnitude, gate-power measurement | final report |
 
 Deletion waves (PV-3+) begin only after this ADR is merged. `v0-platform-final` keeps the platform installable for archaeology.
@@ -119,7 +119,7 @@ Deletion waves (PV-3+) begin only after this ADR is merged. `v0-platform-final` 
 | 0017 (format versioning) | Amended — narrowed to store schema + baseline/record stamps (§6) |
 | 0018 (time model) | Amended — `seq` ordering stays; single-writer simplifies it |
 | 0019 (operability/fault isolation) | **Superseded** — no long-running process |
-| 0025 (drift detection) | Amended — scoped to the JSONL parser + version watchlist |
+| 0025 (drift detection) | Amended — scoped to the JSONL parser + version watchlist (the watchlist, removed in transit by PV-4's deletion pass, is reintroduced offline in PV-5) |
 | 0010/0011/0016/0021/0022/0023 | **Unchanged** — observation identity, id scoping, step/phase keys, invariants, and the regression model are the product |
 
 ## Validation criteria

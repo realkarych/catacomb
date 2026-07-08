@@ -24,6 +24,14 @@ The command set:
 Exit codes are uniform: `0` success, `1` regression (or a stopped `--fail-fast`
 basket), `2` operational error (bad input, missing files, store problems).
 
+Any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`, `export`,
+`replay`) may print up to two advisory lines to **stderr**: a format-drift count for
+records it did not recognize, and a version-ceiling notice when a transcript's Claude
+Code version is newer than the release this binary was tested against (for example
+`warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199`). Both are
+diagnostic only — `stdout`/`--json` stay clean and neither changes the exit code. See
+[Format drift](privacy-and-operations.md#format-drift) for what they mean and what to do.
+
 ---
 
 ## bench

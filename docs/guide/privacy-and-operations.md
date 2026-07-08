@@ -101,6 +101,20 @@ a Claude Code update means the transcript format grew a shape this catacomb does
 know — upgrade catacomb. stdout and `--json` output stay clean; the warning never
 changes an exit code.
 
+The same path carries a **version watchlist**: catacomb records the newest Claude Code
+version it has been tested against, and a transcript stamped with a newer version prints
+a second advisory line:
+
+```text
+warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199
+```
+
+It is the companion to the drift count — a heads-up that Claude Code outran the release
+this catacomb was validated on, so an unrecognized shape may be lurking even when the
+drift count is still zero. Both lines share the same rules: emitted only when triggered,
+on any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`,
+`export`, `replay`), and never touching stdout, `--json`, or the exit code.
+
 ### Troubleshooting
 
 | Symptom | Action |
@@ -114,3 +128,4 @@ changes an exit code.
 | `SQLITE_BUSY` on `regress --record` | Serialize the recorders or give each CI shard its own `--db` file |
 | `cell <run-id>: missing checkpoints: …` warnings | The agent never called `mcp__catacomb__mark` for those phases — check the `--mcp-config` wiring and the CLAUDE.md marking convention |
 | `warning: N unrecognized transcript record(s)` | Transcript format drift — see [Format drift](#format-drift) |
+| `warning: transcript Claude Code version … is newer than tested …` | Claude Code outran this binary's tested version ceiling — upgrade catacomb; see [Format drift](#format-drift) |

@@ -30,6 +30,7 @@
 **Files:** modify `store/migrate.go` (add v5 migration + bump `currentSchemaVersion` to 5; the base `schema` for fresh dbs stops creating `nodes`/`observations`/`runs`; v5 for existing dbs `DROP TABLE IF EXISTS` those three + any indices, then `VACUUM`); `store/sqlite.go` if the base DDL lives there; extend `store/migrate_test.go`.
 
 **Contract:**
+
 - Fresh db (`OpenSQLite` on a new path) creates EXACTLY `baselines` + `regress_results` (+ sqlite internal) — assert via `sqlite_master` query in a test.
 - An old db seeded (raw SQL) with populated `nodes`/`observations`/`runs` + a baseline migrates to v5: graph tables gone, baseline row survives, `PRAGMA user_version` == 5. Secrets-at-rest note: dropping the tables removes their bytes; keep the `VACUUM` so freed pages are reclaimed (honors ADR-0024 for a pre-pivot db upgrading — better than v4's scrub since the data leaves entirely). Keep the v4 scrub migration in the chain (an old db still runs v4 before v5; harmless — the scrub then the drop; test the full v_old→v5 path).
 - `ErrSchemaTooNew`/`ErrSchemaOutdated` semantics unchanged; write-path-triggers-migration unchanged.
@@ -44,6 +45,7 @@
 **Files:** modify `ingest/drift/drift.go` (restore `TestedClaudeCodeVersion` const + `NewerThanTested(v string) bool` + `CompareVersions` — port from git history `git show 8c446d8~N:ingest/drift/drift.go` or the pre-PV-4 version; keep it minimal, semver-ish compare with the existing test style); modify `ingest/jsonl/jsonl.go` to surface the observed Claude Code version (it likely already parses it into an attr — expose a max-observed version through the `drift.Counts` return or a sibling return); wire `cmd/catacomb/offline.go` `warnDrift` (or a sibling `warnVersion`) to emit a stderr line when the observed version is newer than tested; set `driftOut` as the sink (same seam).
 
 **Contract:**
+
 - A transcript whose Claude Code version exceeds `TestedClaudeCodeVersion` → stderr warning naming observed + tested version, on every transcript-parsing command (bench/regress/export/replay/diff/subgraph — same reach as the unknown-record warning after PV-4's loadGraph reroute).
 - A transcript at/below the ceiling → no version warning.
 - `TestedClaudeCodeVersion` set to the current tested ceiling (reuse the value from git history unless a newer CC version is evidenced in testdata; record the choice).

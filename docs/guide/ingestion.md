@@ -70,6 +70,19 @@ warning: 3 unrecognized transcript record(s) [unknown_record_type=3]
 The graph is still built from everything that did parse; the warning is the signal to
 upgrade catacomb ([ADR-0025](../adr/0025-capture-format-drift-detection.md)).
 
+Catacomb also keeps a **version watchlist**: it records the newest Claude Code version
+it has been tested against, and when a parsed transcript is stamped with a newer version
+it prints a second stderr line naming both versions:
+
+```text
+warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199
+```
+
+This is the companion signal — a heads-up that Claude Code moved past the release this
+catacomb was validated on, so the parser may be a step behind. Like the drift count it
+fires only when triggered, on any command that parses transcripts, and never touches the
+graph, `stdout`, `--json`, or the exit code.
+
 ## Watching runs live
 
 Catacomb does not capture for display. Watching a session live in a UI is delegated to a
