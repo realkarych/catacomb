@@ -12,7 +12,7 @@ import (
 	"github.com/realkarych/catacomb/redact"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 const schemaBaselines = `CREATE TABLE IF NOT EXISTS baselines (name TEXT PRIMARY KEY, body TEXT NOT NULL);`
 
@@ -35,7 +35,10 @@ var schemaMigrations = []migration{
 	{from: 1, to: 2, apply: applySchemaV2},
 	{from: 2, to: 3, apply: applySchemaV3},
 	{from: 3, to: 4, apply: applySchemaV4},
+	{from: 4, to: 5, apply: applySchemaV5},
 }
+
+var deadGraphTables = []string{"observations", "nodes", "edges", "runs", "quarantine", "tail_cursors", "annotations"}
 
 func applySchemaV1(tx *sql.Tx) (map[string]int, error) {
 	if _, err := tx.Exec(schema); err != nil {
@@ -64,19 +67,63 @@ type migrationConn interface {
 }
 
 func applySchemaV4(tx *sql.Tx) (map[string]int, error) {
-	obs, err := scrubTable(tx, "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody)
+	obs, err := scrubExisting(tx, "observations", "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody)
 	if err != nil {
 		return nil, fmt.Errorf("store.applySchemaV4 observations: %w", err)
 	}
-	nodes, err := scrubTable(tx, "SELECT id, body FROM nodes", "UPDATE nodes SET body = ? WHERE id = ?", scrubNodeBody)
+	nodes, err := scrubExisting(tx, "nodes", "SELECT id, body FROM nodes", "UPDATE nodes SET body = ? WHERE id = ?", scrubNodeBody)
 	if err != nil {
 		return nil, fmt.Errorf("store.applySchemaV4 nodes: %w", err)
 	}
-	runs, err := scrubTable(tx, "SELECT run_id, body FROM runs", "UPDATE runs SET body = ? WHERE run_id = ?", scrubRunBody)
+	runs, err := scrubExisting(tx, "runs", "SELECT run_id, body FROM runs", "UPDATE runs SET body = ? WHERE run_id = ?", scrubRunBody)
 	if err != nil {
 		return nil, fmt.Errorf("store.applySchemaV4 runs: %w", err)
 	}
 	return map[string]int{"observations": obs, "nodes": nodes, "runs": runs}, nil
+}
+
+func scrubExisting(tx *sql.Tx, table, selectQ, updateQ string, rewrite func([]byte) ([]byte, error)) (int, error) {
+	present, err := tableExists(tx, table)
+	if err != nil {
+		return 0, err
+	}
+	if !present {
+		return 0, nil
+	}
+	return scrubTable(tx, selectQ, updateQ, rewrite)
+}
+
+func applySchemaV5(tx *sql.Tx) (map[string]int, error) {
+	dropped, err := dropDeadTables(tx)
+	if err != nil {
+		return nil, fmt.Errorf("store.applySchemaV5: %w", err)
+	}
+	return map[string]int{"graph_tables": dropped}, nil
+}
+
+func dropDeadTables(tx *sql.Tx) (int, error) {
+	dropped := 0
+	for _, name := range deadGraphTables {
+		present, err := tableExists(tx, name)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec("DROP TABLE IF EXISTS " + name); err != nil {
+			return 0, fmt.Errorf("store.dropDeadTables %s: %w", name, err)
+		}
+		if present {
+			dropped++
+		}
+	}
+	return dropped, nil
+}
+
+func tableExists(tx *sql.Tx, name string) (bool, error) {
+	var n int
+	if err := tx.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name = ?", name).Scan(&n); err != nil {
+		return false, fmt.Errorf("store.tableExists %s: %w", name, err)
+	}
+	return n > 0, nil
 }
 
 type scrubbedRow struct {

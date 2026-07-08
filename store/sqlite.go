@@ -22,31 +22,7 @@ type sqliteStore struct {
 	marshal func(any) ([]byte, error)
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS observations (obs_id TEXT PRIMARY KEY, run_id TEXT, execution_id TEXT, seq INTEGER, body TEXT);
-CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
-CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
-CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, status TEXT, body TEXT);
-CREATE TABLE IF NOT EXISTS quarantine (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
-CREATE TABLE IF NOT EXISTS tail_cursors (path TEXT PRIMARY KEY, offset INTEGER, fingerprint TEXT, size INTEGER, mtime INTEGER);
-CREATE INDEX IF NOT EXISTS idx_observations_run_seq ON observations(run_id, seq);
-CREATE INDEX IF NOT EXISTS idx_observations_exec_seq ON observations(execution_id, seq);
-CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
-CREATE INDEX IF NOT EXISTS idx_edges_run ON edges(run_id);
-CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-CREATE TABLE IF NOT EXISTS annotations (
-    execution_id TEXT NOT NULL,
-    source_key   TEXT NOT NULL,
-    step_key     TEXT,
-    owner        TEXT NOT NULL,
-    key          TEXT NOT NULL,
-    value        TEXT NOT NULL,
-    write_seq    INTEGER NOT NULL,
-    PRIMARY KEY (execution_id, source_key, owner, key)
-);
-CREATE INDEX IF NOT EXISTS idx_annotations_exec ON annotations(execution_id);
-CREATE INDEX IF NOT EXISTS idx_annotations_exec_step ON annotations(execution_id, step_key);
-`
+const schema = schemaBaselines + "\n" + schemaRegressResults
 
 const (
 	upsertBaseline       = `INSERT INTO baselines(name, body) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET body=excluded.body`
