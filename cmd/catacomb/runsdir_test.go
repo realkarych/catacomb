@@ -285,7 +285,7 @@ func TestRunsDirNameSelectorRunsDirPrecedenceWarns(t *testing.T) {
 	assert.Equal(t, 0, code, errBuf.String())
 	assert.Contains(t, errBuf.String(), "recorded runs-dir")
 	assert.Contains(t, errBuf.String(), "/recorded/elsewhere")
-	assert.Contains(t, errBuf.String(), root)
+	assert.Contains(t, errBuf.String(), fmt.Sprintf("%q", root))
 }
 
 func TestEvidenceRunGraphNoMarker(t *testing.T) {
