@@ -6,7 +6,7 @@ Offline eval gate for Claude Code agentic pipelines. A single CLI runs prompt ba
 - Architecture decisions → [`docs/adr/`](docs/adr/)
 - Implementation plans → [`docs/plans/`](docs/plans/)
 
-**Status:** pivoted per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb is the offline eval gate; observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores), PV-3 (viewer deletion), PV-4 (daemon/ingest/exporter/gRPC deletion, store slim, DeepEval retarget, guide repositioning), and PV-5 (residual cleanup: dead `repro` OTLP fields, store schema v5, offline Claude Code version watchlist) have landed; PV-6 (extended calibration) is next. Sequence and gates live in the [pivot roadmap](docs/superpowers/plans/2026-07-06-pivot-roadmap.md).
+**Status:** pivoted per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb is the offline eval gate; observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores), PV-3 (viewer deletion), PV-4 (daemon/ingest/exporter/gRPC deletion, store slim, DeepEval retarget, guide repositioning), PV-5 (residual cleanup: dead `repro` OTLP fields, store schema v5, offline Claude Code version watchlist), and PV-6 (gate-power calibration — deterministic characterization + live `claude -p` validation, zero false positives on A-vs-A controls) have all landed. **The ADR-0026 pivot is complete.** Sequence and evidence live in the [pivot roadmap](docs/superpowers/plans/2026-07-06-pivot-roadmap.md) and `docs/reviews/2026-07-08-*`.
 
 ## Principles
 
