@@ -1,5 +1,12 @@
 package drift
 
+import (
+	"strconv"
+	"strings"
+)
+
+const TestedClaudeCodeVersion = "2.1.199"
+
 const (
 	ReasonUnknownRecordType   = "unknown_record_type"
 	ReasonUnknownContentBlock = "unknown_content_block"
@@ -26,4 +33,39 @@ func (c Counts) Merge(other Counts) Counts {
 		c[reason] += n
 	}
 	return c
+}
+
+func NewerThanTested(v string) bool {
+	return CompareVersions(v, TestedClaudeCodeVersion) > 0
+}
+
+func CompareVersions(a, b string) int {
+	as := strings.Split(a, ".")
+	bs := strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		av, bv := segment(as, i), segment(bs, i)
+		if av != bv {
+			if av < bv {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+func segment(parts []string, i int) int {
+	if i >= len(parts) {
+		return 0
+	}
+	s := parts[i]
+	end := 0
+	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		end++
+	}
+	v, err := strconv.Atoi(s[:end])
+	if err != nil {
+		return 0
+	}
+	return v
 }

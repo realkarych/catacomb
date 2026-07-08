@@ -104,13 +104,13 @@ func TestHashTreeDeterministic(t *testing.T) {
 }
 
 func TestConfigHashDeterministic(t *testing.T) {
-	cfg := repro.Config{OTLPEndpoint: "grpc://localhost:4317", OTLPProject: "proj"}
+	cfg := repro.Config{TranscriptDir: "runs"}
 	assert.Equal(t, repro.ConfigHash(cfg), repro.ConfigHash(cfg))
 }
 
 func TestConfigHashDistinct(t *testing.T) {
-	c1 := repro.Config{OTLPEndpoint: "a"}
-	c2 := repro.Config{OTLPEndpoint: "b"}
+	c1 := repro.Config{TranscriptDir: "a"}
+	c2 := repro.Config{TranscriptDir: "b"}
 	assert.NotEqual(t, repro.ConfigHash(c1), repro.ConfigHash(c2))
 }
 
@@ -120,7 +120,7 @@ func TestCaptureFullFS(t *testing.T) {
 		".claude/skills/s.md":     &fstest.MapFile{Data: []byte("skill")},
 		".claude/agents/agent.md": &fstest.MapFile{Data: []byte("agent")},
 	}
-	cfg := repro.Config{OTLPEndpoint: "x"}
+	cfg := repro.Config{TranscriptDir: "x"}
 	h := repro.Capture(fsys, cfg)
 	assert.NotEmpty(t, h.PromptsHash)
 	assert.NotEmpty(t, h.SkillsHash)
@@ -177,7 +177,7 @@ func TestCaptureSameConfigEqualHashes(t *testing.T) {
 	fsys := fstest.MapFS{
 		"CLAUDE.md": &fstest.MapFile{Data: []byte("x")},
 	}
-	cfg := repro.Config{OTLPEndpoint: "ep"}
+	cfg := repro.Config{TranscriptDir: "ep"}
 	h1 := repro.Capture(fsys, cfg)
 	h2 := repro.Capture(fsys, cfg)
 	assert.Equal(t, h1, h2)

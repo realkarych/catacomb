@@ -19,12 +19,38 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
+const legacySchema = `
+CREATE TABLE IF NOT EXISTS observations (obs_id TEXT PRIMARY KEY, run_id TEXT, execution_id TEXT, seq INTEGER, body TEXT);
+CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
+CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, run_id TEXT, body TEXT);
+CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, status TEXT, body TEXT);
+CREATE TABLE IF NOT EXISTS quarantine (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT);
+CREATE TABLE IF NOT EXISTS tail_cursors (path TEXT PRIMARY KEY, offset INTEGER, fingerprint TEXT, size INTEGER, mtime INTEGER);
+CREATE INDEX IF NOT EXISTS idx_observations_run_seq ON observations(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_observations_exec_seq ON observations(execution_id, seq);
+CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
+CREATE INDEX IF NOT EXISTS idx_edges_run ON edges(run_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+CREATE TABLE IF NOT EXISTS annotations (
+    execution_id TEXT NOT NULL,
+    source_key   TEXT NOT NULL,
+    step_key     TEXT,
+    owner        TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    write_seq    INTEGER NOT NULL,
+    PRIMARY KEY (execution_id, source_key, owner, key)
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_exec ON annotations(execution_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_exec_step ON annotations(execution_id, step_key);
+`
+
 func tooNewDB(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "g.db")
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	seedRunRow(t, s.(*sqliteStore).db, "r1")
+	seedBaselineRow(t, s.(*sqliteStore).db, "b1")
 	_, err = s.(*sqliteStore).db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion+1))
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
@@ -42,7 +68,7 @@ func TestOpenSQLiteRefusesNewerSchema(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	assert.Equal(t, currentSchemaVersion+1, userVersion(t, db))
 	var n int
-	require.NoError(t, db.QueryRow("SELECT count(*) FROM runs").Scan(&n))
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM baselines").Scan(&n))
 	assert.Equal(t, 1, n)
 }
 
@@ -57,7 +83,7 @@ func TestOpenSQLiteRefusesNewerSchemaWithoutWriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	seed, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	_, err = seed.Exec(schema)
+	_, err = seed.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = seed.Exec(`INSERT INTO runs(run_id, status, body) VALUES('r1','running','{"id":"r1","status":"running"}')`)
 	require.NoError(t, err)
@@ -96,25 +122,25 @@ func userVersion(t *testing.T, db *sql.DB) int {
 	return v
 }
 
-func seedRunRow(t *testing.T, db *sql.DB, id string) {
+func seedBaselineRow(t *testing.T, db *sql.DB, name string) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO runs(run_id, status, body) VALUES(?, 'running', ?)`, id, fmt.Sprintf(`{"id":%q,"status":"running"}`, id))
+	_, err := db.Exec(`INSERT INTO baselines(name, body) VALUES(?, ?)`, name, fmt.Sprintf(`{"name":%q}`, name))
 	require.NoError(t, err)
 }
 
-func runIDs(t *testing.T, db *sql.DB) []string {
+func baselineNames(t *testing.T, db *sql.DB) []string {
 	t.Helper()
-	rows, err := db.Query("SELECT run_id FROM runs ORDER BY run_id")
+	rows, err := db.Query("SELECT name FROM baselines ORDER BY name")
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
-	var ids []string
+	var names []string
 	for rows.Next() {
-		var id string
-		require.NoError(t, rows.Scan(&id))
-		ids = append(ids, id)
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		names = append(names, name)
 	}
 	require.NoError(t, rows.Err())
-	return ids
+	return names
 }
 
 func TestOpenStampsFreshDBToCurrent(t *testing.T) {
@@ -126,21 +152,21 @@ func TestReopenAtCurrentDoesNotRemigrate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	seedRunRow(t, s.(*sqliteStore).db, "r1")
+	seedBaselineRow(t, s.(*sqliteStore).db, "b1")
 	require.NoError(t, s.Close())
 
 	again, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = again.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, again.(*sqliteStore).db))
-	assert.Equal(t, []string{"r1"}, runIDs(t, again.(*sqliteStore).db))
+	assert.Equal(t, []string{"b1"}, baselineNames(t, again.(*sqliteStore).db))
 }
 
 func TestOpenMigratesUnversionedDBPreservingData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
-	seedRunRow(t, s.(*sqliteStore).db, "r1")
+	seedBaselineRow(t, s.(*sqliteStore).db, "b1")
 	_, err = s.(*sqliteStore).db.Exec("PRAGMA user_version = 0")
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
@@ -149,7 +175,7 @@ func TestOpenMigratesUnversionedDBPreservingData(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
-	assert.Equal(t, []string{"r1"}, runIDs(t, migrated.(*sqliteStore).db))
+	assert.Equal(t, []string{"b1"}, baselineNames(t, migrated.(*sqliteStore).db))
 }
 
 func TestMigrateAppliesInOrder(t *testing.T) {
@@ -197,10 +223,11 @@ func TestMigrateLogsStartAndFinishWithChangedRowCounts(t *testing.T) {
 	assert.Contains(t, logs, "schema migration start")
 	assert.Contains(t, logs, "schema migration finish")
 	assert.Contains(t, logs, `"from":3`)
-	assert.Contains(t, logs, `"to":4`)
+	assert.Contains(t, logs, `"to":5`)
 	assert.Contains(t, logs, `"observations":1`)
 	assert.Contains(t, logs, `"nodes":1`)
 	assert.Contains(t, logs, `"runs":1`)
+	assert.Contains(t, logs, `"graph_tables":7`)
 	assert.Contains(t, logs, "duration_ms")
 }
 
@@ -304,13 +331,11 @@ func TestApplyMigrationRollsBackPartialDDL(t *testing.T) {
 
 func TestApplySchemaV1Error(t *testing.T) {
 	db := rawDB(t)
-	_, err := db.Exec("CREATE TABLE observations(x)")
-	require.NoError(t, err)
 	tx, err := db.Begin()
 	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
 	_, errV1 := applySchemaV1(tx)
 	require.Error(t, errV1)
-	_ = tx.Rollback()
 }
 
 func TestApplySchemaV2Error(t *testing.T) {
@@ -326,7 +351,7 @@ func seedV1DB(t *testing.T, path string) {
 	t.Helper()
 	seed, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	_, err = seed.Exec(schema)
+	_, err = seed.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = seed.Exec(`INSERT INTO runs(run_id, status, body) VALUES('r1','running','{"id":"r1","status":"running"}')`)
 	require.NoError(t, err)
@@ -344,7 +369,7 @@ func TestOpenMigratesV1ToV2CreatingBaselines(t *testing.T) {
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
 
-	assert.Equal(t, []string{"r1"}, runIDs(t, migrated.(*sqliteStore).db))
+	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, migrated.(*sqliteStore).db))
 
 	require.NoError(t, migrated.UpsertBaseline(model.Baseline{Name: "base", RunIDs: []string{"r1"}}))
 	got, ok, err := migrated.GetBaseline("base")
@@ -400,7 +425,7 @@ func seedV2DB(t *testing.T, path string) {
 	t.Helper()
 	seed, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	_, err = seed.Exec(schema)
+	_, err = seed.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = seed.Exec(schemaBaselines)
 	require.NoError(t, err)
@@ -420,7 +445,7 @@ func TestOpenMigratesV2ToV3CreatingRegressResults(t *testing.T) {
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
 
-	assert.Equal(t, []string{"r1"}, runIDs(t, migrated.(*sqliteStore).db))
+	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, migrated.(*sqliteStore).db))
 
 	seq, err := migrated.AppendRegressResult("base", json.RawMessage(`{"ok":true}`))
 	require.NoError(t, err)
@@ -457,7 +482,7 @@ func seedV3Schema(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	seed, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	for _, stmt := range []string{schema, schemaBaselines, schemaRegressResults} {
+	for _, stmt := range []string{legacySchema, schemaBaselines, schemaRegressResults} {
 		_, err = seed.Exec(stmt)
 		require.NoError(t, err)
 	}
@@ -523,15 +548,22 @@ func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNod
 	return string(ob), string(cb), string(nb), string(rb)
 }
 
+func migrateToV4(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = migrate(db, 3, schemaMigrations[:4], discardLogger())
+	require.NoError(t, err)
+	return db
+}
+
 func TestOpenMigratesV3ToV4ScrubbingBodies(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	secretBody, cleanBody, nodeSeed, runSeed := seedV3DB(t, path)
 
-	migrated, err := openSQLite(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = migrated.Close() })
-	db := migrated.(*sqliteStore).db
-	assert.Equal(t, currentSchemaVersion, userVersion(t, db))
+	db := migrateToV4(t, path)
+	assert.Equal(t, 4, userVersion(t, db))
 
 	var obsBody string
 	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o1'").Scan(&obsBody))
@@ -574,9 +606,7 @@ func TestOpenMigratesV3ToV4ScrubbingBodies(t *testing.T) {
 func TestApplySchemaV4IsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	seedV3DB(t, path)
-	migrated, err := openSQLite(sql.Open, path)
-	require.NoError(t, err)
-	db := migrated.(*sqliteStore).db
+	db := migrateToV4(t, path)
 	tx, err := db.Begin()
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
@@ -590,7 +620,6 @@ func TestApplySchemaV4IsIdempotent(t *testing.T) {
 	assert.Zero(t, nodesChanged)
 	assert.Zero(t, runsChanged)
 	require.NoError(t, tx.Rollback())
-	require.NoError(t, migrated.Close())
 }
 
 func TestMigrationLeavesNoSecretBytesInFile(t *testing.T) {
@@ -673,7 +702,7 @@ func TestScrubTableSelectError(t *testing.T) {
 
 func TestScrubTableRewriteError(t *testing.T) {
 	db := rawDB(t)
-	_, err := db.Exec(schema)
+	_, err := db.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO observations(obs_id, run_id, execution_id, seq, body) VALUES('bad','r','e',1,'not-json')`)
 	require.NoError(t, err)
@@ -696,7 +725,7 @@ func TestScrubRunBodyRejectsInvalidJSON(t *testing.T) {
 
 func TestApplySchemaV4RunErrorPropagates(t *testing.T) {
 	db := rawDB(t)
-	_, err := db.Exec(schema)
+	_, err := db.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO runs(run_id, status, body) VALUES('bad','running','not-json')`)
 	require.NoError(t, err)
@@ -710,7 +739,7 @@ func TestApplySchemaV4RunErrorPropagates(t *testing.T) {
 
 func TestScrubTableUpdateError(t *testing.T) {
 	db := rawDB(t)
-	_, err := db.Exec(schema)
+	_, err := db.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TRIGGER obs_frozen BEFORE UPDATE ON observations BEGIN SELECT RAISE(ABORT, 'frozen'); END`)
 	require.NoError(t, err)
@@ -725,7 +754,7 @@ func TestScrubTableUpdateError(t *testing.T) {
 
 func TestApplySchemaV4NodeErrorPropagates(t *testing.T) {
 	db := rawDB(t)
-	_, err := db.Exec(schema)
+	_, err := db.Exec(legacySchema)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO nodes(id, run_id, body) VALUES('bad','r','not-json')`)
 	require.NoError(t, err)
@@ -812,10 +841,7 @@ func TestMigrationPreservesTypedRefPayloadHash(t *testing.T) {
 	require.NoError(t, err)
 	stampAndClose(t, seed)
 
-	migrated, err := openSQLite(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = migrated.Close() })
-	db := migrated.(*sqliteStore).db
+	db := migrateToV4(t, path)
 
 	var gotObs, gotNode string
 	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o3'").Scan(&gotObs))
@@ -841,10 +867,7 @@ func TestMigrationKeepsVerbatimBytesOfCleanRows(t *testing.T) {
 	require.NoError(t, err)
 	stampAndClose(t, seed)
 
-	migrated, err := openSQLite(sql.Open, path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = migrated.Close() })
-	db := migrated.(*sqliteStore).db
+	db := migrateToV4(t, path)
 
 	var got string
 	require.NoError(t, db.QueryRow("SELECT body FROM observations WHERE obs_id='o5'").Scan(&got))
@@ -852,4 +875,68 @@ func TestMigrationKeepsVerbatimBytesOfCleanRows(t *testing.T) {
 	var o model.Observation
 	require.NoError(t, json.Unmarshal([]byte(got), &o))
 	assert.Equal(t, model.HashPayload(o.Payload), o.Payload.Hash)
+}
+
+func TestFreshDBHasExactlyOfflineTables(t *testing.T) {
+	s := fileStore(t)
+	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, s.db))
+}
+
+func TestOpenMigratesVOldToV5DroppingGraphTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	seedBaselineRow(t, raw, "kept")
+	require.NoError(t, raw.Close())
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	db := migrated.(*sqliteStore).db
+
+	assert.Equal(t, currentSchemaVersion, userVersion(t, db))
+	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, db))
+	assert.Equal(t, []string{"kept"}, baselineNames(t, db))
+}
+
+func TestApplySchemaV5DropsDeadTablesIdempotently(t *testing.T) {
+	db := rawDB(t)
+	for _, stmt := range []string{legacySchema, schemaBaselines, schemaRegressResults} {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	counts, err := applySchemaV5(tx)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	assert.Equal(t, map[string]int{"graph_tables": len(deadGraphTables)}, counts)
+	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, db))
+
+	again, err := db.Begin()
+	require.NoError(t, err)
+	countsAgain, err := applySchemaV5(again)
+	require.NoError(t, err)
+	require.NoError(t, again.Commit())
+	assert.Equal(t, map[string]int{"graph_tables": 0}, countsAgain)
+}
+
+func TestApplySchemaV5Error(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	_, err = applySchemaV5(tx)
+	require.Error(t, err)
+}
+
+func TestScrubExistingErrorPropagates(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	_, err = scrubExisting(tx, "observations", "SELECT obs_id, body FROM observations", "UPDATE observations SET body = ? WHERE obs_id = ?", scrubObservationBody)
+	require.Error(t, err)
 }

@@ -56,7 +56,7 @@ func TestSchemaError(t *testing.T) {
 		require.NoError(t, err)
 		_, walErr := db.Exec("PRAGMA journal_mode=WAL")
 		require.NoError(t, walErr)
-		_, execErr := db.Exec("CREATE TABLE observations(x)")
+		_, execErr := db.Exec("CREATE VIEW observations AS SELECT 1")
 		require.NoError(t, execErr)
 		return db, nil
 	}

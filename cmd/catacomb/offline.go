@@ -41,7 +41,29 @@ func parseTranscripts(main string, subs []string, executionID string) ([]model.O
 		all[i].Seq = uint64(i + 1)
 	}
 	warnDrift(counts)
+	warnVersion(maxObservedVersion(all))
 	return all, nil
+}
+
+func maxObservedVersion(obs []model.Observation) string {
+	newest := ""
+	for _, o := range obs {
+		v, ok := o.Attrs["claude_code_version"].(string)
+		if !ok {
+			continue
+		}
+		if newest == "" || drift.CompareVersions(v, newest) > 0 {
+			newest = v
+		}
+	}
+	return newest
+}
+
+func warnVersion(observed string) {
+	if !drift.NewerThanTested(observed) {
+		return
+	}
+	fmt.Fprintf(driftOut, "warning: transcript Claude Code version %s is newer than tested %s\n", observed, drift.TestedClaudeCodeVersion)
 }
 
 func warnDrift(counts drift.Counts) {

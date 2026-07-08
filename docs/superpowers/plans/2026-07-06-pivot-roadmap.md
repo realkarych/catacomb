@@ -11,8 +11,8 @@ Execution rules (every PV): own worktree, TDD, 100% coverage, subagent-driven ta
 | PV-1 | Offline parity spike (additive; deletes nothing) | Parity test in CI: baseline-vs-degraded fixture groups gate `regression` (exit 1); A-vs-A gates `ok` with zero regressions |
 | PV-2 | Slim eval store + version stamps + `--scores` annotations | `regress`/`baseline`/`trends` run with no graph store; records/baselines carry version stamps; scores file feeds annotation gates |
 | PV-3 | Deletion I: `webui` (Go embed + TS + e2e), `tui`, `observe`/`ui`/`watch` commands | tag `v0-platform-final` on master first; CI drops the frontend job |
-| PV-4 | Deletion II: `daemon`, `ingest/{hook,otel,streamjson,tail}`, `cdc`, `gen/`+proto+gRPC, lifecycle commands (`up/down/status/restart/logs/hook/install-hooks/mark/demo`), config slim, drift scoped to JSONL | `--offline` becomes the only bench path (flag removed); binary builds with cobra/yaml/ulid/sqlite only |
-| PV-5 | Deletion III: `export/{otlp,neo4j,postgres,agentevals,evalview,build}` (jsonl export stays pure), DeepEval bridge retargeted and green, README/guide repositioning, ADR statuses final pass | DeepEval CI job green; docs describe the vendor-substrate (Phoenix) setup |
+| PV-4 | Deletion II: `daemon`, `ingest/{hook,otel,streamjson,tail}`, `cdc`, `gen/`+proto+gRPC, lifecycle commands (`up/down/status/restart/logs/hook/install-hooks/mark/demo`), config slim, drift scoped to JSONL. Absorbed PV-5's original Deletion III: `export/{otlp,neo4j,postgres,agentevals,evalview,build}` (jsonl export stays pure), the DeepEval-bridge retarget, and the README/guide repositioning — the config sinks died with the daemon, leaving the exporters no writers to sequence separately | `--offline` becomes the only bench path (flag removed); binary builds with cobra/yaml/ulid/sqlite only; DeepEval CI job green; docs describe the vendor-substrate (Phoenix) setup |
+| PV-5 | Residual cleanup + version watchlist: drop `repro.Config`'s dead OTLP fields; schema v5 (fresh db = `baselines`+`regress_results`; upgrading a pre-pivot db drops the daemon-era graph tables + `VACUUM`); reintroduce the Claude Code version watchlist offline (amended ADR-0025); final ADR/doc status pass reconciles the sequence | no `OTLPEndpoint`/`OTLPProject` symbols remain; fresh-db schema test green; version-ceiling stderr warning fires on every transcript-parsing command |
 | PV-6 | Extended calibration: 2–3 heterogeneous baskets, deliberate regressions of varying magnitude, gate-power measurement at k=5/10 | calibration report in `docs/reviews/`; threshold defaults re-confirmed or amended |
 
 ## PV-1 (detailed plan)
@@ -33,6 +33,8 @@ Out of scope for PV-1 (lands in PV-2): baseline `name:` selectors over evidence 
 ## PV-3..PV-5 sketch
 
 Deletion order is chosen so every intermediate master state builds, tests green, and keeps the gate usable: viewers first (nothing depends on them), then the daemon+ingest cluster once bench/regress no longer reference discovery, then exporters and packaging/doc repositioning. Each wave updates AGENTS.md, guide pages, and CI in the same PR so no doc references dead surface.
+
+Resequencing note (as shipped): the exporter deletion originally slated for PV-5 landed in **PV-4** — once `config` lost its sink definitions the exporters had no writers left, so deleting them alongside the daemon kept every intermediate master green and folded the DeepEval retarget + guide repositioning into the same wave. PV-5 then narrowed to residual cleanup (dead `repro` OTLP fields, store schema v5 dropping the daemon-era graph tables) plus the offline reintroduction of the Claude Code version watchlist.
 
 ## PV-6 sketch
 

@@ -232,6 +232,17 @@ func TestExportUnknownSinkIsOperational(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "unknown export format")
 }
 
+func TestExportWarnsOnNewerVersion(t *testing.T) {
+	buf := captureDriftOut(t)
+	versioned := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), "9.9.9")
+	root := newRootCmd()
+	root.SetArgs([]string{"export", versioned})
+	root.SetOut(io.Discard)
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), "9.9.9")
+	assert.Contains(t, buf.String(), "newer than tested")
+}
+
 func TestExportCmdWired(t *testing.T) {
 	root := newRootCmd()
 	names := make(map[string]bool)

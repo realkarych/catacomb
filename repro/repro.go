@@ -22,8 +22,6 @@ type Hashes struct {
 }
 
 type Config struct {
-	OTLPEndpoint  string `json:"otlp_endpoint,omitempty"`
-	OTLPProject   string `json:"otlp_project,omitempty"`
 	TranscriptDir string `json:"transcript_dir,omitempty"`
 }
 
