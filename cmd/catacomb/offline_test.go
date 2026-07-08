@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/realkarych/catacomb/ingest/drift"
+	"github.com/realkarych/catacomb/model"
 )
 
 func captureDriftOut(t *testing.T) *bytes.Buffer {
@@ -27,6 +31,17 @@ func writeDriftyCopy(t *testing.T, src string) string {
 	require.NoError(t, err)
 	content := strings.TrimRight(string(data), "\n") + "\n" + `{"type":"checkpoint_v9","sessionId":"s1"}` + "\n"
 	path := filepath.Join(t.TempDir(), "drifty.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+func writeVersionedCopy(t *testing.T, src, version string) string {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	require.NoError(t, err)
+	extra := fmt.Sprintf(`{"type":"user","uuid":"uv","sessionId":"s1","timestamp":"2026-06-20T10:00:09Z","version":%q,"message":{"role":"user","content":"ping"}}`, version)
+	content := strings.TrimRight(string(data), "\n") + "\n" + extra + "\n"
+	path := filepath.Join(t.TempDir(), "versioned.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
@@ -120,4 +135,48 @@ func TestParseTranscriptsNoWarnOnCleanTranscript(t *testing.T) {
 	_, err := parseTranscripts(filepath.Join("testdata", "session.jsonl"), nil, "exec-c")
 	require.NoError(t, err)
 	assert.Empty(t, buf.String())
+}
+
+func TestMaxObservedVersion(t *testing.T) {
+	obs := []model.Observation{
+		{Attrs: nil},
+		{Attrs: map[string]any{"claude_code_version": 123}},
+		{Attrs: map[string]any{"claude_code_version": "1.2.3"}},
+		{Attrs: map[string]any{"claude_code_version": "9.9.9"}},
+		{Attrs: map[string]any{"claude_code_version": "2.0.0"}},
+	}
+	assert.Equal(t, "9.9.9", maxObservedVersion(obs))
+	assert.Equal(t, "", maxObservedVersion(nil))
+}
+
+func TestWarnVersionFiresAndStaysSilent(t *testing.T) {
+	buf := captureDriftOut(t)
+	warnVersion("9.9.9")
+	out := buf.String()
+	assert.Contains(t, out, "9.9.9")
+	assert.Contains(t, out, drift.TestedClaudeCodeVersion)
+	assert.Contains(t, out, "newer than tested")
+
+	buf.Reset()
+	warnVersion(drift.TestedClaudeCodeVersion)
+	warnVersion("")
+	warnVersion("1.0.0")
+	assert.Empty(t, buf.String())
+}
+
+func TestParseTranscriptsWarnsOnNewerVersion(t *testing.T) {
+	buf := captureDriftOut(t)
+	path := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), "9.9.9")
+	_, err := parseTranscripts(path, nil, "exec-v")
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "9.9.9")
+	assert.Contains(t, buf.String(), "newer than tested")
+}
+
+func TestParseTranscriptsNoVersionWarnAtCeiling(t *testing.T) {
+	buf := captureDriftOut(t)
+	path := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), drift.TestedClaudeCodeVersion)
+	_, err := parseTranscripts(path, nil, "exec-v2")
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "newer than tested")
 }

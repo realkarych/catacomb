@@ -103,6 +103,17 @@ func TestReplayWarnsOnUnknownRecords(t *testing.T) {
 	assert.Contains(t, buf.String(), "unknown_record_type=1")
 }
 
+func TestReplayWarnsOnNewerVersion(t *testing.T) {
+	buf := captureDriftOut(t)
+	versioned := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), "9.9.9")
+	root := newRootCmd()
+	root.SetOut(&strings.Builder{})
+	root.SetArgs([]string{"replay", versioned})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, buf.String(), "9.9.9")
+	assert.Contains(t, buf.String(), "newer than tested")
+}
+
 func TestReplayMissingInputIsOperational(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"replay", filepath.Join(t.TempDir(), "nope.jsonl")}, &out, &errBuf)

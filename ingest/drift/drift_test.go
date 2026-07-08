@@ -28,3 +28,33 @@ func TestReasonConstants(t *testing.T) {
 	assert.Equal(t, "unknown_record_type", ReasonUnknownRecordType)
 	assert.Equal(t, "unknown_content_block", ReasonUnknownContentBlock)
 }
+
+func TestTestedClaudeCodeVersionCeiling(t *testing.T) {
+	assert.Equal(t, "2.1.199", TestedClaudeCodeVersion)
+}
+
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"2.1.0", "2.1.0", 0},
+		{"2.1", "2.1.0", 0},
+		{"2.1.1", "2.1.0", 1},
+		{"2.0.9", "2.1.0", -1},
+		{"10.0", "9.9", 1},
+		{"2.1.1-beta", "2.1.1", 0},
+		{"beta", "0", 0},
+		{"", "0.0.0", 0},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, CompareVersions(tc.a, tc.b), "%s vs %s", tc.a, tc.b)
+	}
+}
+
+func TestNewerThanTested(t *testing.T) {
+	assert.False(t, NewerThanTested(TestedClaudeCodeVersion))
+	assert.False(t, NewerThanTested(""))
+	assert.False(t, NewerThanTested("1.0.0"))
+	assert.True(t, NewerThanTested("9999.0.0"))
+}
