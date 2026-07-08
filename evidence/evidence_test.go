@@ -3,6 +3,7 @@ package evidence_test
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -58,7 +59,7 @@ func TestWriteRejectsNonLocalRel(t *testing.T) {
 		err := evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{{Src: src, Rel: rel}})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "rel")
-		require.Contains(t, err.Error(), rel)
+		require.Contains(t, err.Error(), strconv.Quote(rel))
 		_, serr := os.Stat(sentinel)
 		require.NoError(t, serr, "target dir must stay untouched")
 	}
