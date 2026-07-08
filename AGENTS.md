@@ -14,6 +14,10 @@ Offline eval gate for Claude Code agentic pipelines. A single CLI runs prompt ba
 - **Deterministic core.** The canonical graph is a deterministic reduction of an append-only observation stream: the same observations in any order converge to the same graph once genuine terminals arrive, since provisional statuses are reversible and superseded by any later terminal (the §16 commutativity invariant).
 - **TDD by default.** Failing test first, then the minimal implementation, then refactor under green. Not a suggestion — the process.
 
+## Agent models: opus only
+
+**Every agent working on this repo uses `opus` — the main context window and every dispatched subagent (implementer, reviewer, fixer, research, design, whole-branch review).** `fable`, `haiku`, and `sonnet` are forbidden here. The repo's gates (100% coverage, no-comments, gofumpt, adversarial review) punish cheap models with extra iterations, so model uniformity beats token savings. If `opus` is momentarily unavailable, wait and retry — never fall back to a weaker model.
+
 ## Comments: forbidden
 
 **No comments in Go code. None.** No doc comments, no inline comments, no commented-out code. Well-named identifiers and readable code carry the meaning; if a piece of code seems to need a comment, rename or refactor it instead.
