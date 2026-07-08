@@ -8,6 +8,6 @@ type Baseline struct {
 	Selector  map[string]string     `json:"selector,omitempty"`
 	CreatedAt time.Time             `json:"created_at"`
 	RunsDir   string                `json:"runs_dir,omitempty"`
-	Stamps    Stamps                `json:"stamps,omitempty"`
+	Stamps    Stamps                `json:"stamps,omitzero"`
 	Repro     map[string]*ReproMeta `json:"repro,omitempty"`
 }

@@ -90,8 +90,10 @@ func TestLoadGraphOfflineInjectsMarkers(t *testing.T) {
 	names := graphMarkerNames(g)
 	_, ok := names["task:demo"]
 	require.True(t, ok)
-	require.Equal(t, "exec-2", boundary[0].ExecutionID)
-	require.Equal(t, boundary[0].Seq+1, boundary[1].Seq)
+	require.Empty(t, boundary[0].ExecutionID)
+	require.Empty(t, boundary[1].ExecutionID)
+	require.Zero(t, boundary[0].Seq)
+	require.Zero(t, boundary[1].Seq)
 	g2, err := loadGraphOffline(main, nil, "exec-2", nil, boundaryObservations("s", "task:demo", time.Unix(1, 0), time.Unix(2, 0)))
 	require.NoError(t, err)
 	n1, e1 := g.Snapshot()

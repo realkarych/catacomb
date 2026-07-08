@@ -1,6 +1,7 @@
 package regress
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,17 @@ import (
 	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
 )
+
+func TestRecordStampsOmitzero(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(Record{V: RecordVersion})
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "stamps")
+
+	raw, err = json.Marshal(Record{V: RecordVersion, Stamps: model.Stamps{CatacombVersion: "v1", StepKeyScheme: "stepkey/v1"}})
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"stamps":{"catacomb_version":"v1","stepkey_scheme":"stepkey/v1"}`)
+}
 
 func metric(n int, median, p25, p75 float64) aggregate.MetricStats {
 	return aggregate.MetricStats{N: n, Median: median, P25: p25, P75: p75}

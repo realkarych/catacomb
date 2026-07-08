@@ -31,6 +31,7 @@ func TestBaselineSelectorOmitemptyWhenUnset(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "selector")
 	assert.NotContains(t, string(raw), "runs_dir")
+	assert.NotContains(t, string(raw), "stamps")
 	assert.NotContains(t, string(raw), "catacomb_version")
 	assert.NotContains(t, string(raw), "stepkey_scheme")
 }
@@ -59,5 +60,12 @@ func TestBaselineUnmarshalLegacyBodyWithoutNewFields(t *testing.T) {
 	assert.Equal(t, "old", b.Name)
 	assert.Equal(t, []string{"r1"}, b.RunIDs)
 	assert.Empty(t, b.RunsDir)
+	assert.True(t, b.Stamps.Zero())
+}
+
+func TestBaselineUnmarshalLegacyEmptyStampsObject(t *testing.T) {
+	legacy := `{"name":"old","run_ids":["r1"],"created_at":"2023-11-14T22:13:20Z","stamps":{}}`
+	var b Baseline
+	require.NoError(t, json.Unmarshal([]byte(legacy), &b))
 	assert.True(t, b.Stamps.Zero())
 }

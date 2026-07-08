@@ -59,6 +59,25 @@ func TestResolveTranscriptsRetry(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestResolveTranscriptsRetryZeroAttemptsNoFalseSuccess(t *testing.T) {
+	old := sleepFn
+	sleepFn = func(time.Duration) {}
+	defer func() { sleepFn = old }()
+	ts, err := resolveTranscriptsRetry(t.TempDir(), "missing", 0, time.Millisecond)
+	require.Error(t, err)
+	require.Empty(t, ts.Main)
+}
+
+func TestResolveTranscriptsRetrySleepsBetweenAttemptsOnly(t *testing.T) {
+	calls := 0
+	old := sleepFn
+	sleepFn = func(time.Duration) { calls++ }
+	defer func() { sleepFn = old }()
+	_, err := resolveTranscriptsRetry(t.TempDir(), "missing", 2, time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, 1, calls)
+}
+
 func TestRealSleep(t *testing.T) {
 	start := time.Now()
 	realSleep(2 * time.Millisecond)

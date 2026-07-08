@@ -66,7 +66,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultDBPath(), "SQLite database path for name:/--record (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve selectors from: label: scans it, name: reads --db's baselines table, --record appends there")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
-	cmd.Flags().BoolVar(&f.strict, "strict", false, "treat insufficient data as failure (exit 1)")
+	cmd.Flags().BoolVar(&f.strict, "strict", false, "fail on insufficient data (exit 1); also refuse baselines with missing or mismatched version stamps (exit 2)")
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
 	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
 	cmd.Flags().StringVar(&f.scores, "scores", "", "JSONL file of external scores applied as node annotations before comparison; one {\"step_key\",\"key\",\"value\"[,\"run_id\"]} object per line")
