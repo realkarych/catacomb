@@ -24,6 +24,15 @@ func TestStreamPeek(t *testing.T) {
 	require.InDelta(t, 0.5, *p.costUSD, 1e-9)
 }
 
+func TestStreamPeekCostOnlyFromResult(t *testing.T) {
+	p := &streamPeek{}
+	p.onLine([]byte(`{"type":"system","total_cost_usd":9.99}`))
+	require.Nil(t, p.costUSD)
+	p.onLine([]byte(`{"type":"result","total_cost_usd":0.5}`))
+	require.NotNil(t, p.costUSD)
+	require.InDelta(t, 0.5, *p.costUSD, 1e-9)
+}
+
 func TestRunChildLocal(t *testing.T) {
 	t.Setenv("GO_HELPER_OFFLINE", "1")
 	orig := execCommand

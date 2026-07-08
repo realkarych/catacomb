@@ -900,6 +900,31 @@ func TestOpenMigratesVOldToV5DroppingGraphTables(t *testing.T) {
 	assert.Equal(t, []string{"kept"}, baselineNames(t, db))
 }
 
+func seedV4DB(t *testing.T, path string) {
+	t.Helper()
+	seed := seedV3Schema(t, path)
+	_, err := seed.Exec(`INSERT INTO nodes(id, run_id, body) VALUES('n1','r1','{"id":"n1","run_id":"r1"}')`)
+	require.NoError(t, err)
+	seedBaselineRow(t, seed, "kept")
+	_, err = seed.Exec("PRAGMA user_version = 4")
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+}
+
+func TestOpenMigratesExactV4ToV5DroppingGraphTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV4DB(t, path)
+
+	migrated, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = migrated.Close() })
+	db := migrated.(*sqliteStore).db
+
+	assert.Equal(t, currentSchemaVersion, userVersion(t, db))
+	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, db))
+	assert.Equal(t, []string{"kept"}, baselineNames(t, db))
+}
+
 func TestApplySchemaV5DropsDeadTablesIdempotently(t *testing.T) {
 	db := rawDB(t)
 	for _, stmt := range []string{legacySchema, schemaBaselines, schemaRegressResults} {

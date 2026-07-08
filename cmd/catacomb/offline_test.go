@@ -182,3 +182,15 @@ func TestParseTranscriptsNoVersionWarnAtCeiling(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, buf.String(), "newer than tested")
 }
+
+func TestParseTranscriptsWarnsDriftAndVersionTogether(t *testing.T) {
+	buf := captureDriftOut(t)
+	drifty := writeDriftyCopy(t, filepath.Join("testdata", "session.jsonl"))
+	path := writeVersionedCopy(t, drifty, "9.9.9")
+	_, err := parseTranscripts(path, nil, "exec-dv")
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "unrecognized transcript record")
+	assert.Contains(t, out, "newer than tested")
+	assert.Contains(t, out, "9.9.9")
+}
