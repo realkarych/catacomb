@@ -90,8 +90,10 @@ func TestLoadGraphOfflineInjectsMarkers(t *testing.T) {
 	names := graphMarkerNames(g)
 	_, ok := names["task:demo"]
 	require.True(t, ok)
-	require.Equal(t, "exec-2", boundary[0].ExecutionID)
-	require.Equal(t, boundary[0].Seq+1, boundary[1].Seq)
+	require.Empty(t, boundary[0].ExecutionID)
+	require.Empty(t, boundary[1].ExecutionID)
+	require.Zero(t, boundary[0].Seq)
+	require.Zero(t, boundary[1].Seq)
 	g2, err := loadGraphOffline(main, nil, "exec-2", nil, boundaryObservations("s", "task:demo", time.Unix(1, 0), time.Unix(2, 0)))
 	require.NoError(t, err)
 	n1, e1 := g.Snapshot()
@@ -179,4 +181,16 @@ func TestParseTranscriptsNoVersionWarnAtCeiling(t *testing.T) {
 	_, err := parseTranscripts(path, nil, "exec-v2")
 	require.NoError(t, err)
 	assert.NotContains(t, buf.String(), "newer than tested")
+}
+
+func TestParseTranscriptsWarnsDriftAndVersionTogether(t *testing.T) {
+	buf := captureDriftOut(t)
+	drifty := writeDriftyCopy(t, filepath.Join("testdata", "session.jsonl"))
+	path := writeVersionedCopy(t, drifty, "9.9.9")
+	_, err := parseTranscripts(path, nil, "exec-dv")
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "unrecognized transcript record")
+	assert.Contains(t, out, "newer than tested")
+	assert.Contains(t, out, "9.9.9")
 }

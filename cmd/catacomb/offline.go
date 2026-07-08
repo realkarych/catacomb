@@ -113,17 +113,20 @@ func loadGraphOffline(main string, subs []string, executionID string, pricer red
 	}
 	base := len(obs)
 	for i := range extra {
-		extra[i].ExecutionID = executionID
-		extra[i].Seq = uint64(base + i + 1)
-		obs = append(obs, extra[i])
+		e := extra[i]
+		e.ExecutionID = executionID
+		e.Seq = uint64(base + i + 1)
+		obs = append(obs, e)
 	}
 	policy := redact.DefaultPolicy()
 	for i := range obs {
 		obs[i] = policy.Observation(obs[i])
 	}
-	g := reduce.NewGraph()
+	var g *reduce.Graph
 	if pricer != nil {
 		g = reduce.NewGraphWithPricer(pricer)
+	} else {
+		g = reduce.NewGraph()
 	}
 	g.ApplyAll(obs)
 	return g, nil
