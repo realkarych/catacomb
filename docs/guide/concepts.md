@@ -63,7 +63,7 @@ Each node carries:
 - **Timing** — `t_start`, `t_end`, `duration_ms`
 - **Cost and tokens** — from transcript usage records, with reported totals preferred
   over per-turn estimates
-- **Status** — running, ok, error, blocked, or unknown
+- **Status** — running, ok, or error
 - **`payload_hash`** — a hash of the (redacted) content, not the content itself
 - **`step_key`** — cross-run identity for diffing, aggregation, and score annotations
 - **`phase_key`** — which phase this node belongs to (if any)

@@ -199,27 +199,6 @@ func TestLessSiblingTiebreaksOnNodeIDWhenSignaturesTie(t *testing.T) {
 	assert.NotEqual(t, kBase["sib-a"].Key, kBase["sib-c"].Key, "distinct tied siblings must still get distinct keys")
 }
 
-func TestSupersededSiblingDoesNotShiftLiveIndex(t *testing.T) {
-	ts1 := time.Unix(1, 0).UTC()
-	ts2 := time.Unix(2, 0).UTC()
-	ts3 := time.Unix(3, 0).UTC()
-
-	parent := &model.Node{ID: "parent", Type: model.NodeUserPrompt, Status: model.StatusOK, TStart: &ts1}
-	dead := &model.Node{ID: "dead", Type: model.NodeToolCall, Name: "Edit", Status: model.StatusSuperseded, TStart: &ts2}
-	dead.Payload = &model.Payload{Input: []byte(`{"file_path":"a.go"}`)}
-	live1 := &model.Node{ID: "live1", Type: model.NodeToolCall, Name: "Edit", Status: model.StatusOK, TStart: &ts3}
-	live1.Payload = &model.Payload{Input: []byte(`{"file_path":"a.go"}`)}
-
-	nodesWithDead := []*model.Node{parent, dead, live1}
-	nodesWithoutDead := []*model.Node{parent, live1}
-	edges := []*model.Edge{edge("parent", "dead"), edge("parent", "live1")}
-	edgesNoDead := []*model.Edge{edge("parent", "live1")}
-
-	ka := Compute(nodesWithDead, edges)
-	kb := Compute(nodesWithoutDead, edgesNoDead)
-	assert.Equal(t, ka["live1"].Key, kb["live1"].Key)
-}
-
 func TestPromptOrdinalDifferentiatesIdenticalSteps(t *testing.T) {
 	ts := func(s int64) *time.Time { t := time.Unix(s, 0).UTC(); return &t }
 
@@ -319,21 +298,6 @@ func TestNormTool(t *testing.T) {
 	assert.Equal(t, "edit", normTool("Edit"))
 }
 
-func TestLiveFalseForSuperseded(t *testing.T) {
-	n := &model.Node{Status: model.StatusSuperseded}
-	assert.False(t, live(n))
-}
-
-func TestLiveFalseForAbandoned(t *testing.T) {
-	n := &model.Node{Status: model.StatusAbandoned}
-	assert.False(t, live(n))
-}
-
-func TestLiveTrueForOK(t *testing.T) {
-	n := &model.Node{Status: model.StatusOK}
-	assert.True(t, live(n))
-}
-
 func TestEligibleTypes(t *testing.T) {
 	assert.True(t, eligible(model.NodeToolCall))
 	assert.True(t, eligible(model.NodeMCPCall))
@@ -349,12 +313,6 @@ func TestComputeNilEdges(t *testing.T) {
 	got := Compute([]*model.Node{n}, nil)
 	assert.Contains(t, got, "t")
 	assert.Len(t, got["t"].Key, 32)
-}
-
-func TestComputeSkipsDeadNodes(t *testing.T) {
-	n := &model.Node{ID: "n", Type: model.NodeToolCall, Name: "Bash", Status: model.StatusSuperseded}
-	got := Compute([]*model.Node{n}, nil)
-	assert.NotContains(t, got, "n")
 }
 
 func TestLessSiblingBothNilTimestamp(t *testing.T) {

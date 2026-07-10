@@ -13,18 +13,18 @@ import (
 func commutativityCorpus() []model.Observation {
 	t0 := time.Unix(100, 0).UTC()
 	return []model.Observation{
-		sessionStartObs("e1", "s1", 1),
+		unknownKindObs("e1", "s1", "checkpoint", 1),
 		hookTurn("e1", "s1", "m1", 5, 2, t0, 2),
-		otelTurn("e1", "s1", "m1", 50, 20, t0.Add(time.Second), 3),
+		jsonlTurnNoTokens("e1", "s1", "m1", t0.Add(time.Second), 3),
 		toolObs("e1", "s1", "t1", "Bash", "running", 4),
 		toolObs("e1", "s1", "t1", "Bash", string(model.StatusOK), 6),
-		otelTool("e1", "s1", "t2", "spanLeaf", "spanRoot", 7),
+		jsonlTool("e1", "s1", "t2", 7),
 		toolObs("e1", "s1", "t3", "mcp__fs__read", "running", 8),
 		toolObs("e1", "s1", "t3", "mcp__fs__read", string(model.StatusOK), 9),
-		runEndedObs("e1", "s1", "timeout", 10),
+		unknownKindObs("e1", "s1", "diagnostic", 10),
 		toolObs("e1", "s1", "t4", "Read", string(model.StatusOK), 11),
-		sessionEndObs("e1", "s1", 12),
-		streamSessionEndObs("e1", "s1", "error_max_turns", string(model.StatusError), 13),
+		unknownKindObs("e1", "s1", "checkpoint", 12),
+		unknownKindObs("e1", "s1", "diagnostic", 13),
 	}
 }
 

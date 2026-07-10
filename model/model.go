@@ -8,10 +8,8 @@ import (
 type Source string
 
 const (
-	SourceHook       Source = "hook"
-	SourceOTel       Source = "otel"
-	SourceStreamJSON Source = "stream_json"
-	SourceJSONL      Source = "jsonl"
+	SourceHook  Source = "hook"
+	SourceJSONL Source = "jsonl"
 )
 
 type NodeType string
@@ -37,25 +35,17 @@ const (
 type Status string
 
 const (
-	StatusPending    Status = "pending"
-	StatusRunning    Status = "running"
-	StatusOK         Status = "ok"
-	StatusError      Status = "error"
-	StatusBlocked    Status = "blocked"
-	StatusCancelled  Status = "cancelled"
-	StatusUnknown    Status = "unknown"
-	StatusSuperseded Status = "superseded"
-	StatusAbandoned  Status = "abandoned"
+	StatusPending Status = "pending"
+	StatusRunning Status = "running"
+	StatusOK      Status = "ok"
+	StatusError   Status = "error"
 )
 
 type Correlation struct {
 	SessionID       string `json:"session_id,omitempty"`
 	ToolUseID       string `json:"tool_use_id,omitempty"`
 	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
-	SpanID          string `json:"span_id,omitempty"`
-	ParentSpanID    string `json:"parent_span_id,omitempty"`
 	AgentID         string `json:"agent_id,omitempty"`
-	ParentAgentID   string `json:"parent_agent_id,omitempty"`
 	MessageID       string `json:"message_id,omitempty"`
 	UUID            string `json:"uuid,omitempty"`
 }
@@ -142,11 +132,6 @@ type Run struct {
 }
 
 type ReproMeta struct {
-	ClaudeCodeVersion  string `json:"claude_code_version,omitempty"`
-	CatacombVersion    string `json:"catacomb_version,omitempty"`
-	Cwd                string `json:"cwd,omitempty"`
-	PromptsHash        string `json:"prompts_hash,omitempty"`
-	SkillsHash         string `json:"skills_hash,omitempty"`
-	SubagentsHash      string `json:"subagents_hash,omitempty"`
-	CatacombConfigHash string `json:"catacomb_config_hash,omitempty"`
+	ClaudeCodeVersion string `json:"claude_code_version,omitempty"`
+	Cwd               string `json:"cwd,omitempty"`
 }

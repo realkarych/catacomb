@@ -1,7 +1,6 @@
 package redact_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,9 +19,8 @@ func secretRun() model.Run {
 			"note": "postgres://runner:run_label_password@db.internal/labels",
 		},
 		Repro: &model.ReproMeta{
-			Cwd:         "/deploy/AKIAIOSFODNN7EXAMPLE/build",
-			PromptsHash: strings.Repeat("ab", 32),
-			SkillsHash:  strings.Repeat("cd", 32),
+			Cwd:               "/deploy/AKIAIOSFODNN7EXAMPLE/build",
+			ClaudeCodeVersion: "2.1.199",
 		},
 	}
 }
@@ -34,10 +32,9 @@ func TestRunRedactsLabelValuesAndReproCwdSpanLevel(t *testing.T) {
 	assert.Equal(t, "/deploy/‹redacted:aws-key›/build", r.Repro.Cwd)
 }
 
-func TestRunPreservesReproHashesAndIdentity(t *testing.T) {
+func TestRunPreservesReproVersionAndIdentity(t *testing.T) {
 	r := redact.Run(secretRun())
-	assert.Equal(t, strings.Repeat("ab", 32), r.Repro.PromptsHash)
-	assert.Equal(t, strings.Repeat("cd", 32), r.Repro.SkillsHash)
+	assert.Equal(t, "2.1.199", r.Repro.ClaudeCodeVersion)
 	assert.Equal(t, "r1", r.ID)
 	assert.Equal(t, model.StatusRunning, r.Status)
 }

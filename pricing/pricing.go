@@ -15,7 +15,6 @@ type Inputs struct {
 	TokensOut   int64
 	CacheReadIn int64
 	CacheWrite  int64
-	ReportedUSD *float64
 }
 
 type Result struct {
@@ -42,9 +41,6 @@ func newEngineWithFamilies(t map[string]Tier, fams []family) *Engine {
 }
 
 func (e *Engine) Cost(in Inputs) (Result, bool) {
-	if in.ReportedUSD != nil {
-		return Result{USD: *in.ReportedUSD, Source: "reported"}, true
-	}
 	tier, ok := e.table[in.ModelID]
 	if !ok {
 		tier, ok = e.familyTier(in.ModelID)

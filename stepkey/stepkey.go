@@ -33,10 +33,6 @@ func eligible(t model.NodeType) bool {
 	}
 }
 
-func live(n *model.Node) bool {
-	return n.Status != model.StatusSuperseded && n.Status != model.StatusAbandoned
-}
-
 type builder struct {
 	byID     map[string]*model.Node
 	parentOf map[string]string
@@ -66,7 +62,7 @@ func Compute(nodes []*model.Node, edges []*model.Edge) map[string]Key {
 	}
 	out := map[string]Key{}
 	for _, n := range nodes {
-		if !eligible(n.Type) || !live(n) {
+		if !eligible(n.Type) {
 			continue
 		}
 		full, pk := b.compute(n)
@@ -89,7 +85,7 @@ func (b *builder) levels(n *model.Node) string {
 		}
 		seen[p] = true
 		cn := b.byID[cur]
-		if cn != nil && live(cn) {
+		if cn != nil {
 			idx := b.liveIndex(p, cur)
 			lvls = append(lvls, string(cn.Type)+"#"+strconv.Itoa(idx))
 		}
@@ -113,7 +109,7 @@ func (b *builder) liveIndex(parent, target string) int {
 	sibs := make([]*model.Node, 0, len(b.children[parent]))
 	for _, c := range b.children[parent] {
 		cn := b.byID[c]
-		if cn != nil && live(cn) {
+		if cn != nil {
 			sibs = append(sibs, cn)
 		}
 	}

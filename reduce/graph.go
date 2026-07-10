@@ -53,7 +53,6 @@ type Graph struct {
 	Nodes            map[string]*model.Node
 	Edges            map[string]*model.Edge
 	Runs             map[string]*model.Run
-	spanChildren     map[string]bool
 	stamps           map[string]*fieldStamps
 	execs            map[string]*execState
 	pricer           Pricer
@@ -74,7 +73,6 @@ func newGraph(p Pricer) *Graph {
 		Nodes:            map[string]*model.Node{},
 		Edges:            map[string]*model.Edge{},
 		Runs:             map[string]*model.Run{},
-		spanChildren:     map[string]bool{},
 		stamps:           map[string]*fieldStamps{},
 		execs:            map[string]*execState{},
 		pricer:           p,

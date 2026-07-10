@@ -13,15 +13,6 @@ func testTable() map[string]Tier {
 	}
 }
 
-func TestCostReportedFirst(t *testing.T) {
-	e := New()
-	reported := 0.42
-	r, ok := e.Cost(Inputs{ModelID: "model-x", TokensIn: 999999, ReportedUSD: &reported})
-	require.True(t, ok)
-	assert.Equal(t, "reported", r.Source)
-	assert.InDelta(t, 0.42, r.USD, 1e-9)
-}
-
 func TestCostEstimateFromTiers(t *testing.T) {
 	e := New()
 	r, ok := e.Cost(Inputs{ModelID: "claude-haiku-4-5", TokensIn: 1_000_000, TokensOut: 1_000_000, CacheReadIn: 1_000_000, CacheWrite: 1_000_000})

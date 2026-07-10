@@ -12,10 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/ingest/jsonl"
 	"github.com/realkarych/catacomb/model"
-	"github.com/realkarych/catacomb/pricing"
 )
 
 const (
@@ -177,25 +175,6 @@ func TestToInt64(t *testing.T) {
 	}
 }
 
-func TestToFloat64(t *testing.T) {
-	cases := []struct {
-		in any
-		ok bool
-		f  float64
-	}{
-		{float64(1.5), true, 1.5},
-		{float32(2.5), true, float64(float32(2.5))},
-		{int64(3), true, 3.0},
-		{int(4), true, 4.0},
-		{"x", false, 0},
-	}
-	for _, c := range cases {
-		f, ok := toFloat64(c.in)
-		assert.Equal(t, c.ok, ok)
-		assert.InDelta(t, c.f, f, 1e-6)
-	}
-}
-
 func TestIsMCP(t *testing.T) {
 	assert.True(t, isMCP("mcp__fs__read"))
 	assert.False(t, isMCP("Bash"))
@@ -258,7 +237,7 @@ func TestEmptyToolUseIDMarkerDoesNotDropLaterTool(t *testing.T) {
 		ObsID:       "mark_obs",
 		RunID:       runID,
 		ExecutionID: execID,
-		Source:      model.SourceOTel,
+		Source:      model.SourceJSONL,
 		Kind:        "assistant_tool_use",
 		Correlation: model.Correlation{SessionID: runID},
 		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
@@ -271,7 +250,7 @@ func TestEmptyToolUseIDMarkerDoesNotDropLaterTool(t *testing.T) {
 		ObsID:       "tool_obs",
 		RunID:       runID,
 		ExecutionID: execID,
-		Source:      model.SourceOTel,
+		Source:      model.SourceJSONL,
 		Kind:        "assistant_tool_use",
 		Correlation: model.Correlation{SessionID: runID},
 		Attrs:       map[string]any{"name": "Bash"},
@@ -283,7 +262,7 @@ func TestEmptyToolUseIDMarkerDoesNotDropLaterTool(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{mark, tool})
 
-	id := model.ToolCallID(execID, nodeKey("", "", "tool_obs"))
+	id := model.ToolCallID(execID, nodeKey("", "tool_obs"))
 	assert.NotNil(t, g.Nodes[id], "ordinary tool with empty ToolUseID must not be dropped by empty-key marker poison")
 }
 
@@ -296,26 +275,6 @@ func TestToolWithoutMessageIDAttachesToSession(t *testing.T) {
 
 	tool := model.ToolCallID(execID, "toolu_z")
 	require.NotNil(t, g.Edges[model.EdgeID(execID, model.EdgeParentChild, model.SessionNodeID(execID), tool)])
-}
-
-func TestSessionStart(t *testing.T) {
-	o := ob("session_start", "", time.Unix(0, 0).UTC())
-	g := NewGraph()
-	g.Apply(o)
-	n := g.Nodes[model.SessionNodeID(execID)]
-	require.NotNil(t, n)
-	assert.Equal(t, model.StatusRunning, n.Status)
-	require.NotNil(t, n.TStart)
-}
-
-func TestSessionEnd(t *testing.T) {
-	t0 := time.Unix(0, 0).UTC()
-	g := NewGraph()
-	g.Apply(ob("session_start", "", t0))
-	g.Apply(ob("session_end", "", t0.Add(time.Second)))
-	n := g.Nodes[model.SessionNodeID(execID)]
-	require.NotNil(t, n.TEnd)
-	assert.Equal(t, model.StatusOK, n.Status)
 }
 
 func TestSubagentStop(t *testing.T) {
@@ -382,19 +341,6 @@ func TestResolveStatusGenuineLatches(t *testing.T) {
 	assert.Equal(t, model.StatusError, resolveStatus(model.StatusError, model.StatusPending))
 }
 
-func TestResolveStatusGenuineSupersedesProvisional(t *testing.T) {
-	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusUnknown, model.StatusOK))
-	assert.Equal(t, model.StatusError, resolveStatus(model.StatusCancelled, model.StatusError))
-}
-
-func TestResolveStatusProvisionalOverRunning(t *testing.T) {
-	assert.Equal(t, model.StatusUnknown, resolveStatus(model.StatusRunning, model.StatusUnknown))
-}
-
-func TestResolveStatusProvisionalNotRevertedByRunning(t *testing.T) {
-	assert.Equal(t, model.StatusUnknown, resolveStatus(model.StatusUnknown, model.StatusRunning))
-}
-
 func TestResolveStatusRunningOverPending(t *testing.T) {
 	assert.Equal(t, model.StatusRunning, resolveStatus(model.StatusPending, model.StatusRunning))
 }
@@ -414,10 +360,7 @@ func TestResolveStatusTerminalPrecedence(t *testing.T) {
 		{"error then ok stays error", model.StatusError, model.StatusOK, model.StatusError},
 		{"ok then error becomes error", model.StatusOK, model.StatusError, model.StatusError},
 		{"running then ok becomes ok", model.StatusRunning, model.StatusOK, model.StatusOK},
-		{"blocked then ok stays blocked", model.StatusBlocked, model.StatusOK, model.StatusBlocked},
-		{"ok then blocked becomes blocked", model.StatusOK, model.StatusBlocked, model.StatusBlocked},
-		{"blocked then error becomes error", model.StatusBlocked, model.StatusError, model.StatusError},
-		{"error then blocked stays error", model.StatusError, model.StatusBlocked, model.StatusError},
+		{"running then pending stays running", model.StatusRunning, model.StatusPending, model.StatusRunning},
 		{"ok then ok stays ok", model.StatusOK, model.StatusOK, model.StatusOK},
 	}
 	for _, tc := range cases {
@@ -440,31 +383,37 @@ func TestToolStatusErrorNotMaskedByLaterOK(t *testing.T) {
 	assert.Equal(t, model.StatusError, g.Nodes[model.ToolCallID(execID, "toolu_err")].Status)
 }
 
-func sessionStartObs(exec, runID string, seq uint64) model.Observation {
+func unknownKindObs(exec, runID, kind string, seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
-		Source: model.SourceHook, Kind: "session_start",
+		Source: model.SourceHook, Kind: kind,
 		Correlation: model.Correlation{SessionID: runID},
 		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
 	}
 }
 
-func runEndedObs(exec, runID, reason string, seq uint64) model.Observation {
-	attrs := map[string]any{}
-	if reason != "" {
-		attrs["reason"] = reason
+func TestAppendUnique(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		add  string
+		want []string
+	}{
+		{"empty string is ignored", []string{"a"}, "", []string{"a"}},
+		{"duplicate is not appended", []string{"a", "b"}, "a", []string{"a", "b"}},
+		{"new value is appended", []string{"a"}, "b", []string{"a", "b"}},
+		{"appends to nil", nil, "a", []string{"a"}},
 	}
-	return model.Observation{
-		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
-		Source: model.SourceHook, Kind: "run_ended",
-		Correlation: model.Correlation{}, Attrs: attrs,
-		EventTime: time.Unix(int64(seq), 0).UTC(), Seq: seq,
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, appendUnique(tc.in, tc.add))
+		})
 	}
 }
 
 func TestRunOpensOnFirstObs(t *testing.T) {
 	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
 	r := g.Runs["s1"]
 	require.NotNil(t, r)
 	assert.Equal(t, model.StatusRunning, r.Status)
@@ -475,80 +424,15 @@ func TestRunOpensOnFirstObs(t *testing.T) {
 func TestRunLastSeqTracksMaxIgnoringOutOfOrder(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 5),
-		toolObs("e1", "s1", "t1", "Bash", "running", 3),
+		toolObs("e1", "s1", "t1", "Bash", "running", 5),
+		toolObs("e1", "s1", "t2", "Bash", "running", 3),
 	})
 	assert.Equal(t, uint64(5), g.Runs["s1"].LastSeq)
 }
 
-func TestSessionEndEndsRunOK(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		sessionEndObs("e1", "s1", 2),
-	})
-	r := g.Runs["s1"]
-	assert.Equal(t, model.StatusOK, r.Status)
-	assert.Equal(t, "session_ended", r.EndReason)
-	require.NotNil(t, r.EndedAt)
-}
-
-func TestRunEndedAbandonsRunAndClosesDescendants(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		toolObs("e1", "s1", "t1", "Bash", "running", 1),
-		runEndedObs("e1", "s1", "timeout", 2),
-	})
-	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
-	assert.Equal(t, "timeout", g.Runs["s1"].EndReason)
-	assert.Equal(t, model.StatusUnknown, g.Nodes[model.ToolCallID("e1", "t1")].Status)
-}
-
-func TestRunEndedNoReason(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		runEndedObs("e1", "s1", "", 2),
-	})
-	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
-	assert.Equal(t, "", g.Runs["s1"].EndReason)
-}
-
-func TestRunStatusGenuineSessionEndLatchesOverRunEnded(t *testing.T) {
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		runEndedObs("e1", "s1", "timeout", 2),
-		sessionEndObs("e1", "s1", 3),
-	})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{
-		sessionStartObs("e2", "s2", 1),
-		sessionEndObs("e2", "s2", 3),
-		runEndedObs("e2", "s2", "timeout", 4),
-	})
-	assert.Equal(t, model.StatusOK, fwd.Runs["s1"].Status)
-	assert.Equal(t, model.StatusOK, rev.Runs["s2"].Status)
-	assert.Equal(t, "session_ended", fwd.Runs["s1"].EndReason)
-	assert.Equal(t, "session_ended", rev.Runs["s2"].EndReason)
-}
-
-func TestRunReawakenFromAbandoned(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		runEndedObs("e1", "s1", "timeout", 2),
-		toolObs("e1", "s1", "t1", "Bash", "running", 3),
-	})
-	r := g.Runs["s1"]
-	assert.Equal(t, model.StatusRunning, r.Status)
-	assert.Nil(t, r.EndedAt)
-	assert.Equal(t, "", r.EndReason)
-}
-
 func TestRunsSnapshot(t *testing.T) {
 	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
 	snap := g.RunsSnapshot()
 	require.Len(t, snap, 1)
 	assert.Equal(t, "s1", snap[0].ID)
@@ -556,8 +440,8 @@ func TestRunsSnapshot(t *testing.T) {
 
 func TestRunsSnapshotMultipleRuns(t *testing.T) {
 	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
-	g.Apply(sessionStartObs("e2", "s2", 2))
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
+	g.Apply(toolObs("e2", "s2", "t2", "Bash", "running", 2))
 	snap := g.RunsSnapshot()
 	require.Len(t, snap, 2)
 }
@@ -572,292 +456,14 @@ func toolObs(exec, runID, toolUseID, name, status string, seq uint64) model.Obse
 	}
 }
 
-func sessionEndObs(exec, runID string, seq uint64) model.Observation {
+func jsonlTool(exec, runID, toolUse string, seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
-		Source: model.SourceHook, Kind: "session_end",
-		Correlation: model.Correlation{SessionID: runID},
-		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
-	}
-}
-
-func streamSessionEndObs(exec, runID, reason, status string, seq uint64) model.Observation {
-	attrs := map[string]any{"reason": reason}
-	if status != "" {
-		attrs["status"] = status
-	}
-	return model.Observation{
-		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
-		Source: model.SourceStreamJSON, Kind: "session_end",
-		Correlation: model.Correlation{SessionID: runID}, Attrs: attrs,
-		EventTime: time.Unix(int64(seq), 0).UTC(), Seq: seq,
-	}
-}
-
-func TestStreamSessionEndFinalizesRunOK(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		streamSessionEndObs("e1", "s1", "success", "", 2),
-	})
-	r := g.Runs["s1"]
-	assert.Equal(t, model.StatusOK, r.Status)
-	assert.Equal(t, "session_ended", r.EndReason)
-	require.NotNil(t, r.EndedAt)
-	assert.Equal(t, time.Unix(2, 0).UTC(), *r.EndedAt)
-	n := g.Nodes[model.SessionNodeID("e1")]
-	assert.Equal(t, model.StatusOK, n.Status)
-	require.NotNil(t, n.TEnd)
-}
-
-func TestStreamSessionEndErrorEndsRunErrorAndLatches(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		streamSessionEndObs("e1", "s1", "error_max_turns", string(model.StatusError), 2),
-		sessionEndObs("e1", "s1", 3),
-	})
-	r := g.Runs["s1"]
-	assert.Equal(t, model.StatusError, r.Status)
-	assert.Equal(t, model.StatusError, g.Nodes[model.SessionNodeID("e1")].Status)
-	require.NotNil(t, r.EndedAt)
-	assert.Equal(t, time.Unix(3, 0).UTC(), *r.EndedAt)
-}
-
-func TestHookOKThenStreamErrorEndsRunError(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		sessionEndObs("e1", "s1", 2),
-		streamSessionEndObs("e1", "s1", "error_during_execution", string(model.StatusError), 3),
-	})
-	assert.Equal(t, model.StatusError, g.Runs["s1"].Status)
-}
-
-func TestRunEndedAtConvergesToHookTimingBothOrders(t *testing.T) {
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		streamSessionEndObs("e1", "s1", "success", "", 5),
-		sessionEndObs("e1", "s1", 6),
-	})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{
-		sessionStartObs("e2", "s2", 1),
-		sessionEndObs("e2", "s2", 6),
-		streamSessionEndObs("e2", "s2", "success", "", 5),
-	})
-	require.NotNil(t, fwd.Runs["s1"].EndedAt)
-	require.NotNil(t, rev.Runs["s2"].EndedAt)
-	assert.Equal(t, time.Unix(6, 0).UTC(), *fwd.Runs["s1"].EndedAt)
-	assert.Equal(t, time.Unix(6, 0).UTC(), *rev.Runs["s2"].EndedAt)
-}
-
-func TestLateObservationAfterStreamEndDoesNotReopenRun(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		streamSessionEndObs("e1", "s1", "success", "", 2),
-		toolObs("e1", "s1", "t9", "Bash", "running", 3),
-	})
-	r := g.Runs["s1"]
-	assert.Equal(t, model.StatusOK, r.Status)
-	require.NotNil(t, r.EndedAt)
-	assert.Equal(t, time.Unix(2, 0).UTC(), *r.EndedAt)
-	assert.Equal(t, uint64(3), r.LastSeq)
-}
-
-func TestReaperRunEndedCannotAbandonErrorRun(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		streamSessionEndObs("e1", "s1", "error_max_turns", string(model.StatusError), 2),
-		runEndedObs("e1", "s1", "timeout", 3),
-	})
-	assert.Equal(t, model.StatusError, g.Runs["s1"].Status)
-	assert.Equal(t, "session_ended", g.Runs["s1"].EndReason)
-}
-
-func TestStreamEndYieldsRunDurationSample(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		streamSessionEndObs("e1", "s1", "success", "", 2),
-	})
-	rep := aggregate.Aggregate([]aggregate.RunGraph{{Run: *g.Runs["s1"]}}, aggregate.Options{})
-	assert.Equal(t, 1, rep.Totals.DurationMS.N)
-	assert.Equal(t, float64(1000), rep.Totals.DurationMS.Median)
-}
-
-func otelTool(exec, runID, toolUse, span, parentSpan string, seq uint64) model.Observation {
-	return model.Observation{
-		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
-		Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUse, SpanID: span, ParentSpanID: parentSpan},
+		Source: model.SourceJSONL, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUse},
 		Attrs:       map[string]any{"name": "Bash"},
 		EventTime:   time.Unix(int64(seq), 0).UTC(), Seq: seq,
 	}
-}
-
-func TestSpanChildrenRecordedForAnyParentSpan(t *testing.T) {
-	g := NewGraph()
-	g.Apply(otelTool("e1", "s1", "t1", "spanChild", "spanParent", 1))
-	assert.True(t, g.spanChildren["spanParent"])
-}
-
-func TestGateAcceptsOTelEdgeWhenToolUseIDPresent(t *testing.T) {
-	g := NewGraph()
-	o := otelTool("e1", "s1", "tA", "spanA", "spanRoot", 1)
-	g.Apply(o)
-	tool := model.ToolCallID("e1", "tA")
-	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
-
-	g2 := NewGraph()
-	o2 := otelTool("e2", "s2", "tB", "spanB", "spanRoot2", 1)
-	g2.Apply(o2)
-	tool2 := model.ToolCallID("e2", "tB")
-	require.Contains(t, g2.Edges, model.EdgeID("e2", model.EdgeParentChild, model.SessionNodeID("e2"), tool2))
-}
-
-func TestGateSkipsOTelEdgeWhenNoChildrenAndNoToolUseID(t *testing.T) {
-	g := NewGraph()
-	o := model.Observation{
-		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "", SpanID: "spanFlat", ParentSpanID: "spanRoot"},
-		Attrs:       map[string]any{"name": "Bash"}, EventTime: time.Unix(1, 0).UTC(), Seq: 1,
-	}
-	g.Apply(o)
-	tool := model.ToolCallID("e1", "")
-	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
-}
-
-func TestGateAcceptsOTelEdgeWhenSpanHasObservedChild(t *testing.T) {
-	g := NewGraph()
-	g.Apply(otelTool("e1", "s1", "tChild", "spanInner", "spanMid", 1))
-	o := model.Observation{
-		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: "s1", ToolUseID: "", SpanID: "spanMid", ParentSpanID: "spanRoot"},
-		Attrs:       map[string]any{"name": "Read"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2,
-	}
-	g.Apply(o)
-	tool := model.ToolCallID("e1", "span:spanMid")
-	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
-}
-
-func TestGateNeverAppliesToHookEdges(t *testing.T) {
-	g := NewGraph()
-	g.Apply(toolObs("e1", "s1", "", "Bash", "running", 1))
-	tool := model.ToolCallID("e1", "obs:o1")
-	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool))
-}
-
-func TestSessionEndClosesRunningDescendant(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		toolObs("e1", "s1", "t1", "Bash", "running", 1),
-		sessionEndObs("e1", "s1", 2),
-	})
-	assert.Equal(t, model.StatusUnknown, g.Nodes[model.ToolCallID("e1", "t1")].Status)
-}
-
-func TestSessionEndLeavesGenuineTerminal(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		toolObs("e2", "s2", "t1", "Read", "ok", 1),
-		sessionEndObs("e2", "s2", 2),
-	})
-	assert.Equal(t, model.StatusOK, g.Nodes[model.ToolCallID("e2", "t1")].Status)
-}
-
-func TestSessionEndLateGenuineSupersedesUnknown(t *testing.T) {
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{
-		toolObs("e1", "s1", "t2", "Bash", "running", 1),
-		sessionEndObs("e1", "s1", 4),
-		toolObs("e1", "s1", "t2", "Bash", "ok", 5),
-	})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{
-		toolObs("e1", "s1", "t2", "Bash", "ok", 5),
-		toolObs("e1", "s1", "t2", "Bash", "running", 1),
-		sessionEndObs("e1", "s1", 4),
-	})
-	assert.Equal(t, model.StatusOK, fwd.Nodes[model.ToolCallID("e1", "t2")].Status)
-	assert.Equal(t, model.StatusOK, rev.Nodes[model.ToolCallID("e1", "t2")].Status)
-}
-
-func TestCascadeStatusHandlesDiamond(t *testing.T) {
-	g := NewGraph()
-	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.node("a", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("b", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("c", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "a", 1)
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b", 2)
-	g.upsertEdge("e1", "s1", "a", "c", 3)
-	g.upsertEdge("e1", "s1", "b", "c", 9)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
-	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
-}
-
-func TestCascadeStatusSkipsMissingNode(t *testing.T) {
-	g := NewGraph()
-	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost", 2)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
-	assert.NotContains(t, g.Nodes, "ghost")
-}
-
-func TestCascadeStatusIgnoresNonParentChild(t *testing.T) {
-	g := NewGraph()
-	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeMarkerSpan, Src: model.SessionNodeID("e1"), Dst: "x"}
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
-	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
-}
-
-func TestSessionEndLeavesPointInTimeNodes(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		{ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceHook, Kind: "user_prompt", Correlation: model.Correlation{SessionID: "s1", UUID: "u1"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2},
-		sessionEndObs("e1", "s1", 3),
-	})
-	up := g.Nodes[model.UserPromptID("e1", "u1")]
-	require.NotNil(t, up)
-	assert.NotEqual(t, model.StatusUnknown, up.Status)
-}
-
-func TestRunEndedClosesSessionNode(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		runEndedObs("e1", "s1", "timeout", 2),
-	})
-	assert.Equal(t, model.StatusAbandoned, g.Runs["s1"].Status)
-	assert.Equal(t, model.StatusUnknown, g.Nodes[model.SessionNodeID("e1")].Status)
-}
-
-func TestStopDoesNotTerminateRun(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		{ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceHook, Kind: "stop", Correlation: model.Correlation{SessionID: "s1"}, EventTime: time.Unix(2, 0).UTC(), Seq: 2},
-	})
-	assert.Equal(t, model.StatusRunning, g.Runs["s1"].Status)
-	assert.Equal(t, model.StatusRunning, g.Nodes[model.SessionNodeID("e1")].Status)
-}
-
-func TestRankSupersededAndAbandonedAreProvisional(t *testing.T) {
-	assert.Equal(t, 2, rank(model.StatusSuperseded))
-	assert.Equal(t, 2, rank(model.StatusAbandoned))
-}
-
-func TestResolveStatusSupersededOverRunningButUnderTerminal(t *testing.T) {
-	assert.Equal(t, model.StatusSuperseded, resolveStatus(model.StatusRunning, model.StatusSuperseded))
-	assert.Equal(t, model.StatusOK, resolveStatus(model.StatusSuperseded, model.StatusOK))
-	assert.Equal(t, model.StatusSuperseded, resolveStatus(model.StatusUnknown, model.StatusSuperseded))
 }
 
 func TestNodeRevTracksMaxSeq(t *testing.T) {
@@ -878,59 +484,6 @@ func TestEdgeRevTracksMaxSeq(t *testing.T) {
 	assert.Equal(t, uint64(9), g.Edges[id].Rev)
 }
 
-func TestCascadeStatusCancelsNonTerminalDescendants(t *testing.T) {
-	g := NewGraph()
-	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("childRun", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("childDone", "s1", model.NodeToolCall).Status = model.StatusOK
-	g.upsertEdge("e1", "s1", "root", "childRun", 1)
-	g.upsertEdge("e1", "s1", "root", "childDone", 2)
-	g.cascadeStatus("root", model.StatusCancelled)
-	assert.Equal(t, model.StatusCancelled, g.Nodes["childRun"].Status)
-	assert.Equal(t, "root", g.Nodes["childRun"].Attrs["cancel_cause"])
-	assert.Equal(t, model.StatusOK, g.Nodes["childDone"].Status)
-	_, hasCause := g.Nodes["childDone"].Attrs["cancel_cause"]
-	assert.False(t, hasCause)
-}
-
-func TestCascadeStatusSupersededSetsCause(t *testing.T) {
-	g := NewGraph()
-	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.upsertEdge("e1", "s1", "root", "child", 1)
-	g.cascadeStatus("root", model.StatusSuperseded)
-	assert.Equal(t, model.StatusSuperseded, g.Nodes["child"].Status)
-	assert.Equal(t, "root", g.Nodes["child"].Attrs["cancel_cause"])
-}
-
-func TestCascadeUnknownPathHasNoCancelCause(t *testing.T) {
-	g := NewGraph()
-	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "child", 1)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
-	assert.Equal(t, model.StatusUnknown, g.Nodes["child"].Status)
-	_, hasCause := g.Nodes["child"].Attrs["cancel_cause"]
-	assert.False(t, hasCause)
-}
-
-func TestToolResultCancelledCascadesToChildren(t *testing.T) {
-	g := NewGraph()
-	parent := toolObs("e1", "s1", "tp", "Task", "running", 1)
-	parent.Correlation.MessageID = "m1"
-	g.Apply(parent)
-	child := toolObs("e1", "s1", "tc", "Bash", "running", 2)
-	child.Correlation.MessageID = ""
-	g.Apply(child)
-	g.upsertEdge("e1", "s1", model.ToolCallID("e1", "tp"), model.ToolCallID("e1", "tc"), 3)
-	cancel := toolObs("e1", "s1", "tp", "Task", string(model.StatusCancelled), 4)
-	cancel.Correlation.MessageID = "m1"
-	g.Apply(cancel)
-	assert.Equal(t, model.StatusCancelled, g.Nodes[model.ToolCallID("e1", "tc")].Status)
-	assert.Equal(t, model.ToolCallID("e1", "tp"), g.Nodes[model.ToolCallID("e1", "tc")].Attrs["cancel_cause"])
-}
-
 func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 	g := NewGraph()
 	o := model.Observation{
@@ -948,10 +501,9 @@ func TestMarkerCreatesNodeAttachedToSession(t *testing.T) {
 }
 
 func TestSourceRank(t *testing.T) {
-	assert.Equal(t, 3, sourceRank(model.SourceOTel))
 	assert.Equal(t, 2, sourceRank(model.SourceHook))
 	assert.Equal(t, 1, sourceRank(model.SourceJSONL))
-	assert.Equal(t, 0, sourceRank(model.SourceStreamJSON))
+	assert.Equal(t, 0, sourceRank(model.Source("other")))
 }
 
 func TestSetNameEmptyIsNoOp(t *testing.T) {
@@ -966,12 +518,12 @@ func TestSetNameEmptyIsNoOp(t *testing.T) {
 	assert.Equal(t, "Bash", n.Name)
 }
 
-func otelTurn(exec, runID, msg string, tIn, tOut int64, ts time.Time, seq uint64) model.Observation {
+func jsonlTurnNoTokens(exec, runID, msg string, ts time.Time, seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: exec,
-		Source: model.SourceOTel, Kind: "assistant_turn",
+		Source: model.SourceJSONL, Kind: "assistant_turn",
 		Correlation: model.Correlation{SessionID: runID, MessageID: msg},
-		Attrs:       map[string]any{"tokens_in": tIn, "tokens_out": tOut},
+		Attrs:       map[string]any{},
 		EventTime:   ts, ObservedAt: ts, Seq: seq,
 	}
 }
@@ -986,45 +538,11 @@ func hookTurn(exec, runID, msg string, tIn, tOut int64, ts time.Time, seq uint64
 	}
 }
 
-func TestTokensOTelWinsRegardlessOfOrder(t *testing.T) {
-	t0 := time.Unix(10, 0).UTC()
-	h := hookTurn("e1", "s1", "m1", 1, 1, t0, 1)
-	o := otelTurn("e1", "s1", "m1", 99, 88, t0, 2)
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{h, o})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{o, h})
-	id := model.AssistantTurnID("e1", "m1")
-	assert.Equal(t, int64(99), *fwd.Nodes[id].TokensIn)
-	assert.Equal(t, int64(99), *rev.Nodes[id].TokensIn)
-	assert.Equal(t, int64(88), *rev.Nodes[id].TokensOut)
-
-	h2 := hookTurn("e2", "s2", "m2", 3, 4, t0, 1)
-	g2 := NewGraph()
-	g2.Apply(h2)
-	id2 := model.AssistantTurnID("e2", "m2")
-	assert.Equal(t, int64(3), *g2.Nodes[id2].TokensIn)
-}
-
 func TestTokensHookKeptWhenNoOTel(t *testing.T) {
 	g := NewGraph()
 	g.Apply(hookTurn("e1", "s1", "m1", 7, 3, time.Unix(1, 0).UTC(), 1))
 	id := model.AssistantTurnID("e1", "m1")
 	assert.Equal(t, int64(7), *g.Nodes[id].TokensIn)
-}
-
-func TestTimingOTelOutranksHookEitherOrder(t *testing.T) {
-	tHook := time.Unix(100, 0).UTC()
-	tOTel := time.Unix(200, 0).UTC()
-	h := hookTurn("e1", "s1", "m1", 0, 0, tHook, 5)
-	o := otelTurn("e1", "s1", "m1", 0, 0, tOTel, 1)
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{h, o})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{o, h})
-	id := model.AssistantTurnID("e1", "m1")
-	assert.Equal(t, tOTel, *fwd.Nodes[id].TStart)
-	assert.Equal(t, tOTel, *rev.Nodes[id].TStart)
 }
 
 func TestTimingEqualRankKeepsEarliest(t *testing.T) {
@@ -1069,12 +587,12 @@ func permute(obs []model.Observation) [][]model.Observation {
 func TestReductionCommutativity(t *testing.T) {
 	t0 := time.Unix(100, 0).UTC()
 	obs := []model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		hookTurn("e1", "s1", "m1", 5, 2, t0, 2),
-		otelTurn("e1", "s1", "m1", 50, 20, t0.Add(time.Second), 3),
-		toolObs("e1", "s1", "t1", "Bash", "running", 4),
-		toolObs("e1", "s1", "t1", "Bash", string(model.StatusCancelled), 6),
-		otelTool("e1", "s1", "t2", "spanLeaf", "spanRoot", 7),
+		unknownKindObs("e9", "s9", "checkpoint", 10),
+		hookTurn("e9", "s9", "m9", 7, 3, t0, 11),
+		jsonlTurnNoTokens("e9", "s9", "m9", t0.Add(time.Second), 12),
+		toolObs("e9", "s9", "tA", "Read", "running", 13),
+		toolObs("e9", "s9", "tA", "Read", string(model.StatusOK), 15),
+		jsonlTool("e9", "s9", "tB", 16),
 	}
 	perms := permute(obs)
 	var want string
@@ -1157,196 +675,34 @@ func canonGraph(g *Graph) string {
 	return string(b)
 }
 
-func TestSessionEndSetsRunEndReason(t *testing.T) {
-	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
-	g.Apply(sessionEndObs("e1", "s1", 2))
-	r := g.Runs["s1"]
-	require.NotNil(t, r)
-	assert.Equal(t, "session_ended", r.EndReason)
-	assert.NotNil(t, r.EndedAt)
-	assert.Equal(t, model.StatusOK, r.Status)
+func TestPayloadRankJSONLIsFull(t *testing.T) {
+	assert.Equal(t, 1, payloadRank(model.SourceHook))
+	assert.Equal(t, 1, payloadRank(model.SourceJSONL))
+	assert.Equal(t, 0, payloadRank(model.Source("other")))
 }
 
-func TestRunEndedEarlyReturnLeavesTerminalRun(t *testing.T) {
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{
-		sessionStartObs("e1", "s1", 1),
-		sessionEndObs("e1", "s1", 2),
-	})
-	g.Apply(runEndedObs("e1", "s1", "timeout", 3))
-	r := g.Runs["s1"]
-	require.NotNil(t, r)
-	assert.Equal(t, model.StatusOK, r.Status)
-	assert.Equal(t, "session_ended", r.EndReason)
-}
-
-func TestCloseIfOpenLeavesTerminalNode(t *testing.T) {
-	g := NewGraph()
-	g.node("done", "s1", model.NodeToolCall).Status = model.StatusOK
-	g.closeIfOpen("done", model.StatusUnknown)
-	assert.Equal(t, model.StatusOK, g.Nodes["done"].Status)
-}
-
-func TestSourceRankFourLiveTiers(t *testing.T) {
-	assert.Equal(t, 3, sourceRank(model.SourceOTel))
-	assert.Equal(t, 2, sourceRank(model.SourceHook))
-	assert.Equal(t, 1, sourceRank(model.SourceJSONL))
-	assert.Equal(t, 0, sourceRank(model.SourceStreamJSON))
-}
-
-func TestTimingHookBeatsStreamJSON(t *testing.T) {
-	t0 := time.Unix(100, 0).UTC()
-	hookEarly := hookTurn("e1", "s1", "m1", 0, 0, t0.Add(time.Hour), 1)
-	sjLate := model.Observation{
-		RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
-		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
-		Attrs: map[string]any{}, EventTime: t0, ObservedAt: t0, Seq: 2,
+func TestPayloadLowerRankIgnored(t *testing.T) {
+	full := jsonlToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
+	lower := model.Observation{
+		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.Source("other"),
+		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: "s1", ToolUseID: "t1"},
+		Attrs:     map[string]any{"name": "Bash"},
+		Payload:   &model.Payload{Input: json.RawMessage(`{"command":"l"}`)},
+		EventTime: time.Unix(2, 0).UTC(), ObservedAt: time.Unix(2, 0).UTC(), Seq: 2,
 	}
 	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{sjLate, hookEarly})
+	fwd.ApplyAll([]model.Observation{full, lower})
 	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{hookEarly, sjLate})
-	id := model.AssistantTurnID("e1", "m1")
-	require.NotNil(t, fwd.Nodes[id].TStart)
-	assert.Equal(t, t0.Add(time.Hour), fwd.Nodes[id].TStart.UTC())
-	assert.Equal(t, fwd.Nodes[id].TStart.UTC(), rev.Nodes[id].TStart.UTC())
-}
-
-func sjTurn(execID, runID, msgID string, tin, tout int64, seq uint64) model.Observation {
-	return model.Observation{
-		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
-		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: runID, MessageID: msgID},
-		Attrs:     map[string]any{"tokens_in": tin, "tokens_out": tout},
-		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
-	}
-}
-
-func TestTokenRankOTelBeatsStreamJSON(t *testing.T) {
-	otel := otelTurn("e1", "s1", "m1", 50, 20, time.Unix(100, 0).UTC(), 1)
-	sj := sjTurn("e1", "s1", "m1", 7, 9, 2)
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{otel, sj})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{sj, otel})
-	id := model.AssistantTurnID("e1", "m1")
-	require.NotNil(t, fwd.Nodes[id].TokensIn)
-	assert.Equal(t, int64(50), *fwd.Nodes[id].TokensIn)
-	assert.Equal(t, int64(50), *rev.Nodes[id].TokensIn)
-}
-
-func TestTokenStreamJSONSetsWhenNoOTel(t *testing.T) {
-	sj := sjTurn("e1", "s1", "m1", 7, 9, 1)
-	g := NewGraph()
-	g.Apply(sj)
-	id := model.AssistantTurnID("e1", "m1")
-	require.NotNil(t, g.Nodes[id].TokensIn)
-	assert.Equal(t, int64(7), *g.Nodes[id].TokensIn)
-}
-
-func TestTokenRankDefaultIsZero(t *testing.T) {
-	assert.Equal(t, 0, tokenRank(model.SourceHook))
-	assert.Equal(t, 0, tokenRank(model.SourceJSONL))
-}
-
-func sjToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
-	pl := &model.Payload{Input: json.RawMessage(input)}
-	pl.Hash = model.HashPayload(pl)
-	return model.Observation{
-		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
-		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
-		Attrs:     map[string]any{"name": name},
-		Payload:   pl,
-		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
-	}
-}
-
-func hookToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
-	pl := &model.Payload{Input: json.RawMessage(input)}
-	pl.Hash = model.HashPayload(pl)
-	return model.Observation{
-		RunID: runID, ExecutionID: execID, Source: model.SourceHook,
-		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: tuid},
-		Attrs:     map[string]any{"name": name, "status": "running"},
-		Payload:   pl,
-		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
-	}
-}
-
-func TestPayloadHookBeatsStreamJSONDelta(t *testing.T) {
-	hookFull := hookToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
-	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{hookFull, sjDelta})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{sjDelta, hookFull})
+	rev.ApplyAll([]model.Observation{lower, full})
 	id := model.ToolCallID("e1", "t1")
 	require.NotNil(t, fwd.Nodes[id].Payload)
 	assert.JSONEq(t, `{"command":"ls -la"}`, string(fwd.Nodes[id].Payload.Input))
 	assert.Equal(t, string(fwd.Nodes[id].Payload.Input), string(rev.Nodes[id].Payload.Input))
 }
 
-func TestPayloadStreamJSONSetsWhenAlone(t *testing.T) {
-	g := NewGraph()
-	g.Apply(sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 1))
-	id := model.ToolCallID("e1", "t1")
-	require.NotNil(t, g.Nodes[id].Payload)
-	assert.JSONEq(t, `{"command":"l"}`, string(g.Nodes[id].Payload.Input))
-}
-
-func TestPayloadRankStreamJSONIsDefault(t *testing.T) {
-	assert.Equal(t, 0, payloadRank(model.SourceStreamJSON))
-	assert.Equal(t, 0, payloadRank(model.SourceOTel))
-}
-
-func TestPayloadRankJSONLIsFull(t *testing.T) {
-	assert.Equal(t, 1, payloadRank(model.SourceHook))
-	assert.Equal(t, 1, payloadRank(model.SourceJSONL))
-	assert.Equal(t, 0, payloadRank(model.SourceStreamJSON))
-	assert.Equal(t, 0, payloadRank(model.SourceOTel))
-}
-
-func TestTokenRankJSONLIsLowest(t *testing.T) {
-	assert.Equal(t, 2, tokenRank(model.SourceOTel))
-	assert.Equal(t, 1, tokenRank(model.SourceStreamJSON))
-	assert.Equal(t, 0, tokenRank(model.SourceJSONL))
-}
-
-func TestReductionCommutativityThreeSources(t *testing.T) {
-	t0 := time.Unix(200, 0).UTC()
-	obs := []model.Observation{
-		sessionStartObs("e2", "s2", 1),
-		hookTurn("e2", "s2", "m2", 5, 2, t0.Add(time.Minute), 2),
-		otelTurn("e2", "s2", "m2", 50, 20, t0.Add(time.Second), 3),
-		sjTurn("e2", "s2", "m2", 7, 9, 4),
-		hookToolInput("e2", "s2", "t9", "Bash", `{"command":"ls -la"}`, 5),
-		sjToolInput("e2", "s2", "t9", "Bash", `{"command":"l"}`, 6),
-	}
-	perms := permute(obs)
-	var want string
-	for i, p := range perms {
-		g := NewGraph()
-		g.ApplyAll(p)
-		got := canonGraph(g)
-		if i == 0 {
-			want = got
-			continue
-		}
-		assert.Equal(t, want, got, "permutation %d diverged", i)
-	}
-}
-
-func sjStreamEvent(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
-	return model.Observation{
-		RunID: runID, ExecutionID: execID, Source: model.SourceStreamJSON,
-		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
-		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
-	}
-}
-
 func TestParentToolUseEdgeCreated(t *testing.T) {
-	parent := sjToolInput("e1", "s1", "tparent", "Task", `{}`, 1)
-	child := sjStreamEvent("e1", "s1", "tchild", "tparent", 2)
+	parent := jsonlToolInput("e1", "s1", "tparent", "Task", `{}`, 1)
+	child := jsonlChildEdge("e1", "s1", "tchild", "tparent", 2)
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{parent, child})
 	id := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparent"), model.ToolCallID("e1", "tchild"))
@@ -1355,33 +711,18 @@ func TestParentToolUseEdgeCreated(t *testing.T) {
 	assert.Equal(t, model.ToolCallID("e1", "tchild"), g.Edges[id].Dst)
 }
 
-func otelChildEdge(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
+func hookChildEdge(execID, runID, childTUID, parentTUID string, seq uint64) model.Observation {
 	return model.Observation{
-		RunID: runID, ExecutionID: execID, Source: model.SourceOTel,
+		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: runID, ExecutionID: execID, Source: model.SourceHook,
 		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: runID, ToolUseID: childTUID, ParentToolUseID: parentTUID},
 		Attrs:     map[string]any{"name": "Task"},
 		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: seq,
 	}
 }
 
-func TestParentToolUseStreamJSONDoesNotOverwriteOTelEdge(t *testing.T) {
-	otelEdge := otelChildEdge("e1", "s1", "tchild", "tparentA", 1)
-	sjEdge := sjStreamEvent("e1", "s1", "tchild", "tparentB", 2)
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{otelEdge, sjEdge})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{sjEdge, otelEdge})
-	wantID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentA"), model.ToolCallID("e1", "tchild"))
-	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentB"), model.ToolCallID("e1", "tchild"))
-	require.NotNil(t, fwd.Edges[wantID])
-	require.NotNil(t, rev.Edges[wantID])
-	assert.Nil(t, fwd.Edges[loseID])
-	assert.Nil(t, rev.Edges[loseID])
-}
-
 func TestParentToolUseNoChildID(t *testing.T) {
 	o := model.Observation{
-		RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
 		Kind: "assistant_tool_use", Correlation: model.Correlation{SessionID: "s1", ParentToolUseID: "tparent"},
 		EventTime: time.Unix(100, 0).UTC(), ObservedAt: time.Unix(100, 0).UTC(), Seq: 1,
 	}
@@ -1393,9 +734,8 @@ func TestParentToolUseNoChildID(t *testing.T) {
 
 func TestStructureRankValues(t *testing.T) {
 	assert.Equal(t, 3, structureRank(model.SourceJSONL))
-	assert.Equal(t, 2, structureRank(model.SourceOTel))
-	assert.Equal(t, 1, structureRank(model.SourceStreamJSON))
 	assert.Equal(t, 0, structureRank(model.SourceHook))
+	assert.Equal(t, 0, structureRank(model.Source("other")))
 }
 
 func jsonlToolInput(execID, runID, tuid, name, input string, seq uint64) model.Observation {
@@ -1431,45 +771,19 @@ func jsonlTurn(execID, runID, msgID string, tin, tout int64, seq uint64) model.O
 	}
 }
 
-func TestJSONLStructureOutranksOTelEdgeBothOrders(t *testing.T) {
-	otelEdge := otelChildEdge("e1", "s1", "tchild2", "tparentOTEL", 1)
+func TestJSONLStructureOutranksHookEdgeBothOrders(t *testing.T) {
+	hookEdge := hookChildEdge("e1", "s1", "tchild2", "tparentHOOK", 1)
 	jsonlEdge := jsonlChildEdge("e1", "s1", "tchild2", "tparentJSONL", 2)
 	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{otelEdge, jsonlEdge})
+	fwd.ApplyAll([]model.Observation{hookEdge, jsonlEdge})
 	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{jsonlEdge, otelEdge})
+	rev.ApplyAll([]model.Observation{jsonlEdge, hookEdge})
 	wantID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentJSONL"), model.ToolCallID("e1", "tchild2"))
-	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentOTEL"), model.ToolCallID("e1", "tchild2"))
+	loseID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "tparentHOOK"), model.ToolCallID("e1", "tchild2"))
 	require.NotNil(t, fwd.Edges[wantID])
 	require.NotNil(t, rev.Edges[wantID])
 	assert.Nil(t, fwd.Edges[loseID])
 	assert.Nil(t, rev.Edges[loseID])
-}
-
-func TestJSONLStructureOutranksOTelEdge(t *testing.T) {
-	g := NewGraph()
-	otel := model.Observation{
-		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel,
-		Kind: "assistant_tool_use", Seq: 1, EventTime: time.Unix(1, 0).UTC(),
-		Attrs:       map[string]any{"name": "Task"},
-		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pOTEL"},
-	}
-	g.Apply(otel)
-	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
-		model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child")))
-
-	jsonl := model.Observation{
-		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
-		Kind: "assistant_tool_use", Seq: 2, EventTime: time.Unix(2, 0).UTC(),
-		Attrs:       map[string]any{"name": "Task"},
-		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pJSONL"},
-	}
-	g.Apply(jsonl)
-
-	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
-		model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child")))
-	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
-		model.ToolCallID("e1", "pJSONL"), model.ToolCallID("e1", "child")))
 }
 
 func hookToolNoMessage(seq uint64) model.Observation {
@@ -1556,54 +870,6 @@ func TestHookOnlyToolKeepsSessionParent(t *testing.T) {
 	require.Contains(t, g.Edges, sessionEdge)
 }
 
-func TestJSONLPayloadBeatsStreamJSON(t *testing.T) {
-	jsonlFull := jsonlToolInput("e1", "s1", "t1", "Bash", `{"command":"ls -la"}`, 1)
-	sjDelta := sjToolInput("e1", "s1", "t1", "Bash", `{"command":"l"}`, 2)
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{jsonlFull, sjDelta})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{sjDelta, jsonlFull})
-	id := model.ToolCallID("e1", "t1")
-	require.NotNil(t, fwd.Nodes[id].Payload)
-	assert.JSONEq(t, `{"command":"ls -la"}`, string(fwd.Nodes[id].Payload.Input))
-	assert.Equal(t, string(fwd.Nodes[id].Payload.Input), string(rev.Nodes[id].Payload.Input))
-}
-
-func TestStreamJSONTokensOutrankJSONLTokens(t *testing.T) {
-	g := NewGraph()
-	mkTurn := func(src model.Source, in, out int64, seq uint64) model.Observation {
-		return model.Observation{
-			ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
-			Source: src, Kind: "assistant_turn", Seq: seq, EventTime: time.Unix(int64(seq), 0).UTC(),
-			Correlation: model.Correlation{MessageID: "m1"},
-			Attrs:       map[string]any{"tokens_in": in, "tokens_out": out},
-		}
-	}
-	g.Apply(mkTurn(model.SourceStreamJSON, 11, 22, 1))
-	g.Apply(mkTurn(model.SourceJSONL, 99, 99, 2))
-	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
-	require.NotNil(t, n)
-	assert.Equal(t, int64(11), *n.TokensIn)
-	assert.Equal(t, int64(22), *n.TokensOut)
-}
-
-func TestJSONLTimingBeatsStreamJSON(t *testing.T) {
-	tJSONL := time.Unix(200, 0).UTC()
-	tSJ := time.Unix(100, 0).UTC()
-	jsonlObs := jsonlTurn("e1", "s1", "m1", 0, 0, 1)
-	jsonlObs.EventTime = tJSONL
-	sjObs := sjTurn("e1", "s1", "m1", 0, 0, 2)
-	sjObs.EventTime = tSJ
-	fwd := NewGraph()
-	fwd.ApplyAll([]model.Observation{sjObs, jsonlObs})
-	rev := NewGraph()
-	rev.ApplyAll([]model.Observation{jsonlObs, sjObs})
-	id := model.AssistantTurnID("e1", "m1")
-	require.NotNil(t, fwd.Nodes[id].TStart)
-	assert.Equal(t, tJSONL, *fwd.Nodes[id].TStart)
-	assert.Equal(t, tJSONL, *rev.Nodes[id].TStart)
-}
-
 func TestJSONLTimingLosesToHook(t *testing.T) {
 	tHook := time.Unix(300, 0).UTC()
 	tJSONL := time.Unix(100, 0).UTC()
@@ -1618,57 +884,6 @@ func TestJSONLTimingLosesToHook(t *testing.T) {
 	require.NotNil(t, fwd.Nodes[id].TStart)
 	assert.Equal(t, tHook, *fwd.Nodes[id].TStart)
 	assert.Equal(t, tHook, *rev.Nodes[id].TStart)
-}
-
-func TestReductionCommutativityWithJSONL(t *testing.T) {
-	base := []model.Observation{
-		otelTool("e4", "s4", "tu1", "sp1", "", 1),
-		toolObs("e4", "s4", "tu1", "Bash", "ok", 2),
-		{
-			ObsID: "o3", RunID: "s4", ExecutionID: "e4", Source: model.SourceJSONL,
-			Kind: "assistant_tool_use", Seq: 3, EventTime: time.Unix(3, 0).UTC(),
-			Correlation: model.Correlation{ToolUseID: "tu1", ParentToolUseID: "tu0"},
-			Attrs:       map[string]any{"name": "Bash"},
-			Payload:     &model.Payload{Input: json.RawMessage(`{"command":"ls"}`)},
-		},
-		{
-			ObsID: "o4", RunID: "s4", ExecutionID: "e4", Source: model.SourceStreamJSON,
-			Kind: "assistant_turn", Seq: 4, EventTime: time.Unix(4, 0).UTC(),
-			Correlation: model.Correlation{MessageID: "m1"},
-			Attrs:       map[string]any{"tokens_in": int64(5), "tokens_out": int64(6)},
-		},
-	}
-	g0 := NewGraph()
-	g0.ApplyAll(base)
-	want := canonGraph(g0)
-	perms := permute(base)
-	for i, p := range perms {
-		g := NewGraph()
-		g.ApplyAll(p)
-		got := canonGraph(g)
-		assert.Equal(t, want, got, "permutation %d diverged", i)
-	}
-}
-
-func TestReductionCommutativityWithParentToolEdge(t *testing.T) {
-	obs := []model.Observation{
-		sessionStartObs("e3", "s3", 1),
-		sjToolInput("e3", "s3", "tp", "Task", `{}`, 2),
-		sjStreamEvent("e3", "s3", "tc", "tp", 3),
-		otelChildEdge("e3", "s3", "tc", "tp", 4),
-	}
-	perms := permute(obs)
-	var want string
-	for i, p := range perms {
-		g := NewGraph()
-		g.ApplyAll(p)
-		got := canonGraph(g)
-		if i == 0 {
-			want = got
-			continue
-		}
-		assert.Equal(t, want, got, "permutation %d diverged", i)
-	}
 }
 
 func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
@@ -1753,7 +968,7 @@ func TestAssistantTurnStampsDurationWhenStartAndEndKnown(t *testing.T) {
 func TestEndRankHigherSourceWins(t *testing.T) {
 	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
 	jsonlEnd := t0.Add(time.Second)
-	otelEnd := t0.Add(5 * time.Second)
+	hookEnd := t0.Add(5 * time.Second)
 
 	use := ob("assistant_tool_use", "toolu_d3", t0)
 	use.Attrs = map[string]any{"name": "Bash"}
@@ -1762,30 +977,18 @@ func TestEndRankHigherSourceWins(t *testing.T) {
 	resJSONL.Source = model.SourceJSONL
 	resJSONL.Attrs = map[string]any{"status": string(model.StatusOK)}
 
-	resOTel := ob("tool_result", "toolu_d3", otelEnd)
-	resOTel.Source = model.SourceOTel
-	resOTel.Attrs = map[string]any{"status": string(model.StatusOK)}
+	resHook := ob("tool_result", "toolu_d3", hookEnd)
+	resHook.Source = model.SourceHook
+	resHook.Attrs = map[string]any{"status": string(model.StatusOK)}
 
 	g := NewGraph()
-	g.ApplyAll([]model.Observation{use, resJSONL, resOTel})
+	g.ApplyAll([]model.Observation{use, resJSONL, resHook})
 	rg := NewGraph()
-	rg.ApplyAll([]model.Observation{resOTel, resJSONL, use})
+	rg.ApplyAll([]model.Observation{resHook, resJSONL, use})
 
 	id := model.ToolCallID(execID, "toolu_d3")
-	assert.Equal(t, otelEnd, *g.Nodes[id].TEnd)
-	assert.Equal(t, otelEnd, *rg.Nodes[id].TEnd)
-}
-
-func TestSessionEndGetsDurationMS(t *testing.T) {
-	t0 := time.Unix(0, 0).UTC()
-	t1 := t0.Add(5 * time.Second)
-	g := NewGraph()
-	g.Apply(ob("session_start", "", t0))
-	g.Apply(ob("session_end", "", t1))
-	n := g.Nodes[model.SessionNodeID(execID)]
-	require.NotNil(t, n.TEnd)
-	require.NotNil(t, n.DurationMS)
-	assert.Equal(t, int64(5000), *n.DurationMS)
+	assert.Equal(t, hookEnd, *g.Nodes[id].TEnd)
+	assert.Equal(t, hookEnd, *rg.Nodes[id].TEnd)
 }
 
 func TestSubagentStopGetsDurationMS(t *testing.T) {
@@ -1831,26 +1034,6 @@ func TestEndRankEqualRankLatestTimeWins(t *testing.T) {
 	assert.Equal(t, later, *rg.Nodes[id].TEnd)
 }
 
-func TestAssistantTurnCostReportedProvenance(t *testing.T) {
-	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
-		if in.ReportedUSD != nil {
-			return PriceResult{USD: *in.ReportedUSD, Source: "reported"}, true
-		}
-		return PriceResult{USD: float64(in.TokensIn+in.TokensOut) / 1000, Source: "estimated"}, true
-	})
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Correlation.MessageID = "mc1"
-	o.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(10), "tokens_out": int64(5), "cost_usd": float64(0.25)}
-
-	g := NewGraphWithPricer(p)
-	g.Apply(o)
-
-	n := g.Nodes[model.AssistantTurnID(execID, "mc1")]
-	require.NotNil(t, n.CostUSD)
-	assert.InDelta(t, 0.25, *n.CostUSD, 1e-9)
-	assert.Equal(t, "reported", n.Attrs["cost_source"])
-}
-
 func TestAssistantTurnCostEstimatedProvenance(t *testing.T) {
 	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
 		return PriceResult{USD: float64(in.TokensIn+in.TokensOut) / 1000, Source: "estimated"}, true
@@ -1891,40 +1074,6 @@ func TestAssistantTurnCostIncludesCacheTokens(t *testing.T) {
 	assert.InDelta(t, float64(10+5+1000+2000)/1000, *n.CostUSD, 1e-9)
 }
 
-func TestAssistantTurnReportedCostWinsOverCacheEstimate(t *testing.T) {
-	eng := pricing.New()
-	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
-		r, ok := eng.Cost(pricing.Inputs{
-			ModelID:     in.ModelID,
-			TokensIn:    in.TokensIn,
-			TokensOut:   in.TokensOut,
-			CacheReadIn: in.CacheReadIn,
-			CacheWrite:  in.CacheWrite,
-			ReportedUSD: in.ReportedUSD,
-		})
-		return PriceResult{USD: r.USD, Source: r.Source}, ok
-	})
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Source = model.SourceStreamJSON
-	o.Correlation.MessageID = "mc_reported"
-	o.Attrs = map[string]any{
-		"model":         "claude-opus-4-8",
-		"tokens_in":     int64(1000),
-		"tokens_out":    int64(500),
-		"cache_read_in": int64(1_000_000),
-		"cache_write":   int64(1_000_000),
-		"cost_usd":      float64(0.25),
-	}
-
-	g := NewGraphWithPricer(p)
-	g.Apply(o)
-
-	n := g.Nodes[model.AssistantTurnID(execID, "mc_reported")]
-	require.NotNil(t, n.CostUSD)
-	assert.InDelta(t, 0.25, *n.CostUSD, 1e-9)
-	assert.Equal(t, "reported", n.Attrs["cost_source"])
-}
-
 func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
 	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
 		return PriceResult{}, false
@@ -1940,30 +1089,6 @@ func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
 	assert.Nil(t, n.CostUSD)
 	_, has := n.Attrs["cost_source"]
 	assert.False(t, has)
-}
-
-func TestCostAttributionOrderIndependent(t *testing.T) {
-	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
-		return PriceResult{USD: float64(in.TokensIn), Source: "estimated"}, true
-	})
-	t0 := time.Unix(0, 0).UTC()
-	a := ob("assistant_turn", "", t0)
-	a.Source = model.SourceStreamJSON
-	a.Correlation.MessageID = "mc4"
-	a.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(7)}
-	b := ob("assistant_turn", "", t0.Add(time.Second))
-	b.Source = model.SourceOTel
-	b.Correlation.MessageID = "mc4"
-	b.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(11)}
-
-	fwd := NewGraphWithPricer(p)
-	fwd.ApplyAll([]model.Observation{a, b})
-	rev := NewGraphWithPricer(p)
-	rev.ApplyAll([]model.Observation{b, a})
-
-	id := model.AssistantTurnID(execID, "mc4")
-	require.NotNil(t, fwd.Nodes[id].CostUSD)
-	assert.Equal(t, *fwd.Nodes[id].CostUSD, *rev.Nodes[id].CostUSD)
 }
 
 func TestNewGraphNoPricerNoCost(t *testing.T) {
@@ -2042,7 +1167,7 @@ func TestApplyAssistantTurnMergesTextPayload(t *testing.T) {
 func TestApplyAssistantTurnNilPayloadNoPanic(t *testing.T) {
 	g := NewGraph()
 	o := model.Observation{
-		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
 		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m2"},
 		EventTime: time.Unix(1, 0).UTC(), Seq: 1,
 	}
@@ -2055,14 +1180,14 @@ func TestApplyAssistantTurnNilPayloadNoPanic(t *testing.T) {
 func TestApplyAssistantTurnResultDoesNotClobberText(t *testing.T) {
 	g := NewGraph()
 	first := model.Observation{
-		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
 		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
 		Payload:   &model.Payload{Output: json.RawMessage(`"keep me"`)},
 		EventTime: time.Unix(1, 0).UTC(), Seq: 1,
 	}
 	first.Payload.Hash = model.HashPayload(first.Payload)
 	second := model.Observation{
-		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceStreamJSON,
+		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
 		Kind: "assistant_turn", Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
 		EventTime: time.Unix(2, 0).UTC(), Seq: 2,
 	}
@@ -2070,48 +1195,6 @@ func TestApplyAssistantTurnResultDoesNotClobberText(t *testing.T) {
 	n := g.Nodes[model.AssistantTurnID("e1", "m1")]
 	require.NotNil(t, n.Payload)
 	assert.JSONEq(t, `"keep me"`, string(n.Payload.Output))
-}
-
-func TestCumulativeCostNoDoubleCount(t *testing.T) {
-	result := func(seq uint64, cost float64) []model.Observation {
-		return []model.Observation{
-			{
-				ObsID: "turn" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: execID,
-				Source: model.SourceStreamJSON, Kind: "assistant_turn",
-				Correlation: model.Correlation{SessionID: "s1"},
-				Attrs:       map[string]any{"session_total": true, "cost_usd": cost}, Seq: seq,
-			},
-			{
-				ObsID: "end" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: execID,
-				Source: model.SourceStreamJSON, Kind: "session_end",
-				Correlation: model.Correlation{SessionID: "s1"},
-				Attrs:       map[string]any{"reason": ""}, Seq: seq + 1,
-			},
-		}
-	}
-	obs1 := result(1, 0.10)
-	obs2 := result(3, 0.30)
-
-	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
-		if in.ReportedUSD != nil {
-			return PriceResult{USD: *in.ReportedUSD, Source: "reported"}, true
-		}
-		return PriceResult{}, false
-	})
-	g := NewGraphWithPricer(p)
-	g.ApplyAll(obs1)
-	g.ApplyAll(obs2)
-
-	var costUSD float64
-	var found bool
-	for _, n := range g.Nodes {
-		if n.Type == model.NodeAssistantTurn && n.CostUSD != nil {
-			costUSD += *n.CostUSD
-			found = true
-		}
-	}
-	require.True(t, found, "expected at least one assistant_turn node with cost")
-	assert.InDelta(t, 0.30, costUSD, 1e-9)
 }
 
 func promptObs(uuid string, seq uint64) model.Observation {
@@ -2690,28 +1773,6 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
 }
 
-func TestSetIfEmpty(t *testing.T) {
-	tests := []struct {
-		name    string
-		initial string
-		src     any
-		want    string
-	}{
-		{"fills empty from string", "", "hello", "hello"},
-		{"skips non-empty dst", "existing", "new", "existing"},
-		{"skips empty string src", "", "", ""},
-		{"skips nil src", "", nil, ""},
-		{"skips int src", "", 42, ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tc.initial
-			setIfEmpty(&got, tc.src)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 func TestEnsureRunCwdWithoutVersionInitsRepro(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{{
@@ -2725,68 +1786,9 @@ func TestEnsureRunCwdWithoutVersionInitsRepro(t *testing.T) {
 	assert.Equal(t, "/work", r.Repro.Cwd)
 }
 
-func TestApplyReproMetaNilRun(t *testing.T) {
-	applyReproMeta(nil, map[string]any{"prompts_hash": "abc"})
-}
-
-func TestApplyReproMetaSetsAllFields(t *testing.T) {
-	r := &model.Run{}
-	applyReproMeta(r, map[string]any{
-		"prompts_hash":         "ph",
-		"skills_hash":          "sh",
-		"subagents_hash":       "suh",
-		"catacomb_config_hash": "cch",
-		"catacomb_version":     "cv",
-		"claude_code_version":  "ccv",
-		"cwd":                  "/home",
-	})
-	require.NotNil(t, r.Repro)
-	assert.Equal(t, "ph", r.Repro.PromptsHash)
-	assert.Equal(t, "sh", r.Repro.SkillsHash)
-	assert.Equal(t, "suh", r.Repro.SubagentsHash)
-	assert.Equal(t, "cch", r.Repro.CatacombConfigHash)
-	assert.Equal(t, "cv", r.Repro.CatacombVersion)
-	assert.Equal(t, "ccv", r.Repro.ClaudeCodeVersion)
-	assert.Equal(t, "/home", r.Repro.Cwd)
-}
-
-func TestApplyReproMetaNoOverwrite(t *testing.T) {
-	r := &model.Run{Repro: &model.ReproMeta{PromptsHash: "original"}}
-	applyReproMeta(r, map[string]any{"prompts_hash": "new"})
-	assert.Equal(t, "original", r.Repro.PromptsHash)
-}
-
-func TestApplyReproMetaKindInGraph(t *testing.T) {
-	g := NewGraph()
-	g.Apply(model.Observation{
-		RunID:       "s1",
-		ExecutionID: "exec1",
-		Source:      model.SourceHook,
-		Kind:        "session_start",
-		Correlation: model.Correlation{SessionID: "s1"},
-		Attrs:       map[string]any{},
-	})
-	g.Apply(model.Observation{
-		RunID:       "s1",
-		ExecutionID: "exec1",
-		Source:      model.SourceHook,
-		Kind:        "repro_meta",
-		Correlation: model.Correlation{SessionID: "s1"},
-		Attrs: map[string]any{
-			"prompts_hash":     "ph",
-			"catacomb_version": "cv",
-		},
-	})
-	r := g.Runs["s1"]
-	require.NotNil(t, r)
-	require.NotNil(t, r.Repro)
-	assert.Equal(t, "ph", r.Repro.PromptsHash)
-	assert.Equal(t, "cv", r.Repro.CatacombVersion)
-}
-
 func TestBareRunHasNoReproField(t *testing.T) {
 	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
 	r := g.Runs["s1"]
 	require.NotNil(t, r)
 	assert.Nil(t, r.Repro)
@@ -2801,8 +1803,8 @@ func TestEnsureRunHarvestsClaudeCodeVersionAndCwd(t *testing.T) {
 		RunID:       "s1",
 		ExecutionID: "exec1",
 		Source:      model.SourceHook,
-		Kind:        "session_start",
-		Correlation: model.Correlation{SessionID: "s1"},
+		Kind:        "assistant_turn",
+		Correlation: model.Correlation{SessionID: "s1", MessageID: "m1"},
 		Attrs: map[string]any{
 			"claude_code_version": "1.2.3",
 			"cwd":                 "/project",
@@ -2817,22 +1819,11 @@ func TestEnsureRunHarvestsClaudeCodeVersionAndCwd(t *testing.T) {
 
 func TestRunStartedRunIsRunning(t *testing.T) {
 	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
 	r := g.Runs["s1"]
 	require.NotNil(t, r)
 	assert.Equal(t, "s1", r.ID)
 	assert.Equal(t, model.StatusRunning, r.Status)
-}
-
-func TestRunEndedRunIsAbandoned(t *testing.T) {
-	g := NewGraph()
-	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
-	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
-	r := g.Runs["s1"]
-	require.NotNil(t, r)
-	assert.Equal(t, "s1", r.ID)
-	assert.Equal(t, model.StatusAbandoned, r.Status)
-	assert.NotNil(t, r.EndedAt)
 }
 
 func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
@@ -2858,50 +1849,23 @@ func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {
 }
 
 func TestNodeKey(t *testing.T) {
-	assert.Equal(t, "abc", nodeKey("abc", "span1", "obs1"))
-	assert.Equal(t, "span:span1", nodeKey("", "span1", "obs1"))
-	assert.Equal(t, "obs:obs1", nodeKey("", "", "obs1"))
-}
-
-func TestToolSpanFallbackDistinctSpanIDs(t *testing.T) {
-	t0 := time.Unix(0, 0).UTC()
-	o1 := model.Observation{
-		ObsID: "obs1", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: "s1"},
-		Attrs:       map[string]any{"name": "Bash"},
-		EventTime:   t0, ObservedAt: t0, Seq: 1,
-	}
-	o2 := model.Observation{
-		ObsID: "obs2", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: "s2"},
-		Attrs:       map[string]any{"name": "Read"},
-		EventTime:   t0, ObservedAt: t0, Seq: 2,
-	}
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{o1, o2})
-	n1 := g.Nodes[model.ToolCallID(execID, "span:s1")]
-	n2 := g.Nodes[model.ToolCallID(execID, "span:s2")]
-	require.NotNil(t, n1)
-	require.NotNil(t, n2)
-	assert.NotEqual(t, n1.ID, n2.ID)
-	assert.Nil(t, g.Nodes[model.ToolCallID(execID, "")])
+	assert.Equal(t, "abc", nodeKey("abc", "obs1"))
+	assert.Equal(t, "obs:obs1", nodeKey("", "obs1"))
 }
 
 func TestToolObsFallbackDistinctObsIDs(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	o1 := model.Observation{
 		ObsID: "o1", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: ""},
+		Source: model.SourceJSONL, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: ""},
 		Attrs:       map[string]any{"name": "Bash"},
 		EventTime:   t0, ObservedAt: t0, Seq: 1,
 	}
 	o2 := model.Observation{
 		ObsID: "o2", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "assistant_tool_use",
-		Correlation: model.Correlation{SessionID: runID, ToolUseID: "", SpanID: ""},
+		Source: model.SourceJSONL, Kind: "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: ""},
 		Attrs:       map[string]any{"name": "Read"},
 		EventTime:   t0, ObservedAt: t0, Seq: 2,
 	}
@@ -2915,45 +1879,19 @@ func TestToolObsFallbackDistinctObsIDs(t *testing.T) {
 	assert.Nil(t, g.Nodes[model.ToolCallID(execID, "")])
 }
 
-func TestTurnSpanFallbackDistinctSpanIDs(t *testing.T) {
-	t0 := time.Unix(0, 0).UTC()
-	o1 := model.Observation{
-		ObsID: "obs1", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "assistant_turn",
-		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: "sp1"},
-		Attrs:       map[string]any{},
-		EventTime:   t0, ObservedAt: t0, Seq: 1,
-	}
-	o2 := model.Observation{
-		ObsID: "obs2", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "assistant_turn",
-		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: "sp2"},
-		Attrs:       map[string]any{},
-		EventTime:   t0, ObservedAt: t0, Seq: 2,
-	}
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{o1, o2})
-	n1 := g.Nodes[model.AssistantTurnID(execID, "span:sp1")]
-	n2 := g.Nodes[model.AssistantTurnID(execID, "span:sp2")]
-	require.NotNil(t, n1)
-	require.NotNil(t, n2)
-	assert.NotEqual(t, n1.ID, n2.ID)
-	assert.Nil(t, g.Nodes[model.AssistantTurnID(execID, "")])
-}
-
-func TestTurnNoMessageNoSpanCollapsesToOneNode(t *testing.T) {
+func TestTurnNoMessageCollapsesToOneNode(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	o1 := model.Observation{
 		ObsID: "ob1", RunID: runID, ExecutionID: execID,
-		Source: model.SourceStreamJSON, Kind: "assistant_turn",
-		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: ""},
+		Source: model.SourceJSONL, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: ""},
 		Attrs:       map[string]any{},
 		EventTime:   t0, ObservedAt: t0, Seq: 1,
 	}
 	o2 := model.Observation{
 		ObsID: "ob2", RunID: runID, ExecutionID: execID,
-		Source: model.SourceStreamJSON, Kind: "assistant_turn",
-		Correlation: model.Correlation{SessionID: runID, MessageID: "", SpanID: ""},
+		Source: model.SourceJSONL, Kind: "assistant_turn",
+		Correlation: model.Correlation{SessionID: runID, MessageID: ""},
 		Attrs:       map[string]any{},
 		EventTime:   t0, ObservedAt: t0, Seq: 2,
 	}
@@ -2974,14 +1912,14 @@ func TestPromptObsFallbackDistinctObsIDs(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	o1 := model.Observation{
 		ObsID: "po1", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "user_prompt",
+		Source: model.SourceJSONL, Kind: "user_prompt",
 		Correlation: model.Correlation{SessionID: runID, UUID: ""},
 		Attrs:       map[string]any{},
 		EventTime:   t0, ObservedAt: t0, Seq: 1,
 	}
 	o2 := model.Observation{
 		ObsID: "po2", RunID: runID, ExecutionID: execID,
-		Source: model.SourceOTel, Kind: "user_prompt",
+		Source: model.SourceJSONL, Kind: "user_prompt",
 		Correlation: model.Correlation{SessionID: runID, UUID: ""},
 		Attrs:       map[string]any{},
 		EventTime:   t0, ObservedAt: t0, Seq: 2,
@@ -2998,8 +1936,7 @@ func TestPromptObsFallbackDistinctObsIDs(t *testing.T) {
 
 func TestResultObservationTagsSessionTotalNode(t *testing.T) {
 	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Source = model.SourceStreamJSON
-	o.Attrs = map[string]any{"session_total": true, "model": "m", "tokens_in": int64(7), "tokens_out": int64(9), "cost_usd": 0.5}
+	o.Attrs = map[string]any{"session_total": true, "model": "m", "tokens_in": int64(7), "tokens_out": int64(9)}
 
 	g := NewGraph()
 	g.Apply(o)
@@ -3009,43 +1946,9 @@ func TestResultObservationTagsSessionTotalNode(t *testing.T) {
 	assert.True(t, n.SessionTotal())
 }
 
-func TestLegacyResultObservationTagsSessionTotalNode(t *testing.T) {
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Source = model.SourceStreamJSON
-	o.Attrs = map[string]any{"tokens_in": int64(7), "cost_usd": 0.5}
-
-	g := NewGraph()
-	g.Apply(o)
-
-	assert.True(t, g.Nodes[model.AssistantTurnID(execID, "")].SessionTotal())
-}
-
-func TestMessageTurnWithReportedCostNotSessionTotal(t *testing.T) {
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Source = model.SourceStreamJSON
-	o.Correlation.MessageID = "m1"
-	o.Attrs = map[string]any{"cost_usd": 0.5}
-
-	g := NewGraph()
-	g.Apply(o)
-
-	assert.False(t, g.Nodes[model.AssistantTurnID(execID, "m1")].SessionTotal())
-}
-
-func TestNonStreamTurnWithCostNotSessionTotal(t *testing.T) {
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Attrs = map[string]any{"cost_usd": 0.5}
-
-	g := NewGraph()
-	g.Apply(o)
-
-	assert.False(t, g.Nodes[model.AssistantTurnID(execID, "")].SessionTotal())
-}
-
 func TestSessionTotalTagSurvivesStoreRoundTrip(t *testing.T) {
 	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Source = model.SourceStreamJSON
-	o.Attrs = map[string]any{"session_total": true, "cost_usd": 0.5}
+	o.Attrs = map[string]any{"session_total": true}
 
 	raw, err := json.Marshal(o)
 	require.NoError(t, err)
