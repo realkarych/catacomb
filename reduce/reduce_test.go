@@ -796,7 +796,7 @@ func TestCascadeStatusHandlesDiamond(t *testing.T) {
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "b", 2)
 	g.upsertEdge("e1", "s1", "a", "c", 3)
 	g.upsertEdge("e1", "s1", "b", "c", 9)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 1)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.Equal(t, model.StatusUnknown, g.Nodes["c"].Status)
 }
 
@@ -804,7 +804,7 @@ func TestCascadeStatusSkipsMissingNode(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "ghost", 2)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 2)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.NotContains(t, g.Nodes, "ghost")
 }
 
@@ -813,7 +813,7 @@ func TestCascadeStatusIgnoresNonParentChild(t *testing.T) {
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeMarkerSpan, Src: model.SessionNodeID("e1"), Dst: "x"}
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 3)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }
 
@@ -886,7 +886,7 @@ func TestCascadeStatusCancelsNonTerminalDescendants(t *testing.T) {
 	g.node("childDone", "s1", model.NodeToolCall).Status = model.StatusOK
 	g.upsertEdge("e1", "s1", "root", "childRun", 1)
 	g.upsertEdge("e1", "s1", "root", "childDone", 2)
-	g.cascadeStatus("root", model.StatusCancelled, 42)
+	g.cascadeStatus("root", model.StatusCancelled)
 	assert.Equal(t, model.StatusCancelled, g.Nodes["childRun"].Status)
 	assert.Equal(t, "root", g.Nodes["childRun"].Attrs["cancel_cause"])
 	assert.Equal(t, model.StatusOK, g.Nodes["childDone"].Status)
@@ -899,7 +899,7 @@ func TestCascadeStatusSupersededSetsCause(t *testing.T) {
 	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.upsertEdge("e1", "s1", "root", "child", 1)
-	g.cascadeStatus("root", model.StatusSuperseded, 5)
+	g.cascadeStatus("root", model.StatusSuperseded)
 	assert.Equal(t, model.StatusSuperseded, g.Nodes["child"].Status)
 	assert.Equal(t, "root", g.Nodes["child"].Attrs["cancel_cause"])
 }
@@ -909,7 +909,7 @@ func TestCascadeUnknownPathHasNoCancelCause(t *testing.T) {
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
 	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "child", 1)
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 7)
+	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown)
 	assert.Equal(t, model.StatusUnknown, g.Nodes["child"].Status)
 	_, hasCause := g.Nodes["child"].Attrs["cancel_cause"]
 	assert.False(t, hasCause)
@@ -1157,141 +1157,35 @@ func canonGraph(g *Graph) string {
 	return string(b)
 }
 
-func deltaByKind(ds []GraphDelta, k GraphDeltaKind) []GraphDelta {
-	var out []GraphDelta
-	for _, d := range ds {
-		if d.Kind == k {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func TestEmitNodeUpsertOnSessionStart(t *testing.T) {
+func TestSessionEndSetsRunEndReason(t *testing.T) {
 	g := NewGraph()
 	g.Apply(sessionStartObs("e1", "s1", 1))
-	ds := g.DrainDeltas()
-	ups := deltaByKind(ds, DeltaNodeUpsert)
-	require.NotEmpty(t, ups)
-	found := false
-	for _, d := range ups {
-		if d.Node != nil && d.Node.ID == model.SessionNodeID("e1") {
-			found = true
-			assert.Equal(t, uint64(1), d.Rev)
-			assert.Equal(t, "e1", d.ExecutionID)
-		}
-	}
-	assert.True(t, found)
-}
-
-func TestDrainDeltasClearsBuffer(t *testing.T) {
-	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
-	first := g.DrainDeltas()
-	require.NotEmpty(t, first)
-	second := g.DrainDeltas()
-	assert.Empty(t, second)
-}
-
-func TestEmitRunStartedOnceOnFirstObs(t *testing.T) {
-	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
-	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 2))
-	ds := g.DrainDeltas()
-	starts := deltaByKind(ds, DeltaRunStarted)
-	require.Len(t, starts, 1)
-	assert.Equal(t, "s1", starts[0].RunID)
-}
-
-func TestEmitEdgeUpsertOnNewEdge(t *testing.T) {
-	g := NewGraph()
-	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
-	ds := g.DrainDeltas()
-	edges := deltaByKind(ds, DeltaEdgeUpsert)
-	require.NotEmpty(t, edges)
-	assert.Equal(t, uint64(1), edges[0].Rev)
-	assert.NotNil(t, edges[0].Edge)
-}
-
-func TestEmitSessionEndedOnSessionEnd(t *testing.T) {
-	g := NewGraph()
-	g.Apply(sessionStartObs("e1", "s1", 1))
-	_ = g.DrainDeltas()
 	g.Apply(sessionEndObs("e1", "s1", 2))
-	ds := g.DrainDeltas()
-	require.Len(t, deltaByKind(ds, DeltaSessionEnded), 1)
-	assert.Equal(t, "s1", deltaByKind(ds, DeltaSessionEnded)[0].RunID)
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, "session_ended", r.EndReason)
+	assert.NotNil(t, r.EndedAt)
+	assert.Equal(t, model.StatusOK, r.Status)
 }
 
-func TestEmitRunEndedOnRunEnded(t *testing.T) {
-	g := NewGraph()
-	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
-	_ = g.DrainDeltas()
-	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
-	ds := g.DrainDeltas()
-	require.Len(t, deltaByKind(ds, DeltaRunEnded), 1)
-}
-
-func TestRunEndedEarlyReturnEmitsNoRunEnded(t *testing.T) {
+func TestRunEndedEarlyReturnLeavesTerminalRun(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{
 		sessionStartObs("e1", "s1", 1),
 		sessionEndObs("e1", "s1", 2),
 	})
-	_ = g.DrainDeltas()
 	g.Apply(runEndedObs("e1", "s1", "timeout", 3))
-	ds := g.DrainDeltas()
-	assert.Empty(t, deltaByKind(ds, DeltaRunEnded))
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, model.StatusOK, r.Status)
+	assert.Equal(t, "session_ended", r.EndReason)
 }
 
-func TestCascadeEmitsNodeStatusWithTriggeringSeq(t *testing.T) {
-	g := NewGraph()
-	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.upsertEdge("e1", "s1", "root", "child", 1)
-	_ = g.DrainDeltas()
-	g.cascadeStatus("root", model.StatusCancelled, 42)
-	ds := g.DrainDeltas()
-	st := deltaByKind(ds, DeltaNodeStatus)
-	require.Len(t, st, 1)
-	assert.Equal(t, "child", st[0].Node.ID)
-	assert.Equal(t, model.StatusCancelled, st[0].Node.Status)
-	assert.Equal(t, uint64(42), st[0].Rev)
-}
-
-func TestCascadeUnknownCloseEmitsNodeStatus(t *testing.T) {
-	g := NewGraph()
-	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
-	g.node("child", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.upsertEdge("e1", "s1", model.SessionNodeID("e1"), "child", 1)
-	_ = g.DrainDeltas()
-	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 7)
-	ds := g.DrainDeltas()
-	st := deltaByKind(ds, DeltaNodeStatus)
-	require.Len(t, st, 1)
-	assert.Equal(t, "child", st[0].Node.ID)
-	assert.Equal(t, model.StatusUnknown, st[0].Node.Status)
-	assert.Equal(t, uint64(7), st[0].Rev)
-}
-
-func TestCloseIfOpenNoChangeEmitsNothing(t *testing.T) {
+func TestCloseIfOpenLeavesTerminalNode(t *testing.T) {
 	g := NewGraph()
 	g.node("done", "s1", model.NodeToolCall).Status = model.StatusOK
-	_ = g.DrainDeltas()
-	g.closeIfOpen("done", model.StatusUnknown, 5)
-	ds := g.DrainDeltas()
-	assert.Empty(t, deltaByKind(ds, DeltaNodeStatus))
-}
-
-func TestCascadeTerminalDescendantEmitsNoNodeStatus(t *testing.T) {
-	g := NewGraph()
-	g.node("root", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.node("child", "s1", model.NodeToolCall).Status = model.StatusOK
-	g.upsertEdge("e1", "s1", "root", "child", 1)
-	_ = g.DrainDeltas()
-	g.cascadeStatus("root", model.StatusCancelled, 9)
-	ds := g.DrainDeltas()
-	assert.Empty(t, deltaByKind(ds, DeltaNodeStatus))
+	g.closeIfOpen("done", model.StatusUnknown)
+	assert.Equal(t, model.StatusOK, g.Nodes["done"].Status)
 }
 
 func TestSourceRankFourLiveTiers(t *testing.T) {
@@ -1578,31 +1472,6 @@ func TestJSONLStructureOutranksOTelEdge(t *testing.T) {
 		model.ToolCallID("e1", "pJSONL"), model.ToolCallID("e1", "child")))
 }
 
-func TestReparentEmitsEdgeDelete(t *testing.T) {
-	g := NewGraph()
-	g.Apply(model.Observation{
-		ObsID: "o1", RunID: "s1", ExecutionID: "e1", Source: model.SourceOTel,
-		Kind: "assistant_tool_use", Seq: 1, EventTime: time.Unix(1, 0).UTC(),
-		Attrs:       map[string]any{"name": "Task"},
-		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pOTEL"},
-	})
-	_ = g.DrainDeltas()
-	g.Apply(model.Observation{
-		ObsID: "o2", RunID: "s1", ExecutionID: "e1", Source: model.SourceJSONL,
-		Kind: "assistant_tool_use", Seq: 2, EventTime: time.Unix(2, 0).UTC(),
-		Attrs:       map[string]any{"name": "Task"},
-		Correlation: model.Correlation{ToolUseID: "child", ParentToolUseID: "pJSONL"},
-	})
-	oldID := model.EdgeID("e1", model.EdgeParentChild, model.ToolCallID("e1", "pOTEL"), model.ToolCallID("e1", "child"))
-	deletedOld := false
-	for _, d := range g.DrainDeltas() {
-		if d.Kind == DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == oldID {
-			deletedOld = true
-		}
-	}
-	assert.True(t, deletedOld, "re-parent must emit DeltaEdgeDelete for the superseded edge")
-}
-
 func hookToolNoMessage(seq uint64) model.Observation {
 	return model.Observation{
 		ObsID: "o" + strconv.FormatUint(seq, 10), RunID: "s1", ExecutionID: "e1",
@@ -1626,7 +1495,6 @@ func jsonlToolTurn(seq uint64) model.Observation {
 func TestHookSessionReparentedToTurnByJSONL(t *testing.T) {
 	g := NewGraph()
 	g.Apply(hookToolNoMessage(1))
-	_ = g.DrainDeltas()
 	g.Apply(jsonlToolTurn(2))
 
 	tool := model.ToolCallID("e1", "t1")
@@ -1634,37 +1502,6 @@ func TestHookSessionReparentedToTurnByJSONL(t *testing.T) {
 	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
 	require.Contains(t, g.Edges, turnEdge)
 	assert.NotContains(t, g.Edges, sessionEdge)
-
-	deletedSession := false
-	for _, d := range g.DrainDeltas() {
-		if d.Kind == DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
-			deletedSession = true
-		}
-	}
-	assert.True(t, deletedSession, "session edge must be deleted when tool is reparented to its turn")
-}
-
-func TestStructReparentDeleteRevNotBelowDeletedEdgeRev(t *testing.T) {
-	g := NewGraph()
-	g.Apply(hookToolNoMessage(5))
-	_ = g.DrainDeltas()
-
-	tool := model.ToolCallID("e1", "t1")
-	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), tool)
-	deletedRev := g.Edges[sessionEdge].Rev
-
-	g.Apply(jsonlToolTurn(2))
-
-	var del *GraphDelta
-	for _, d := range g.DrainDeltas() {
-		if d.Kind == DeltaEdgeDelete && d.Edge != nil && d.Edge.ID == sessionEdge {
-			dd := d
-			del = &dd
-		}
-	}
-	require.NotNil(t, del, "reparent must emit DeltaEdgeDelete for the superseded session edge")
-	assert.GreaterOrEqual(t, del.Rev, deletedRev, "delete rev must not be below the deleted edge's last upsert rev")
-	assert.GreaterOrEqual(t, del.Rev, uint64(2), "delete rev must be at least the establishing observation seq")
 }
 
 func TestJSONLTurnNotReplacedByHookSessionFallback(t *testing.T) {
@@ -2331,37 +2168,11 @@ func TestLatePromptReparentsTurnFromSession(t *testing.T) {
 	g.Apply(turnObs("m1", 2))
 	turn := model.AssistantTurnID("e1", "m1")
 	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn))
-	_ = g.DrainDeltas()
 
 	g.Apply(promptObs("u1", 1))
 	prompt := model.UserPromptID("e1", "u1")
 	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn))
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, prompt, turn))
-
-	ds := g.DrainDeltas()
-	dels := deltaByKind(ds, DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	require.NotNil(t, dels[0].Edge)
-	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
-}
-
-func TestTurnReparentDeleteRevNotBelowDeletedEdgeRev(t *testing.T) {
-	g := NewGraph()
-	g.Apply(turnObs("m1", 2))
-	turn := model.AssistantTurnID("e1", "m1")
-	sessionEdge := model.EdgeID("e1", model.EdgeParentChild, model.SessionNodeID("e1"), turn)
-	require.Contains(t, g.Edges, sessionEdge)
-	deletedRev := g.Edges[sessionEdge].Rev
-	_ = g.DrainDeltas()
-
-	g.Apply(promptObs("u1", 1))
-
-	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	require.NotNil(t, dels[0].Edge)
-	require.Equal(t, sessionEdge, dels[0].Edge.ID)
-	assert.GreaterOrEqual(t, dels[0].Rev, deletedRev, "delete rev must not be below the deleted edge's last upsert rev")
-	assert.GreaterOrEqual(t, dels[0].Rev, uint64(1), "delete rev must be at least the establishing observation seq")
 }
 
 func TestLatePromptReparentsTurnFromEarlierPrompt(t *testing.T) {
@@ -2372,15 +2183,10 @@ func TestLatePromptReparentsTurnFromEarlierPrompt(t *testing.T) {
 	})
 	turn := model.AssistantTurnID("e1", "m1")
 	require.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
-	_ = g.DrainDeltas()
 
 	g.Apply(promptObs("u2", 3))
 	assert.NotContains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u2"), turn))
-
-	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	assert.Equal(t, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn), dels[0].Edge.ID)
 }
 
 func TestLatePromptAfterTurnDoesNotReparentEarlierTurn(t *testing.T) {
@@ -2390,11 +2196,9 @@ func TestLatePromptAfterTurnDoesNotReparentEarlierTurn(t *testing.T) {
 		turnObs("m1", 2),
 	})
 	turn := model.AssistantTurnID("e1", "m1")
-	_ = g.DrainDeltas()
 
 	g.Apply(promptObs("u2", 5))
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild, model.UserPromptID("e1", "u1"), turn))
-	assert.Empty(t, deltaByKind(g.DrainDeltas(), DeltaEdgeDelete))
 }
 
 func TestToolStillParentsToTurnUnderReparentedTurn(t *testing.T) {
@@ -2524,21 +2328,12 @@ func TestSubagentMetaUpgradesSessionParentDropsStaleEdge(t *testing.T) {
 	sub := model.SubagentID("e1", "ag1")
 	sessionEdge := pcEdge(model.SessionNodeID("e1"), sub)
 	require.Contains(t, g.Edges, sessionEdge)
-	deletedRev := g.Edges[sessionEdge].Rev
-	_ = g.DrainDeltas()
 
 	g.Apply(subagentStopObs("toolu_agent", "researcher", "desc", 4))
 
 	toolEdge := pcEdge(model.ToolCallID("e1", "toolu_agent"), sub)
 	assert.Contains(t, g.Edges, toolEdge)
 	assert.NotContains(t, g.Edges, sessionEdge)
-
-	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	require.NotNil(t, dels[0].Edge)
-	assert.Equal(t, sessionEdge, dels[0].Edge.ID)
-	assert.GreaterOrEqual(t, dels[0].Rev, deletedRev)
-	assert.GreaterOrEqual(t, dels[0].Rev, uint64(4))
 
 	n := g.Nodes[sub]
 	assert.Equal(t, "researcher", n.SubagentType)
@@ -2551,13 +2346,11 @@ func TestSubagentSessionStopAfterMetaLeavesNoStaleEdge(t *testing.T) {
 	sub := model.SubagentID("e1", "ag1")
 	toolEdge := pcEdge(model.ToolCallID("e1", "toolu_agent"), sub)
 	require.Contains(t, g.Edges, toolEdge)
-	_ = g.DrainDeltas()
 
 	g.Apply(subagentStopObs("", "", "", 4))
 
 	assert.Contains(t, g.Edges, toolEdge)
 	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), sub))
-	assert.Empty(t, deltaByKind(g.DrainDeltas(), DeltaEdgeDelete))
 
 	edges := 0
 	for id, e := range g.Edges {
@@ -2651,17 +2444,12 @@ func TestSubagentTurnReparentsToInnerPrompt(t *testing.T) {
 	turn := model.AssistantTurnID("e1", "m1")
 	subEdge := pcEdge(sub, turn)
 	require.Contains(t, g.Edges, subEdge)
-	_ = g.DrainDeltas()
 
 	g.Apply(agentPromptObs("u1", "ag1", 1))
 
 	prompt := model.UserPromptID("e1", "u1")
 	assert.Contains(t, g.Edges, pcEdge(prompt, turn))
 	assert.NotContains(t, g.Edges, subEdge)
-
-	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	assert.Equal(t, subEdge, dels[0].Edge.ID)
 }
 
 func TestAgentScopedTurnIgnoresForeignPrompt(t *testing.T) {
@@ -2770,15 +2558,6 @@ func TestMainSessionRegressionByteIdentical(t *testing.T) {
 		}
 	}
 	assert.Equal(t, wantEdges, gotEdges)
-
-	wantDeletes := map[string]uint64{
-		pcEdge(model.SessionNodeID("e1"), model.AssistantTurnID("e1", "m1")): 2,
-	}
-	gotDeletes := map[string]uint64{}
-	for _, d := range deltaByKind(g.DrainDeltas(), DeltaEdgeDelete) {
-		gotDeletes[d.Edge.ID] = d.Rev
-	}
-	assert.Equal(t, wantDeletes, gotDeletes)
 }
 
 func TestLargeInterleavedParentInvariant(t *testing.T) {
@@ -2872,7 +2651,6 @@ func TestNearLinearReparentsOnlyAffectedTurns(t *testing.T) {
 		turnObs("m2", 12),
 		turnObs("m3", 30),
 	})
-	_ = g.DrainDeltas()
 
 	m1EdgeID := pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1"))
 	revBeforeM1 := g.Edges[m1EdgeID].Rev
@@ -2882,12 +2660,9 @@ func TestNearLinearReparentsOnlyAffectedTurns(t *testing.T) {
 	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")))
 	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m2")))
 	assert.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u2"), model.AssistantTurnID("e1", "m3")))
+	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m3")))
 
 	assert.Equal(t, revBeforeM1, g.Edges[m1EdgeID].Rev, "m1 edge Rev must not change when turn is not in affected interval")
-
-	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	assert.Equal(t, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m3")), dels[0].Edge.ID)
 }
 
 func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
@@ -2898,7 +2673,6 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 		turnObs("m1", 10),
 	})
 	require.Contains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u1"), model.AssistantTurnID("e1", "m1")))
-	_ = g.DrainDeltas()
 
 	g.Apply(turnObs("m1", 3))
 
@@ -2910,13 +2684,10 @@ func TestTurnSeqDecreaseRepositionsAndReparents(t *testing.T) {
 	assert.Contains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
 	assert.NotContains(t, g.Edges, pcEdge(model.UserPromptID("e1", "u2"), turn))
 
-	_ = g.DrainDeltas()
 	g.Apply(promptObs("u0", 1))
 	u0 := model.UserPromptID("e1", "u0")
 	assert.Contains(t, g.Edges, pcEdge(u0, turn), "turn must reparent to prompt before it after repositionTurn")
-	dels := deltaByKind(g.DrainDeltas(), DeltaEdgeDelete)
-	require.Len(t, dels, 1)
-	assert.Equal(t, pcEdge(model.SessionNodeID("e1"), turn), dels[0].Edge.ID)
+	assert.NotContains(t, g.Edges, pcEdge(model.SessionNodeID("e1"), turn))
 }
 
 func TestSetIfEmpty(t *testing.T) {
@@ -3044,29 +2815,24 @@ func TestEnsureRunHarvestsClaudeCodeVersionAndCwd(t *testing.T) {
 	assert.Equal(t, "/project", r.Repro.Cwd)
 }
 
-func TestEmitRunStartedDeltaCarriesRun(t *testing.T) {
+func TestRunStartedRunIsRunning(t *testing.T) {
 	g := NewGraph()
 	g.Apply(sessionStartObs("e1", "s1", 1))
-	ds := g.DrainDeltas()
-	starts := deltaByKind(ds, DeltaRunStarted)
-	require.Len(t, starts, 1)
-	require.NotNil(t, starts[0].Run)
-	assert.Equal(t, "s1", starts[0].Run.ID)
-	assert.Equal(t, model.StatusRunning, starts[0].Run.Status)
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, "s1", r.ID)
+	assert.Equal(t, model.StatusRunning, r.Status)
 }
 
-func TestEmitRunEndedDeltaCarriesRun(t *testing.T) {
+func TestRunEndedRunIsAbandoned(t *testing.T) {
 	g := NewGraph()
 	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
-	_ = g.DrainDeltas()
 	g.Apply(runEndedObs("e1", "s1", "timeout", 2))
-	ds := g.DrainDeltas()
-	ended := deltaByKind(ds, DeltaRunEnded)
-	require.Len(t, ended, 1)
-	require.NotNil(t, ended[0].Run)
-	assert.Equal(t, "s1", ended[0].Run.ID)
-	assert.Equal(t, model.StatusAbandoned, ended[0].Run.Status)
-	assert.NotNil(t, ended[0].Run.EndedAt)
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Equal(t, "s1", r.ID)
+	assert.Equal(t, model.StatusAbandoned, r.Status)
+	assert.NotNil(t, r.EndedAt)
 }
 
 func TestAgentScopedDeterministicAcrossOrder(t *testing.T) {

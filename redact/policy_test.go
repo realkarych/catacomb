@@ -21,7 +21,6 @@ func refFor(data []byte) string {
 
 func TestDefaultPolicy(t *testing.T) {
 	p := redact.DefaultPolicy()
-	assert.Equal(t, redact.ModeRedact, p.Mode)
 	assert.Equal(t, redact.DefaultMaxBytes, p.MaxBytes)
 }
 
@@ -32,7 +31,7 @@ func TestPolicyRedactModeRedactsUnderCap(t *testing.T) {
 }
 
 func TestPolicyCapsOversizedSideAfterRedaction(t *testing.T) {
-	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: 16}
+	p := redact.Policy{MaxBytes: 16}
 	r := p.Observation(secretObservation())
 	redacted := redact.Observation(secretObservation())
 	assert.Equal(t, refFor(redacted.Payload.Input), string(r.Payload.Input))
@@ -40,52 +39,32 @@ func TestPolicyCapsOversizedSideAfterRedaction(t *testing.T) {
 	assert.Equal(t, redacted.Payload.Hash, r.Payload.Hash)
 }
 
-func TestPolicyRefsModeStoresRefsAndHashOnly(t *testing.T) {
-	p := redact.Policy{Mode: redact.ModeRefs, MaxBytes: redact.DefaultMaxBytes}
-	r := p.Observation(secretObservation())
-	redacted := redact.Observation(secretObservation())
-	assert.Equal(t, refFor(redacted.Payload.Input), string(r.Payload.Input))
-	assert.Equal(t, refFor(redacted.Payload.Output), string(r.Payload.Output))
-	assert.Equal(t, redacted.Payload.Hash, r.Payload.Hash)
-	assert.NotContains(t, string(r.Payload.Input), "redacted:connection-string")
+func TestPolicyNilPayload(t *testing.T) {
+	r := redact.DefaultPolicy().Observation(model.Observation{ObsID: "o2"})
+	assert.Nil(t, r.Payload)
 }
 
-func TestPolicyAllModeSkipsRedactionButCaps(t *testing.T) {
-	p := redact.Policy{Mode: redact.ModeAll, MaxBytes: redact.DefaultMaxBytes}
-	o := secretObservation()
-	r := p.Observation(o)
-	assert.Equal(t, o, r)
-
-	tiny := redact.Policy{Mode: redact.ModeAll, MaxBytes: 8}
-	capped := tiny.Observation(o)
-	assert.Equal(t, refFor(o.Payload.Input), string(capped.Payload.Input))
-	assert.Equal(t, "stale-pre-redaction", capped.Payload.Hash)
-	assert.Equal(t, "use AKIAIOSFODNN7EXAMPLE", capped.Attrs["prompt"])
-}
-
-func TestPolicyZeroValueNormalizesToRedact(t *testing.T) {
+func TestPolicyZeroValueNormalizesToDefault(t *testing.T) {
 	var p redact.Policy
 	r := p.Observation(secretObservation())
 	assert.Equal(t, redact.DefaultPolicy().Observation(secretObservation()), r)
 }
 
-func TestPolicyIdempotentAcrossModes(t *testing.T) {
+func TestPolicyIdempotent(t *testing.T) {
 	policies := []redact.Policy{
 		redact.DefaultPolicy(),
-		{Mode: redact.ModeRedact, MaxBytes: 8},
-		{Mode: redact.ModeRefs, MaxBytes: 64},
-		{Mode: redact.ModeAll, MaxBytes: 8},
+		{MaxBytes: 8},
 	}
 	for _, p := range policies {
 		once := p.Observation(secretObservation())
 		twice := p.Observation(once)
-		assert.Equal(t, once, twice, "mode %q max %d", p.Mode, p.MaxBytes)
+		assert.Equal(t, once, twice, "max %d", p.MaxBytes)
 	}
 }
 
 func TestPolicyWrapsRefLookalikeAsRefOfRedactedLength(t *testing.T) {
 	in := json.RawMessage(`"‹ref:1,ab›garbage-AKIAIOSFODNN7EXAMPLE"`)
-	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: 8}
+	p := redact.Policy{MaxBytes: 8}
 	r := p.Observation(model.Observation{Payload: &model.Payload{Input: in}})
 
 	redacted := redact.Redact(in).Data
@@ -105,18 +84,10 @@ func TestPolicyDropsPreRedactionHashWhenOneSideIsForgedRef(t *testing.T) {
 	})
 	require.NotEqual(t, incomingHash, wantHash)
 
-	mk := func() *model.Payload {
-		return &model.Payload{Input: rawInput, Output: forgedRef, Hash: incomingHash}
-	}
-	for _, mode := range []redact.Mode{redact.ModeRedact, redact.ModeRefs} {
-		t.Run(string(mode), func(t *testing.T) {
-			p := redact.Policy{Mode: mode, MaxBytes: redact.DefaultMaxBytes}
-
-			o := p.Observation(model.Observation{Payload: mk()})
-			assert.Equal(t, wantHash, o.Payload.Hash)
-			assert.NotEqual(t, incomingHash, o.Payload.Hash)
-		})
-	}
+	p := redact.Policy{MaxBytes: redact.DefaultMaxBytes}
+	o := p.Observation(model.Observation{Payload: &model.Payload{Input: rawInput, Output: forgedRef, Hash: incomingHash}})
+	assert.Equal(t, wantHash, o.Payload.Hash)
+	assert.NotEqual(t, incomingHash, o.Payload.Hash)
 }
 
 func TestPolicyRecomputesHashWhenOtherSideIsRawSecret(t *testing.T) {
@@ -129,7 +100,7 @@ func TestPolicyRecomputesHashWhenOtherSideIsRawSecret(t *testing.T) {
 	})
 	require.NotEqual(t, incomingHash, wantHash)
 
-	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: redact.DefaultMaxBytes}
+	p := redact.Policy{MaxBytes: redact.DefaultMaxBytes}
 	o := p.Observation(model.Observation{Payload: &model.Payload{Input: forgedRef, Output: rawOut, Hash: incomingHash}})
 	assert.Equal(t, wantHash, o.Payload.Hash)
 	assert.NotEqual(t, incomingHash, o.Payload.Hash)
@@ -157,7 +128,7 @@ func TestPolicyForgedHighEntropyRefRecomputesHashAndStaysIdempotent(t *testing.T
 				return &model.Payload{Input: forged, Output: tc.out, Hash: "incoming-stale-hash"}
 			}
 
-			p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: redact.DefaultMaxBytes}
+			p := redact.Policy{MaxBytes: redact.DefaultMaxBytes}
 			once := p.Observation(model.Observation{Payload: mk()})
 			assert.Equal(t, wantHash, once.Payload.Hash)
 			assert.NotEqual(t, "incoming-stale-hash", once.Payload.Hash)
@@ -190,17 +161,8 @@ func TestPolicyPassesThroughNonJSONPayloadUnchanged(t *testing.T) {
 	assert.Equal(t, model.HashPayload(r.Payload), r.Payload.Hash)
 }
 
-func TestPolicyAllModeCanonicalizesWhitespaceJSON(t *testing.T) {
-	spacey := json.RawMessage(`{"command": "ls -la"}`)
-	p := redact.Policy{Mode: redact.ModeAll, MaxBytes: redact.DefaultMaxBytes}
-	r := p.Observation(model.Observation{Payload: &model.Payload{Input: spacey, Hash: "stale"}})
-	require.NotNil(t, r.Payload)
-	assert.Equal(t, `{"command":"ls -la"}`, string(r.Payload.Input))
-	assert.Equal(t, "stale", r.Payload.Hash)
-}
-
 func TestPolicyBinaryPayloadBecomesBinaryRefNotDoubleWrapped(t *testing.T) {
-	p := redact.Policy{Mode: redact.ModeRefs, MaxBytes: redact.DefaultMaxBytes}
+	p := redact.Policy{MaxBytes: redact.DefaultMaxBytes}
 	o := model.Observation{Payload: &model.Payload{Input: json.RawMessage{0xff, 0xfe, 0x01}}}
 	once := p.Observation(o)
 	assert.True(t, strings.HasPrefix(string(once.Payload.Input), `"‹binary:`))

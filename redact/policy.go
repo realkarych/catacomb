@@ -9,29 +9,17 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
-type Mode string
-
-const (
-	ModeRedact Mode = "redact"
-	ModeRefs   Mode = "refs"
-	ModeAll    Mode = "all"
-)
-
 const DefaultMaxBytes = 262144
 
 type Policy struct {
-	Mode     Mode
 	MaxBytes int
 }
 
 func DefaultPolicy() Policy {
-	return Policy{Mode: ModeRedact, MaxBytes: DefaultMaxBytes}
+	return Policy{MaxBytes: DefaultMaxBytes}
 }
 
 func (p Policy) normalized() Policy {
-	if p.Mode != ModeRefs && p.Mode != ModeAll {
-		p.Mode = ModeRedact
-	}
 	if p.MaxBytes <= 0 {
 		p.MaxBytes = DefaultMaxBytes
 	}
@@ -40,9 +28,7 @@ func (p Policy) normalized() Policy {
 
 func (p Policy) Observation(o model.Observation) model.Observation {
 	p = p.normalized()
-	if p.Mode != ModeAll {
-		o.Attrs = redactAttrs(o.Attrs)
-	}
+	o.Attrs = redactAttrs(o.Attrs)
 	o.Payload = p.payload(o.Payload)
 	return o
 }
@@ -53,16 +39,12 @@ func (p Policy) payload(pl *model.Payload) *model.Payload {
 	if pl == nil {
 		return nil
 	}
-	in := pl.Input
-	out := pl.Output
-	if p.Mode != ModeAll {
-		in = json.RawMessage(Redact(pl.Input).Data)
-		out = json.RawMessage(Redact(pl.Output).Data)
-	}
+	in := json.RawMessage(Redact(pl.Input).Data)
+	out := json.RawMessage(Redact(pl.Output).Data)
 	in = canonicalizeJSON(in)
 	out = canonicalizeJSON(out)
 	pc := model.Payload{Hash: pl.Hash}
-	if p.Mode != ModeAll && !preserveIncomingHash(pl.Input, pl.Output) {
+	if !preserveIncomingHash(pl.Input, pl.Output) {
 		hp := model.Payload{Input: in, Output: out}
 		pc.Hash = model.HashPayload(&hp)
 	}
@@ -83,7 +65,7 @@ func (p Policy) capSide(data json.RawMessage) json.RawMessage {
 	if sideIsRefOrEmpty(data) {
 		return data
 	}
-	if p.Mode == ModeRefs || len(data) > p.MaxBytes {
+	if len(data) > p.MaxBytes {
 		return typedRef(data)
 	}
 	return data
