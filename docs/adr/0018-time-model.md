@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5.1, §5.2, §7, §16; ADR-0003, ADR-0010
+- **Related:** spec §5.1, §5.2, §7, §16; ADR-0003, ADR-0010, amended by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 
 ## Context
 

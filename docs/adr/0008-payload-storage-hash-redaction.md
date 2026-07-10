@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5.2, §11; ADR-0013, ADR-0020
+- **Related:** spec §5.2, §11; ADR-0013, ADR-0020, amended by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Amended by:** ADR-0020 — the redaction surface is the whole node (not just `payload`), with default value-scanning regexes, redact-before-cap ordering, and **post-redaction** hashing; ADR-0013 adds the daemon trust boundary that limits who can read payloads.
 
 ## Context

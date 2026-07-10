@@ -61,8 +61,8 @@ its own `subagents/agent-*.jsonl` sub-transcript.
 Each node carries:
 
 - **Timing** — `t_start`, `t_end`, `duration_ms`
-- **Cost and tokens** — from transcript usage records, with reported totals preferred
-  over per-turn estimates
+- **Cost and tokens** — token counts from transcript usage records; cost is estimated
+  from those tokens via a built-in per-model pricing table
 - **Status** — running, ok, or error
 - **`payload_hash`** — a hash of the (redacted) content, not the content itself
 - **`step_key`** — cross-run identity for diffing, aggregation, and score annotations

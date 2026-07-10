@@ -652,15 +652,14 @@ func canonGraph(g *Graph) string {
 	}
 	sort.Slice(ev, func(i, j int) bool { return ev[i].ID < ev[j].ID })
 	type runView struct {
-		ID        string
-		Status    model.Status
-		EndReason string
-		EndedAt   string
-		LastSeq   uint64
+		ID      string
+		Status  model.Status
+		EndedAt string
+		LastSeq uint64
 	}
 	var rv []runView
 	for id, r := range g.Runs {
-		v := runView{ID: id, Status: r.Status, EndReason: r.EndReason, LastSeq: r.LastSeq}
+		v := runView{ID: id, Status: r.Status, LastSeq: r.LastSeq}
 		if r.EndedAt != nil {
 			v.EndedAt = r.EndedAt.UTC().Format(time.RFC3339Nano)
 		}

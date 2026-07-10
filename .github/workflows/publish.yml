@@ -126,7 +126,7 @@ jobs:
           mkdir -p tap/Formula
           cat > tap/Formula/catacomb.rb <<EOF
           class Catacomb < Formula
-            desc "Execution-graph observability for Claude Code agentic sessions"
+            desc "Offline eval gate for Claude Code agentic pipelines"
             homepage "https://github.com/realkarych/catacomb"
             version "${TAG}"
 
@@ -204,7 +204,7 @@ jobs:
                 --name catacomb \
                 --version "${VER#v}" \
                 --architecture "$arch" \
-                --description "Execution-graph observability for Claude Code agentic sessions" \
+                --description "Offline eval gate for Claude Code agentic pipelines" \
                 --license Apache-2.0 \
                 --url "https://github.com/realkarych/catacomb" \
                 "$bin=/usr/bin/catacomb"
