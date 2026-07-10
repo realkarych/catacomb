@@ -2,6 +2,7 @@ package reduce
 
 import (
 	"encoding/json"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,16 @@ const (
 	execID = "exec1"
 	runID  = "s1"
 )
+
+func parseJSONL(r io.Reader, executionID string) ([]model.Observation, error) {
+	var seq uint64
+	obs, _, err := jsonl.Parse(r, executionID, func() uint64 {
+		s := seq
+		seq++
+		return s
+	}, func(ts time.Time) time.Time { return ts })
+	return obs, err
+}
 
 func ob(kind, toolUse string, ts time.Time) model.Observation {
 	return model.Observation{
@@ -801,7 +812,7 @@ func TestCascadeStatusIgnoresNonParentChild(t *testing.T) {
 	g := NewGraph()
 	g.node(model.SessionNodeID("e1"), "s1", model.NodeSession)
 	g.node("x", "s1", model.NodeToolCall).Status = model.StatusRunning
-	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeSequence, Src: model.SessionNodeID("e1"), Dst: "x"}
+	g.Edges["seq"] = &model.Edge{ID: "seq", RunID: "s1", Type: model.EdgeMarkerSpan, Src: model.SessionNodeID("e1"), Dst: "x"}
 	g.cascadeStatus(model.SessionNodeID("e1"), model.StatusUnknown, 3)
 	assert.Equal(t, model.StatusRunning, g.Nodes["x"].Status)
 }
@@ -1827,9 +1838,9 @@ func TestParentChildEdgeReachableFromRealAssistantEnvelope(t *testing.T) {
 	parentLine := `{"type":"assistant","sessionId":"s1","message":{"role":"assistant","id":"msg_parent","content":[{"type":"tool_use","id":"toolu_parent","name":"Task","input":{}}]}}` + "\n"
 	childLine := `{"type":"assistant","sessionId":"s1","parent_tool_use_id":"toolu_parent","message":{"role":"assistant","id":"msg_child","content":[{"type":"tool_use","id":"toolu_child","name":"Bash","input":{"command":"ls"}}]}}` + "\n"
 
-	parentObs, err := jsonl.ParseReader(strings.NewReader(parentLine), "exec_i1")
+	parentObs, err := parseJSONL(strings.NewReader(parentLine), "exec_i1")
 	require.NoError(t, err)
-	childObs, err := jsonl.ParseReader(strings.NewReader(childLine), "exec_i1")
+	childObs, err := parseJSONL(strings.NewReader(childLine), "exec_i1")
 	require.NoError(t, err)
 
 	g := NewGraph()

@@ -55,13 +55,3 @@ func MergeLabels(dst, src map[string]string) map[string]string {
 	}
 	return dst
 }
-
-func MatchLabels(labels, want map[string]string) bool {
-	for k, v := range want {
-		v2, ok := labels[k]
-		if !ok || v2 != v {
-			return false
-		}
-	}
-	return true
-}

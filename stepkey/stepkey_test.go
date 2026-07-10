@@ -402,7 +402,7 @@ func TestLessSiblingCNilTimestamp(t *testing.T) {
 
 func TestComputeEdgeNonParentChild(t *testing.T) {
 	n := tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
-	e := &model.Edge{Type: model.EdgeSequence, Src: "x", Dst: "t"}
+	e := &model.Edge{Type: model.EdgeMarkerSpan, Src: "x", Dst: "t"}
 	got := Compute([]*model.Node{n}, []*model.Edge{e})
 	assert.Contains(t, got, "t")
 }

@@ -83,49 +83,6 @@ func TestPolicyIdempotentAcrossModes(t *testing.T) {
 	}
 }
 
-func TestPolicyNode(t *testing.T) {
-	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: 16}
-	assert.Nil(t, p.Node(nil))
-
-	bare := &model.Node{Name: "clean"}
-	assert.Equal(t, "clean", p.Node(bare).Name)
-
-	n := &model.Node{
-		Name:    "Bash",
-		Payload: &model.Payload{Input: json.RawMessage(`{"command":"psql postgres://kesha:pw@localhost/db"}`)},
-	}
-	rn := p.Node(n)
-	require.NotNil(t, rn.Payload)
-	assert.True(t, strings.HasPrefix(string(rn.Payload.Input), `"‹ref:`))
-	assert.Equal(t, rn.Payload.Hash, rn.PayloadHash)
-	assert.Contains(t, string(n.Payload.Input), "kesha")
-	again := p.Node(rn)
-	assert.Equal(t, rn, again)
-}
-
-func TestPolicyNodeAllModeSkipsRedactionButCaps(t *testing.T) {
-	p := redact.Policy{Mode: redact.ModeAll, MaxBytes: 8}
-	n := &model.Node{
-		Name:         "AKIAIOSFODNN7EXAMPLE",
-		SubagentType: "reviewer",
-		Attrs:        map[string]any{"prompt": "use AKIAIOSFODNN7EXAMPLE"},
-		Payload: &model.Payload{
-			Input: json.RawMessage(`{"command":"psql postgres://kesha:pw@localhost/db"}`),
-			Hash:  "stale",
-		},
-	}
-	rn := p.Node(n)
-	assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", rn.Name)
-	assert.Equal(t, "reviewer", rn.SubagentType)
-	assert.Equal(t, "use AKIAIOSFODNN7EXAMPLE", rn.Attrs["prompt"])
-	assert.True(t, strings.HasPrefix(string(rn.Payload.Input), `"‹ref:`))
-	assert.Equal(t, "stale", rn.Payload.Hash)
-	assert.Equal(t, "stale", rn.PayloadHash)
-
-	twice := p.Node(rn)
-	assert.Equal(t, rn, twice)
-}
-
 func TestPolicyWrapsRefLookalikeAsRefOfRedactedLength(t *testing.T) {
 	in := json.RawMessage(`"‹ref:1,ab›garbage-AKIAIOSFODNN7EXAMPLE"`)
 	p := redact.Policy{Mode: redact.ModeRedact, MaxBytes: 8}
@@ -158,11 +115,6 @@ func TestPolicyDropsPreRedactionHashWhenOneSideIsForgedRef(t *testing.T) {
 			o := p.Observation(model.Observation{Payload: mk()})
 			assert.Equal(t, wantHash, o.Payload.Hash)
 			assert.NotEqual(t, incomingHash, o.Payload.Hash)
-
-			n := p.Node(&model.Node{Payload: mk(), PayloadHash: incomingHash})
-			assert.Equal(t, wantHash, n.Payload.Hash)
-			assert.Equal(t, n.Payload.Hash, n.PayloadHash)
-			assert.NotEqual(t, incomingHash, n.Payload.Hash)
 		})
 	}
 }

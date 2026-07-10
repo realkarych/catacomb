@@ -32,12 +32,3 @@ func TestNodeSessionTotal(t *testing.T) {
 	assert.False(t, (&Node{Attrs: map[string]any{"session_total": "true"}}).SessionTotal())
 	assert.True(t, (&Node{Attrs: map[string]any{"session_total": true}}).SessionTotal())
 }
-
-func TestTailCursorJSONRoundTrip(t *testing.T) {
-	c := TailCursor{Path: "/a/b.jsonl", Offset: 128, Fingerprint: "deadbeef", Size: 256, Mtime: 999}
-	b, err := json.Marshal(c)
-	require.NoError(t, err)
-	var got TailCursor
-	require.NoError(t, json.Unmarshal(b, &got))
-	assert.Equal(t, c, got)
-}

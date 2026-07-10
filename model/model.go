@@ -24,7 +24,6 @@ const (
 	NodeSubagent      NodeType = "subagent"
 	NodeMCPCall       NodeType = "mcp_call"
 	NodeSkill         NodeType = "skill"
-	NodeHookEvent     NodeType = "hook_event"
 	NodeMarker        NodeType = "marker"
 )
 
@@ -32,9 +31,7 @@ type EdgeType string
 
 const (
 	EdgeParentChild EdgeType = "parent_child"
-	EdgeSequence    EdgeType = "sequence"
 	EdgeMarkerSpan  EdgeType = "marker_span"
-	EdgeDataDep     EdgeType = "data_dep"
 )
 
 type Status string
@@ -95,7 +92,6 @@ type Node struct {
 	Type          NodeType       `json:"type"`
 	ParentID      string         `json:"parent_id,omitempty"`
 	AgentID       string         `json:"agent_id,omitempty"`
-	ParentAgentID string         `json:"parent_agent_id,omitempty"`
 	SubagentType  string         `json:"subagent_type,omitempty"`
 	Name          string         `json:"name,omitempty"`
 	Status        Status         `json:"status,omitempty"`
@@ -141,7 +137,6 @@ type Run struct {
 	LastSeq    uint64            `json:"last_seq,omitempty"`
 	StartedAt  *time.Time        `json:"started_at,omitempty"`
 	EndedAt    *time.Time        `json:"ended_at,omitempty"`
-	Meta       map[string]any    `json:"meta,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Repro      *ReproMeta        `json:"repro,omitempty"`
 }
@@ -154,27 +149,4 @@ type ReproMeta struct {
 	SkillsHash         string `json:"skills_hash,omitempty"`
 	SubagentsHash      string `json:"subagents_hash,omitempty"`
 	CatacombConfigHash string `json:"catacomb_config_hash,omitempty"`
-}
-
-type QuarantineRecord struct {
-	Raw      []byte    `json:"raw,omitempty"`
-	HookType string    `json:"hook_type,omitempty"`
-	Err      string    `json:"err,omitempty"`
-	At       time.Time `json:"at"`
-}
-
-type TailCursor struct {
-	Path        string `json:"path"`
-	Offset      int64  `json:"offset"`
-	Fingerprint string `json:"fingerprint,omitempty"`
-	Size        int64  `json:"size"`
-	Mtime       int64  `json:"mtime"`
-}
-
-type SubagentMeta struct {
-	SessionID   string
-	AgentID     string
-	ToolUseID   string
-	AgentType   string
-	Description string
 }

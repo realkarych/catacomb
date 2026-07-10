@@ -8,7 +8,7 @@ graph.
 
 ### Node types
 
-The graph has nine node types:
+The graph has eight node types:
 
 - `session` — a Claude Code session root
 - `user_prompt` — a user message submitted to the model
@@ -17,18 +17,14 @@ The graph has nine node types:
 - `mcp_call` — an MCP tool invocation
 - `skill` — a skill invocation
 - `subagent` — a spawned subagent
-- `hook_event` — retained in the data model for old exports; the transcript source
-  never produces it
 - `marker` — a phase boundary (see [Phases and checkpoints](#phases-and-checkpoints))
 
 ### Edge types
 
-Four edge types connect nodes:
+Two edge types connect nodes:
 
 - `parent_child` — structural containment (session → prompt, turn → tool)
-- `sequence` — ordering between siblings
 - `marker_span` — links a marker to every node inside its time window
-- `data_dep` — data dependency between nodes
 
 ### Identity and scope
 

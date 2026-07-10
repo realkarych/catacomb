@@ -62,17 +62,6 @@ type partial struct {
 
 var nowFn = time.Now
 
-func ParseReader(r io.Reader, executionID string) ([]model.Observation, error) {
-	var seq uint64
-	next := func() uint64 {
-		s := seq
-		seq++
-		return s
-	}
-	obs, _, err := Parse(r, executionID, next, func(eventTime time.Time) time.Time { return eventTime })
-	return obs, err
-}
-
 func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
@@ -107,7 +96,7 @@ func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt fu
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, nil, fmt.Errorf("jsonl.ParseReader: %w", err)
+		return nil, nil, fmt.Errorf("jsonl.Parse: %w", err)
 	}
 	return out, dc, nil
 }

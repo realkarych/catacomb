@@ -47,24 +47,6 @@ func (p Policy) Observation(o model.Observation) model.Observation {
 	return o
 }
 
-func (p Policy) Node(n *model.Node) *model.Node {
-	if n == nil {
-		return nil
-	}
-	p = p.normalized()
-	nc := *n
-	if p.Mode != ModeAll {
-		nc.Name = redactString(n.Name)
-		nc.SubagentType = redactString(n.SubagentType)
-		nc.Attrs = redactAttrs(n.Attrs)
-	}
-	nc.Payload = p.payload(n.Payload)
-	if nc.Payload != nil {
-		nc.PayloadHash = nc.Payload.Hash
-	}
-	return &nc
-}
-
 var reTypedRef = regexp.MustCompile(`^"` + typedRefCorePattern + `"$`)
 
 func (p Policy) payload(pl *model.Payload) *model.Payload {

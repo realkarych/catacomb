@@ -904,11 +904,3 @@ func TestRedactAnchorsTypedRefLookalikesUnderSensitiveKey(t *testing.T) {
 		})
 	}
 }
-
-func TestHasMarker(t *testing.T) {
-	assert.True(t, redact.HasMarker([]byte(`{"x":"‹redacted:aws-key›"}`)))
-	assert.True(t, redact.HasMarker([]byte(`"‹binary:3,0123456789abcdef›"`)))
-	assert.True(t, redact.HasMarker([]byte(`"‹ref:99,0123456789abcdef›"`)))
-	assert.False(t, redact.HasMarker([]byte(`{"x":"clean"}`)))
-	assert.False(t, redact.HasMarker(nil))
-}

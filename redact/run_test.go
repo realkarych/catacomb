@@ -19,7 +19,6 @@ func secretRun() model.Run {
 			"team": "core",
 			"note": "postgres://runner:run_label_password@db.internal/labels",
 		},
-		Meta: map[string]any{"lossy": true},
 		Repro: &model.ReproMeta{
 			Cwd:         "/deploy/AKIAIOSFODNN7EXAMPLE/build",
 			PromptsHash: strings.Repeat("ab", 32),
@@ -41,7 +40,6 @@ func TestRunPreservesReproHashesAndIdentity(t *testing.T) {
 	assert.Equal(t, strings.Repeat("cd", 32), r.Repro.SkillsHash)
 	assert.Equal(t, "r1", r.ID)
 	assert.Equal(t, model.StatusRunning, r.Status)
-	assert.Equal(t, map[string]any{"lossy": true}, r.Meta)
 }
 
 func TestRunDoesNotMutateInput(t *testing.T) {

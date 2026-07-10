@@ -37,10 +37,6 @@ func New() *Engine {
 	return newEngineWithFamilies(defaultTable(), defaultFamilies())
 }
 
-func newEngineWithTable(t map[string]Tier) *Engine {
-	return &Engine{table: t}
-}
-
 func newEngineWithFamilies(t map[string]Tier, fams []family) *Engine {
 	return &Engine{table: t, families: fams}
 }

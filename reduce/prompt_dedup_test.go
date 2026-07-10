@@ -1,8 +1,10 @@
 package reduce_test
 
 import (
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,6 +13,16 @@ import (
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 )
+
+func parseJSONL(r io.Reader, executionID string) ([]model.Observation, error) {
+	var seq uint64
+	obs, _, err := jsonl.Parse(r, executionID, func() uint64 {
+		s := seq
+		seq++
+		return s
+	}, func(ts time.Time) time.Time { return ts })
+	return obs, err
+}
 
 func countPromptNodes(g *reduce.Graph) int {
 	c := 0
@@ -40,9 +52,9 @@ const dedupPromptLine = `{"type":"user","uuid":"u1","sessionId":"s1","timestamp"
 
 func TestDuplicatePromptsReconcileToOneNode(t *testing.T) {
 	const execID = "e1"
-	first, err := jsonl.ParseReader(strings.NewReader(dedupPromptLine), execID)
+	first, err := parseJSONL(strings.NewReader(dedupPromptLine), execID)
 	require.NoError(t, err)
-	second, err := jsonl.ParseReader(strings.NewReader(dedupPromptLine), execID)
+	second, err := parseJSONL(strings.NewReader(dedupPromptLine), execID)
 	require.NoError(t, err)
 
 	g := reduce.NewGraph()
@@ -55,7 +67,7 @@ func TestDuplicatePromptsReconcileToOneNode(t *testing.T) {
 
 func TestSinglePromptCreatesExactlyOneNode(t *testing.T) {
 	const execID = "e1"
-	obs, err := jsonl.ParseReader(strings.NewReader(dedupPromptLine), execID)
+	obs, err := parseJSONL(strings.NewReader(dedupPromptLine), execID)
 	require.NoError(t, err)
 
 	g := reduce.NewGraph()
