@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "catacomb-verifier"
 version = "0.1.0"
 description = "Stdlib-only SDK for authoring catacomb verifiers (exec-contract env, artifact resolution, scores-JSONL)"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
