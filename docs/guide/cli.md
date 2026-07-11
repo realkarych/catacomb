@@ -273,6 +273,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
 | `--error-delta` | 0.1 | Error-rate delta threshold |
+| `--annotation-rate-delta` | 0.1 | Rate delta threshold for run-level binary annotations (e.g. `verifier.pass`; must be > 0) |
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
@@ -296,13 +297,14 @@ directories under `--runs-dir`:
 Groups are aggregated and compared per
 [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
 
-- **Rates** (presence, error) use one-sided Wilson bounds (default z `1.645`, tunable
-  with `--z`) and are flagged as a `regression` only when the baseline and candidate
-  bounds are disjoint *and* the delta exceeds the threshold; a delta over the threshold
-  with overlapping bounds is reported as `notable`, which gates only under
-  `--fail-on-notable`. When even a maximal flip at the actual group sizes cannot reach
-  `regression`, the report (human and `--json`) carries a `sensitivity:` note naming
-  the smallest `k` at which the gate could fire; see
+- **Rates** (presence, error, and run-level binary annotations such as `verifier.pass`)
+  use one-sided Wilson bounds (default z `1.645`, tunable with `--z`) and are flagged as a
+  `regression` only when the baseline and candidate bounds are disjoint *and* the delta
+  exceeds the threshold (`--presence-delta`, `--error-delta`, or `--annotation-rate-delta`
+  respectively); a delta over the threshold with overlapping bounds is reported as
+  `notable`, which gates only under `--fail-on-notable`. When even a maximal flip at the
+  actual group sizes cannot reach `regression`, the report (human and `--json`) carries a
+  `sensitivity:` note naming the smallest `k` at which the gate could fire; see
   [Gate sensitivity at small k](workflows.md#gate-sensitivity-at-small-k).
 - **Metrics** (`duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `occurrences`; run
   totals also `nodes`) flag the candidate median when it falls outside the baseline
@@ -347,10 +349,11 @@ compared medians are taken across the per-run sums:
   is the `regression`.
 
 The flag is repeatable and each key gates independently; a duplicate key (across flags
-or directions) is an operational error (exit `2`). Annotation gating is **step-scoped
-only** per
-[ADR-0022 Amendments](../adr/0022-regression-detection-over-repeated-runs.md#amendments):
-phase rows carry no annotation block. Because a score is only sampled on the runs that
+or directions) is an operational error (exit `2`). Annotation gating runs at two scopes —
+individual **steps** (per `step_key`, described here) and the **run total** (run-level
+scores, [below](#run-level-scores)); phase rows carry no annotation block per
+[ADR-0022 Amendments](../adr/0022-regression-detection-over-repeated-runs.md#amendments).
+Because a score is only sampled on the runs that
 actually carry it, an annotation's `N` can be below the step's `Present` (a step
 reached in every run but scored in only some); an annotation whose `N` falls below
 `--min-support`, or one present on only one side, is reported `insufficient` rather
@@ -368,18 +371,53 @@ warning to stderr (stdout and `--json` stay clean).
 same `owner.key` grammar as `--annotation`, `value` must be a number, and `run_id` is
 optional: set it to score a single run — one line per scored run is the normal shape —
 or omit it and the value lands on every run in **both** groups that carries the step
-key, which flattens both medians to the same value. Blank lines are skipped; a
-malformed line is an operational error (exit `2`) naming the file and line. Values
-apply in memory to both groups before aggregation — nothing is written back to the
-evidence dirs or the store. Entries that match no node are counted into a single stderr
-warning (`N score entries matched no node`); stdout and `--json` stay clean. The file
-only supplies values: each key still needs its `--annotation owner.key[:direction]`
-flag to declare a gate, or the scores are inert.
+key, which flattens both medians to the same value. A line that omits `step_key` is a
+**run-level** score ([below](#run-level-scores)). Extra provenance fields — `tool`,
+`tool_version`, `prompt_hash`, or any other key an evaluator emits — are tolerated and
+ignored, so a scorer can record its own metadata on the same line. Blank lines are
+skipped; a malformed line is an operational error (exit `2`) naming the file and line.
+Values apply in memory to both groups before aggregation — nothing is written back to
+the evidence dirs or the store. Entries that match no node are counted into a single
+stderr warning (`N score entries matched no node`); stdout and `--json` stay clean. The
+file only supplies values: each key still needs its `--annotation owner.key[:direction]`
+flag to declare a gate — the sole exception is `verifier.pass`, which gates by default
+([below](#run-level-scores)) — or the scores are inert.
+
+### Run-level scores
+
+A score line that **omits `step_key`** attaches to the run as a whole rather than to a
+node, and gates at the `total` scope alongside `cost_usd`, `nodes`, and the run-total
+rates. In a `--scores` file a run-level line **requires `run_id`** (there is no node to
+match it by; a run-level line without one is an operational error, exit `2`):
+
+```json
+{"step_key": "", "key": "verifier.pass", "value": 1, "run_id": "bench-checkout-work-task-candidate-r1"}
+```
+
+- **`verifier.pass` gates by default.** The reserved key `verifier.pass` (higher-better)
+  is compared even with no `--annotation` flag, so a candidate whose pass rate drops
+  below the baseline flags a `regression` out of the box. Any other run-level key still
+  needs `--annotation owner.key[:direction]` to gate.
+- **Binary annotations use the rate gate.** When every value for a key is `0` or `1`,
+  the key is gated as a rate with one-sided Wilson bounds and the `--annotation-rate-delta`
+  threshold (default `0.1`) — the same disjoint-bounds-and-delta rule as presence and
+  error rates — and the human `DETAIL` column shows the raw counts as `ones a/n -> b/m`.
+  A key with non-`{0,1}` values is treated as continuous and gated with the metric median
+  band instead.
+
+Run-level scores can also be supplied without `--scores`: when `regress` resolves runs
+from `--runs-dir`, it auto-loads a `scores.jsonl` sitting in each run's evidence dir, and
+a run-level line there may omit `run_id` (it defaults to that run's ID). A `--scores`
+file is layered on top; when one of its entries sets a key an evidence file already
+provided, the flag value wins and a stderr warning notes the count
+(`N entries overrode evidence-provided values`).
 
 Comparison runs at three scopes — run totals, checkpoint phases, and steps. The human
-table prints `VERDICT SCOPE KEY NAME METRIC BASELINE CANDIDATE BAND` with
-presence-normalized values (presence rate, not absence); `--json` emits the full report
-(presence rows carry absence rates plus a clarifying `detail` field). Exit codes: `0`
+table prints `VERDICT SCOPE KEY NAME METRIC BASELINE CANDIDATE BAND DETAIL` with
+presence-normalized values (presence rate, not absence); the `DETAIL` column carries the
+per-finding note (raw counts such as `present a/n -> b/m` or `ones a/n -> b/m`, an
+`insufficient` reason, or a coverage-downgrade note), and is `-` when empty. `--json`
+emits the full report (presence rows carry absence rates plus the same `detail` field). Exit codes: `0`
 pass, `1` regression (or `insufficient` with `--strict`), `2` operational error
 (invalid selector, unknown baseline, missing store, empty group, a missing pinned
 evidence dir, a [stamp refusal](#baseline-version-stamps) under `--strict`, or
@@ -420,7 +458,12 @@ catacomb regress --baseline name:golden --candidate label:variant=candidate --js
 catacomb regress --baseline name:golden --candidate label:variant=candidate --record --strict
 catacomb regress --baseline name:golden --candidate label:variant=candidate \
   --scores scores.jsonl --annotation deepeval.tool_correctness
+catacomb regress --baseline name:golden --candidate label:variant=candidate \
+  --scores verifier.jsonl
 ```
+
+The last form gates on `verifier.pass` with no `--annotation` flag, since that key gates
+by default.
 
 ---
 

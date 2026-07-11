@@ -17,11 +17,11 @@ func RenderHuman(r Report, w io.Writer) {
 			formatSensitivity("error_rate", r.Sensitivity.ErrorRate))
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "VERDICT\tSCOPE\tKEY\tNAME\tMETRIC\tBASELINE\tCANDIDATE\tBAND")
+	_, _ = fmt.Fprintln(tw, "VERDICT\tSCOPE\tKEY\tNAME\tMETRIC\tBASELINE\tCANDIDATE\tBAND\tDETAIL")
 	for _, f := range r.Findings {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			f.Verdict, f.Scope, keyOrDash(f.Key), keyOrDash(f.Name), f.Metric,
-			renderValue(f, f.Baseline), renderValue(f, f.Candidate), formatBand(f))
+			renderValue(f, f.Baseline), renderValue(f, f.Candidate), formatBand(f), keyOrDash(f.Detail))
 	}
 	_ = tw.Flush()
 }

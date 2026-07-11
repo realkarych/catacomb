@@ -89,6 +89,7 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		{"iqr-factor", "2.5", func(th regress.Thresholds) string { return strconv.FormatFloat(th.IQRFactor, 'g', -1, 64) }},
 		{"coverage-floor", "0.8", func(th regress.Thresholds) string { return strconv.FormatFloat(th.CoverageFloor, 'g', -1, 64) }},
 		{"z", "1.96", func(th regress.Thresholds) string { return strconv.FormatFloat(th.Z, 'g', -1, 64) }},
+		{"annotation-rate-delta", "0.15", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AnnotationRateDelta, 'g', -1, 64) }},
 	}
 	for _, tc := range cases {
 		var f regressFlags
@@ -138,6 +139,14 @@ func TestRegressZFlagRejectsNonPositive(t *testing.T) {
 	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--z", "0"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "--z must be > 0")
+}
+
+func TestRegressAnnotationRateDeltaRejectsNonPositive(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--annotation-rate-delta", "0"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--annotation-rate-delta must be > 0")
 }
 
 func TestRegressStrictInsufficientExitOne(t *testing.T) {

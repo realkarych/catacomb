@@ -96,6 +96,29 @@ func TestRenderHumanNameColumn(t *testing.T) {
 	assert.Equal(t, "-", rows["-"][3])
 }
 
+func TestRenderHumanAnnotationDetail(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictRegression,
+		Findings: []Finding{{
+			Scope:     "total",
+			Metric:    "ann:verifier.pass",
+			Verdict:   VerdictRegression,
+			Baseline:  1.0,
+			Candidate: 0.4,
+			BandLo:    0.6,
+			BandHi:    1.0,
+			Detail:    "ones 5/5 -> 2/5",
+		}},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "DETAIL")
+	assert.Contains(t, out, "ann:verifier.pass")
+	assert.Contains(t, out, "ones 5/5 -> 2/5")
+}
+
 func TestRenderHumanPresenceNormalized(t *testing.T) {
 	t.Parallel()
 	rep := Report{
