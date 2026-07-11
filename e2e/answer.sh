@@ -15,7 +15,7 @@
 set -euo pipefail
 
 exec claude -p "${TASK_PROMPT}" \
-	--model claude-haiku-4-5 \
+	--model "${CHILD_MODEL:-claude-haiku-4-5}" \
 	--output-format stream-json \
 	--verbose \
 	--strict-mcp-config \

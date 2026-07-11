@@ -340,8 +340,10 @@ smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
 Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
+The checkpoint (mark) task runs on Sonnet for instruction-following reliability while the
+step and continuous tasks stay on Haiku, which also exercises multi-model pricing.
 
-Because it spends real API budget (~$0.5 per run), it is not part of per-PR CI: trigger it
+Because it spends real API budget (~$1 per run), it is not part of per-PR CI: trigger it
 by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
 needs the `ANTHROPIC_API_KEY` repository secret and fails fast with a clear message when
 the secret is absent.

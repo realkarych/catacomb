@@ -22,8 +22,16 @@ tasks:
   - id: haiku
     cmd: ["./presence.sh"]
     dir: .
+    # claude-haiku-4-5 (CLI 2.1.206) no longer reliably follows the mark instruction
+    # (run 5: baseline 4/5, baseline2 2/5), so the mark-dependent task runs on sonnet.
+    # Task-level env: no variant sets CHILD_MODEL, so it survives the task+variant
+    # merge (bench merges task env first, then variant env; variant would win a clash).
+    env:
+      CHILD_MODEL: claude-sonnet-5
     checkpoints:
       - verify
+  # echo stays on the default haiku (CHILD_MODEL unset) — cheap, and Bash obedience
+  # held on haiku in run 5. This also exercises multi-model pricing in the gate.
   - id: echo
     cmd: ["./echo.sh"]
     dir: .

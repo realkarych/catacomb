@@ -29,7 +29,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
 exec claude -p "Write a haiku about the sea (three short lines). ${PHASE_INSTRUCTION}" \
-	--model claude-haiku-4-5 \
+	--model "${CHILD_MODEL:-claude-haiku-4-5}" \
 	--output-format stream-json \
 	--verbose \
 	--mcp-config "${here}/mcp.json" \
