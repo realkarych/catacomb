@@ -29,6 +29,7 @@ Branch: `chore/governance-model-policy`. No Go behavior change. Validate: `markd
 ### Task C1: Model-policy section in AGENTS.md
 
 **Files:**
+
 - Modify: `AGENTS.md` (the "Agent models: opus only" section, ~lines 17-19)
 
 - [ ] **Step 1:** Replace the section titled `## Agent models: opus only` and its paragraph with:
@@ -52,6 +53,7 @@ carries the gated work. If Fable is momentarily unavailable, wait and retry.
 ### Task C2: SECURITY.md
 
 **Files:**
+
 - Create: `SECURITY.md`
 
 - [ ] **Step 1:** Create `SECURITY.md`:
@@ -89,6 +91,7 @@ See the Privacy section of the README.
 ### Task C3: .claude/settings.json + Stop hook + agent definitions
 
 **Files:**
+
 - Modify: `.claude/settings.json` (currently `{}`)
 - Create: `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`, `.claude/agents/verifier.md`, `.claude/agents/scout.md`
 
@@ -142,6 +145,7 @@ Use `model: fable` for `implementer`, `reviewer`, `verifier`; `model: opus` for 
 ### Task C4: Community files
 
 **Files:**
+
 - Create: `CONTRIBUTING.md`, `CODEOWNERS`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/bug_report.md`, `.github/ISSUE_TEMPLATE/feature_request.md`
 
 - [ ] **Step 1:** `CONTRIBUTING.md` (thin, points to AGENTS.md):
@@ -179,6 +183,7 @@ Branch: `ci/security-scanners`. Validate: `actionlint`, `zizmor`, `gitleaks dete
 ### Task A1: gitleaks config + job
 
 **Files:**
+
 - Create: `.gitleaks.toml`
 - Create: `.github/workflows/security.yml` (gitleaks job first; more jobs added in A2/A3)
 
@@ -222,6 +227,7 @@ paths = [
 ### Task A4: Pin third-party Actions to commit SHAs
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml`, `.github/workflows/e2e-live.yml`, `.github/workflows/python-deepeval.yml`, `.github/workflows/security.yml`
 
 - [ ] **Step 1:** For each third-party `uses:` at a version tag, resolve the tag → commit SHA (mechanical, Opus): `gh api repos/<owner>/<repo>/git/refs/tags/<tag> --jq .object.sha` (deref annotated tags with a second call to `.object.url`). Replace `uses: owner/repo@vX.Y.Z` with `uses: owner/repo@<sha> # vX.Y.Z`.
@@ -237,6 +243,7 @@ Branch: `ci/goreleaser-release-integrity`. Owns `publish.yml`. Validate: `gorele
 ### Task B1: .goreleaser.yaml
 
 **Files:**
+
 - Create: `.goreleaser.yaml`
 
 - [ ] **Step 1:** Author `.goreleaser.yaml` covering, at minimum:
@@ -256,6 +263,7 @@ Branch: `ci/goreleaser-release-integrity`. Owns `publish.yml`. Validate: `gorele
 ### Task B2: Rewrite publish.yml
 
 **Files:**
+
 - Modify: `.github/workflows/publish.yml` (replace build/homebrew/docker jobs with a GoReleaser job; keep a slim APT-publish job)
 
 - [ ] **Step 1:** Replace the matrix build + archive + homebrew + docker jobs with a single `goreleaser` job:
@@ -275,10 +283,12 @@ Branch: `feat/redaction-hardening`. Package `redact`. Owns `README.md` (privacy 
 ### Task D1: Shannon-entropy helper
 
 **Files:**
+
 - Modify: `redact/redact.go` (add `shannonEntropy`, import `math`)
 - Test: `redact/redact_test.go` (or a focused `redact/entropy_test.go`)
 
 **Interfaces:**
+
 - Produces: `func shannonEntropy(s string) float64` — bits/char; `0` for empty.
 
 - [ ] **Step 1: Write failing test**
@@ -323,10 +333,12 @@ func shannonEntropy(s string) float64 {
 ### Task D2: Vendor prefix rules
 
 **Files:**
+
 - Modify: `redact/redact.go` (add regex vars + entries to `valueRules`)
 - Test: `redact/redact_test.go`
 
 **Interfaces:**
+
 - Produces: new reasons `"stripe-key"`, `"sendgrid-key"`, `"twilio-key"`, `"npm-token"`, `"pypi-token"`, `"gitlab-token"`, `"google-oauth"`. These auto-register in `knownPlaceholders` (built from `valueRules`).
 
 - [ ] **Step 1: Write failing table test** asserting each secret is replaced by its placeholder and a benign lookalike is not:
@@ -370,10 +382,12 @@ Add to `valueRules` with their reasons.
 ### Task D3: Entropy-gated generic detection
 
 **Files:**
+
 - Modify: `redact/redact.go` (introduce `entropyRules`, gate matching by `shannonEntropy`; lower length threshold 40→32; add base64url charset)
 - Test: `redact/redact_test.go`
 
 **Interfaces:**
+
 - Produces: entropy-gated redaction for `"high-entropy"`; a 32+ char high-entropy hex/base64/base64url span is redacted, a 32+ char low-entropy span (repeated/dictionary) is NOT.
 
 - [ ] **Step 1: Write failing tests** for both recall (short-but-high-entropy now caught) and precision (long-but-low-entropy not caught):
@@ -412,6 +426,7 @@ Gate in `replaceSecretSpans` via `ReplaceAllStringFunc`, redacting a match only 
 ### Task D4: Fuzz target
 
 **Files:**
+
 - Create: `redact/redact_fuzz_test.go`
 
 - [ ] **Step 1: Write the fuzz target** (properties: no panic; idempotence; injected known secret never survives):
@@ -435,6 +450,7 @@ func FuzzRedact(f *testing.F) {
 ### Task D5: Soften README + guide privacy claim
 
 **Files:**
+
 - Modify: `README.md` (Privacy section; the "no artifact catacomb writes encodes a raw secret" sentence)
 - Modify: `docs/guide/privacy-and-operations.md` (matching phrasing if present)
 
@@ -450,10 +466,12 @@ Branch: `fix/subprocess-timeout`. Packages `cmd/catacomb` + `bench`. 100% covera
 ### Task E1: Thread context into runChildLocal
 
 **Files:**
+
 - Modify: `cmd/catacomb/childlocal.go:71` (`runChildLocal` signature + `exec.CommandContext`)
 - Modify: `cmd/catacomb/childlocal_test.go` (3 callers at lines 45, 59, 71; add cancellation + timeout tests)
 
 **Interfaces:**
+
 - Produces: `func runChildLocal(ctx context.Context, stdout, stderr io.Writer, args []string, dir string, extraEnv []string, observe func(line []byte)) error`.
 - Consumes (test): `execCommand` stays `exec.Command`; switch to `exec.CommandContext(ctx, args[0], args[1:]...)` via a new `execCommandContext = exec.CommandContext` var for injectability.
 
@@ -483,10 +501,12 @@ func TestRunChildLocalTimeout(t *testing.T) {
 ### Task E2: bench Task.Timeout schema + validation
 
 **Files:**
+
 - Modify: `bench/basket.go` (`Task` struct; `validateTasks`; new `ErrTimeout`; `parseTimeout` helper)
 - Test: `bench/basket_test.go`
 
 **Interfaces:**
+
 - Produces: `Task.Timeout string` (yaml `timeout,omitempty`); `func (t Task) TimeoutDuration() (time.Duration, error)` returning `0, nil` when unset; `ErrTimeout` sentinel.
 
 - [ ] **Step 1: Write failing tests:** valid `"30s"` parses to `30*time.Second`; empty → `0`; `"-1s"` → `ErrTimeout`; garbage → `ErrTimeout`; a basket with `timeout: "banana"` fails `Load`.
@@ -496,10 +516,12 @@ func TestRunChildLocalTimeout(t *testing.T) {
 ### Task E3: Wire ctx + per-cell timeout in bench
 
 **Files:**
+
 - Modify: `cmd/catacomb/bench.go:165` (`runBenchCellOffline` gains `ctx`; wrap with `context.WithTimeout` when the task sets one) and the RunE loop that calls it (thread `cmd.Context()`)
 - Test: `cmd/catacomb/bench_offline_test.go`
 
 **Interfaces:**
+
 - Consumes: `runChildLocal(ctx, ...)` (E1); `cell.Task.TimeoutDuration()` (E2).
 - Produces: `runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell bench.Cell, ...)`.
 
