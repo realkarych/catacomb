@@ -120,7 +120,7 @@ func TestScoresApplyMatrix(t *testing.T) {
 		{StepKey: "sk2", Key: "owner.q", Value: 0.5, RunID: "c0"},
 		{StepKey: "ghost", Key: "owner.q", Value: 1},
 	}
-	applied, unmatched := applyScores([][]aggregate.RunGraph{base, cand}, entries)
+	applied, unmatched, _ := applyScores([][]aggregate.RunGraph{base, cand}, entries)
 	assert.Equal(t, 4, applied)
 	assert.Equal(t, 2, unmatched)
 	assert.Equal(t, float64(1), base[0].Nodes[0].Annotations["owner.q"])
@@ -131,7 +131,7 @@ func TestScoresApplyMatrix(t *testing.T) {
 
 func TestScoresApplyRunScopedSkipsOtherRuns(t *testing.T) {
 	base := []aggregate.RunGraph{scoreGraph("b0", "sk1"), scoreGraph("b1", "sk1")}
-	applied, unmatched := applyScores([][]aggregate.RunGraph{base}, []scoreEntry{
+	applied, unmatched, _ := applyScores([][]aggregate.RunGraph{base}, []scoreEntry{
 		{StepKey: "sk1", Key: "owner.q", Value: 0.75, RunID: "b1"},
 	})
 	assert.Equal(t, 1, applied)
@@ -143,7 +143,7 @@ func TestScoresApplyRunScopedSkipsOtherRuns(t *testing.T) {
 func TestScoresApplyPreservesExistingAnnotations(t *testing.T) {
 	g := scoreGraph("r0", "sk1")
 	g.Nodes[0].Annotations = map[string]any{"other.metric": 2.0}
-	applied, unmatched := applyScores([][]aggregate.RunGraph{{g}}, []scoreEntry{
+	applied, unmatched, _ := applyScores([][]aggregate.RunGraph{{g}}, []scoreEntry{
 		{StepKey: "sk1", Key: "owner.q", Value: 1},
 	})
 	assert.Equal(t, 1, applied)
@@ -153,7 +153,7 @@ func TestScoresApplyPreservesExistingAnnotations(t *testing.T) {
 }
 
 func TestScoresApplyEmptyEntries(t *testing.T) {
-	applied, unmatched := applyScores([][]aggregate.RunGraph{{scoreGraph("r0", "sk1")}}, nil)
+	applied, unmatched, _ := applyScores([][]aggregate.RunGraph{{scoreGraph("r0", "sk1")}}, nil)
 	assert.Zero(t, applied)
 	assert.Zero(t, unmatched)
 }
@@ -192,4 +192,76 @@ func TestScoresFileAllMatchedNoWarning(t *testing.T) {
 	assert.Empty(t, errBuf.String())
 	assert.Equal(t, float64(1), base[0].Nodes[0].Annotations["owner.q"])
 	assert.Equal(t, float64(1), cand[0].Nodes[0].Annotations["owner.q"])
+}
+
+func TestApplyEntriesToRunGraphRunLevel(t *testing.T) {
+	rg := aggregate.RunGraph{Run: model.Run{ID: "r1"}}
+	applied, unmatched := applyEntriesToRunGraph(&rg, []scoreEntry{
+		{Key: "verifier.pass", Value: 1, RunID: "r1"},
+		{Key: "verifier.pass", Value: 0, RunID: "other"},
+	})
+	assert.Equal(t, 1, applied)
+	assert.Equal(t, 1, unmatched)
+	assert.Equal(t, map[string]float64{"verifier.pass": 1}, rg.Annotations)
+}
+
+func TestLoadEvidenceScoresFillsRunID(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scores.jsonl"),
+		[]byte(`{"key":"verifier.pass","value":1}`+"\n"), 0o600))
+	entries, err := loadEvidenceScores(dir, "r9")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "r9", entries[0].RunID)
+}
+
+func TestLoadEvidenceScoresMissingFile(t *testing.T) {
+	entries, err := loadEvidenceScores(t.TempDir(), "r9")
+	require.NoError(t, err)
+	assert.Nil(t, entries)
+}
+
+func TestLoadEvidenceScoresParseError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scores.jsonl"), []byte("{bad\n"), 0o600))
+	_, err := loadEvidenceScores(dir, "r9")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "line 1")
+}
+
+func TestLoadEvidenceScoresReadError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "scores.jsonl"), 0o700))
+	_, err := loadEvidenceScores(dir, "r9")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scores")
+}
+
+func TestApplyScoresExternalOverridesEvidence(t *testing.T) {
+	groups := [][]aggregate.RunGraph{{{Run: model.Run{ID: "r1"}, Annotations: map[string]float64{"verifier.pass": 1}}}}
+	applied, unmatched, overridden := applyScores(groups, []scoreEntry{{Key: "verifier.pass", Value: 0, RunID: "r1"}})
+	assert.Equal(t, 1, applied)
+	assert.Equal(t, 0, unmatched)
+	assert.Equal(t, 1, overridden)
+	assert.InDelta(t, 0.0, groups[0][0].Annotations["verifier.pass"], 1e-9)
+}
+
+func TestApplyScoresExternalOverridesNodeAnnotation(t *testing.T) {
+	g := scoreGraph("r1", "sk1")
+	g.Nodes[0].Annotations = map[string]any{"owner.q": 0.5}
+	applied, unmatched, overridden := applyScores([][]aggregate.RunGraph{{g}}, []scoreEntry{
+		{StepKey: "sk1", Key: "owner.q", Value: 1},
+	})
+	assert.Equal(t, 1, applied)
+	assert.Equal(t, 0, unmatched)
+	assert.Equal(t, 1, overridden)
+	assert.Equal(t, float64(1), g.Nodes[0].Annotations["owner.q"])
+}
+
+func TestScoresFileOverrideWarns(t *testing.T) {
+	path := writeScoresFile(t, `{"key":"verifier.pass","value":0,"run_id":"b0"}`)
+	base := []aggregate.RunGraph{{Run: model.Run{ID: "b0"}, Annotations: map[string]float64{"verifier.pass": 1}}}
+	var errBuf bytes.Buffer
+	require.NoError(t, applyScoresFile(&errBuf, path, base, nil))
+	assert.Contains(t, errBuf.String(), "1 entries overrode evidence-provided values")
 }
