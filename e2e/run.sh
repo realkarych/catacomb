@@ -11,7 +11,7 @@
 #
 # See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$0.5 of real API spend (30 bench cells, PV-6b scale).
+# Cost: ~$1 of real API spend (45 bench cells; checkpoint task on sonnet, PV-6b scale).
 #
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
