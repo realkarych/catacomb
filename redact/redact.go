@@ -262,7 +262,14 @@ func redactOnce(raw []byte) Result {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var node any
-	if err := dec.Decode(&node); err != nil || dec.More() {
+	if err := dec.Decode(&node); err != nil {
+		return redactFreeText(raw)
+	}
+	if off := dec.InputOffset(); dec.More() {
+		switch node.(type) {
+		case map[string]any, []any, string:
+			return redactValueWithTail(node, raw, off)
+		}
 		return redactFreeText(raw)
 	}
 
@@ -272,24 +279,53 @@ func redactOnce(raw []byte) Result {
 		return Result{Data: raw}
 	}
 
+	sortFindings(findings)
+
+	return Result{
+		Data:     marshalJSON(redacted),
+		Findings: findings,
+		Redacted: true,
+	}
+}
+
+func redactValueWithTail(node any, raw []byte, off int64) Result {
+	var findings []Finding
+	redacted := walkNode(node, "", &findings)
+	head := raw[:off]
+	if len(findings) > 0 {
+		head = marshalJSON(redacted)
+	}
+	tail := redactFreeText(raw[off:])
+	findings = mergeFindings(findings, tail.Findings)
+	if len(findings) == 0 {
+		return Result{Data: raw}
+	}
+	sortFindings(findings)
+	out := make([]byte, 0, len(head)+len(tail.Data))
+	out = append(out, head...)
+	out = append(out, tail.Data...)
+	return Result{
+		Data:     out,
+		Findings: findings,
+		Redacted: true,
+	}
+}
+
+func marshalJSON(node any) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(node)
+	return bytes.TrimRight(buf.Bytes(), "\n")
+}
+
+func sortFindings(findings []Finding) {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].Path != findings[j].Path {
 			return findings[i].Path < findings[j].Path
 		}
 		return findings[i].Reason < findings[j].Reason
 	})
-
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(redacted)
-	out := bytes.TrimRight(buf.Bytes(), "\n")
-
-	return Result{
-		Data:     out,
-		Findings: findings,
-		Redacted: true,
-	}
 }
 
 func redactFreeText(raw []byte) Result {

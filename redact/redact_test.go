@@ -662,6 +662,35 @@ func TestRedact_PlainText_NotJSON(t *testing.T) {
 	})
 }
 
+func TestRedact_LeadingJSONValue_TrailingText(t *testing.T) {
+	t.Run("sensitive key in leading object still redacted structurally", func(t *testing.T) {
+		input := []byte(`{"password":"hunter2"} x`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, "hunter2"))
+		assert.Contains(t, string(result.Data), "‹redacted:sensitive-key›")
+		assert.True(t, strings.HasSuffix(string(result.Data), " x"), "trailing text must be preserved, got %q", result.Data)
+		assert.Contains(t, findingPaths(result.Findings), "password")
+	})
+	t.Run("secrets in both leading value and tail redacted", func(t *testing.T) {
+		input := []byte(`{"password":"hunter2"} AKIAIOSFODNN7EXAMPLE`)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, "hunter2"))
+		assert.False(t, containsSecret(result.Data, "AKIAIOSFODNN7EXAMPLE"))
+		reasons := findingReasons(result.Findings)
+		assert.Contains(t, reasons, "sensitive-key")
+		assert.Contains(t, reasons, "aws-key")
+	})
+	t.Run("clean leading value and clean tail unchanged", func(t *testing.T) {
+		input := []byte(`{"a":1} x`)
+		result := redact.Redact(input)
+		assert.False(t, result.Redacted)
+		assert.Empty(t, result.Findings)
+		assert.Equal(t, string(input), string(result.Data))
+	})
+}
+
 func TestRedact_MalformedJSON_GracefulFallback(t *testing.T) {
 	input := []byte(`{"key": "value", "broken":}`)
 	result := redact.Redact(input)
@@ -858,6 +887,11 @@ func TestRedactFixedPoint(t *testing.T) {
 		`plain prose without any secret`,
 		"{\"password\":\"foo -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY----- bar\"}",
 		"{\"password\":\"foo postgres://user:pa\x01ss@host/db bar\"}",
+		`{"password":"hunter2"} x`,
+		`{"password":"hunter2"} AKIAIOSFODNN7EXAMPLE`,
+		`{"a":1} tail AKIAIOSFODNN7EXAMPLE`,
+		`"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" x`,
+		`123 456`,
 	}
 	for _, in := range cases {
 		once := redact.Redact([]byte(in))

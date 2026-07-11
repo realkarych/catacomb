@@ -16,6 +16,8 @@ func FuzzRedact(f *testing.F) {
 	f.Add([]byte("-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----"))
 	f.Add([]byte(`9 export AWS_KEY=AKIAIOSFODNN7EXAMPLE`))
 	f.Add([]byte(`{"password":"hunter2","note":"ya29.` + "abcdefghijklmnopqrstuvwxyz" + `"}`))
+	f.Add([]byte(`{"password":"hunter2"} x`))
+	f.Add([]byte(`{"a":1} tail wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`))
 	f.Fuzz(func(t *testing.T, in []byte) {
 		r1 := redact.Redact(in)
 		r2 := redact.Redact(r1.Data)
