@@ -68,6 +68,7 @@ This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy)
 | Coverage 100% | `go-test-coverage` ([`.testcoverage.yml`](.testcoverage.yml)) |
 | Docs lint | `markdownlint` ([`.markdownlint.json`](.markdownlint.json)) |
 | DeepEval bridge | `pytest` over [`integrations/deepeval`](integrations/deepeval) (own workflow) |
+| Security scanners | `gitleaks`, `govulncheck`, `gosec`, CodeQL, `dependency-review`, `actionlint`+`zizmor` ([`security.yml`](.github/workflows/security.yml)) |
 | E2E live gate (weekly/dispatch) | `.github/workflows/e2e-live.yml` — real `claude -p` baskets; needs `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 
 ## Build / dev

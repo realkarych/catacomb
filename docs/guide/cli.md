@@ -65,6 +65,7 @@ tasks:
     dir: services/cart          # optional working directory
     env: { MODE: fast }         # optional per-task env
     checkpoints: [plan, tests.pass]   # optional declared phases to verify
+    timeout: 30s                # optional per-task deadline (Go duration; unset = no limit)
 variants:
   - id: baseline
     env: { MODEL: opus }        # optional per-variant env (wins over task env)
@@ -92,6 +93,11 @@ from. After the child exits the runner resolves the session's transcripts under
 retrying for up to ~3 s while the file lands; a session id matching no transcript (or
 more than one) records the reason in the cell's manifest `note` and skips verification
 and evidence for that cell.
+
+A task's optional `timeout:` — a Go duration string such as `30s` or `5m` — puts a
+per-cell deadline on the child process. The value is validated at basket load (an
+invalid or negative duration rejects the basket), and it is opt-in: unset means no
+deadline, though `Ctrl-C`/`SIGTERM` still cancels the run either way.
 
 For each cell the runner synthesizes `task:<id>` start/end phase markers from the
 child's wall-clock start and end, giving `regress` a stable checkpoint axis even when
