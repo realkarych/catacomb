@@ -45,7 +45,7 @@ mechanism.
 - **A gate, not a vibe check.** `regress` compares repeated runs with one-sided Wilson bounds and IQR noise bands (ADR-0022), reports `regression`/`notable`/`insufficient` per finding, and maps the verdict to the exit code your CI already understands.
 - **An outline, not a hairball.** Each run reduces to a collapsible tree — `session → prompt → turn → tool` — with each subagent nested under the turn that spawned it, rebuilt deterministically from the transcripts.
 - **Stable identity across runs.** Step keys hash each call's redacted, salient input; phase keys name checkpoint windows the agent marks via the shipped `catacomb mcp` marker tool — so comparisons survive prompt churn.
-- **Redacted evidence you can share.** Transcript copies pass through secret redaction on write (ADR-0024); step keys and payload hashes are computed post-redaction, so no artifact catacomb writes encodes a raw secret.
+- **Redacted evidence you can share.** Transcript copies pass through secret redaction on write (ADR-0024); step keys and payload hashes are computed post-redaction, so artifacts never hash or encode pre-redaction bytes. The denylist is best-effort — it shrinks the blast radius of a leaked secret rather than guaranteeing zero leakage.
 - **Longitudinal memory.** Pin golden groups as named, version-stamped baselines; `--record` appends every comparison to an append-only history that `trends` replays.
 - **Bring your own viewer.** Catacomb ships no UI: watching runs live is delegated to a vendor substrate fed by that vendor's first-party Claude Code plugin — Phoenix is the recommended one ([ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md)). Catacomb stays the offline capture, diff, and regression-gate layer.
 
@@ -205,11 +205,14 @@ quality scores, and the DeepEval bridge.
 
 Catacomb runs no daemon and opens no sockets — everything is local files. The
 transcript copies it stores as evidence pass through secret redaction on the write path
-(ADR-0024): API keys, tokens, private keys, connection strings, and high-entropy
-values are replaced with typed markers before they touch disk. Graphs carry a content
-*hash* per node, computed after redaction; step keys likewise hash only redacted
-content. The SQLite store holds baselines and regression reports — never transcripts or
-payloads.
+(ADR-0024) — a denylist that reduces the blast radius of leaked secrets by replacing
+API keys, tokens, private keys, connection strings, and high-entropy values with typed
+markers before they touch disk. It is best-effort, not a guarantee: no denylist catches
+every secret — the classes it deliberately does not catch are listed under
+[Known residuals](docs/guide/privacy-and-operations.md#known-residuals). Graphs carry
+a content *hash* per node, computed after redaction; step keys likewise hash only
+redacted content. The SQLite store holds baselines and regression reports — never
+transcripts or payloads.
 
 <hr>
 

@@ -107,7 +107,8 @@ func TestPolicyRecomputesHashWhenOtherSideIsRawSecret(t *testing.T) {
 }
 
 func TestPolicyForgedHighEntropyRefRecomputesHashAndStaysIdempotent(t *testing.T) {
-	forged := json.RawMessage(`"‹ref:1,` + strings.Repeat("a", 64) + `›"`)
+	smuggled := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	forged := json.RawMessage(`"‹ref:1,` + smuggled + `›"`)
 	rawSecret := json.RawMessage(`{"password":"hunter2"}`)
 
 	cases := []struct {
@@ -132,7 +133,7 @@ func TestPolicyForgedHighEntropyRefRecomputesHashAndStaysIdempotent(t *testing.T
 			once := p.Observation(model.Observation{Payload: mk()})
 			assert.Equal(t, wantHash, once.Payload.Hash)
 			assert.NotEqual(t, "incoming-stale-hash", once.Payload.Hash)
-			assert.NotContains(t, string(once.Payload.Input), strings.Repeat("a", 64))
+			assert.NotContains(t, string(once.Payload.Input), smuggled)
 			twice := p.Observation(once)
 			assert.Equal(t, once, twice)
 

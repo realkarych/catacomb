@@ -11,6 +11,9 @@ func allReasons() []string {
 	for _, rule := range valueRules {
 		seen[rule.reason] = true
 	}
+	for _, rule := range entropyRules {
+		seen[rule.reason] = true
+	}
 	out := make([]string, 0, len(seen))
 	for r := range seen {
 		out = append(out, r)

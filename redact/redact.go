@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -46,10 +47,40 @@ var (
 
 	reConnectionString = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+\-.]*://(?:[^:@\s/]+:[^@\s]+@|:[^@\s]+@)[^\s"'` + "`" + `]+`)
 
-	reHexEntropy = regexp.MustCompile(`\b[0-9a-fA-F]{40,}\b`)
+	reStripeKey = regexp.MustCompile(`\b[rsp]k_(?:live|test)_[0-9A-Za-z]{16,}\b`)
 
-	reBase64Entropy = regexp.MustCompile(`\b[A-Za-z0-9+]{40,}={0,2}\b`)
+	reSendGrid = regexp.MustCompile(`\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b`)
+
+	reTwilioKey = regexp.MustCompile(`\bSK[0-9a-fA-F]{32}\b`)
+
+	reNPMToken = regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}\b`)
+
+	rePyPIToken = regexp.MustCompile(`\bpypi-[A-Za-z0-9_-]{16,}\b`)
+
+	reGitLabPAT = regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}\b`)
+
+	reGoogleOAuth = regexp.MustCompile(`\bya29\.[A-Za-z0-9._-]{20,}\b`)
 )
+
+func shannonEntropy(s string) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	var counts [256]int
+	for i := 0; i < len(s); i++ {
+		counts[s[i]]++
+	}
+	n := float64(len(s))
+	var h float64
+	for _, c := range counts {
+		if c == 0 {
+			continue
+		}
+		p := float64(c) / n
+		h -= p * math.Log2(p)
+	}
+	return h
+}
 
 type valueRule struct {
 	re     *regexp.Regexp
@@ -67,8 +98,26 @@ var valueRules = []valueRule{
 	{reGoogleAPIKey, "google-api-key"},
 	{reBearerToken, "bearer-token"},
 	{reJWT, "jwt"},
-	{reHexEntropy, "high-entropy"},
-	{reBase64Entropy, "high-entropy"},
+	{reStripeKey, "stripe-key"},
+	{reSendGrid, "sendgrid-key"},
+	{reTwilioKey, "twilio-key"},
+	{reNPMToken, "npm-token"},
+	{rePyPIToken, "pypi-token"},
+	{reGitLabPAT, "gitlab-token"},
+	{reGoogleOAuth, "google-oauth"},
+}
+
+type entropyRule struct {
+	re      *regexp.Regexp
+	reason  string
+	minBits float64
+}
+
+var entropyRules = []entropyRule{
+	{regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`), "high-entropy", 3.2},
+	{regexp.MustCompile(`\b[A-Za-z0-9+]{32,}={0,2}\b`), "high-entropy", 4.0},
+	{regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}={0,2}\b`), "high-entropy", 4.3},
+	{regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`), "high-entropy", 4.4},
 }
 
 var sensitiveKeyTokens = []string{
@@ -98,6 +147,9 @@ var knownPlaceholders = func() map[string]bool {
 	for _, rule := range valueRules {
 		m[placeholder(rule.reason)] = true
 	}
+	for _, rule := range entropyRules {
+		m[placeholder(rule.reason)] = true
+	}
 	return m
 }()
 
@@ -117,6 +169,13 @@ func matchValueRule(s string) string {
 	for _, rule := range valueRules {
 		if rule.re.MatchString(s) {
 			return rule.reason
+		}
+	}
+	for _, rule := range entropyRules {
+		for _, m := range rule.re.FindAllString(s, -1) {
+			if shannonEntropy(m) >= rule.minBits {
+				return rule.reason
+			}
 		}
 	}
 	return ""
@@ -206,6 +265,13 @@ func redactOnce(raw []byte) Result {
 	if err := dec.Decode(&node); err != nil {
 		return redactFreeText(raw)
 	}
+	if off := dec.InputOffset(); dec.More() {
+		switch node.(type) {
+		case map[string]any, []any, string:
+			return redactValueWithTail(node, raw, off)
+		}
+		return redactFreeText(raw)
+	}
 
 	var findings []Finding
 	redacted := walkNode(node, "", &findings)
@@ -213,24 +279,53 @@ func redactOnce(raw []byte) Result {
 		return Result{Data: raw}
 	}
 
+	sortFindings(findings)
+
+	return Result{
+		Data:     marshalJSON(redacted),
+		Findings: findings,
+		Redacted: true,
+	}
+}
+
+func redactValueWithTail(node any, raw []byte, off int64) Result {
+	var findings []Finding
+	redacted := walkNode(node, "", &findings)
+	head := raw[:off]
+	if len(findings) > 0 {
+		head = marshalJSON(redacted)
+	}
+	tail := redactFreeText(raw[off:])
+	findings = mergeFindings(findings, tail.Findings)
+	if len(findings) == 0 {
+		return Result{Data: raw}
+	}
+	sortFindings(findings)
+	out := make([]byte, 0, len(head)+len(tail.Data))
+	out = append(out, head...)
+	out = append(out, tail.Data...)
+	return Result{
+		Data:     out,
+		Findings: findings,
+		Redacted: true,
+	}
+}
+
+func marshalJSON(node any) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(node)
+	return bytes.TrimRight(buf.Bytes(), "\n")
+}
+
+func sortFindings(findings []Finding) {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].Path != findings[j].Path {
 			return findings[i].Path < findings[j].Path
 		}
 		return findings[i].Reason < findings[j].Reason
 	})
-
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(redacted)
-	out := bytes.TrimRight(buf.Bytes(), "\n")
-
-	return Result{
-		Data:     out,
-		Findings: findings,
-		Redacted: true,
-	}
 }
 
 func redactFreeText(raw []byte) Result {
@@ -272,6 +367,19 @@ func replaceSecretSpans(text string) (string, []string) {
 			result = rule.re.ReplaceAllStringFunc(result, func(string) string {
 				return placeholder(rule.reason)
 			})
+			reasons = append(reasons, rule.reason)
+		}
+	}
+	for _, rule := range entropyRules {
+		replaced := false
+		result = rule.re.ReplaceAllStringFunc(result, func(m string) string {
+			if shannonEntropy(m) < rule.minBits {
+				return m
+			}
+			replaced = true
+			return placeholder(rule.reason)
+		})
+		if replaced {
 			reasons = append(reasons, rule.reason)
 		}
 	}
