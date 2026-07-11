@@ -1,0 +1,31 @@
+# Presence basket: does a real agent mark the `verify` checkpoint?
+#
+# 1 task x 3 variants x 5 reps = 15 live `claude -p` cells. The gate must:
+#   - see `verify` present 5/5 on baseline and baseline2 (A-vs-A control), and
+#   - see it drop to ~0/5 on `degraded` (the seeded checkpoint-presence regression).
+#
+# `dir: .` means each cell runs with its working directory set to THIS basket's
+# directory (e2e/). run.sh cd's into e2e before invoking bench, so `./presence.sh`
+# and `mcp.json` resolve here. Do not run bench for this basket from the repo root
+# with `dir: .`, or `./presence.sh` would resolve against the wrong directory.
+basket: e2e-presence
+reps: 5
+tasks:
+  - id: haiku
+    cmd: ["./presence.sh"]
+    dir: .
+    checkpoints:
+      - verify
+variants:
+  # baseline: instruct the agent to bracket the write with a `verify` mark.
+  - id: baseline
+    env:
+      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+  # degraded: seeded regression — no tools, so `verify` is never marked.
+  - id: degraded
+    env:
+      PHASE_INSTRUCTION: "Do not use any tools. Just write the haiku."
+  # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
+  - id: baseline2
+    env:
+      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."

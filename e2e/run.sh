@@ -1,0 +1,410 @@
+#!/usr/bin/env bash
+# E2E live gate — the PV-6b calibration methodology as a self-asserting driver.
+#
+# Runs two heterogeneous live `claude -p` baskets through `catacomb bench` and
+# then exercises the full offline pipeline against the real evidence:
+#   - both A-vs-A controls must NOT gate (zero false positives), and
+#   - a seeded checkpoint-presence regression AND a seeded continuous
+#     (tokens_out) regression MUST gate, attributed to the swapped instruction.
+# It also smoke-tests baseline pin/record/trends, diff/subgraph/export, and the
+# external-scores path — all on the live evidence.
+#
+# See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
+#
+# Cost: ~$0.5 of real API spend (30 bench cells, PV-6b scale).
+#
+# Environment:
+#   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
+#                   Its directory is also prepended to PATH so the in-run MCP
+#                   server (mcp.json's `catacomb mcp`) resolves the same binary.
+#   E2E_ARTIFACTS   directory for manifests + every regress --json (default:
+#                   ./e2e-artifacts, resolved against the invocation cwd).
+#   ANTHROPIC_API_KEY   required by `claude -p` (checked by the caller/workflow).
+#
+# The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json`
+# relative to the e2e directory, so this driver cd's into its own directory
+# before invoking bench (the baskets declare `dir: .`). All other paths are
+# absolute, so the cd does not affect them.
+set -euo pipefail
+
+e2e_dir="$(cd "$(dirname "$0")" && pwd)"
+
+fatal() {
+	printf 'e2e: FATAL: %s\n' "$1" >&2
+	exit 2
+}
+
+# --- artifacts dir: resolve against the invocation cwd, keep absolute ---------
+artifacts="${E2E_ARTIFACTS:-e2e-artifacts}"
+mkdir -p "$artifacts" || fatal "cannot create artifacts dir: $artifacts"
+artifacts="$(cd "$artifacts" && pwd)"
+
+# --- required binaries --------------------------------------------------------
+catacomb_bin="${CATACOMB_BIN:-catacomb}"
+"$catacomb_bin" version >/dev/null 2>&1 ||
+	fatal "catacomb is not runnable — install it, add it to PATH, or set CATACOMB_BIN"
+catacomb_abs="$(command -v "$catacomb_bin" 2>/dev/null || true)"
+[ -n "$catacomb_abs" ] || fatal "cannot resolve the catacomb binary path"
+PATH="$(cd "$(dirname "$catacomb_abs")" && pwd):$PATH"
+export PATH
+command -v catacomb >/dev/null 2>&1 ||
+	fatal "catacomb must resolve on PATH for the in-run MCP server (see mcp.json)"
+command -v claude >/dev/null 2>&1 ||
+	fatal "claude CLI not found on PATH (npm install -g @anthropic-ai/claude-code)"
+command -v python3 >/dev/null 2>&1 || fatal "python3 not found on PATH"
+
+# --- workspace ----------------------------------------------------------------
+work="$(mktemp -d)"
+runs1="$work/runs-presence"
+runs2="$work/runs-continuous"
+manifest1="$work/manifest-presence.jsonl"
+manifest2="$work/manifest-continuous.jsonl"
+db="$work/e2e.db"
+mkdir -p "$runs1" "$runs2"
+
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below
+copy_artifacts() {
+	cp -f "$manifest1" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest2" "$artifacts"/ 2>/dev/null || true
+}
+trap copy_artifacts EXIT
+
+# --- assertion bookkeeping ----------------------------------------------------
+failures=()
+pass() { printf '  PASS  %s\n' "$1"; }
+failrec() {
+	printf '  FAIL  %s\n' "$1"
+	failures+=("$1")
+}
+skip() { printf '  SKIP  %s\n' "$1"; }
+record() { # <rc> <label>
+	if [ "$1" -eq 0 ]; then pass "$2"; else failrec "$2"; fi
+}
+
+# run a command and compare its exit code against the expected one
+run_expect() { # <want> <label> -- cmd...
+	local want="$1" label="$2"
+	shift 2
+	[ "${1:-}" = "--" ] && shift
+	local rc=0
+	"$@" || rc=$?
+	if [ "$rc" -eq "$want" ]; then pass "$label (exit $rc)"; else failrec "$label (exit $rc, want $want)"; fi
+}
+
+# run a command capturing stdout to a JSON artifact, compare its exit code
+run_json() { # <want> <outfile> <label> -- cmd...
+	local want="$1" out="$2" label="$3"
+	shift 3
+	[ "${1:-}" = "--" ] && shift
+	local rc=0
+	"$@" >"$out" 2>"$out.stderr" || rc=$?
+	if [ "$rc" -eq "$want" ]; then
+		pass "$label (exit $rc)"
+	else
+		failrec "$label (exit $rc, want $want; json: $out)"
+		sed 's/^/        stderr: /' "$out.stderr" >&2 || true
+	fi
+}
+
+cd "$e2e_dir"
+
+echo "== a. bench presence basket (15 live claude -p cells) =="
+run_expect 0 "bench presence basket" -- \
+	catacomb bench basket-presence.yaml --runs-dir "$runs1" --manifest "$manifest1"
+
+echo "== b. presence manifest assertions =="
+rc=0
+python3 - "$manifest1" <<'PY' || rc=$?
+import json, os, sys
+
+entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+errs = []
+if len(entries) != 15:
+    errs.append(f"expected 15 cells, got {len(entries)}")
+for e in entries:
+    rid = e.get("run_id", "?")
+    if e.get("exit_code") != 0:
+        errs.append(f"{rid}: exit_code={e.get('exit_code')} note={e.get('note','')}")
+    if not e.get("session_id"):
+        errs.append(f"{rid}: empty session_id note={e.get('note','')}")
+    ev = e.get("evidence_dir", "")
+    if not ev or not os.path.isdir(ev):
+        errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+for e in entries:
+    if e.get("variant") in ("baseline", "baseline2"):
+        if "verify" in (e.get("missing_checkpoints") or []):
+            errs.append(
+                f"agent failed to mark verify on {e.get('variant')} cell "
+                f"{e.get('run_id')} — investigate model/instruction drift "
+                f"before trusting the gate"
+            )
+if errs:
+    print("presence manifest assertion failures:", file=sys.stderr)
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"presence manifest OK: {len(entries)} cells, all exit 0, session ids + "
+      f"evidence present, baseline+baseline2 marked verify")
+PY
+record "$rc" "presence manifest: 15 cells, all exit 0, session ids + evidence, baseline+baseline2 marked verify"
+
+echo "== c. presence A-vs-A control (baseline vs baseline2) must NOT gate =="
+run_json 0 "$artifacts/regress-presence-AvA.json" \
+	"presence A-vs-A (baseline vs baseline2)" -- \
+	catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,variant=baseline \
+	--candidate label:basket=e2e-presence,variant=baseline2 --json
+
+echo "== d. seeded presence regression (baseline vs degraded) must gate =="
+run_json 1 "$artifacts/regress-presence-degraded.json" \
+	"presence seeded regression (baseline vs degraded)" -- \
+	catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,variant=baseline \
+	--candidate label:basket=e2e-presence,variant=degraded --json
+rc=0
+python3 - "$artifacts/regress-presence-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "phase" and f.get("name") == "verify"
+    and f.get("metric") == "presence" and f.get("verdict") == "regression"
+]
+if not hits:
+    print("no phase 'verify' presence regression finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: phase verify presence {h.get('baseline')} -> {h.get('candidate')} (regression)")
+PY
+record "$rc" "presence regression attributed to phase 'verify' presence drop"
+
+echo "== e. baseline pin + strict record + trends =="
+run_expect 0 "baseline set e2e-presence-main" -- \
+	catacomb baseline set e2e-presence-main \
+	--label basket=e2e-presence,variant=baseline --runs-dir "$runs1" --db "$db"
+run_json 1 "$artifacts/regress-presence-strict-record.json" \
+	"strict+record name:e2e-presence-main vs degraded must gate" -- \
+	catacomb regress --db "$db" --runs-dir "$runs1" \
+	--baseline name:e2e-presence-main \
+	--candidate label:basket=e2e-presence,variant=degraded --record --strict --json
+rc=0
+catacomb trends e2e-presence-main --db "$db" >"$artifacts/trends-presence.txt" 2>&1 || rc=$?
+record "$rc" "trends e2e-presence-main exits 0"
+if [ -s "$artifacts/trends-presence.txt" ]; then pass "trends output non-empty"; else failrec "trends output empty"; fi
+
+echo "== f. bench continuous basket + continuous gate =="
+run_expect 0 "bench continuous basket" -- \
+	catacomb bench basket-continuous.yaml --runs-dir "$runs2" --manifest "$manifest2"
+rc=0
+python3 - "$manifest2" <<'PY' || rc=$?
+import json, os, sys
+
+entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+errs = []
+if len(entries) != 15:
+    errs.append(f"expected 15 cells, got {len(entries)}")
+for e in entries:
+    rid = e.get("run_id", "?")
+    if e.get("exit_code") != 0:
+        errs.append(f"{rid}: exit_code={e.get('exit_code')} note={e.get('note','')}")
+    if not e.get("session_id"):
+        errs.append(f"{rid}: empty session_id note={e.get('note','')}")
+    ev = e.get("evidence_dir", "")
+    if not ev or not os.path.isdir(ev):
+        errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+if errs:
+    print("continuous manifest assertion failures:", file=sys.stderr)
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"continuous manifest OK: {len(entries)} cells, all exit 0, session ids + evidence present")
+PY
+record "$rc" "continuous manifest: 15 cells, all exit 0, session ids + evidence present"
+
+run_json 0 "$artifacts/regress-continuous-AvA.json" \
+	"continuous A-vs-A (baseline vs baseline2)" -- \
+	catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=baseline2 --json
+run_json 1 "$artifacts/regress-continuous-verbose.json" \
+	"continuous seeded regression (baseline vs verbose)" -- \
+	catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=verbose --json
+rc=0
+python3 - "$artifacts/regress-continuous-verbose.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("metric") == "tokens_out" and f.get("verdict") == "regression"
+]
+if not hits:
+    print("no tokens_out regression finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "baseline", "candidate")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: tokens_out {h.get('baseline')} -> {h.get('candidate')} (regression, scope {h.get('scope')})")
+PY
+record "$rc" "continuous regression attributed to tokens_out growth"
+
+echo "== g. artifact smokes on live evidence (diff / subgraph / export) =="
+base_evid=()
+while IFS= read -r d; do base_evid+=("$d"); done < <(
+	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline-r*' | sort
+)
+if [ "${#base_evid[@]}" -ge 2 ]; then
+	a_sess="${base_evid[0]}/session.jsonl"
+	b_sess="${base_evid[1]}/session.jsonl"
+	run_expect 0 "diff two baseline presence sessions" -- \
+		catacomb diff "$a_sess" "$b_sess"
+	run_json 0 "$artifacts/subgraph-verify.json" \
+		"subgraph --phase verify --json" -- \
+		catacomb subgraph "$a_sess" --phase verify --json
+	rc=0
+	python3 - "$artifacts/subgraph-verify.json" <<'PY' || rc=$?
+import json, sys
+
+g = json.load(open(sys.argv[1]))
+nodes = g.get("nodes") or []
+if not nodes:
+    print("subgraph verify phase has an empty nodes array (did the live mark land?)", file=sys.stderr)
+    sys.exit(1)
+print(f"subgraph verify nodes: {len(nodes)}")
+PY
+	record "$rc" "subgraph verify nodes array non-empty (live mark checkpoints landed)"
+	run_expect 0 "export baseline evidence dir to jsonl" -- \
+		catacomb export "${base_evid[0]}" --to jsonl --out "$work/export.jsonl"
+	if [ -s "$work/export.jsonl" ]; then pass "export.jsonl non-empty"; else failrec "export.jsonl empty/missing"; fi
+	if grep -q 'step_key' "$work/export.jsonl" 2>/dev/null; then
+		pass "export.jsonl contains step_key"
+	else
+		failrec "export.jsonl has no step_key (live runs made no step-key-eligible tool call)"
+	fi
+	cp -f "$work/export.jsonl" "$artifacts"/ 2>/dev/null || true
+else
+	failrec "fewer than 2 baseline presence evidence dirs found (${#base_evid[@]}); cannot smoke diff/subgraph/export"
+fi
+
+echo "== h. external-scores plumbing on live evidence =="
+# The only step-key-eligible nodes in a haiku run are stochastic tool calls
+# (mark calls are consumed into markers, not steps). A `regress` annotation
+# finding is emitted only for a step present in BOTH groups, so we intersect the
+# step keys across all baseline and all baseline2 exports. Scoring that key on
+# the baseline side only yields a one-sided (insufficient) annotation finding,
+# which surfaces `e2e.quality` in --json while keeping the A-vs-A verdict at
+# exit 0 (a two-sided equal score would be an `ok` step finding, which regress
+# filters out of the report). If the live runs shared no tool-call step this
+# run, the scores path cannot be exercised on live data — that is a SKIP, not a
+# failure.
+base2_evid=()
+while IFS= read -r d; do base2_evid+=("$d"); done < <(
+	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline2-r*' | sort
+)
+if [ "${#base_evid[@]}" -ge 1 ] && [ "${#base2_evid[@]}" -ge 1 ]; then
+	mkdir -p "$work/exp/base" "$work/exp/base2"
+	for d in "${base_evid[@]}"; do
+		catacomb export "$d" --to jsonl --out "$work/exp/base/$(basename "$d").jsonl" 2>/dev/null || true
+	done
+	for d in "${base2_evid[@]}"; do
+		catacomb export "$d" --to jsonl --out "$work/exp/base2/$(basename "$d").jsonl" 2>/dev/null || true
+	done
+	sk_rc=0
+	sk_out="$(python3 - "$work/exp/base" "$work/exp/base2" <<'PY'
+import glob, json, os, sys
+
+def keys_by_run(d):
+    m = {}
+    for fp in glob.glob(os.path.join(d, "*.jsonl")):
+        rid = os.path.basename(fp)[:-6]
+        ks = set()
+        for line in open(fp):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("kind") == "node" and r.get("step_key"):
+                ks.add(r["step_key"])
+        m[rid] = ks
+    return m
+
+b = keys_by_run(sys.argv[1])
+b2 = keys_by_run(sys.argv[2])
+ub = set().union(*b.values()) if b else set()
+ub2 = set().union(*b2.values()) if b2 else set()
+common = sorted(ub & ub2)
+if not common:
+    sys.exit(3)
+key = common[0]
+rid = next((r for r, ks in b.items() if key in ks), "")
+if not rid:
+    sys.exit(3)
+print(key)
+print(rid)
+PY
+	)" || sk_rc=$?
+	if [ "$sk_rc" -eq 0 ]; then
+		step_key="$(printf '%s\n' "$sk_out" | sed -n 1p)"
+		score_rid="$(printf '%s\n' "$sk_out" | sed -n 2p)"
+		printf '{"step_key":"%s","key":"e2e.quality","value":1.0,"run_id":"%s"}\n' \
+			"$step_key" "$score_rid" >"$work/scores.jsonl"
+		cp -f "$work/scores.jsonl" "$artifacts"/ 2>/dev/null || true
+		run_json 0 "$artifacts/regress-presence-scores.json" \
+			"A-vs-A presence with --scores/--annotation must NOT gate" -- \
+			catacomb regress --runs-dir "$runs1" \
+			--baseline label:basket=e2e-presence,variant=baseline \
+			--candidate label:basket=e2e-presence,variant=baseline2 \
+			--scores "$work/scores.jsonl" --annotation e2e.quality --json
+		if grep -q 'e2e.quality' "$artifacts/regress-presence-scores.json" 2>/dev/null; then
+			pass "external score surfaced (e2e.quality present in report json)"
+		else
+			failrec "e2e.quality not present in report json (see $artifacts/regress-presence-scores.json)"
+		fi
+	elif [ "$sk_rc" -eq 3 ]; then
+		skip "external-scores test: live presence runs shared no step-key-eligible tool-call node to score this run"
+	else
+		failrec "external-scores test: step_key extraction errored (rc=$sk_rc)"
+	fi
+else
+	failrec "no baseline/baseline2 presence evidence for the external-scores test"
+fi
+
+echo "== i. cost report =="
+python3 - "$manifest1" "$manifest2" "$artifacts/cost.txt" <<'PY'
+import json, sys
+
+total = 0.0
+for p in sys.argv[1:3]:
+    try:
+        for line in open(p):
+            line = line.strip()
+            if not line:
+                continue
+            c = json.loads(line).get("cost_usd")
+            if isinstance(c, (int, float)):
+                total += c
+    except FileNotFoundError:
+        pass
+open(sys.argv[3], "w").write(f"total live spend: ${total:.2f}\n")
+print(f"total live spend: ${total:.2f}")
+PY
+
+echo "== summary =="
+if [ "${#failures[@]}" -eq 0 ]; then
+	echo "E2E LIVE GATE: PASS — all assertions held (artifacts in $artifacts)"
+	exit 0
+fi
+echo "E2E LIVE GATE: FAIL — ${#failures[@]} assertion(s) failed:"
+for f in "${failures[@]}"; do
+	echo "  - $f"
+done
+echo "artifacts (manifests + regress json) in $artifacts"
+exit 1

@@ -1,0 +1,78 @@
+# E2E Live Gate — runs the PV-6b calibration methodology against the real
+# `claude -p` CLI in CI (see docs/reviews/2026-07-08-pv6b-live-calibration.md and
+# e2e/run.sh). It is deliberately NOT part of the per-PR CI: it spends real API
+# budget (~$0.5 per run, PV-6b scale — 30 live bench cells) and needs the
+# `ANTHROPIC_API_KEY` repository secret. Trigger it manually (workflow_dispatch)
+# or let the weekly schedule run it; the guard step fails fast with a clear
+# message when the secret is absent so a fork or an unconfigured repo does not
+# burn a confusing red run.
+name: E2E Live Gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:00 UTC — a weekly canary over the live gate.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-live
+  # never cancel a run that is already spending API budget
+  cancel-in-progress: false
+
+jobs:
+  e2e-live:
+    name: E2E live gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Require ANTHROPIC_API_KEY secret
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set. This workflow makes real 'claude -p' calls and cannot run without it. Add the secret in repo settings, then re-run." >&2
+            exit 1
+          fi
+          echo "ANTHROPIC_API_KEY is present."
+
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "24"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Build catacomb
+        run: make build
+
+      - name: Put catacomb on PATH
+        run: echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - name: Run E2E live gate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # keep the non-interactive claude run quiet and deterministic in CI
+          DISABLE_AUTOUPDATER: "1"
+          DISABLE_TELEMETRY: "1"
+          DISABLE_ERROR_REPORTING: "1"
+        run: bash e2e/run.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-live-artifacts
+          path: e2e-artifacts/
+          if-no-files-found: warn

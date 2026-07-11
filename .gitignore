@@ -47,6 +47,9 @@ tmp/
 # Bare binary from `go build ./cmd/catacomb`
 /catacomb
 
+# E2E live gate output (manifests + regress json; see e2e/run.sh)
+e2e-artifacts/
+
 # Subagent-driven-development scratch (ledger, briefs, reports, diffs) — not project docs
 .superpowers/
 

@@ -323,3 +323,19 @@ This snapshot is the input format of the
 [DeepEval bridge](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval)
 and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 [export](cli.md#export) for flags.
+
+## Continuous live validation
+
+The offline gate is itself validated end-to-end against the real `claude -p` CLI by the
+[E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
+CI-portable rerun of the [PV-6b calibration](../reviews/2026-07-08-pv6b-live-calibration.md)
+methodology. It runs two live baskets and asserts the gate's behavior on the real
+evidence: both A-vs-A controls must pass (zero false positives), while a seeded
+checkpoint-presence regression and a seeded continuous (`tokens_out`) regression must each
+gate and be attributed to the swapped instruction. It also smoke-tests baseline
+pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
+
+Because it spends real API budget (~$0.5 per run), it is not part of per-PR CI: trigger it
+by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
+needs the `ANTHROPIC_API_KEY` repository secret and fails fast with a clear message when
+the secret is absent.
