@@ -333,8 +333,10 @@ methodology. It runs two live baskets and asserts the gate's behavior on the rea
 evidence: the A-vs-A controls must raise no presence false positives at default
 sensitivity (their continuous metrics are asserted at a widened band, since sequential
 batches drift on API latency, cost, and tokens), while a seeded checkpoint-presence
-regression and a seeded continuous (`tokens_out`) regression must each gate at default
-thresholds and be attributed to the swapped instruction. It also smoke-tests baseline
+regression (phase axis) and a seeded continuous (`tokens_out`) regression must each gate at
+default thresholds, and a seeded step-scope regression (a guaranteed Bash step that
+vanishes) must surface in the report — all attributed to the swapped instruction. It also
+smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
 Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.

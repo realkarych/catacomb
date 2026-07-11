@@ -132,8 +132,8 @@ import json, os, sys
 
 entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 errs = []
-if len(entries) != 15:
-    errs.append(f"expected 15 cells, got {len(entries)}")
+if len(entries) != 30:
+    errs.append(f"expected 30 cells (2 tasks x 3 variants x 5 reps), got {len(entries)}")
 for e in entries:
     rid = e.get("run_id", "?")
     if e.get("exit_code") != 0:
@@ -146,6 +146,8 @@ for e in entries:
 present = {"baseline": 0, "degraded": 0, "baseline2": 0}
 total = {"baseline": 0, "degraded": 0, "baseline2": 0}
 for e in entries:
+    if e.get("task") != "haiku":
+        continue
     v = e.get("variant")
     if v in total:
         total[v] += 1
@@ -154,13 +156,13 @@ for e in entries:
 for v in ("baseline", "baseline2"):
     if present[v] < 4:
         errs.append(
-            f"verify present {present[v]}/{total[v]} on {v} (< 4/5, one stochastic "
-            f"miss tolerated) — investigate model/instruction drift before trusting "
-            f"the gate"
+            f"verify present {present[v]}/{total[v]} on haiku/{v} (< 4/5, one "
+            f"stochastic miss tolerated) — investigate model/instruction drift "
+            f"before trusting the gate"
         )
 if present["degraded"] != 0:
     errs.append(
-        f"verify present {present['degraded']}/{total['degraded']} on degraded "
+        f"verify present {present['degraded']}/{total['degraded']} on haiku/degraded "
         f"(want 0/5) — the degraded instruction failed to suppress marking"
     )
 if errs:
@@ -168,18 +170,18 @@ if errs:
     for x in errs:
         print("  -", x, file=sys.stderr)
     sys.exit(1)
-print(f"presence manifest OK: {len(entries)} cells, all exit 0, session ids + "
-      f"evidence present; verify present baseline={present['baseline']}/5 "
+print(f"presence manifest OK: {len(entries)} cells (haiku+echo), all exit 0, session "
+      f"ids + evidence present; haiku verify present baseline={present['baseline']}/5 "
       f"baseline2={present['baseline2']}/5 degraded={present['degraded']}/5")
 PY
-record "$rc" "presence manifest: 15 cells/exit0/session/evidence; verify baseline&baseline2 >=4/5, degraded 0/5"
+record "$rc" "presence manifest: 30 cells/exit0/session/evidence; haiku verify baseline&baseline2 >=4/5, degraded 0/5"
 
 echo "== c. presence A-vs-A control (baseline vs baseline2) must NOT gate =="
 # (i) informational: DEFAULT thresholds. Continuous metrics can flag here on
 #     inter-batch API latency/cost/token drift — logged, NOT asserted.
 catacomb regress --runs-dir "$runs1" \
-	--baseline label:basket=e2e-presence,variant=baseline \
-	--candidate label:basket=e2e-presence,variant=baseline2 --json \
+	--baseline label:basket=e2e-presence,task=haiku,variant=baseline \
+	--candidate label:basket=e2e-presence,task=haiku,variant=baseline2 --json \
 	>"$artifacts/regress-presence-AvA-default.json" 2>/dev/null || true
 echo "  [info] presence A-vs-A @ default thresholds: overall_verdict=$(verdict_of "$artifacts/regress-presence-AvA-default.json") (informational; continuous drift not asserted)"
 # (ii) HARD assertion — the moat: presence + error-rate stay at DEFAULT sensitivity
@@ -190,16 +192,16 @@ echo "  [why] A-vs-A hard-asserted with presence/error-rate at DEFAULT sensitivi
 run_json 0 "$artifacts/regress-presence-AvA.json" \
 	"presence A-vs-A must NOT gate (presence default; continuous band widened)" -- \
 	catacomb regress --runs-dir "$runs1" \
-	--baseline label:basket=e2e-presence,variant=baseline \
-	--candidate label:basket=e2e-presence,variant=baseline2 \
+	--baseline label:basket=e2e-presence,task=haiku,variant=baseline \
+	--candidate label:basket=e2e-presence,task=haiku,variant=baseline2 \
 	--metric-rel-delta "$ava_metric_band" --json
 
 echo "== d. seeded presence regression (baseline vs degraded) must gate =="
 run_json 1 "$artifacts/regress-presence-degraded.json" \
 	"presence seeded regression (baseline vs degraded)" -- \
 	catacomb regress --runs-dir "$runs1" \
-	--baseline label:basket=e2e-presence,variant=baseline \
-	--candidate label:basket=e2e-presence,variant=degraded --json
+	--baseline label:basket=e2e-presence,task=haiku,variant=baseline \
+	--candidate label:basket=e2e-presence,task=haiku,variant=degraded --json
 rc=0
 python3 - "$artifacts/regress-presence-degraded.json" <<'PY' || rc=$?
 import json, sys
@@ -220,15 +222,49 @@ print(f"decisive finding: phase verify presence {h.get('baseline')} -> {h.get('c
 PY
 record "$rc" "presence regression attributed to phase 'verify' presence drop"
 
+echo "== d2. seeded STEP regression via echo task (Bash step presence 5/5 -> 0/5) =="
+# Exit code is NOT asserted here. A clean flip leaves the degraded echo group with
+# zero steps, so step coverage = matched/baseline = 0/1 < 0.7 (--coverage-floor) and
+# regress downgrades the Bash presence regression to `notable` (exit 0, confirmed in
+# regress/regress.go: rowFindings is called with active=!StepsTrusted, and
+# applyDowngrade turns a step regression into notable). If a degraded cell leaks a
+# Bash call, coverage = 1 and it stays `regression` (exit 1). Either way the --json
+# carries a step-scope Bash presence finding with the drop — that is what we assert.
+catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,task=echo,variant=baseline \
+	--candidate label:basket=e2e-presence,task=echo,variant=degraded \
+	--metric-rel-delta "$ava_metric_band" --json \
+	>"$artifacts/regress-echo-degraded.json" 2>/dev/null || true
+rc=0
+python3 - "$artifacts/regress-echo-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") in ("regression", "notable")
+    and f.get("candidate", 0) > f.get("baseline", 0)
+]
+if not hits:
+    print("no step-scope presence regression/notable finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: step {h.get('name')!r} presence {h.get('verdict')} ({h.get('detail', '')})")
+PY
+record "$rc" "echo seeded step regression: Bash step presence drop at step scope (regression|notable)"
+
 echo "== e. baseline pin + strict record + trends =="
 run_expect 0 "baseline set e2e-presence-main" -- \
 	catacomb baseline set e2e-presence-main \
-	--label basket=e2e-presence,variant=baseline --runs-dir "$runs1" --db "$db"
+	--label basket=e2e-presence,task=haiku,variant=baseline --runs-dir "$runs1" --db "$db"
 run_json 1 "$artifacts/regress-presence-strict-record.json" \
 	"strict+record name:e2e-presence-main vs degraded must gate" -- \
 	catacomb regress --db "$db" --runs-dir "$runs1" \
 	--baseline name:e2e-presence-main \
-	--candidate label:basket=e2e-presence,variant=degraded --record --strict --json
+	--candidate label:basket=e2e-presence,task=haiku,variant=degraded --record --strict --json
 rc=0
 catacomb trends e2e-presence-main --db "$db" >"$artifacts/trends-presence.txt" 2>&1 || rc=$?
 record "$rc" "trends e2e-presence-main exits 0"
@@ -301,13 +337,13 @@ print(f"decisive finding: tokens_out {h.get('baseline')} -> {h.get('candidate')}
 PY
 record "$rc" "continuous regression attributed to tokens_out growth"
 
-echo "== g. artifact smokes on live evidence (diff / subgraph / export) =="
-# Resilient evidence pick (no glob-order luck): among baseline cells that bench
+echo "== g. artifact smokes on live evidence (diff/subgraph on haiku; export on echo) =="
+# haiku pick (phase axis), no glob-order luck: among haiku baseline cells that bench
 # verified (manifest missing_checkpoints empty), keep those whose verify phase ALSO
 # resolves offline from the main session.jsonl. A cell that delegated the mark to a
 # subagent verifies by NAME at bench time but splits the POSITIONAL phase key
 # (ADR-0016), so `subgraph --phase verify` on its main transcript exits non-zero.
-python3 - "$manifest1" >"$work/verified-baseline.txt" <<'PY'
+python3 - "$manifest1" >"$work/verified-haiku.txt" <<'PY'
 import json, sys
 
 for line in open(sys.argv[1]):
@@ -315,7 +351,7 @@ for line in open(sys.argv[1]):
     if not line:
         continue
     e = json.loads(line)
-    if e.get("variant") == "baseline" and not (e.get("missing_checkpoints") or []):
+    if e.get("task") == "haiku" and e.get("variant") == "baseline" and not (e.get("missing_checkpoints") or []):
         ev = e.get("evidence_dir", "")
         if ev:
             print(ev)
@@ -328,7 +364,7 @@ while IFS= read -r d; do
 	if catacomb subgraph "$d/session.jsonl" --phase verify --json >/dev/null 2>&1; then
 		resolved_dirs+=("$d")
 	fi
-done <"$work/verified-baseline.txt"
+done <"$work/verified-haiku.txt"
 
 if [ "${#resolved_dirs[@]}" -ge 1 ]; then
 	chosen="${resolved_dirs[0]}"
@@ -343,13 +379,13 @@ if [ "${#resolved_dirs[@]}" -ge 1 ]; then
 		d_b=""
 	fi
 	if [ -n "$d_a" ] && [ -n "$d_b" ]; then
-		run_expect 0 "diff two bench-verified baseline sessions" -- \
+		run_expect 0 "diff two bench-verified haiku sessions" -- \
 			catacomb diff "$d_a/session.jsonl" "$d_b/session.jsonl"
 	else
-		failrec "need two bench-verified baseline cells for diff (verified=${#verified_dirs[@]}, resolved=${#resolved_dirs[@]})"
+		failrec "need two bench-verified haiku cells for diff (verified=${#verified_dirs[@]}, resolved=${#resolved_dirs[@]})"
 	fi
 	run_json 0 "$artifacts/subgraph-verify.json" \
-		"subgraph --phase verify --json (bench-verified, phase-resolving cell)" -- \
+		"subgraph --phase verify --json (bench-verified, phase-resolving haiku cell)" -- \
 		catacomb subgraph "$chosen/session.jsonl" --phase verify --json
 	rc=0
 	python3 - "$artifacts/subgraph-verify.json" <<'PY' || rc=$?
@@ -363,37 +399,58 @@ if not nodes:
 print(f"subgraph verify nodes: {len(nodes)}")
 PY
 	record "$rc" "subgraph verify nodes array non-empty (mark landed in the root session)"
-	run_expect 0 "export bench-verified baseline evidence dir to jsonl" -- \
-		catacomb export "$chosen" --to jsonl --out "$work/export.jsonl"
+else
+	failrec "bench-time checkpoint verification and offline phase resolution diverged (positional phase-key split or evidence loss) — investigate (verified haiku baseline cells=${#verified_dirs[@]}, none resolved the verify phase offline)"
+fi
+
+# export (step axis): an echo baseline cell — the guaranteed Bash step_key node.
+echo_base_dir="$(python3 - "$manifest1" <<'PY'
+import json, sys
+
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    e = json.loads(line)
+    if e.get("task") == "echo" and e.get("variant") == "baseline":
+        ev = e.get("evidence_dir", "")
+        if ev:
+            print(ev)
+            break
+PY
+)"
+if [ -n "$echo_base_dir" ]; then
+	run_expect 0 "export echo baseline evidence dir to jsonl" -- \
+		catacomb export "$echo_base_dir" --to jsonl --out "$work/export.jsonl"
 	if [ -s "$work/export.jsonl" ]; then pass "export.jsonl non-empty"; else failrec "export.jsonl empty/missing"; fi
 	if grep -q 'step_key' "$work/export.jsonl" 2>/dev/null; then
 		pass "export.jsonl contains step_key"
 	else
-		failrec "export.jsonl has no step_key — the guaranteed Bash echo step is missing (did the agent skip the Bash tool?)"
+		failrec "export.jsonl has no step_key — the guaranteed Bash echo step is missing (did the echo agent skip Bash?)"
 	fi
 	cp -f "$work/export.jsonl" "$artifacts"/ 2>/dev/null || true
 else
-	failrec "bench-time checkpoint verification and offline phase resolution diverged (positional phase-key split or evidence loss) — investigate (verified baseline cells=${#verified_dirs[@]}, none resolved the verify phase offline)"
+	failrec "no echo baseline evidence dir found for the export smoke"
 fi
 
 echo "== h. external-scores plumbing on live evidence =="
-# baseline and baseline2 each run a guaranteed `echo catacomb-e2e` Bash step (mark
-# calls are consumed into markers, not step nodes), so a stable, cross-variant
-# step-key-eligible node exists. A `regress` annotation finding is emitted only for
-# a step present in BOTH groups, so we intersect step keys across all baseline and
-# all baseline2 exports and PREFER the Bash step. Scoring that key on the baseline
-# side only yields a one-sided (insufficient) annotation finding, which surfaces
-# `e2e.quality` in --json while keeping the A-vs-A verdict at exit 0 (a two-sided
-# equal score would be an `ok` step finding, which regress filters out of the
-# report). The intersection fallback + SKIP remain for the (now unexpected) case of
-# no shared step.
+# The echo task's baseline and baseline2 cells each run a guaranteed `echo
+# catacomb-e2e` Bash step (mark calls are consumed into markers, not step nodes), so
+# a stable, cross-variant step-key-eligible node exists. A `regress` annotation
+# finding is emitted only for a step present in BOTH groups, so we intersect step
+# keys across all echo baseline and all echo baseline2 exports and PREFER the Bash
+# step. Scoring that key on the baseline side only yields a one-sided (insufficient)
+# annotation finding, which surfaces `e2e.quality` in --json while keeping the A-vs-A
+# verdict at exit 0 (a two-sided equal score would be an `ok` step finding, which
+# regress filters out of the report). The intersection fallback + SKIP remain for the
+# (now unexpected) case of no shared step.
 base_evid=()
 while IFS= read -r d; do base_evid+=("$d"); done < <(
-	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline-r*' | sort
+	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-echo-baseline-r*' | sort
 )
 base2_evid=()
 while IFS= read -r d; do base2_evid+=("$d"); done < <(
-	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline2-r*' | sort
+	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-echo-baseline2-r*' | sort
 )
 if [ "${#base_evid[@]}" -ge 1 ] && [ "${#base2_evid[@]}" -ge 1 ]; then
 	mkdir -p "$work/exp/base" "$work/exp/base2"
@@ -451,25 +508,25 @@ PY
 		printf '{"step_key":"%s","key":"e2e.quality","value":1.0,"run_id":"%s"}\n' \
 			"$step_key" "$score_rid" >"$work/scores.jsonl"
 		cp -f "$work/scores.jsonl" "$artifacts"/ 2>/dev/null || true
-		run_json 0 "$artifacts/regress-presence-scores.json" \
-			"A-vs-A presence with --scores/--annotation must NOT gate" -- \
+		run_json 0 "$artifacts/regress-echo-scores.json" \
+			"echo A-vs-A with --scores/--annotation must NOT gate" -- \
 			catacomb regress --runs-dir "$runs1" \
-			--baseline label:basket=e2e-presence,variant=baseline \
-			--candidate label:basket=e2e-presence,variant=baseline2 \
+			--baseline label:basket=e2e-presence,task=echo,variant=baseline \
+			--candidate label:basket=e2e-presence,task=echo,variant=baseline2 \
 			--scores "$work/scores.jsonl" --annotation e2e.quality \
 			--metric-rel-delta "$ava_metric_band" --json
-		if grep -q 'e2e.quality' "$artifacts/regress-presence-scores.json" 2>/dev/null; then
+		if grep -q 'e2e.quality' "$artifacts/regress-echo-scores.json" 2>/dev/null; then
 			pass "external score surfaced (e2e.quality present in report json)"
 		else
-			failrec "e2e.quality not present in report json (see $artifacts/regress-presence-scores.json)"
+			failrec "e2e.quality not present in report json (see $artifacts/regress-echo-scores.json)"
 		fi
 	elif [ "$sk_rc" -eq 3 ]; then
-		skip "external-scores test: live presence runs shared no step-key-eligible tool-call node to score this run"
+		skip "external-scores test: echo cells shared no step-key-eligible node to score this run"
 	else
 		failrec "external-scores test: step_key extraction errored (rc=$sk_rc)"
 	fi
 else
-	failrec "no baseline/baseline2 presence evidence for the external-scores test"
+	failrec "no echo baseline/baseline2 evidence for the external-scores test"
 fi
 
 echo "== i. cost report =="

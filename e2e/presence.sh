@@ -19,10 +19,11 @@
 # which splits the positional phase key). Together these make local runs match CI;
 # OAuth / API-key auth is unaffected.
 #
-# Bash is allowed alongside the mark tool so the PHASE_INSTRUCTION can require one
-# concrete `echo` step: mark calls are consumed into phase markers (not step nodes),
-# so the Bash call is the one guaranteed step-key-eligible node the diff/subgraph/
-# export/scores smokes need on this otherwise tool-less haiku workload.
+# Only the mark tool is allowed: a single allowed tool plus the exact PV-6b
+# instruction gives reliable mark obedience, whereas a second allowed tool (or a
+# longer composite instruction) dilutes it. The step-key axis — a guaranteed Bash
+# step — is a SEPARATE `echo` task (echo.sh), so the phase and step axes stay
+# independent and each keeps a single-tool, high-obedience prompt.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -34,4 +35,4 @@ exec claude -p "Write a haiku about the sea (three short lines). ${PHASE_INSTRUC
 	--mcp-config "${here}/mcp.json" \
 	--strict-mcp-config \
 	--setting-sources project \
-	--allowedTools "mcp__catacomb__mark,Bash"
+	--allowedTools "mcp__catacomb__mark"

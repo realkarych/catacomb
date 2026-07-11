@@ -1,13 +1,21 @@
-# Presence basket: does a real agent mark the `verify` checkpoint?
+# Presence basket: two independent axes in one live run.
 #
-# 1 task x 3 variants x 5 reps = 15 live `claude -p` cells. The gate must:
-#   - see `verify` present 5/5 on baseline and baseline2 (A-vs-A control), and
-#   - see it drop to ~0/5 on `degraded` (the seeded checkpoint-presence regression).
+# 2 tasks x 3 variants x 5 reps = 30 live cells.
+#   - task `haiku` (PHASE axis): does the agent mark the `verify` checkpoint?
+#     baseline/baseline2 mark it (must stay ~5/5), degraded omits it (~0/5) — the
+#     seeded checkpoint-presence regression. Mark-only tool surface for reliable
+#     obedience (see presence.sh).
+#   - task `echo` (STEP axis): a guaranteed Bash `echo` step. baseline/baseline2
+#     run it (a stable, cross-variant step key), degraded runs no tool — a seeded
+#     STEP-scope regression, and the guaranteed step-key node the diff/export/scores
+#     smokes need (see echo.sh).
 #
-# `dir: .` means each cell runs with its working directory set to THIS basket's
-# directory (e2e/). run.sh cd's into e2e before invoking bench, so `./presence.sh`
-# and `mcp.json` resolve here. Do not run bench for this basket from the repo root
-# with `dir: .`, or `./presence.sh` would resolve against the wrong directory.
+# Separating the axes keeps each task single-tool: run 1 showed a single allowed
+# tool + the exact PV-6b instruction gives reliable obedience, which a second tool
+# or a longer composite instruction dilutes.
+#
+# `dir: .` — run.sh cd's into e2e before invoking bench, so `./presence.sh`,
+# `./echo.sh`, and `mcp.json` resolve here.
 basket: e2e-presence
 reps: 5
 tasks:
@@ -16,16 +24,23 @@ tasks:
     dir: .
     checkpoints:
       - verify
+  - id: echo
+    cmd: ["./echo.sh"]
+    dir: .
 variants:
-  # baseline: instruct the agent to bracket the write with a `verify` mark.
+  # baseline: haiku marks verify; echo runs the Bash step. The A-vs-A reference.
   - id: baseline
     env:
-      PHASE_INSTRUCTION: "Follow these 4 steps exactly, calling every tool yourself — never launch subagents, never invoke skills: 1. Call mcp__catacomb__mark with name=verify boundary=start. 2. Run the Bash command `echo catacomb-e2e` using the Bash tool. 3. Write the haiku. 4. Call mcp__catacomb__mark with name=verify boundary=end. All 4 steps are mandatory."
-  # degraded: seeded regression — no tools, so `verify` is never marked.
+      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+      STEP_INSTRUCTION: "Run the Bash command `echo catacomb-e2e` using the Bash tool, then reply done. Run it yourself, directly — no subagents, no skills."
+  # degraded: seeded regressions on both axes — no tools, so neither `verify` nor
+  # the echo step lands.
   - id: degraded
     env:
       PHASE_INSTRUCTION: "Do not use any tools. Just write the haiku."
+      STEP_INSTRUCTION: "Do not use any tools. Just reply done."
   # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
   - id: baseline2
     env:
-      PHASE_INSTRUCTION: "Follow these 4 steps exactly, calling every tool yourself — never launch subagents, never invoke skills: 1. Call mcp__catacomb__mark with name=verify boundary=start. 2. Run the Bash command `echo catacomb-e2e` using the Bash tool. 3. Write the haiku. 4. Call mcp__catacomb__mark with name=verify boundary=end. All 4 steps are mandatory."
+      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+      STEP_INSTRUCTION: "Run the Bash command `echo catacomb-e2e` using the Bash tool, then reply done. Run it yourself, directly — no subagents, no skills."

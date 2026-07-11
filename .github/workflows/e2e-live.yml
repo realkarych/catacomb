@@ -1,7 +1,7 @@
 # E2E Live Gate — runs the PV-6b calibration methodology against the real
 # `claude -p` CLI in CI (see docs/reviews/2026-07-08-pv6b-live-calibration.md and
 # e2e/run.sh). It is deliberately NOT part of the per-PR CI: it spends real API
-# budget (~$0.5 per run, PV-6b scale — 30 live bench cells) and needs the
+# budget (~$0.5 per run, PV-6b scale — 45 live bench cells) and needs the
 # `ANTHROPIC_API_KEY` repository secret. Trigger it manually (workflow_dispatch)
 # or let the weekly schedule run it; the guard step fails fast with a clear
 # message when the secret is absent so a fork or an unconfigured repo does not
