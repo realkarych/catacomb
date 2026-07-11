@@ -17,6 +17,8 @@ type AnnotationSpec struct {
 
 const RecordVersion = 1
 
+const VerifierPassKey = "verifier.pass"
+
 type Record struct {
 	V                 int              `json:"v"`
 	CandidateSelector string           `json:"candidate_selector"`
@@ -65,9 +67,11 @@ func Compare(in Input, th Thresholds) Report {
 		},
 	}
 	rep.StepsTrusted = rep.Coverage.Steps >= th.CoverageFloor
-	rep.Sensitivity = computeSensitivity(b.Runs, c.Runs, th)
+	withAnnotations := len(b.Totals.Annotations)+len(c.Totals.Annotations) > 0
+	rep.Sensitivity = computeSensitivity(b.Runs, c.Runs, th, withAnnotations)
 
 	findings := totalsFindings(b, c, th)
+	findings = append(findings, runAnnotationFindings(b, c, in.Annotations, th)...)
 	findings = append(findings, rowFindings("phase", b.Phases, c.Phases, b.Runs, c.Runs, th, false, 0, nil)...)
 	findings = append(findings, rowFindings("step", b.Steps, c.Steps, b.Runs, c.Runs, th, !rep.StepsTrusted, rep.Coverage.Steps, in.Annotations)...)
 
@@ -111,6 +115,48 @@ func totalsFindings(b, c aggregate.Report, th Thresholds) []Finding {
 	cErr := int(math.Round(c.Totals.ErrorRate * float64(c.Runs)))
 	out = append(out, compareRate("total", "", "", "error_rate", bErr, b.Runs, cErr, c.Runs, th.ErrorRateDelta, th))
 	return out
+}
+
+func effectiveRunAnnotationSpecs(specs []AnnotationSpec) []AnnotationSpec {
+	for _, s := range specs {
+		if s.Key == VerifierPassKey {
+			return specs
+		}
+	}
+	return append([]AnnotationSpec{{Key: VerifierPassKey, HigherBetter: true}}, specs...)
+}
+
+func runAnnotationFindings(b, c aggregate.Report, specs []AnnotationSpec, th Thresholds) []Finding {
+	var out []Finding
+	for _, spec := range effectiveRunAnnotationSpecs(specs) {
+		bt, bok := b.Totals.Annotations[spec.Key]
+		ct, cok := c.Totals.Annotations[spec.Key]
+		switch {
+		case !bok && !cok:
+		case bok != cok:
+			out = append(out, annotationAbsentFinding("total", "", "", spec, bok))
+		case bt.Binary && ct.Binary:
+			out = append(out, runAnnotationRate(spec, bt, ct, th))
+		default:
+			out = append(out, compareAnnotation("total", "", "", spec, bt.Stats, ct.Stats, th))
+		}
+	}
+	return out
+}
+
+func runAnnotationRate(spec AnnotationSpec, bt, ct aggregate.AnnotationTotals, th Thresholds) Finding {
+	bBad, cBad := bt.Ones, ct.Ones
+	if spec.HigherBetter {
+		bBad, cBad = bt.N-bt.Ones, ct.N-ct.Ones
+	}
+	f := compareRate("total", "", "", "ann:"+spec.Key, bBad, bt.N, cBad, ct.N, th.AnnotationRateDelta, th)
+	note := fmt.Sprintf("ones %d/%d -> %d/%d", bt.Ones, bt.N, ct.Ones, ct.N)
+	if f.Detail == "" {
+		f.Detail = note
+	} else {
+		f.Detail = f.Detail + "; " + note
+	}
+	return f
 }
 
 func rowFindings(scope string, bRows, cRows []aggregate.Row, bRuns, cRuns int, th Thresholds, active bool, cov float64, specs []AnnotationSpec) []Finding {

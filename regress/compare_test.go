@@ -13,13 +13,14 @@ func TestDefaultThresholds(t *testing.T) {
 	t.Parallel()
 	th := DefaultThresholds()
 	require.Equal(t, Thresholds{
-		PresenceDelta:  0.2,
-		ErrorRateDelta: 0.1,
-		MetricRelDelta: 0.25,
-		IQRFactor:      1.5,
-		MinSupport:     3,
-		CoverageFloor:  0.7,
-		Z:              1.645,
+		PresenceDelta:       0.2,
+		ErrorRateDelta:      0.1,
+		MetricRelDelta:      0.25,
+		IQRFactor:           1.5,
+		MinSupport:          3,
+		CoverageFloor:       0.7,
+		Z:                   1.645,
+		AnnotationRateDelta: 0.1,
 	}, th)
 }
 

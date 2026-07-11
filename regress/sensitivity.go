@@ -8,8 +8,9 @@ type RateSensitivity struct {
 }
 
 type Sensitivity struct {
-	Presence  RateSensitivity `json:"presence"`
-	ErrorRate RateSensitivity `json:"error_rate"`
+	Presence   RateSensitivity  `json:"presence"`
+	ErrorRate  RateSensitivity  `json:"error_rate"`
+	Annotation *RateSensitivity `json:"annotation,omitempty"`
 }
 
 func rateGateReachable(bN, cN int, delta float64, th Thresholds) bool {
@@ -25,7 +26,7 @@ func minFullFlipRuns(th Thresholds, delta float64) int {
 	return 0
 }
 
-func computeSensitivity(bRuns, cRuns int, th Thresholds) *Sensitivity {
+func computeSensitivity(bRuns, cRuns int, th Thresholds, withAnnotations bool) *Sensitivity {
 	s := Sensitivity{
 		Presence: RateSensitivity{
 			Reachable:       rateGateReachable(bRuns, cRuns, th.PresenceDelta, th),
@@ -36,7 +37,13 @@ func computeSensitivity(bRuns, cRuns int, th Thresholds) *Sensitivity {
 			MinFullFlipRuns: minFullFlipRuns(th, th.ErrorRateDelta),
 		},
 	}
-	if s.Presence.Reachable && s.ErrorRate.Reachable {
+	if withAnnotations {
+		s.Annotation = &RateSensitivity{
+			Reachable:       rateGateReachable(bRuns, cRuns, th.AnnotationRateDelta, th),
+			MinFullFlipRuns: minFullFlipRuns(th, th.AnnotationRateDelta),
+		}
+	}
+	if s.Presence.Reachable && s.ErrorRate.Reachable && (s.Annotation == nil || s.Annotation.Reachable) {
 		return nil
 	}
 	return &s
