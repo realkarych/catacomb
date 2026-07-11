@@ -14,9 +14,11 @@ The pipeline lives in
 [`.github/workflows/publish.yml`](../.github/workflows/publish.yml).
 
 Alongside the archives, each release publishes supply-chain evidence: a
-`checksums.txt`, syft SBOMs for the archives, and keyless cosign signatures over
-the checksum file, the SBOMs, and the GHCR images (built with buildx, which
-attaches its default build-provenance attestation on push).
+`checksums.txt`, syft SBOMs for the archives, keyless cosign Sigstore bundles
+(`*.sigstore.json`, verifiable with `cosign verify-blob --bundle`) over the
+checksum file and the SBOMs, and keyless cosign signatures on the GHCR images
+(built with buildx, which attaches its default build-provenance attestation on
+push).
 
 ## Cutting a release
 
