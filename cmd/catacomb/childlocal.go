@@ -10,10 +10,7 @@ import (
 	"time"
 )
 
-var (
-	execCommand        = exec.Command
-	execCommandContext = exec.CommandContext
-)
+var execCommandContext = exec.CommandContext
 
 const maxObserverBuffer = 1 << 20
 

@@ -154,16 +154,19 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 		Rep:        cell.Rep,
 		BasketHash: hash,
 	}
-	if code, ok := runSetup(stdout, stderr, cell); !ok {
-		entry.ExitCode = code
-		entry.Note = "setup failed"
-		entry.FinishedAt = nowFn()
-		return entry, true, false
-	}
 	if d, _ := cell.Task.TimeoutDuration(); d > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
+	}
+	if code, ok := runSetup(ctx, stdout, stderr, cell); !ok {
+		entry.ExitCode = code
+		entry.Note = "setup failed"
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			entry.Note = appendNote(entry.Note, ctxNote(ctxErr))
+		}
+		entry.FinishedAt = nowFn()
+		return entry, true, false
 	}
 	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
 	peek := &streamPeek{}
@@ -174,6 +177,9 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 	entry.ExitCode = code
 	entry.SessionID = peek.sessionID
 	entry.CostUSD = peek.costUSD
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		entry.Note = appendNote(entry.Note, ctxNote(ctxErr))
+	}
 	if offlineChildFailed(stderr, cell, err, &entry) {
 		return entry, !ok, false
 	}
@@ -181,15 +187,22 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 	return entry, !ok, verified
 }
 
+func ctxNote(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed out"
+	}
+	return "cancelled"
+}
+
 func offlineChildFailed(stderr io.Writer, cell bench.Cell, err error, entry *bench.ManifestEntry) bool {
 	if note := spawnFailure(err); note != "" {
-		entry.Note = note
+		entry.Note = appendNote(entry.Note, note)
 		fmt.Fprintf(stderr, "bench %s: %s\n", cell.RunID, note)
 		entry.FinishedAt = nowFn()
 		return true
 	}
 	if entry.SessionID == "" {
-		entry.Note = "no session id observed"
+		entry.Note = appendNote(entry.Note, "no session id observed")
 		entry.FinishedAt = nowFn()
 		return true
 	}
@@ -352,16 +365,17 @@ func spawnFailure(err error) string {
 	return "spawn failed: " + err.Error()
 }
 
-func runSetup(stdout, stderr io.Writer, cell bench.Cell) (int, bool) {
+func runSetup(ctx context.Context, stdout, stderr io.Writer, cell bench.Cell) (int, bool) {
 	for _, raw := range cell.Variant.Setup {
 		fields := strings.Fields(raw)
 		if len(fields) == 0 {
 			continue
 		}
-		c := execCommand(fields[0], fields[1:]...)
+		c := execCommandContext(ctx, fields[0], fields[1:]...)
 		c.Dir = cell.Task.Dir
 		c.Stdout = stdout
 		c.Stderr = stderr
+		c.WaitDelay = 10 * time.Second
 		if code, ok := exitInfo(c.Run()); !ok {
 			return code, false
 		}

@@ -26,18 +26,11 @@ func stubBenchChild(t *testing.T, env ...string) {
 		k, v, _ := strings.Cut(kv, "=")
 		t.Setenv(k, v)
 	}
-	orig := execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(os.Args[0], "-test.run=TestHelperBenchChild")
-	}
-	origCtx := execCommandContext
+	orig := execCommandContext
 	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperBenchChild")
 	}
-	t.Cleanup(func() {
-		execCommand = orig
-		execCommandContext = origCtx
-	})
+	t.Cleanup(func() { execCommandContext = orig })
 }
 
 func offlineCell(runID string, task bench.Task, variant bench.Variant) bench.Cell {
@@ -154,6 +147,52 @@ func TestBenchOfflineTimeoutDeadline(t *testing.T) {
 	}
 }
 
+func TestBenchOfflineSetupUnderTimeout(t *testing.T) {
+	t.Setenv("GO_HELPER_BENCH", "1")
+	var deadlines []bool
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		_, has := ctx.Deadline()
+		deadlines = append(deadlines, has)
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperBenchChild")
+	}
+	t.Cleanup(func() { execCommandContext = orig })
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}, Timeout: "5s"},
+		bench.Variant{ID: "base", Setup: []string{"prep"}})
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Equal(t, []bool{true, true}, deadlines)
+	assert.False(t, failed)
+	assert.Equal(t, "no session id observed", entry.Note)
+}
+
+func TestBenchOfflineSetupCancelledContext(t *testing.T) {
+	stubBenchChild(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}},
+		bench.Variant{ID: "base", Setup: []string{"prep"}})
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Equal(t, "setup failed; cancelled", entry.Note)
+	assert.Equal(t, -1, entry.ExitCode)
+	assert.True(t, failed)
+	assert.False(t, verified)
+}
+
+func TestBenchOfflineSetupTimedOutNote(t *testing.T) {
+	stubBenchChild(t)
+	ctx, cancel := context.WithTimeout(t.Context(), -time.Second)
+	defer cancel()
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}},
+		bench.Variant{ID: "base", Setup: []string{"prep"}})
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Equal(t, "setup failed; timed out", entry.Note)
+	assert.True(t, failed)
+	assert.False(t, verified)
+}
+
 func TestBenchOfflineTimeoutCancelledContext(t *testing.T) {
 	stubBenchChild(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -162,10 +201,23 @@ func TestBenchOfflineTimeoutCancelledContext(t *testing.T) {
 	var errb bytes.Buffer
 	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, &errb, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Contains(t, entry.Note, "cancelled")
 	assert.Contains(t, entry.Note, "spawn failed: context canceled")
 	assert.True(t, failed)
 	assert.False(t, verified)
 	assert.Contains(t, errb.String(), "context canceled")
+}
+
+func TestBenchOfflineTimedOutNote(t *testing.T) {
+	stubBenchChild(t)
+	ctx, cancel := context.WithTimeout(t.Context(), -time.Second)
+	defer cancel()
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}, Timeout: "5s"}, bench.Variant{ID: "base"})
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Contains(t, entry.Note, "timed out")
+	assert.True(t, failed)
+	assert.False(t, verified)
 }
 
 func TestBenchOfflineNoSessionNote(t *testing.T) {

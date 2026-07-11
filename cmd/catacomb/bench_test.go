@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -201,7 +202,7 @@ func TestAppendNote(t *testing.T) {
 
 func TestSpawnFailure(t *testing.T) {
 	assert.Empty(t, spawnFailure(nil))
-	cmd := execCommand(os.Args[0], "-test.run=TestSpawnFailureExitHelper")
+	cmd := exec.Command(os.Args[0], "-test.run=TestSpawnFailureExitHelper")
 	t.Setenv("GO_SPAWN_FAILURE_EXIT", "1")
 	assert.Empty(t, spawnFailure(cmd.Run()))
 	assert.Contains(t, spawnFailure(assertErr("boom")), "spawn failed: boom")
