@@ -330,9 +330,11 @@ The offline gate is itself validated end-to-end against the real `claude -p` CLI
 [E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
 CI-portable rerun of the [PV-6b calibration](../reviews/2026-07-08-pv6b-live-calibration.md)
 methodology. It runs two live baskets and asserts the gate's behavior on the real
-evidence: both A-vs-A controls must pass (zero false positives), while a seeded
-checkpoint-presence regression and a seeded continuous (`tokens_out`) regression must each
-gate and be attributed to the swapped instruction. It also smoke-tests baseline
+evidence: the A-vs-A controls must raise no presence false positives at default
+sensitivity (their continuous metrics are asserted at a widened band, since sequential
+batches drift on API latency, cost, and tokens), while a seeded checkpoint-presence
+regression and a seeded continuous (`tokens_out`) regression must each gate at default
+thresholds and be attributed to the swapped instruction. It also smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
 
 Because it spends real API budget (~$0.5 per run), it is not part of per-PR CI: trigger it

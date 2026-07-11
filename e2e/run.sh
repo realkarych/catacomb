@@ -106,6 +106,19 @@ run_json() { # <want> <outfile> <label> -- cmd...
 	fi
 }
 
+# overall_verdict from a saved regress --json (for informational log lines)
+verdict_of() {
+	python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("overall_verdict","?"))' "$1" 2>/dev/null || echo "?"
+}
+
+# A-vs-A continuous metrics use a WIDENED relative band. Sequential bench batches
+# drift on API latency/cost/tokens (PV-6b: cost/duration are noisy regressors); the
+# live calibration saw duration ~2.0x between identical batches, which sits on the
+# edge of a 1.0 (=2x) band, so 2.0 (=3x) is used to absorb it with margin. Presence
+# and error-rate stay at DEFAULT sensitivity (the moat), and the seeded regressions
+# (steps d/f) are asserted at DEFAULT thresholds.
+ava_metric_band="2.0"
+
 cd "$e2e_dir"
 
 echo "== a. bench presence basket (15 live claude -p cells) =="
@@ -130,30 +143,56 @@ for e in entries:
     ev = e.get("evidence_dir", "")
     if not ev or not os.path.isdir(ev):
         errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+present = {"baseline": 0, "degraded": 0, "baseline2": 0}
+total = {"baseline": 0, "degraded": 0, "baseline2": 0}
 for e in entries:
-    if e.get("variant") in ("baseline", "baseline2"):
-        if "verify" in (e.get("missing_checkpoints") or []):
-            errs.append(
-                f"agent failed to mark verify on {e.get('variant')} cell "
-                f"{e.get('run_id')} — investigate model/instruction drift "
-                f"before trusting the gate"
-            )
+    v = e.get("variant")
+    if v in total:
+        total[v] += 1
+        if "verify" not in (e.get("missing_checkpoints") or []):
+            present[v] += 1
+for v in ("baseline", "baseline2"):
+    if present[v] < 4:
+        errs.append(
+            f"verify present {present[v]}/{total[v]} on {v} (< 4/5, one stochastic "
+            f"miss tolerated) — investigate model/instruction drift before trusting "
+            f"the gate"
+        )
+if present["degraded"] != 0:
+    errs.append(
+        f"verify present {present['degraded']}/{total['degraded']} on degraded "
+        f"(want 0/5) — the degraded instruction failed to suppress marking"
+    )
 if errs:
     print("presence manifest assertion failures:", file=sys.stderr)
     for x in errs:
         print("  -", x, file=sys.stderr)
     sys.exit(1)
 print(f"presence manifest OK: {len(entries)} cells, all exit 0, session ids + "
-      f"evidence present, baseline+baseline2 marked verify")
+      f"evidence present; verify present baseline={present['baseline']}/5 "
+      f"baseline2={present['baseline2']}/5 degraded={present['degraded']}/5")
 PY
-record "$rc" "presence manifest: 15 cells, all exit 0, session ids + evidence, baseline+baseline2 marked verify"
+record "$rc" "presence manifest: 15 cells/exit0/session/evidence; verify baseline&baseline2 >=4/5, degraded 0/5"
 
 echo "== c. presence A-vs-A control (baseline vs baseline2) must NOT gate =="
+# (i) informational: DEFAULT thresholds. Continuous metrics can flag here on
+#     inter-batch API latency/cost/token drift — logged, NOT asserted.
+catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,variant=baseline \
+	--candidate label:basket=e2e-presence,variant=baseline2 --json \
+	>"$artifacts/regress-presence-AvA-default.json" 2>/dev/null || true
+echo "  [info] presence A-vs-A @ default thresholds: overall_verdict=$(verdict_of "$artifacts/regress-presence-AvA-default.json") (informational; continuous drift not asserted)"
+# (ii) HARD assertion — the moat: presence + error-rate stay at DEFAULT sensitivity
+#      (a presence false positive must still fail the e2e); only the continuous band
+#      is widened to absorb sequential-batch API latency/cost/token drift, which the
+#      median/IQR band does not model. Seeded regressions (d/f) use DEFAULT thresholds.
+echo "  [why] A-vs-A hard-asserted with presence/error-rate at DEFAULT sensitivity and continuous band WIDENED to --metric-rel-delta ${ava_metric_band}: calibration saw duration ~2x between identical batches (inter-batch latency), which a default band would false-flag; presence stays default so a real presence false positive still fails."
 run_json 0 "$artifacts/regress-presence-AvA.json" \
-	"presence A-vs-A (baseline vs baseline2)" -- \
+	"presence A-vs-A must NOT gate (presence default; continuous band widened)" -- \
 	catacomb regress --runs-dir "$runs1" \
 	--baseline label:basket=e2e-presence,variant=baseline \
-	--candidate label:basket=e2e-presence,variant=baseline2 --json
+	--candidate label:basket=e2e-presence,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
 
 echo "== d. seeded presence regression (baseline vs degraded) must gate =="
 run_json 1 "$artifacts/regress-presence-degraded.json" \
@@ -224,11 +263,20 @@ print(f"continuous manifest OK: {len(entries)} cells, all exit 0, session ids + 
 PY
 record "$rc" "continuous manifest: 15 cells, all exit 0, session ids + evidence present"
 
+echo "-- continuous A-vs-A control (baseline vs baseline2) must NOT gate --"
+# (i) informational: DEFAULT thresholds (continuous drift may flag; NOT asserted).
+catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=baseline2 --json \
+	>"$artifacts/regress-continuous-AvA-default.json" 2>/dev/null || true
+echo "  [info] continuous A-vs-A @ default thresholds: overall_verdict=$(verdict_of "$artifacts/regress-continuous-AvA-default.json") (informational; continuous drift not asserted)"
+# (ii) HARD assertion: continuous band widened (same batch-drift rationale as step c).
 run_json 0 "$artifacts/regress-continuous-AvA.json" \
-	"continuous A-vs-A (baseline vs baseline2)" -- \
+	"continuous A-vs-A must NOT gate (continuous band widened)" -- \
 	catacomb regress --runs-dir "$runs2" \
 	--baseline label:basket=e2e-continuous,variant=baseline \
-	--candidate label:basket=e2e-continuous,variant=baseline2 --json
+	--candidate label:basket=e2e-continuous,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
 run_json 1 "$artifacts/regress-continuous-verbose.json" \
 	"continuous seeded regression (baseline vs verbose)" -- \
 	catacomb regress --runs-dir "$runs2" \
@@ -362,7 +410,8 @@ PY
 			catacomb regress --runs-dir "$runs1" \
 			--baseline label:basket=e2e-presence,variant=baseline \
 			--candidate label:basket=e2e-presence,variant=baseline2 \
-			--scores "$work/scores.jsonl" --annotation e2e.quality --json
+			--scores "$work/scores.jsonl" --annotation e2e.quality \
+			--metric-rel-delta "$ava_metric_band" --json
 		if grep -q 'e2e.quality' "$artifacts/regress-presence-scores.json" 2>/dev/null; then
 			pass "external score surfaced (e2e.quality present in report json)"
 		else
