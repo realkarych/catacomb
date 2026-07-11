@@ -302,18 +302,55 @@ PY
 record "$rc" "continuous regression attributed to tokens_out growth"
 
 echo "== g. artifact smokes on live evidence (diff / subgraph / export) =="
-base_evid=()
-while IFS= read -r d; do base_evid+=("$d"); done < <(
-	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline-r*' | sort
-)
-if [ "${#base_evid[@]}" -ge 2 ]; then
-	a_sess="${base_evid[0]}/session.jsonl"
-	b_sess="${base_evid[1]}/session.jsonl"
-	run_expect 0 "diff two baseline presence sessions" -- \
-		catacomb diff "$a_sess" "$b_sess"
+# Resilient evidence pick (no glob-order luck): among baseline cells that bench
+# verified (manifest missing_checkpoints empty), keep those whose verify phase ALSO
+# resolves offline from the main session.jsonl. A cell that delegated the mark to a
+# subagent verifies by NAME at bench time but splits the POSITIONAL phase key
+# (ADR-0016), so `subgraph --phase verify` on its main transcript exits non-zero.
+python3 - "$manifest1" >"$work/verified-baseline.txt" <<'PY'
+import json, sys
+
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    e = json.loads(line)
+    if e.get("variant") == "baseline" and not (e.get("missing_checkpoints") or []):
+        ev = e.get("evidence_dir", "")
+        if ev:
+            print(ev)
+PY
+verified_dirs=()
+resolved_dirs=()
+while IFS= read -r d; do
+	[ -n "$d" ] || continue
+	verified_dirs+=("$d")
+	if catacomb subgraph "$d/session.jsonl" --phase verify --json >/dev/null 2>&1; then
+		resolved_dirs+=("$d")
+	fi
+done <"$work/verified-baseline.txt"
+
+if [ "${#resolved_dirs[@]}" -ge 1 ]; then
+	chosen="${resolved_dirs[0]}"
+	if [ "${#resolved_dirs[@]}" -ge 2 ]; then
+		d_a="${resolved_dirs[0]}"
+		d_b="${resolved_dirs[1]}"
+	elif [ "${#verified_dirs[@]}" -ge 2 ]; then
+		d_a="${verified_dirs[0]}"
+		d_b="${verified_dirs[1]}"
+	else
+		d_a=""
+		d_b=""
+	fi
+	if [ -n "$d_a" ] && [ -n "$d_b" ]; then
+		run_expect 0 "diff two bench-verified baseline sessions" -- \
+			catacomb diff "$d_a/session.jsonl" "$d_b/session.jsonl"
+	else
+		failrec "need two bench-verified baseline cells for diff (verified=${#verified_dirs[@]}, resolved=${#resolved_dirs[@]})"
+	fi
 	run_json 0 "$artifacts/subgraph-verify.json" \
-		"subgraph --phase verify --json" -- \
-		catacomb subgraph "$a_sess" --phase verify --json
+		"subgraph --phase verify --json (bench-verified, phase-resolving cell)" -- \
+		catacomb subgraph "$chosen/session.jsonl" --phase verify --json
 	rc=0
 	python3 - "$artifacts/subgraph-verify.json" <<'PY' || rc=$?
 import json, sys
@@ -321,35 +358,39 @@ import json, sys
 g = json.load(open(sys.argv[1]))
 nodes = g.get("nodes") or []
 if not nodes:
-    print("subgraph verify phase has an empty nodes array (did the live mark land?)", file=sys.stderr)
+    print("subgraph verify phase resolved but has an empty nodes array", file=sys.stderr)
     sys.exit(1)
 print(f"subgraph verify nodes: {len(nodes)}")
 PY
-	record "$rc" "subgraph verify nodes array non-empty (live mark checkpoints landed)"
-	run_expect 0 "export baseline evidence dir to jsonl" -- \
-		catacomb export "${base_evid[0]}" --to jsonl --out "$work/export.jsonl"
+	record "$rc" "subgraph verify nodes array non-empty (mark landed in the root session)"
+	run_expect 0 "export bench-verified baseline evidence dir to jsonl" -- \
+		catacomb export "$chosen" --to jsonl --out "$work/export.jsonl"
 	if [ -s "$work/export.jsonl" ]; then pass "export.jsonl non-empty"; else failrec "export.jsonl empty/missing"; fi
 	if grep -q 'step_key' "$work/export.jsonl" 2>/dev/null; then
 		pass "export.jsonl contains step_key"
 	else
-		failrec "export.jsonl has no step_key (live runs made no step-key-eligible tool call)"
+		failrec "export.jsonl has no step_key — the guaranteed Bash echo step is missing (did the agent skip the Bash tool?)"
 	fi
 	cp -f "$work/export.jsonl" "$artifacts"/ 2>/dev/null || true
 else
-	failrec "fewer than 2 baseline presence evidence dirs found (${#base_evid[@]}); cannot smoke diff/subgraph/export"
+	failrec "bench-time checkpoint verification and offline phase resolution diverged (positional phase-key split or evidence loss) — investigate (verified baseline cells=${#verified_dirs[@]}, none resolved the verify phase offline)"
 fi
 
 echo "== h. external-scores plumbing on live evidence =="
-# The only step-key-eligible nodes in a haiku run are stochastic tool calls
-# (mark calls are consumed into markers, not steps). A `regress` annotation
-# finding is emitted only for a step present in BOTH groups, so we intersect the
-# step keys across all baseline and all baseline2 exports. Scoring that key on
-# the baseline side only yields a one-sided (insufficient) annotation finding,
-# which surfaces `e2e.quality` in --json while keeping the A-vs-A verdict at
-# exit 0 (a two-sided equal score would be an `ok` step finding, which regress
-# filters out of the report). If the live runs shared no tool-call step this
-# run, the scores path cannot be exercised on live data — that is a SKIP, not a
-# failure.
+# baseline and baseline2 each run a guaranteed `echo catacomb-e2e` Bash step (mark
+# calls are consumed into markers, not step nodes), so a stable, cross-variant
+# step-key-eligible node exists. A `regress` annotation finding is emitted only for
+# a step present in BOTH groups, so we intersect step keys across all baseline and
+# all baseline2 exports and PREFER the Bash step. Scoring that key on the baseline
+# side only yields a one-sided (insufficient) annotation finding, which surfaces
+# `e2e.quality` in --json while keeping the A-vs-A verdict at exit 0 (a two-sided
+# equal score would be an `ok` step finding, which regress filters out of the
+# report). The intersection fallback + SKIP remain for the (now unexpected) case of
+# no shared step.
+base_evid=()
+while IFS= read -r d; do base_evid+=("$d"); done < <(
+	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline-r*' | sort
+)
 base2_evid=()
 while IFS= read -r d; do base2_evid+=("$d"); done < <(
 	find "$runs1" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-baseline2-r*' | sort
@@ -366,8 +407,9 @@ if [ "${#base_evid[@]}" -ge 1 ] && [ "${#base2_evid[@]}" -ge 1 ]; then
 	sk_out="$(python3 - "$work/exp/base" "$work/exp/base2" <<'PY'
 import glob, json, os, sys
 
-def keys_by_run(d):
-    m = {}
+def scan(d):
+    keys_by_run = {}
+    bash_keys = set()
     for fp in glob.glob(os.path.join(d, "*.jsonl")):
         rid = os.path.basename(fp)[:-6]
         ks = set()
@@ -380,18 +422,22 @@ def keys_by_run(d):
             except Exception:
                 continue
             if r.get("kind") == "node" and r.get("step_key"):
-                ks.add(r["step_key"])
-        m[rid] = ks
-    return m
+                sk = r["step_key"]
+                ks.add(sk)
+                if str(r.get("name", "")).lower() == "bash":
+                    bash_keys.add(sk)
+        keys_by_run[rid] = ks
+    return keys_by_run, bash_keys
 
-b = keys_by_run(sys.argv[1])
-b2 = keys_by_run(sys.argv[2])
+b, b_bash = scan(sys.argv[1])
+b2, b2_bash = scan(sys.argv[2])
 ub = set().union(*b.values()) if b else set()
 ub2 = set().union(*b2.values()) if b2 else set()
-common = sorted(ub & ub2)
+common = ub & ub2
 if not common:
     sys.exit(3)
-key = common[0]
+bash_common = sorted((b_bash & b2_bash) & common)
+key = bash_common[0] if bash_common else sorted(common)[0]
 rid = next((r for r, ks in b.items() if key in ks), "")
 if not rid:
     sys.exit(3)

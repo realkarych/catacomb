@@ -13,7 +13,16 @@
 # regardless of the caller's cwd. The mark tool is served by `catacomb mcp`
 # (mcp.json), so `catacomb` must be on PATH during the live run.
 # --strict-mcp-config loads ONLY the servers from --mcp-config (just catacomb) and
-# ignores any ambient user/project MCP config, so local and CI runs are identical.
+# ignores any ambient user/project MCP config. --setting-sources project restricts
+# the child to project-scope settings, so user-scope SessionStart hooks/plugins do
+# not inject into the run (they can make the agent delegate the mark to a subagent,
+# which splits the positional phase key). Together these make local runs match CI;
+# OAuth / API-key auth is unaffected.
+#
+# Bash is allowed alongside the mark tool so the PHASE_INSTRUCTION can require one
+# concrete `echo` step: mark calls are consumed into phase markers (not step nodes),
+# so the Bash call is the one guaranteed step-key-eligible node the diff/subgraph/
+# export/scores smokes need on this otherwise tool-less haiku workload.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -24,4 +33,5 @@ exec claude -p "Write a haiku about the sea (three short lines). ${PHASE_INSTRUC
 	--verbose \
 	--mcp-config "${here}/mcp.json" \
 	--strict-mcp-config \
-	--allowedTools "mcp__catacomb__mark"
+	--setting-sources project \
+	--allowedTools "mcp__catacomb__mark,Bash"

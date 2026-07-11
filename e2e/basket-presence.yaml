@@ -20,7 +20,7 @@ variants:
   # baseline: instruct the agent to bracket the write with a `verify` mark.
   - id: baseline
     env:
-      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+      PHASE_INSTRUCTION: "First, run the Bash command `echo catacomb-e2e` using the Bash tool. Then: Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end. Call the tool yourself, directly — do not launch subagents and do not invoke skills."
   # degraded: seeded regression — no tools, so `verify` is never marked.
   - id: degraded
     env:
@@ -28,4 +28,4 @@ variants:
   # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
   - id: baseline2
     env:
-      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+      PHASE_INSTRUCTION: "First, run the Bash command `echo catacomb-e2e` using the Bash tool. Then: Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end. Call the tool yourself, directly — do not launch subagents and do not invoke skills."

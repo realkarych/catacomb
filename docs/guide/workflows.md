@@ -336,6 +336,8 @@ batches drift on API latency, cost, and tokens), while a seeded checkpoint-prese
 regression and a seeded continuous (`tokens_out`) regression must each gate at default
 thresholds and be attributed to the swapped instruction. It also smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
+Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
+config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
 
 Because it spends real API budget (~$0.5 per run), it is not part of per-PR CI: trigger it
 by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It

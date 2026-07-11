@@ -8,12 +8,15 @@
 # a long essay, driving a large, gateable `tokens_out` growth. This basket
 # exercises the continuous (metric) gate, not checkpoints, so it needs no MCP
 # server — and bare --strict-mcp-config (with no --mcp-config) loads NONE, keeping
-# ambient user/project MCP config out of the child runs so local and CI runs are
-# identical. `set -u` makes an unset TASK_PROMPT a loud failure, not an empty prompt.
+# ambient user/project MCP config out of the child runs. --setting-sources project
+# likewise restricts the child to project-scope settings, so user-scope hooks/plugins
+# do not inject; together they make local runs match CI (OAuth / API-key auth is
+# unaffected). `set -u` makes an unset TASK_PROMPT a loud failure, not an empty prompt.
 set -euo pipefail
 
 exec claude -p "${TASK_PROMPT}" \
 	--model claude-haiku-4-5 \
 	--output-format stream-json \
 	--verbose \
-	--strict-mcp-config
+	--strict-mcp-config \
+	--setting-sources project
