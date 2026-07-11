@@ -245,7 +245,7 @@ func redactOnce(raw []byte) Result {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var node any
-	if err := dec.Decode(&node); err != nil {
+	if err := dec.Decode(&node); err != nil || dec.More() {
 		return redactFreeText(raw)
 	}
 

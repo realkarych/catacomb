@@ -624,6 +624,21 @@ func TestRedact_PlainText_NotJSON(t *testing.T) {
 		assert.True(t, result.Redacted, "sk-ant- key with underscores must be caught in free-text mode")
 		assert.False(t, containsSecret(result.Data, secret))
 	})
+	t.Run("digit-prefixed plain text with AKIA secret", func(t *testing.T) {
+		secret := "AKIAIOSFODNN7EXAMPLE"
+		input := []byte("9 export AWS_KEY=" + secret)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "digit-prefixed free text must not bypass span scanning")
+		assert.False(t, containsSecret(result.Data, secret))
+	})
+	t.Run("json value with trailing garbage scanned as free text", func(t *testing.T) {
+		secret := "AKIAIOSFODNN7EXAMPLE"
+		input := []byte(`{"a":1} tail ` + secret)
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted, "trailing bytes after a JSON value must not bypass span scanning")
+		assert.False(t, containsSecret(result.Data, secret))
+		assert.Contains(t, string(result.Data), `{"a":1} tail `)
+	})
 	t.Run("plain text no secret", func(t *testing.T) {
 		input := []byte("hello world, this is normal text")
 		result := redact.Redact(input)
