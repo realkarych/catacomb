@@ -188,10 +188,23 @@ func TestBenchOfflineTimeoutCancelledContext(t *testing.T) {
 	var errb bytes.Buffer
 	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, &errb, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Contains(t, entry.Note, "cancelled")
 	assert.Contains(t, entry.Note, "spawn failed: context canceled")
 	assert.True(t, failed)
 	assert.False(t, verified)
 	assert.Contains(t, errb.String(), "context canceled")
+}
+
+func TestBenchOfflineTimedOutNote(t *testing.T) {
+	stubBenchChild(t)
+	ctx, cancel := context.WithTimeout(t.Context(), -time.Second)
+	defer cancel()
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}, Timeout: "5s"}, bench.Variant{ID: "base"})
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Contains(t, entry.Note, "timed out")
+	assert.True(t, failed)
+	assert.False(t, verified)
 }
 
 func TestBenchOfflineNoSessionNote(t *testing.T) {

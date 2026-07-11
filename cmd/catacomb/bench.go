@@ -174,6 +174,9 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 	entry.ExitCode = code
 	entry.SessionID = peek.sessionID
 	entry.CostUSD = peek.costUSD
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		entry.Note = appendNote(entry.Note, ctxNote(ctxErr))
+	}
 	if offlineChildFailed(stderr, cell, err, &entry) {
 		return entry, !ok, false
 	}
@@ -181,15 +184,22 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 	return entry, !ok, verified
 }
 
+func ctxNote(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed out"
+	}
+	return "cancelled"
+}
+
 func offlineChildFailed(stderr io.Writer, cell bench.Cell, err error, entry *bench.ManifestEntry) bool {
 	if note := spawnFailure(err); note != "" {
-		entry.Note = note
+		entry.Note = appendNote(entry.Note, note)
 		fmt.Fprintf(stderr, "bench %s: %s\n", cell.RunID, note)
 		entry.FinishedAt = nowFn()
 		return true
 	}
 	if entry.SessionID == "" {
-		entry.Note = "no session id observed"
+		entry.Note = appendNote(entry.Note, "no session id observed")
 		entry.FinishedAt = nowFn()
 		return true
 	}
