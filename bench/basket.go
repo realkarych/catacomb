@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,6 +36,7 @@ var (
 	ErrEmptyCmd        = errors.New("bench: task cmd is empty")
 	ErrRunIDCollision  = errors.New("bench: run-id collision")
 	ErrCheckpoint      = errors.New("bench: invalid checkpoint")
+	ErrTimeout         = errors.New("bench: invalid timeout")
 )
 
 type Task struct {
@@ -43,6 +45,22 @@ type Task struct {
 	Dir         string            `yaml:"dir,omitempty" json:"dir,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 	Checkpoints []string          `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
+	Timeout     string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
+func (t Task) TimeoutDuration() (time.Duration, error) {
+	return parseTimeout(t.Timeout)
+}
+
+func parseTimeout(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("%w: %q", ErrTimeout, s)
+	}
+	return d, nil
 }
 
 type Variant struct {
@@ -142,6 +160,9 @@ func validateTasks(tasks []Task) error {
 		}
 		if len(t.Cmd) == 0 {
 			return fmt.Errorf("bench.Load: task[%d].cmd: %w", i, ErrEmptyCmd)
+		}
+		if _, err := t.TimeoutDuration(); err != nil {
+			return fmt.Errorf("bench.Load: task[%d].timeout: %w", i, err)
 		}
 		if err := validateCheckpoints(i, t); err != nil {
 			return err

@@ -51,6 +51,8 @@ func TestValidateErrors(t *testing.T) {
 			ErrDuplicateID, "task",
 		},
 		{"empty cmd", func(b *Basket) { b.Tasks[0].Cmd = nil }, ErrEmptyCmd, "task"},
+		{"negative timeout", func(b *Basket) { b.Tasks[0].Timeout = "-1s" }, ErrTimeout, "task"},
+		{"garbage timeout", func(b *Basket) { b.Tasks[0].Timeout = "banana" }, ErrTimeout, "task"},
 		{"empty variant id", func(b *Basket) { b.Variants[0].ID = "" }, ErrEmptyID, "variant"},
 		{"variant id too long", func(b *Basket) { b.Variants[0].ID = long }, ErrIDLen, "variant"},
 		{"variant id comma", func(b *Basket) { b.Variants[0].ID = "x,y" }, ErrCharset, "variant"},
