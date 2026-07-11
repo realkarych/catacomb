@@ -57,7 +57,7 @@ The `redact` package applies value patterns for:
 - GitLab `glpat-` tokens
 - High-entropy hex, base64 (including `/`-bearing spans such as AWS secret access
   keys), and base64url strings, gated by a Shannon-entropy threshold so low-entropy
-  lookalikes (file paths, UUIDs, repeated patterns) pass through untouched
+  lookalikes — UUIDs, repeated patterns, and most file paths — pass through untouched
 
 It also redacts any value whose key path matches a sensitive token: `password`,
 `passwd`, `secret`, `token`, `apikey`/`api_key`, `auth`, `credential`,
@@ -73,9 +73,11 @@ filesystem a vault. Deliberate trade-offs to know about:
    recognizes — or a generic token below the entropy gate — survives redaction. Treat
    evidence dirs as reduced-risk, not secret-free. Classes the entropy gate
    deliberately does not catch:
-   - **Hex- or base32-encoded ASCII secrets.** Encoding ASCII this way caps entropy
-     around 2.8 bits — squarely inside the band of legitimate hashes and identifiers
-     the gate exists to spare. No threshold separates the two.
+   - **Hex- or base32-encoded ASCII secrets.** Encoding ASCII this way typically holds
+     entropy to ~2.8–3.3 bits — largely inside the band of legitimate hashes and
+     identifiers the gate exists to spare — so many but not all such secrets fall below
+     the gate. Mixed-case-and-digit ASCII near the top of that range (H≈3.3) crosses the
+     threshold and is caught; lower-diversity encodings are not.
    - **UUID-shaped secrets** (Heroku API keys, for example) are structurally
      indistinguishable from the session-id UUIDs that saturate every transcript.
    - **Adversarial padding dilution.** Content shaped by an attacker can pad a secret
@@ -89,7 +91,10 @@ filesystem a vault. Deliberate trade-offs to know about:
    rewrites them. Evidence dirs are the redacted, shareable copy.
 3. **Redaction false positives destroy data in the evidence copy.** There is no raw
    copy inside the evidence dir to recover from — by design. The original transcript
-   under `~/.claude/projects` is the fallback while Claude Code retains it.
+   under `~/.claude/projects` is the fallback while Claude Code retains it. The entropy
+   gate can over-redact high-diversity path segments — content-addressed store hashes or
+   case-and-digit-diverse CI paths of ≥40 characters — a safe-direction false positive
+   that loses data rather than leaking it.
 4. **Literal `‹redacted:…›`/`‹ref:…›` text in genuine content** is indistinguishable
    from a real redaction marker downstream.
 5. **`--scores` files are yours.** Catacomb reads them and applies the values in
