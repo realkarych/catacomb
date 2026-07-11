@@ -76,7 +76,7 @@ def _paired_mismatches(
     out = _positional_mismatches(left, right, cols, float_tol)
     if ordered or not out:
         return out
-    return _greedy_mismatches(left, right, cols, float_tol)
+    return _matched_mismatches(left, right, cols, float_tol)
 
 
 def _positional_mismatches(
@@ -96,25 +96,40 @@ def _positional_mismatches(
     return out
 
 
-def _greedy_mismatches(
+def _matched_mismatches(
     left: list[dict[str, object]],
     right: list[dict[str, object]],
     cols: list[str],
     float_tol: float,
 ) -> list[str]:
-    matched = [False] * len(right)
-    leftover_left: list[dict[str, object]] = []
-    for got_row in left:
-        for j, want_row in enumerate(right):
-            if not matched[j] and all(
-                _cell_eq(got_row.get(c), want_row.get(c), float_tol) for c in cols
-            ):
-                matched[j] = True
-                break
-        else:
-            leftover_left.append(got_row)
-    leftover_right = [right[j] for j, hit in enumerate(matched) if not hit]
+    compat = [
+        [
+            j
+            for j, want_row in enumerate(right)
+            if all(_cell_eq(got_row.get(c), want_row.get(c), float_tol) for c in cols)
+        ]
+        for got_row in left
+    ]
+    match_right = [-1] * len(right)
+    for i in range(len(left)):
+        _augment(i, compat, [False] * len(right), match_right)
+    matched_left = [False] * len(left)
+    for i in match_right:
+        if i != -1:
+            matched_left[i] = True
+    leftover_left = [left[i] for i in range(len(left)) if not matched_left[i]]
+    leftover_right = [right[j] for j in range(len(right)) if match_right[j] == -1]
     return _positional_mismatches(leftover_left, leftover_right, cols, float_tol)
+
+
+def _augment(i: int, compat: list[list[int]], seen: list[bool], match_right: list[int]) -> bool:
+    for j in compat[i]:
+        if not seen[j]:
+            seen[j] = True
+            if match_right[j] == -1 or _augment(match_right[j], compat, seen, match_right):
+                match_right[j] = i
+                return True
+    return False
 
 
 def _contained_mismatches(

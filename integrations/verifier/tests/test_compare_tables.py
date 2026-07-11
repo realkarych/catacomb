@@ -220,6 +220,14 @@ def test_tolerance_equal_rows_straddling_sort_boundary_compare_equal(tmp_path):
     assert res.mismatches == []
 
 
+def test_overlapping_tolerance_bands_use_maximum_matching(tmp_path):
+    got = _write(tmp_path, "got.csv", "total\n100.0\n99.99992\n")
+    want = _write(tmp_path, "want.csv", "total\n100.0\n100.00009\n")
+    res = compare_tables(got, want, float_tol=1e-4)
+    assert res.equal is True
+    assert res.mismatches == []
+
+
 def test_unordered_genuine_mismatch_reports_leftover_rows(tmp_path):
     got = _write(tmp_path, "got.csv", "total\n1.0\n2.0\n")
     want = _write(tmp_path, "want.csv", "total\n1.0\n9.0\n")
