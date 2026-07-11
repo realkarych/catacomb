@@ -47,6 +47,20 @@ var (
 
 	reConnectionString = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+\-.]*://(?:[^:@\s/]+:[^@\s]+@|:[^@\s]+@)[^\s"'` + "`" + `]+`)
 
+	reStripeKey = regexp.MustCompile(`\b[rsp]k_(?:live|test)_[0-9A-Za-z]{16,}\b`)
+
+	reSendGrid = regexp.MustCompile(`\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b`)
+
+	reTwilioKey = regexp.MustCompile(`\bSK[0-9a-fA-F]{32}\b`)
+
+	reNPMToken = regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}\b`)
+
+	rePyPIToken = regexp.MustCompile(`\bpypi-[A-Za-z0-9_-]{16,}\b`)
+
+	reGitLabPAT = regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}\b`)
+
+	reGoogleOAuth = regexp.MustCompile(`\bya29\.[A-Za-z0-9._-]{20,}\b`)
+
 	reHexEntropy = regexp.MustCompile(`\b[0-9a-fA-F]{40,}\b`)
 
 	reBase64Entropy = regexp.MustCompile(`\b[A-Za-z0-9+]{40,}={0,2}\b`)
@@ -88,6 +102,13 @@ var valueRules = []valueRule{
 	{reGoogleAPIKey, "google-api-key"},
 	{reBearerToken, "bearer-token"},
 	{reJWT, "jwt"},
+	{reStripeKey, "stripe-key"},
+	{reSendGrid, "sendgrid-key"},
+	{reTwilioKey, "twilio-key"},
+	{reNPMToken, "npm-token"},
+	{rePyPIToken, "pypi-token"},
+	{reGitLabPAT, "gitlab-token"},
+	{reGoogleOAuth, "google-oauth"},
 	{reHexEntropy, "high-entropy"},
 	{reBase64Entropy, "high-entropy"},
 }
