@@ -20,7 +20,7 @@ variants:
   # baseline: instruct the agent to bracket the write with a `verify` mark.
   - id: baseline
     env:
-      PHASE_INSTRUCTION: "First, run the Bash command `echo catacomb-e2e` using the Bash tool. Then: Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end. Call the tool yourself, directly — do not launch subagents and do not invoke skills."
+      PHASE_INSTRUCTION: "Follow these 4 steps exactly, calling every tool yourself — never launch subagents, never invoke skills: 1. Call mcp__catacomb__mark with name=verify boundary=start. 2. Run the Bash command `echo catacomb-e2e` using the Bash tool. 3. Write the haiku. 4. Call mcp__catacomb__mark with name=verify boundary=end. All 4 steps are mandatory."
   # degraded: seeded regression — no tools, so `verify` is never marked.
   - id: degraded
     env:
@@ -28,4 +28,4 @@ variants:
   # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
   - id: baseline2
     env:
-      PHASE_INSTRUCTION: "First, run the Bash command `echo catacomb-e2e` using the Bash tool. Then: Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end. Call the tool yourself, directly — do not launch subagents and do not invoke skills."
+      PHASE_INSTRUCTION: "Follow these 4 steps exactly, calling every tool yourself — never launch subagents, never invoke skills: 1. Call mcp__catacomb__mark with name=verify boundary=start. 2. Run the Bash command `echo catacomb-e2e` using the Bash tool. 3. Write the haiku. 4. Call mcp__catacomb__mark with name=verify boundary=end. All 4 steps are mandatory."
