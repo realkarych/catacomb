@@ -1,11 +1,13 @@
 # E2E Live Gate — runs the PV-6b calibration methodology against the real
 # `claude -p` CLI in CI (see docs/reviews/2026-07-08-pv6b-live-calibration.md and
 # e2e/run.sh). It is deliberately NOT part of the per-PR CI: it spends real API
-# budget (~$1 per run — 45 live bench cells; the checkpoint task runs on sonnet) and needs the
-# `ANTHROPIC_API_KEY` repository secret. Trigger it manually (workflow_dispatch)
-# or let the weekly schedule run it; the guard step fails fast with a clear
-# message when the secret is absent so a fork or an unconfigured repo does not
-# burn a confusing red run.
+# budget (~$1 per run — 45 live bench cells; the checkpoint task runs on sonnet) and needs
+# an Anthropic auth secret: either `ANTHROPIC_API_KEY` (API billing) or
+# `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
+# `claude setup-token`). When both are set the API key takes precedence (API billing).
+# Trigger it manually (workflow_dispatch) or let the weekly schedule run it; the guard
+# step fails fast with a clear message when neither is set so a fork or an unconfigured
+# repo does not burn a confusing red run.
 name: E2E Live Gate
 
 on:
@@ -28,15 +30,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Require ANTHROPIC_API_KEY secret
+      - name: Require an Anthropic auth secret
         env:
           HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
         run: |
-          if [ "$HAS_KEY" != "true" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set. This workflow makes real 'claude -p' calls and cannot run without it. Add the secret in repo settings, then re-run." >&2
+          if [ "$HAS_KEY" != "true" ] && [ "$HAS_OAUTH" != "true" ]; then
+            echo "::error::No Anthropic auth secret is set. This workflow makes real 'claude -p' calls and needs one of two repository secrets: ANTHROPIC_API_KEY (API billing) or CLAUDE_CODE_OAUTH_TOKEN (a Claude Pro/Max subscription; generate it with 'claude setup-token'). Add either in repo settings, then re-run." >&2
             exit 1
           fi
-          echo "ANTHROPIC_API_KEY is present."
+          if [ "$HAS_KEY" = "true" ] && [ "$HAS_OAUTH" = "true" ]; then
+            echo "ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are both present (the API key takes precedence)."
+          elif [ "$HAS_KEY" = "true" ]; then
+            echo "ANTHROPIC_API_KEY is present."
+          else
+            echo "CLAUDE_CODE_OAUTH_TOKEN is present."
+          fi
 
       - name: Checkout
         uses: actions/checkout@v7.0.0
@@ -65,11 +74,18 @@ jobs:
       - name: Run E2E live gate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # keep the non-interactive claude run quiet and deterministic in CI
           DISABLE_AUTOUPDATER: "1"
           DISABLE_TELEMETRY: "1"
           DISABLE_ERROR_REPORTING: "1"
-        run: bash e2e/run.sh
+        # A missing GitHub secret materializes as an empty-but-set env var, and an empty
+        # ANTHROPIC_API_KEY still WINS auth precedence over a valid OAuth token — so drop
+        # any empty var before invoking the harness so the present one is actually used.
+        run: |
+          [ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
+          [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || unset CLAUDE_CODE_OAUTH_TOKEN
+          bash e2e/run.sh
 
       - name: Upload artifacts
         if: always()

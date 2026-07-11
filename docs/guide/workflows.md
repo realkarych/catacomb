@@ -345,5 +345,7 @@ step and continuous tasks stay on Haiku, which also exercises multi-model pricin
 
 Because it spends real API budget (~$1 per run), it is not part of per-PR CI: trigger it
 by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
-needs the `ANTHROPIC_API_KEY` repository secret and fails fast with a clear message when
-the secret is absent.
+needs either the `ANTHROPIC_API_KEY` repository secret (API billing) or
+`CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
+`claude setup-token`); when both are set the API key wins. It fails fast with a clear
+message when neither is set.
