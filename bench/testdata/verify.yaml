@@ -1,0 +1,17 @@
+basket: vfy
+reps: 1
+tasks:
+  - id: build
+    cmd: ["make", "build"]
+    artifacts:
+      - "dist/**/*.js"
+      - "*.log"
+    verify:
+      cmd: ["pytest", "-q"]
+      env:
+        CI: "1"
+      timeout: 45s
+  - id: deploy
+    cmd: ["make", "deploy"]
+variants:
+  - id: baseline

@@ -260,6 +260,130 @@ func TestLoadCheckpointValidation(t *testing.T) {
 	}
 }
 
+func TestLoadVerifyRoundTrip(t *testing.T) {
+	b, _, err := bench.Load("testdata/verify.yaml")
+	require.NoError(t, err)
+
+	require.Len(t, b.Tasks, 2)
+	require.NotNil(t, b.Tasks[0].Verify)
+	assert.Equal(t, []string{"pytest", "-q"}, b.Tasks[0].Verify.Cmd)
+	assert.Equal(t, map[string]string{"CI": "1"}, b.Tasks[0].Verify.Env)
+	assert.Equal(t, "45s", b.Tasks[0].Verify.Timeout)
+	assert.Equal(t, []string{"dist/**/*.js", "*.log"}, b.Tasks[0].Artifacts)
+
+	assert.Nil(t, b.Tasks[1].Verify)
+	assert.Empty(t, b.Tasks[1].Artifacts)
+}
+
+func TestVerifyTimeoutDuration(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"empty defaults to one minute", "", time.Minute, false},
+		{"forty five seconds", "45s", 45 * time.Second, false},
+		{"negative", "-1s", 0, true},
+		{"garbage", "banana", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := bench.Verify{Cmd: []string{"x"}, Timeout: tt.timeout}.TimeoutDuration()
+			if tt.wantErr {
+				require.ErrorIs(t, err, bench.ErrTimeout)
+				assert.Zero(t, d)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, d)
+		})
+	}
+}
+
+func TestLoadVerifyValidation(t *testing.T) {
+	const template = "basket: vv\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\n    verify: %s\nvariants:\n  - id: v\n"
+
+	tests := []struct {
+		name    string
+		verify  string
+		wantErr error
+		needle  string
+	}{
+		{"empty cmd", `{cmd: []}`, bench.ErrVerifyCmd, "verify.cmd"},
+		{"bad timeout", `{cmd: ["x"], timeout: "nope"}`, bench.ErrTimeout, "verify.timeout"},
+		{"valid", `{cmd: ["x"], timeout: "10s"}`, nil, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "verify.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf(template, tc.verify)), 0o600))
+
+			_, _, err := bench.Load(path)
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tc.wantErr)
+			assert.Contains(t, err.Error(), tc.needle)
+		})
+	}
+}
+
+func TestLoadArtifactValidation(t *testing.T) {
+	const template = "basket: aa\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\n    artifacts: %s\nvariants:\n  - id: v\n"
+
+	tests := []struct {
+		name      string
+		artifacts string
+		wantErr   bool
+	}{
+		{"empty entry", `[""]`, true},
+		{"parent escape", `["../x"]`, true},
+		{"absolute", `["/etc/passwd"]`, true},
+		{"deep parent escape", `["a/../../b"]`, true},
+		{"rooted and bare globs accepted", `["dist/**/*.js", "*.log", "logs/out.txt"]`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "artifacts.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf(template, tc.artifacts)), 0o600))
+
+			_, _, err := bench.Load(path)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, bench.ErrArtifactGlob)
+				assert.Contains(t, err.Error(), "artifacts[")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestLoadVerifyBlockChangesHash(t *testing.T) {
+	const withoutVerify = "basket: h\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\nvariants:\n  - id: v\n"
+	const withVerify = "basket: h\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\n    verify: {cmd: [\"x\"]}\nvariants:\n  - id: v\n"
+
+	dir := t.TempDir()
+	p1 := filepath.Join(dir, "a.yaml")
+	p2 := filepath.Join(dir, "b.yaml")
+	require.NoError(t, os.WriteFile(p1, []byte(withoutVerify), 0o600))
+	require.NoError(t, os.WriteFile(p2, []byte(withVerify), 0o600))
+
+	b1, h1, err := bench.Load(p1)
+	require.NoError(t, err)
+	assert.Nil(t, b1.Tasks[0].Verify)
+
+	b2, h2, err := bench.Load(p2)
+	require.NoError(t, err)
+	require.NotNil(t, b2.Tasks[0].Verify)
+	assert.Equal(t, []string{"x"}, b2.Tasks[0].Verify.Cmd)
+
+	assert.NotEqual(t, h1, h2)
+}
+
 func TestLoadDashIDsNoCollision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dashy.yaml")
 	body := `basket: multi-word-basket
