@@ -70,3 +70,57 @@ jobs:
         # traverse. gosec's -conf file cannot exclude rules, so the exclusion
         # lives here rather than in a .gosec.json.
         run: go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude=G304 ./...
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.0
+        with:
+          languages: go
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4.37.0
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4.37.0
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5.0.0
+
+  lint-workflows:
+    name: actionlint + zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
+      - name: Run zizmor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install zizmor==1.26.1
+          zizmor --no-progress .github/workflows/
