@@ -6,7 +6,6 @@ type PriceInputs struct {
 	TokensOut   int64
 	CacheReadIn int64
 	CacheWrite  int64
-	ReportedUSD *float64
 }
 
 type PriceResult struct {

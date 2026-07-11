@@ -27,18 +27,14 @@ func fixtureGroup() []RunGraph {
 			{ID: "r1-sess", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK},
 			{ID: "r1-s1b", RunID: "r1", Type: model.NodeToolCall, Name: "search2", Status: model.StatusOK, StepKey: "s1", CostUSD: f64(2), TokensIn: i64(20), TokensOut: i64(10), DurationMS: i64(200), Annotations: map[string]any{"eval.score": float64(0.25), "eval.latency": []byte("0.125")}},
 			{ID: "r1-s1a", RunID: "r1", Type: model.NodeToolCall, Name: "search", Status: model.StatusOK, StepKey: "s1", CostUSD: f64(1), TokensIn: i64(10), TokensOut: i64(5), DurationMS: i64(100), Annotations: map[string]any{"eval.score": json.RawMessage("0.5"), "eval.note": json.RawMessage(`"good"`), "misc.ignored": json.RawMessage("1")}},
-			{ID: "r1-sup", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusSuperseded, StepKey: "s1", CostUSD: f64(100), TokensIn: i64(1000), TokensOut: i64(1000), DurationMS: i64(9999)},
-			{ID: "r1-s2", RunID: "r1", Type: model.NodeToolCall, Name: "build", Status: model.StatusBlocked, StepKey: "s2", CostUSD: f64(5), TokensIn: i64(50), TokensOut: i64(25), DurationMS: i64(500)},
+			{ID: "r1-s2", RunID: "r1", Type: model.NodeToolCall, Name: "build", Status: model.StatusOK, StepKey: "s2", CostUSD: f64(5), TokensIn: i64(50), TokensOut: i64(25), DurationMS: i64(500)},
 			{ID: "r1-m1", RunID: "r1", Type: model.NodeMarker, Name: "phase-one", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(2000 * time.Millisecond))},
-			{ID: "r1-m-sup", RunID: "r1", Type: model.NodeMarker, Name: "phase-one-sup", Status: model.StatusSuperseded, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(9999 * time.Millisecond))},
 			{ID: "r1-mem1", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, CostUSD: f64(10), TokensIn: i64(100), TokensOut: i64(50), DurationMS: i64(9999)},
 			{ID: "r1-mem2", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, CostUSD: f64(20), TokensIn: i64(200), TokensOut: i64(100)},
-			{ID: "r1-mem-sup", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusSuperseded, CostUSD: f64(999), TokensIn: i64(999), TokensOut: i64(999)},
 		},
 		Edges: []*model.Edge{
 			{Type: model.EdgeMarkerSpan, Src: "r1-m1", Dst: "r1-mem1"},
 			{Type: model.EdgeMarkerSpan, Src: "r1-m1", Dst: "r1-mem2"},
-			{Type: model.EdgeMarkerSpan, Src: "r1-m1", Dst: "r1-mem-sup"},
 			{Type: model.EdgeMarkerSpan, Src: "r1-m1", Dst: "r1-missing"},
 		},
 	}
@@ -80,7 +76,7 @@ func TestAggregateFixture(t *testing.T) {
 			},
 			{
 				Key: "s2", Name: "build", Present: 1, PresenceRate: 1.0 / 3,
-				StatusRates: map[model.Status]float64{model.StatusBlocked: 1},
+				StatusRates: map[model.Status]float64{model.StatusOK: 1},
 				Occurrences: MetricStats{N: 1, Median: 1, P25: 1, P75: 1, P90: 1},
 				DurationMS:  MetricStats{N: 1, Median: 500, P25: 500, P75: 500, P90: 500},
 				CostUSD:     MetricStats{N: 1, Median: 5, P25: 5, P75: 5, P90: 5},
@@ -231,9 +227,6 @@ func TestAggregateEmptyGroup(t *testing.T) {
 func TestSeverityOrdering(t *testing.T) {
 	order := []model.Status{
 		model.StatusError,
-		model.StatusBlocked,
-		model.StatusCancelled,
-		model.StatusUnknown,
 		model.StatusRunning,
 		model.StatusPending,
 		model.StatusOK,
@@ -241,7 +234,7 @@ func TestSeverityOrdering(t *testing.T) {
 	for i := 0; i+1 < len(order); i++ {
 		assert.Greater(t, severity(order[i]), severity(order[i+1]), "%s should outrank %s", order[i], order[i+1])
 	}
-	assert.Equal(t, 0, severity(model.StatusSuperseded))
+	assert.Equal(t, 0, severity(model.Status("")))
 }
 
 func TestWorse(t *testing.T) {
@@ -250,66 +243,34 @@ func TestWorse(t *testing.T) {
 	assert.Equal(t, model.StatusOK, worse(model.StatusOK, model.StatusOK))
 }
 
-func sessionTotalRun(withResult bool, resultCost *float64) RunGraph {
-	nodes := []*model.Node{
+func twoTurnRun() RunGraph {
+	return RunGraph{Run: model.Run{ID: "r1", Status: model.StatusOK}, Nodes: []*model.Node{
 		{ID: "e:sess", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK},
 		{ID: "e:turn:m1", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, CostUSD: f64(0.30), TokensIn: i64(100), TokensOut: i64(50)},
 		{ID: "e:turn:m2", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, CostUSD: f64(0.40), TokensIn: i64(200), TokensOut: i64(70)},
-	}
-	if withResult {
-		n := &model.Node{ID: "e:turn:", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, TokensIn: i64(999), TokensOut: i64(999), Attrs: map[string]any{"session_total": true}}
-		n.CostUSD = resultCost
-		nodes = append(nodes, n)
-	}
-	return RunGraph{Run: model.Run{ID: "r1", Status: model.StatusOK}, Nodes: nodes}
+	}}
 }
 
-func TestRunTotalsPreferReportedSessionTotal(t *testing.T) {
-	r := runTotals([]RunGraph{sessionTotalRun(true, f64(0.50))})
-
-	assert.InDelta(t, 0.50, r.CostUSD.Median, 1e-12)
-	assert.Equal(t, float64(300), r.TokensIn.Median)
-	assert.Equal(t, float64(120), r.TokensOut.Median)
-	assert.Equal(t, float64(4), r.Nodes.Median)
-}
-
-func TestRunTotalsFallBackToEstimates(t *testing.T) {
-	r := runTotals([]RunGraph{sessionTotalRun(false, nil)})
+func TestRunTotalsSumsPerNode(t *testing.T) {
+	r := runTotals([]RunGraph{twoTurnRun()})
 
 	assert.InDelta(t, 0.70, r.CostUSD.Median, 1e-12)
 	assert.Equal(t, float64(300), r.TokensIn.Median)
 	assert.Equal(t, float64(120), r.TokensOut.Median)
-}
-
-func TestRunTotalsSessionTotalWithoutCostFallsBack(t *testing.T) {
-	r := runTotals([]RunGraph{sessionTotalRun(true, nil)})
-
-	assert.InDelta(t, 0.70, r.CostUSD.Median, 1e-12)
-	assert.Equal(t, float64(300), r.TokensIn.Median)
-}
-
-func TestRunTotalsSupersededSessionTotalIgnored(t *testing.T) {
-	rg := sessionTotalRun(true, f64(0.50))
-	rg.Nodes[3].Status = model.StatusSuperseded
-
-	r := runTotals([]RunGraph{rg})
-
-	assert.InDelta(t, 0.70, r.CostUSD.Median, 1e-12)
 	assert.Equal(t, float64(3), r.Nodes.Median)
 }
 
-func TestPhaseFoldExcludesSessionTotalMember(t *testing.T) {
+func TestPhaseFoldSumsMembers(t *testing.T) {
 	t0 := fixtureBase
 	group := []RunGraph{{
 		Run: model.Run{ID: "r1", Status: model.StatusOK},
 		Nodes: []*model.Node{
 			{ID: "m1", RunID: "r1", Type: model.NodeMarker, Name: "phase", Status: model.StatusOK, PhaseKey: "p1", TStart: tp(t0), TEnd: tp(t0.Add(time.Second))},
 			{ID: "in-window", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, CostUSD: f64(1), TokensIn: i64(10), TokensOut: i64(5)},
-			{ID: "e:turn:", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, CostUSD: f64(9), TokensIn: i64(900), TokensOut: i64(900), Attrs: map[string]any{"session_total": true}},
 		},
 		Edges: []*model.Edge{
 			{Type: model.EdgeMarkerSpan, Src: "m1", Dst: "in-window"},
-			{Type: model.EdgeMarkerSpan, Src: "m1", Dst: "e:turn:"},
+			{Type: model.EdgeMarkerSpan, Src: "m1", Dst: "missing"},
 		},
 	}}
 
@@ -321,18 +282,19 @@ func TestPhaseFoldExcludesSessionTotalMember(t *testing.T) {
 	assert.Equal(t, float64(5), rep.Phases[0].TokensOut.Median)
 }
 
-func TestStepFoldExcludesSessionTotal(t *testing.T) {
+func TestStepFoldSumsMembers(t *testing.T) {
 	group := []RunGraph{{
 		Run: model.Run{ID: "r1", Status: model.StatusOK},
 		Nodes: []*model.Node{
+			{ID: "e:sess", RunID: "r1", Type: model.NodeSession, Status: model.StatusOK},
 			{ID: "a", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, StepKey: "s1", CostUSD: f64(1)},
-			{ID: "b", RunID: "r1", Type: model.NodeAssistantTurn, Status: model.StatusOK, StepKey: "s1", CostUSD: f64(9), Attrs: map[string]any{"session_total": true}},
+			{ID: "b", RunID: "r1", Type: model.NodeToolCall, Status: model.StatusOK, StepKey: "s1", CostUSD: f64(2)},
 		},
 	}}
 
 	rep := Aggregate(group, Options{})
 
 	require.Len(t, rep.Steps, 1)
-	assert.Equal(t, float64(1), rep.Steps[0].CostUSD.Median)
-	assert.Equal(t, float64(1), rep.Steps[0].Occurrences.Median)
+	assert.Equal(t, float64(3), rep.Steps[0].CostUSD.Median)
+	assert.Equal(t, float64(2), rep.Steps[0].Occurrences.Median)
 }

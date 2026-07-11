@@ -66,20 +66,6 @@ func sessionStart(ts time.Time) model.Observation {
 	}
 }
 
-func sessionEnd(ts time.Time, seq uint64) model.Observation {
-	return model.Observation{
-		ObsID:       "sess_end",
-		RunID:       runID,
-		ExecutionID: execID,
-		Source:      model.SourceHook,
-		Kind:        "session_end",
-		Correlation: model.Correlation{SessionID: runID},
-		EventTime:   ts,
-		ObservedAt:  ts,
-		Seq:         seq,
-	}
-}
-
 func TestIsMarkerTool(t *testing.T) {
 	assert.True(t, isMarkerTool("mcp__catacomb__mark"))
 	assert.True(t, isMarkerTool("catacomb__mark"))
@@ -447,7 +433,8 @@ func TestOpenPhaseClosesAtSessionTEnd(t *testing.T) {
 	g := NewGraph()
 	g.Apply(sessionStart(t0))
 	g.Apply(markerToolUse("tu1", "phase1", "start", "", nil, t1, 2))
-	g.Apply(sessionEnd(tEnd, 3))
+	end := tEnd
+	g.Nodes[model.SessionNodeID(execID)].TEnd = &end
 
 	nodes, _ := g.Snapshot()
 

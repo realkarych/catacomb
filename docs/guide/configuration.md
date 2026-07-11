@@ -37,7 +37,7 @@ every command.
   forward automatically. Read-only opens (`baseline list`, `trends`, and `regress`
   `name:` resolution) refuse an older schema with a hint to run a write-path command,
   and every command refuses a schema newer than the binary (upgrade catacomb).
-- The current schema version is 4.
+- The current schema version is 5.
 
 ## Fixed policies
 

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §3, §5.2, §5.5, §5.8, §7, §17; ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0012, ADR-0014
+- **Related:** spec §3, §5.2, §5.5, §5.8, §7, §17; ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0012, ADR-0014, amended by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Amended by:** ADR-0012/ADR-0014 — `cancelled`/`superseded` are **provisional** (a genuine terminal supersedes them) and **cascade** transitively over the `parent_child` closure (across subagent files); the never-resolved-orphan case adds `unknown`/`abandoned`. The "does not override any of them" line in §Relationship below is superseded by that status lattice + cascade.
 
 ## Context

@@ -13,32 +13,23 @@ func testTable() map[string]Tier {
 	}
 }
 
-func TestCostReportedFirst(t *testing.T) {
-	e := newEngineWithTable(testTable())
-	reported := 0.42
-	r, ok := e.Cost(Inputs{ModelID: "model-x", TokensIn: 999999, ReportedUSD: &reported})
-	require.True(t, ok)
-	assert.Equal(t, "reported", r.Source)
-	assert.InDelta(t, 0.42, r.USD, 1e-9)
-}
-
 func TestCostEstimateFromTiers(t *testing.T) {
-	e := newEngineWithTable(testTable())
-	r, ok := e.Cost(Inputs{ModelID: "model-x", TokensIn: 1_000_000, TokensOut: 1_000_000, CacheReadIn: 1_000_000, CacheWrite: 1_000_000})
+	e := New()
+	r, ok := e.Cost(Inputs{ModelID: "claude-haiku-4-5", TokensIn: 1_000_000, TokensOut: 1_000_000, CacheReadIn: 1_000_000, CacheWrite: 1_000_000})
 	require.True(t, ok)
 	assert.Equal(t, "estimated", r.Source)
 	assert.InDelta(t, 1+5+0.1+1.25, r.USD, 1e-9)
 }
 
 func TestCostUnknownModel(t *testing.T) {
-	e := newEngineWithTable(testTable())
+	e := New()
 	_, ok := e.Cost(Inputs{ModelID: "nope", TokensIn: 10})
 	assert.False(t, ok)
 }
 
 func TestCostZeroTokensKnownModel(t *testing.T) {
-	e := newEngineWithTable(testTable())
-	r, ok := e.Cost(Inputs{ModelID: "model-x"})
+	e := New()
+	r, ok := e.Cost(Inputs{ModelID: "claude-haiku-4-5"})
 	require.True(t, ok)
 	assert.Equal(t, "estimated", r.Source)
 	assert.InDelta(t, 0, r.USD, 1e-9)
@@ -90,7 +81,7 @@ func TestCostPrefixLongestFamilyWins(t *testing.T) {
 }
 
 func TestCostNoFamiliesStillMissesUnknown(t *testing.T) {
-	e := newEngineWithTable(testTable())
+	e := newEngineWithFamilies(testTable(), nil)
 	_, ok := e.Cost(Inputs{ModelID: "claude-opus-4-9", TokensIn: 10})
 	assert.False(t, ok)
 }

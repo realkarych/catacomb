@@ -2,6 +2,7 @@ package jsonl
 
 import (
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -25,6 +26,16 @@ func seqFor(t *testing.T) func() uint64 {
 	}
 }
 
+func parseReader(r io.Reader, executionID string) ([]model.Observation, error) {
+	var seq uint64
+	obs, _, err := Parse(r, executionID, func() uint64 {
+		s := seq
+		seq++
+		return s
+	}, func(ts time.Time) time.Time { return ts })
+	return obs, err
+}
+
 type errReader struct{ read bool }
 
 func (r *errReader) Read(p []byte) (int, error) {
@@ -41,7 +52,7 @@ func parseFixture(t *testing.T) []model.Observation {
 	f, err := os.Open("testdata/session.jsonl")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
-	obs, err := ParseReader(f, "exec-T")
+	obs, err := parseReader(f, "exec-T")
 	require.NoError(t, err)
 	return obs
 }
@@ -87,7 +98,7 @@ func TestParseReaderUserPromptTextPayload(t *testing.T) {
 }
 
 func TestParseReaderUserPromptEmptyTextNoPayload(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x","is_error":false}]}}`+"\n"), "e")
 	require.NoError(t, err)
 	assert.Empty(t, byKind(obs, "user_prompt"))
@@ -111,51 +122,51 @@ func TestParseReaderToolResultStatus(t *testing.T) {
 }
 
 func TestParseReaderSkipsBlankLines(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader("\n   \n"), "exec-T")
+	obs, err := parseReader(strings.NewReader("\n   \n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestParseReaderMalformedLine(t *testing.T) {
-	_, err := ParseReader(strings.NewReader("{not json}\n"), "exec-T")
+	_, err := parseReader(strings.NewReader("{not json}\n"), "exec-T")
 	require.Error(t, err)
 }
 
 func TestParseReaderMalformedMessage(t *testing.T) {
-	_, err := ParseReader(strings.NewReader(`{"type":"user","message":123}`+"\n"), "exec-T")
+	_, err := parseReader(strings.NewReader(`{"type":"user","message":123}`+"\n"), "exec-T")
 	require.Error(t, err)
 }
 
 func TestParseReaderMalformedContent(t *testing.T) {
-	_, err := ParseReader(strings.NewReader(`{"type":"user","message":{"role":"user","content":5}}`+"\n"), "exec-T")
+	_, err := parseReader(strings.NewReader(`{"type":"user","message":{"role":"user","content":5}}`+"\n"), "exec-T")
 	require.Error(t, err)
 }
 
 func TestParseReaderScannerError(t *testing.T) {
-	_, err := ParseReader(&errReader{}, "exec-T")
+	_, err := parseReader(&errReader{}, "exec-T")
 	require.Error(t, err)
 }
 
 func TestParseReaderEmptyMessage(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(`{"type":"user"}`+"\n"), "exec-T")
+	obs, err := parseReader(strings.NewReader(`{"type":"user"}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestParseReaderUnknownType(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(`{"type":"system","message":{"role":"system","content":"x"}}`+"\n"), "exec-T")
+	obs, err := parseReader(strings.NewReader(`{"type":"system","message":{"role":"system","content":"x"}}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestParseReaderNonToolResultBlock(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}`+"\n"), "exec-T")
+	obs, err := parseReader(strings.NewReader(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
 
 func TestSidechainLineCorrelationAgentIDSet(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"assistant","sessionId":"s1","agentId":"agent_99","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
 	require.NoError(t, err)
 	turns := byKind(obs, "assistant_turn")
@@ -164,7 +175,7 @@ func TestSidechainLineCorrelationAgentIDSet(t *testing.T) {
 }
 
 func TestMainLineCorrelationAgentIDEmpty(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"assistant","sessionId":"s1","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
 	require.NoError(t, err)
 	turns := byKind(obs, "assistant_turn")
@@ -173,14 +184,14 @@ func TestMainLineCorrelationAgentIDEmpty(t *testing.T) {
 }
 
 func TestParseReaderAssistantTextOnly(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "exec-T")
+	obs, err := parseReader(strings.NewReader(`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	require.Len(t, byKind(obs, "assistant_turn"), 1)
 	assert.Empty(t, byKind(obs, "assistant_tool_use"))
 }
 
 func TestParseReaderMessageWithoutContent(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(`{"type":"user","message":{"role":"user"}}`+"\n"), "exec-T")
+	obs, err := parseReader(strings.NewReader(`{"type":"user","message":{"role":"user"}}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
@@ -210,7 +221,7 @@ func TestParseThreadsParentToolUseID(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
-	obs, err := ParseReader(f, "exec-S")
+	obs, err := parseReader(f, "exec-S")
 	require.NoError(t, err)
 	tu := byKind(obs, "assistant_tool_use")
 	require.Len(t, tu, 1)
@@ -222,7 +233,7 @@ func TestParseEmitsSubagentForSidechain(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
-	obs, err := ParseReader(f, "exec-S")
+	obs, err := parseReader(f, "exec-S")
 	require.NoError(t, err)
 	sa := byKind(obs, "subagent_stop")
 	require.Len(t, sa, 1)
@@ -231,14 +242,14 @@ func TestParseEmitsSubagentForSidechain(t *testing.T) {
 }
 
 func TestParseNoSidechainNoSubagent(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
 	require.NoError(t, err)
 	assert.Empty(t, byKind(obs, "subagent_stop"))
 }
 
 func TestParseReaderAssistantCacheTokens(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":321,"cache_creation_input_tokens":99}}}`+"\n"), "e")
 	require.NoError(t, err)
 	turn := byKind(obs, "assistant_turn")
@@ -248,7 +259,7 @@ func TestParseReaderAssistantCacheTokens(t *testing.T) {
 }
 
 func TestParseReaderAssistantTextPayload(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"here is the answer"}]}}`+"\n"), "e")
 	require.NoError(t, err)
 	turn := byKind(obs, "assistant_turn")
@@ -275,7 +286,7 @@ func TestParseReaderAssistantNoTextNoTurnPayload(t *testing.T) {
 }
 
 func TestParseReaderUserPromptSyntheticKind(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"user","message":{"role":"user","content":"<system-reminder>foo"}}`+"\n"), "e")
 	require.NoError(t, err)
 	up := byKind(obs, "user_prompt")
@@ -284,7 +295,7 @@ func TestParseReaderUserPromptSyntheticKind(t *testing.T) {
 }
 
 func TestParseReaderUserPromptHumanKind(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(
+	obs, err := parseReader(strings.NewReader(
 		`{"type":"user","message":{"role":"user","content":"hello friend"}}`+"\n"), "e")
 	require.NoError(t, err)
 	up := byKind(obs, "user_prompt")
@@ -294,7 +305,7 @@ func TestParseReaderUserPromptHumanKind(t *testing.T) {
 
 func TestDecodeLineVersionAndCwdInjected(t *testing.T) {
 	raw := `{"type":"assistant","sessionId":"s1","isSidechain":true,"version":"1.2.3","cwd":"/home","message":{"id":"m1","model":"claude-opus-4-8","role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
-	obs, err := ParseReader(strings.NewReader(raw), "exec1")
+	obs, err := parseReader(strings.NewReader(raw), "exec1")
 	require.NoError(t, err)
 
 	byKindMap := map[string]*model.Observation{}
@@ -365,7 +376,7 @@ func TestParseUserDocumentBlockNoDrift(t *testing.T) {
 }
 
 func TestParseReaderDiscardsDriftCounts(t *testing.T) {
-	obs, err := ParseReader(strings.NewReader(`{"type":"checkpoint_v9","sessionId":"s1"}`+"\n"), "exec-T")
+	obs, err := parseReader(strings.NewReader(`{"type":"checkpoint_v9","sessionId":"s1"}`+"\n"), "exec-T")
 	require.NoError(t, err)
 	assert.Empty(t, obs)
 }
@@ -374,7 +385,7 @@ func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
-	obs, err := ParseReader(f, "e1")
+	obs, err := parseReader(f, "e1")
 	require.NoError(t, err)
 	g := reduce.NewGraph()
 	g.ApplyAll(obs)
@@ -389,7 +400,7 @@ func TestSkillToolReducesToNodeSkill(t *testing.T) {
 	f, err := os.Open("testdata/skill.jsonl")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
-	obs, err := ParseReader(f, "e1")
+	obs, err := parseReader(f, "e1")
 	require.NoError(t, err)
 	g := reduce.NewGraph()
 	g.ApplyAll(obs)

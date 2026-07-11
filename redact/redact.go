@@ -90,11 +90,6 @@ func placeholder(reason string) string {
 	return "‹redacted:" + reason + "›"
 }
 
-func HasMarker(data []byte) bool {
-	s := string(data)
-	return strings.Contains(s, "‹redacted:") || strings.Contains(s, "‹binary:") || strings.Contains(s, "‹ref:")
-}
-
 var knownPlaceholders = func() map[string]bool {
 	m := map[string]bool{
 		placeholder("sensitive-key"): true,

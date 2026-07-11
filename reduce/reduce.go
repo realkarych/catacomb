@@ -8,10 +8,6 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
-func (g *Graph) emitNode(n *model.Node, o model.Observation) {
-	g.emit(GraphDelta{Kind: DeltaNodeUpsert, Rev: o.Seq, Node: n, RunID: o.RunID, ExecutionID: o.ExecutionID})
-}
-
 func setAgentID(n *model.Node, o model.Observation) {
 	if o.Correlation.AgentID != "" {
 		n.AgentID = o.Correlation.AgentID
@@ -26,35 +22,10 @@ func (g *Graph) ApplyAll(obs []model.Observation) {
 
 func (g *Graph) Apply(o model.Observation) {
 	g.ensureRun(o)
-	if o.Correlation.ParentSpanID != "" {
-		g.spanChildren[o.Correlation.ParentSpanID] = true
-	}
 	g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
 	switch o.Kind {
-	case "session_start":
-		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
-		g.stamp(n, o)
-		n.Status = resolveStatus(n.Status, model.StatusRunning)
-		g.emitNode(n, o)
-	case "session_end":
-		n := g.node(model.SessionNodeID(o.ExecutionID), o.RunID, model.NodeSession)
-		g.stamp(n, o)
-		g.stampEnd(n, o)
-		end := model.StatusOK
-		if s, ok := o.Attrs["status"].(string); ok && s == string(model.StatusError) {
-			end = model.StatusError
-		}
-		n.Status = resolveStatus(n.Status, end)
-		g.emitNode(n, o)
-		g.cascadeStatus(n.ID, model.StatusUnknown, o.Seq)
-		r := g.Runs[o.RunID]
-		r.Status = resolveStatus(r.Status, end)
-		ended := *n.TEnd
-		r.EndedAt = &ended
-		r.EndReason = "session_ended"
-		g.emit(GraphDelta{Kind: DeltaSessionEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID})
 	case "user_prompt":
-		n := g.node(model.UserPromptID(o.ExecutionID, nodeKey(o.Correlation.UUID, "", o.ObsID)), o.RunID, model.NodeUserPrompt)
+		n := g.node(model.UserPromptID(o.ExecutionID, nodeKey(o.Correlation.UUID, o.ObsID)), o.RunID, model.NodeUserPrompt)
 		g.stamp(n, o)
 		setAgentID(n, o)
 		if pk, ok := o.Attrs["prompt_kind"].(string); ok && pk != "" {
@@ -64,35 +35,23 @@ func (g *Graph) Apply(o model.Observation) {
 			n.Attrs["prompt_kind"] = pk
 		}
 		g.mergePayload(n, o.Payload, o.Source)
-		g.emitNode(n, o)
 		g.upsertEdge(o.ExecutionID, o.RunID, groupRoot(o.ExecutionID, o.Correlation.AgentID), n.ID, o.Seq)
 		g.recordPrompt(o, n.ID)
 	case "assistant_turn":
 		turnKey := o.Correlation.MessageID
-		if turnKey == "" && o.Correlation.SpanID != "" {
-			turnKey = "span:" + o.Correlation.SpanID
-		}
 		n := g.node(model.AssistantTurnID(o.ExecutionID, turnKey), o.RunID, model.NodeAssistantTurn)
 		g.stamp(n, o)
 		setAgentID(n, o)
 		g.stampEnd(n, o)
-		if g.applyTokens(n, o.Attrs, o.Source) {
-			g.applyCost(n, o.Attrs)
-		}
+		g.applyTokens(n, o.Attrs)
+		g.applyCost(n, o.Attrs)
 		if m, ok := o.Attrs["model"].(string); ok && m != "" {
 			if n.Attrs == nil {
 				n.Attrs = map[string]any{}
 			}
 			n.Attrs["model"] = m
 		}
-		if sessionTotalObservation(o) {
-			if n.Attrs == nil {
-				n.Attrs = map[string]any{}
-			}
-			n.Attrs["session_total"] = true
-		}
 		g.mergePayload(n, o.Payload, o.Source)
-		g.emitNode(n, o)
 		g.parentTurn(o, n.ID)
 	case "assistant_tool_use", "tool_result":
 		g.applyTool(o)
@@ -106,31 +65,14 @@ func (g *Graph) Apply(o model.Observation) {
 			n := g.node(model.MarkerID(o.ExecutionID, o.ObsID), o.RunID, model.NodeMarker)
 			g.stamp(n, o)
 			n.Attrs = o.Attrs
-			g.emitNode(n, o)
 			g.upsertEdge(o.ExecutionID, o.RunID, model.SessionNodeID(o.ExecutionID), n.ID, o.Seq)
 		}
-	case "run_ended":
-		g.applyRunEnded(o)
-	case "repro_meta":
-		applyReproMeta(g.Runs[o.RunID], o.Attrs)
 	}
 }
 
-func (g *Graph) structEdgeAllowed(o model.Observation) bool {
-	if o.Source == model.SourceOTel && o.Correlation.ParentSpanID != "" {
-		if !g.spanChildren[o.Correlation.SpanID] && o.Correlation.ToolUseID == "" {
-			return false
-		}
-	}
-	return true
-}
-
-func nodeKey(primary, span, obs string) string {
+func nodeKey(primary, obs string) string {
 	if primary != "" {
 		return primary
-	}
-	if span != "" {
-		return "span:" + span
 	}
 	return "obs:" + obs
 }
@@ -155,7 +97,7 @@ func (g *Graph) applyTool(o model.Observation) {
 		return
 	}
 
-	id := model.ToolCallID(o.ExecutionID, nodeKey(o.Correlation.ToolUseID, o.Correlation.SpanID, o.ObsID))
+	id := model.ToolCallID(o.ExecutionID, nodeKey(o.Correlation.ToolUseID, o.ObsID))
 	nodeType := model.NodeToolCall
 	switch {
 	case isMCP(name):
@@ -177,16 +119,11 @@ func (g *Graph) applyTool(o model.Observation) {
 	}
 	if s, ok := o.Attrs["status"].(string); ok {
 		n.Status = resolveStatus(n.Status, model.Status(s))
-		if n.Status == model.StatusCancelled || n.Status == model.StatusSuperseded {
-			g.cascadeStatus(n.ID, n.Status, o.Seq)
-		}
 	}
 	g.mergePayload(n, o.Payload, o.Source)
-	g.emitNode(n, o)
 	switch {
 	case o.Correlation.ParentToolUseID != "":
 		g.upsertParentToolEdge(o)
-	case !g.structEdgeAllowed(o):
 	case o.Correlation.MessageID != "":
 		g.setStructParent(o, structKindTurn, model.AssistantTurnID(o.ExecutionID, o.Correlation.MessageID), id)
 	default:
@@ -209,7 +146,6 @@ func (g *Graph) applySubagent(o model.Observation) {
 	}
 	g.stampEnd(n, o)
 	n.Status = resolveStatus(n.Status, model.StatusOK)
-	g.emitNode(n, o)
 	if o.Correlation.ParentToolUseID != "" {
 		g.setStructParent(o, structKindParentTool, model.ToolCallID(o.ExecutionID, o.Correlation.ParentToolUseID), id)
 		return
@@ -219,22 +155,9 @@ func (g *Graph) applySubagent(o model.Observation) {
 
 func sourceRank(s model.Source) int {
 	switch s {
-	case model.SourceOTel:
-		return 3
 	case model.SourceHook:
 		return 2
 	case model.SourceJSONL:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func tokenRank(s model.Source) int {
-	switch s {
-	case model.SourceOTel:
-		return 2
-	case model.SourceStreamJSON:
 		return 1
 	default:
 		return 0
@@ -251,16 +174,10 @@ func payloadRank(s model.Source) int {
 }
 
 func structureRank(s model.Source) int {
-	switch s {
-	case model.SourceJSONL:
+	if s == model.SourceJSONL {
 		return 3
-	case model.SourceOTel:
-		return 2
-	case model.SourceStreamJSON:
-		return 1
-	default:
-		return 0
 	}
+	return 0
 }
 
 const (
@@ -286,10 +203,7 @@ func (g *Graph) setStructParent(o model.Observation, kind int, src, dst string) 
 	}
 	if fs.haveStruct && fs.structSrc != src {
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, fs.structSrc, dst)
-		if old, ok := g.Edges[oldID]; ok {
-			delete(g.Edges, oldID)
-			g.emit(GraphDelta{Kind: DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
-		}
+		delete(g.Edges, oldID)
 	}
 	fs.structKind = kind
 	fs.structRank = r
@@ -372,10 +286,7 @@ func (g *Graph) setTurnParent(o model.Observation, t *turnRef, parent string) {
 	}
 	if t.parent != "" {
 		oldID := model.EdgeID(o.ExecutionID, model.EdgeParentChild, t.parent, t.id)
-		if old, ok := g.Edges[oldID]; ok {
-			delete(g.Edges, oldID)
-			g.emit(GraphDelta{Kind: DeltaEdgeDelete, Rev: max(o.Seq, old.Rev), Edge: old, RunID: old.RunID, ExecutionID: o.ExecutionID})
-		}
+		delete(g.Edges, oldID)
 	}
 	t.parent = parent
 	g.upsertEdge(o.ExecutionID, o.RunID, parent, t.id, t.rev)
@@ -387,8 +298,6 @@ type fieldStamps struct {
 	nameSeq     uint64
 	haveName    bool
 	nameStrong  bool
-	tokenRank   int
-	haveToken   bool
 	payloadRank int
 	havePayload bool
 	structRank  int
@@ -486,32 +395,13 @@ func (g *Graph) mergePayload(n *model.Node, p *model.Payload, src model.Source) 
 	n.PayloadHash = n.Payload.Hash
 }
 
-func (g *Graph) applyTokens(n *model.Node, attrs map[string]any, src model.Source) bool {
-	fs := g.stampsFor(n.ID)
-	r := tokenRank(src)
-	if fs.haveToken && r < fs.tokenRank {
-		return false
-	}
-	fs.tokenRank = r
-	fs.haveToken = true
+func (g *Graph) applyTokens(n *model.Node, attrs map[string]any) {
 	if v, ok := toInt64(attrs["tokens_in"]); ok {
 		n.TokensIn = &v
 	}
 	if v, ok := toInt64(attrs["tokens_out"]); ok {
 		n.TokensOut = &v
 	}
-	return true
-}
-
-func sessionTotalObservation(o model.Observation) bool {
-	if v, ok := o.Attrs["session_total"].(bool); ok && v {
-		return true
-	}
-	if o.Source != model.SourceStreamJSON || o.Correlation.MessageID != "" {
-		return false
-	}
-	_, ok := o.Attrs["cost_usd"]
-	return ok
 }
 
 func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
@@ -534,9 +424,6 @@ func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
 	if v, ok := toInt64(attrs["cache_write"]); ok {
 		in.CacheWrite = v
 	}
-	if v, ok := toFloat64(attrs["cost_usd"]); ok {
-		in.ReportedUSD = &v
-	}
 	res, ok := g.pricer.Cost(in)
 	if !ok {
 		return
@@ -547,21 +434,6 @@ func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
 		n.Attrs = map[string]any{}
 	}
 	n.Attrs["cost_source"] = res.Source
-}
-
-func toFloat64(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	default:
-		return 0, false
-	}
 }
 
 func toInt64(v any) (int64, bool) {
@@ -587,12 +459,6 @@ func (g *Graph) ensureRun(o model.Observation) {
 		started := o.EventTime
 		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
 		g.Runs[o.RunID] = r
-		g.emit(GraphDelta{Kind: DeltaRunStarted, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
-	}
-	if r.Status == model.StatusAbandoned {
-		r.Status = model.StatusRunning
-		r.EndedAt = nil
-		r.EndReason = ""
 	}
 	if o.Seq > r.LastSeq {
 		r.LastSeq = o.Seq
@@ -624,23 +490,6 @@ func (g *Graph) ensureRun(o model.Observation) {
 	}
 }
 
-func (g *Graph) applyRunEnded(o model.Observation) {
-	r := g.Runs[o.RunID]
-	if rank(r.Status) == 3 {
-		return
-	}
-	r.Status = model.StatusAbandoned
-	ended := o.EventTime
-	r.EndedAt = &ended
-	r.EndReason = ""
-	if reason, ok := o.Attrs["reason"].(string); ok {
-		r.EndReason = reason
-	}
-	g.closeIfOpen(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
-	g.cascadeStatus(model.SessionNodeID(o.ExecutionID), model.StatusUnknown, o.Seq)
-	g.emit(GraphDelta{Kind: DeltaRunEnded, Rev: o.Seq, RunID: o.RunID, ExecutionID: o.ExecutionID, Run: r})
-}
-
 func appendUnique(xs []string, x string) []string {
 	if x == "" {
 		return xs
@@ -651,63 +500,10 @@ func appendUnique(xs []string, x string) []string {
 	return append(xs, x)
 }
 
-func (g *Graph) cascadeStatus(rootID string, status model.Status, seq uint64) {
-	children := map[string][]string{}
-	for _, e := range g.Edges {
-		if e.Type == model.EdgeParentChild {
-			children[e.Src] = append(children[e.Src], e.Dst)
-		}
-	}
-	seen := map[string]bool{rootID: true}
-	queue := []string{rootID}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, c := range children[cur] {
-			if seen[c] {
-				continue
-			}
-			seen[c] = true
-			queue = append(queue, c)
-			g.applyCascade(c, rootID, status, seq)
-		}
-	}
-}
-
-func (g *Graph) applyCascade(id, rootID string, status model.Status, seq uint64) {
-	if status == model.StatusUnknown {
-		g.closeIfOpen(id, status, seq)
-		return
-	}
-	n := g.Nodes[id]
-	if n == nil || rank(n.Status) >= 3 {
-		return
-	}
-	n.Status = resolveStatus(n.Status, status)
-	if n.Attrs == nil {
-		n.Attrs = map[string]any{}
-	}
-	n.Attrs["cancel_cause"] = rootID
-	g.emit(GraphDelta{Kind: DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
-}
-
-func (g *Graph) closeIfOpen(id string, status model.Status, seq uint64) {
-	n := g.Nodes[id]
-	if n == nil {
-		return
-	}
-	if n.Status == model.StatusRunning || n.Status == model.StatusPending {
-		n.Status = resolveStatus(n.Status, status)
-		g.emit(GraphDelta{Kind: DeltaNodeStatus, Rev: seq, Node: n, RunID: n.RunID})
-	}
-}
-
 func rank(s model.Status) int {
 	switch s {
-	case model.StatusOK, model.StatusError, model.StatusBlocked:
+	case model.StatusOK, model.StatusError:
 		return 3
-	case model.StatusCancelled, model.StatusUnknown, model.StatusSuperseded, model.StatusAbandoned:
-		return 2
 	case model.StatusRunning:
 		return 1
 	default:
@@ -716,14 +512,10 @@ func rank(s model.Status) int {
 }
 
 func terminalRank(s model.Status) int {
-	switch s {
-	case model.StatusError:
+	if s == model.StatusError {
 		return 2
-	case model.StatusBlocked:
-		return 1
-	default:
-		return 0
 	}
+	return 0
 }
 
 func resolveStatus(cur, next model.Status) model.Status {
@@ -741,29 +533,4 @@ func resolveStatus(cur, next model.Status) model.Status {
 		return next
 	}
 	return cur
-}
-
-func setIfEmpty(dst *string, src any) {
-	if *dst != "" {
-		return
-	}
-	if v, ok := src.(string); ok && v != "" {
-		*dst = v
-	}
-}
-
-func applyReproMeta(r *model.Run, attrs map[string]any) {
-	if r == nil {
-		return
-	}
-	if r.Repro == nil {
-		r.Repro = &model.ReproMeta{}
-	}
-	setIfEmpty(&r.Repro.PromptsHash, attrs["prompts_hash"])
-	setIfEmpty(&r.Repro.SkillsHash, attrs["skills_hash"])
-	setIfEmpty(&r.Repro.SubagentsHash, attrs["subagents_hash"])
-	setIfEmpty(&r.Repro.CatacombConfigHash, attrs["catacomb_config_hash"])
-	setIfEmpty(&r.Repro.CatacombVersion, attrs["catacomb_version"])
-	setIfEmpty(&r.Repro.ClaudeCodeVersion, attrs["claude_code_version"])
-	setIfEmpty(&r.Repro.Cwd, attrs["cwd"])
 }

@@ -40,7 +40,6 @@ func newPricer() reduce.Pricer {
 			TokensOut:   in.TokensOut,
 			CacheReadIn: in.CacheReadIn,
 			CacheWrite:  in.CacheWrite,
-			ReportedUSD: in.ReportedUSD,
 		})
 		return reduce.PriceResult{USD: r.USD, Source: r.Source}, ok
 	})

@@ -8,10 +8,8 @@ import (
 type Source string
 
 const (
-	SourceHook       Source = "hook"
-	SourceOTel       Source = "otel"
-	SourceStreamJSON Source = "stream_json"
-	SourceJSONL      Source = "jsonl"
+	SourceHook  Source = "hook"
+	SourceJSONL Source = "jsonl"
 )
 
 type NodeType string
@@ -24,7 +22,6 @@ const (
 	NodeSubagent      NodeType = "subagent"
 	NodeMCPCall       NodeType = "mcp_call"
 	NodeSkill         NodeType = "skill"
-	NodeHookEvent     NodeType = "hook_event"
 	NodeMarker        NodeType = "marker"
 )
 
@@ -32,33 +29,23 @@ type EdgeType string
 
 const (
 	EdgeParentChild EdgeType = "parent_child"
-	EdgeSequence    EdgeType = "sequence"
 	EdgeMarkerSpan  EdgeType = "marker_span"
-	EdgeDataDep     EdgeType = "data_dep"
 )
 
 type Status string
 
 const (
-	StatusPending    Status = "pending"
-	StatusRunning    Status = "running"
-	StatusOK         Status = "ok"
-	StatusError      Status = "error"
-	StatusBlocked    Status = "blocked"
-	StatusCancelled  Status = "cancelled"
-	StatusUnknown    Status = "unknown"
-	StatusSuperseded Status = "superseded"
-	StatusAbandoned  Status = "abandoned"
+	StatusPending Status = "pending"
+	StatusRunning Status = "running"
+	StatusOK      Status = "ok"
+	StatusError   Status = "error"
 )
 
 type Correlation struct {
 	SessionID       string `json:"session_id,omitempty"`
 	ToolUseID       string `json:"tool_use_id,omitempty"`
 	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
-	SpanID          string `json:"span_id,omitempty"`
-	ParentSpanID    string `json:"parent_span_id,omitempty"`
 	AgentID         string `json:"agent_id,omitempty"`
-	ParentAgentID   string `json:"parent_agent_id,omitempty"`
 	MessageID       string `json:"message_id,omitempty"`
 	UUID            string `json:"uuid,omitempty"`
 }
@@ -95,7 +82,6 @@ type Node struct {
 	Type          NodeType       `json:"type"`
 	ParentID      string         `json:"parent_id,omitempty"`
 	AgentID       string         `json:"agent_id,omitempty"`
-	ParentAgentID string         `json:"parent_agent_id,omitempty"`
 	SubagentType  string         `json:"subagent_type,omitempty"`
 	Name          string         `json:"name,omitempty"`
 	Status        Status         `json:"status,omitempty"`
@@ -117,11 +103,6 @@ type Node struct {
 	Rev           uint64         `json:"rev,omitempty"`
 }
 
-func (n *Node) SessionTotal() bool {
-	v, ok := n.Attrs["session_total"].(bool)
-	return ok && v
-}
-
 type Edge struct {
 	ID    string         `json:"id"`
 	RunID string         `json:"run_id"`
@@ -137,44 +118,14 @@ type Run struct {
 	SessionIDs []string          `json:"session_ids,omitempty"`
 	ModelID    string            `json:"model_id,omitempty"`
 	Status     Status            `json:"status,omitempty"`
-	EndReason  string            `json:"end_reason,omitempty"`
 	LastSeq    uint64            `json:"last_seq,omitempty"`
 	StartedAt  *time.Time        `json:"started_at,omitempty"`
 	EndedAt    *time.Time        `json:"ended_at,omitempty"`
-	Meta       map[string]any    `json:"meta,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Repro      *ReproMeta        `json:"repro,omitempty"`
 }
 
 type ReproMeta struct {
-	ClaudeCodeVersion  string `json:"claude_code_version,omitempty"`
-	CatacombVersion    string `json:"catacomb_version,omitempty"`
-	Cwd                string `json:"cwd,omitempty"`
-	PromptsHash        string `json:"prompts_hash,omitempty"`
-	SkillsHash         string `json:"skills_hash,omitempty"`
-	SubagentsHash      string `json:"subagents_hash,omitempty"`
-	CatacombConfigHash string `json:"catacomb_config_hash,omitempty"`
-}
-
-type QuarantineRecord struct {
-	Raw      []byte    `json:"raw,omitempty"`
-	HookType string    `json:"hook_type,omitempty"`
-	Err      string    `json:"err,omitempty"`
-	At       time.Time `json:"at"`
-}
-
-type TailCursor struct {
-	Path        string `json:"path"`
-	Offset      int64  `json:"offset"`
-	Fingerprint string `json:"fingerprint,omitempty"`
-	Size        int64  `json:"size"`
-	Mtime       int64  `json:"mtime"`
-}
-
-type SubagentMeta struct {
-	SessionID   string
-	AgentID     string
-	ToolUseID   string
-	AgentType   string
-	Description string
+	ClaudeCodeVersion string `json:"claude_code_version,omitempty"`
+	Cwd               string `json:"cwd,omitempty"`
 }

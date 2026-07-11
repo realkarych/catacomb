@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-20
 - **Deciders:** @realkarych
-- **Related:** spec §5, §5.7; ADR-0003, ADR-0021
+- **Related:** spec §5, §5.7; ADR-0003, ADR-0021, amended by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 - **Amended by:** ADR-0021 — `assistant_turn` is reclassified **core-tier** (load-bearing spine); lean mode folds only `hook_event`. The detail-tier list in the Decision below is superseded for `assistant_turn`.
 
 ## Context

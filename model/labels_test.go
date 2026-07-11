@@ -74,19 +74,3 @@ func TestMergeLabels(t *testing.T) {
 	assert.Equal(t, map[string]string{"a": "2", "b": "3"}, dst)
 	assert.Equal(t, map[string]string{"x": "1"}, model.MergeLabels(nil, map[string]string{"x": "1"}))
 }
-
-func TestMatchLabels(t *testing.T) {
-	labels := map[string]string{"basket": "checkout", "variant": "v2"}
-	assert.True(t, model.MatchLabels(labels, map[string]string{"basket": "checkout"}))
-	assert.True(t, model.MatchLabels(labels, map[string]string{}))
-	assert.True(t, model.MatchLabels(labels, nil))
-	assert.False(t, model.MatchLabels(labels, map[string]string{"basket": "other"}))
-	assert.False(t, model.MatchLabels(labels, map[string]string{"missing": "x"}))
-	assert.False(t, model.MatchLabels(nil, map[string]string{"a": "1"}))
-}
-
-func TestMatchLabelsEmptyValueVsMissingKey(t *testing.T) {
-	assert.False(t, model.MatchLabels(nil, map[string]string{"a": ""}))
-	assert.False(t, model.MatchLabels(map[string]string{"b": "1"}, map[string]string{"a": ""}))
-	assert.True(t, model.MatchLabels(map[string]string{"a": ""}, map[string]string{"a": ""}))
-}

@@ -93,20 +93,10 @@ type runKey struct {
 	durationMeasured bool
 }
 
-func included(n *model.Node) bool {
-	return n.Status != model.StatusSuperseded && n.Status != model.StatusAbandoned
-}
-
 func severity(s model.Status) int {
 	switch s {
 	case model.StatusError:
 		return 7
-	case model.StatusBlocked:
-		return 6
-	case model.StatusCancelled:
-		return 5
-	case model.StatusUnknown:
-		return 4
 	case model.StatusRunning:
 		return 3
 	case model.StatusPending:
@@ -142,7 +132,7 @@ func derefF(p *float64) float64 {
 func foldRunSteps(rg RunGraph, allow map[string]struct{}) map[string]runKey {
 	acc := map[string]runKey{}
 	for _, n := range rg.Nodes {
-		if n.StepKey == "" || !included(n) || n.SessionTotal() {
+		if n.StepKey == "" {
 			continue
 		}
 		rk := accumulate(acc[n.StepKey], n)
@@ -213,7 +203,7 @@ func foldRunPhases(rg RunGraph) map[string]runKey {
 	}
 	acc := map[string]runKey{}
 	for _, n := range rg.Nodes {
-		if n.Type != model.NodeMarker || n.PhaseKey == "" || !included(n) {
+		if n.Type != model.NodeMarker || n.PhaseKey == "" {
 			continue
 		}
 		rk := accumulate(acc[n.PhaseKey], n)
@@ -223,7 +213,7 @@ func foldRunPhases(rg RunGraph) map[string]runKey {
 		}
 		for _, mid := range members[n.ID] {
 			m := byID[mid]
-			if m == nil || !included(m) || m.SessionTotal() {
+			if m == nil {
 				continue
 			}
 			rk.sums.cost += derefF(m.CostUSD)
@@ -357,29 +347,14 @@ func runTotals(group []RunGraph) RunTotals {
 		var sums metricSums
 		count := 0
 		hasError := rg.Run.Status == model.StatusError
-		var reported float64
-		hasReported := false
 		for _, n := range rg.Nodes {
-			if !included(n) {
-				continue
-			}
 			count++
 			if n.Status == model.StatusError {
 				hasError = true
 			}
-			if n.SessionTotal() {
-				if n.CostUSD != nil {
-					hasReported = true
-					reported += *n.CostUSD
-				}
-				continue
-			}
 			sums.cost += derefF(n.CostUSD)
 			sums.tokensIn += derefI(n.TokensIn)
 			sums.tokensOut += derefI(n.TokensOut)
-		}
-		if hasReported {
-			sums.cost = reported
 		}
 		if d, ok := runDuration(rg.Run); ok {
 			durations = append(durations, d)

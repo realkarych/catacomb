@@ -524,8 +524,8 @@ func seedV3DB(t *testing.T, path string) (secretObsBody, cleanObsBody, secretNod
 		ID: "r1", Status: model.StatusRunning,
 		Labels: map[string]string{"team": "core", "note": seedRunLabelSecret},
 		Repro: &model.ReproMeta{
-			Cwd:         "/deploy/" + seedRunCwdSecret + "/build",
-			PromptsHash: strings.Repeat("ab", 32),
+			Cwd:               "/deploy/" + seedRunCwdSecret + "/build",
+			ClaudeCodeVersion: "2.1.199",
 		},
 	}
 	ob, err := json.Marshal(obs)
@@ -600,7 +600,7 @@ func TestOpenMigratesV3ToV4ScrubbingBodies(t *testing.T) {
 	assert.Equal(t, "/deploy/‹redacted:aws-key›/build", r.Repro.Cwd)
 	assert.Equal(t, "‹redacted:connection-string›", r.Labels["note"])
 	assert.Equal(t, "core", r.Labels["team"])
-	assert.Equal(t, strings.Repeat("ab", 32), r.Repro.PromptsHash)
+	assert.Equal(t, "2.1.199", r.Repro.ClaudeCodeVersion)
 }
 
 func TestApplySchemaV4IsIdempotent(t *testing.T) {
