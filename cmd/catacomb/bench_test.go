@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -46,7 +47,7 @@ func loadBasket(t *testing.T, content string) (bench.Basket, string, []bench.Cel
 }
 
 func markedCellFn(hash string) cellRunner {
-	return func(cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
+	return func(_ context.Context, cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
 		return manifestFor(cell, hash, true), false, false
 	}
 }
@@ -71,7 +72,7 @@ func TestRunBenchCellsRecordsMarkedAndEpilogue(t *testing.T) {
 	f := benchFlags{manifest: manifest, runsDir: "/runs"}
 
 	var out bytes.Buffer
-	require.NoError(t, runBenchCells(&out, "b.yaml", basket, cells, hash, f, markedCellFn(hash)))
+	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash, f, markedCellFn(hash)))
 
 	entries := readManifest(t, manifest)
 	require.Len(t, entries, 2)
@@ -85,7 +86,7 @@ func TestRunBenchCellsDefaultManifestPath(t *testing.T) {
 	basket, hash, cells := loadBasket(t, "basket: bdef\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"claude\"]\nvariants:\n  - id: v1\n")
 	basketPath := filepath.Join(t.TempDir(), "basket.yaml")
 
-	require.NoError(t, runBenchCells(io.Discard, basketPath, basket, cells, hash, benchFlags{}, markedCellFn(hash)))
+	require.NoError(t, runBenchCells(t.Context(), io.Discard, basketPath, basket, cells, hash, benchFlags{}, markedCellFn(hash)))
 	entries := readManifest(t, basketPath+".manifest.jsonl")
 	require.Len(t, entries, 1)
 	assert.Equal(t, "bench-bdef-t1-v1-r1", entries[0].RunID)
@@ -94,9 +95,9 @@ func TestRunBenchCellsDefaultManifestPath(t *testing.T) {
 func TestRunBenchCellsRerunWithoutResumeRefused(t *testing.T) {
 	basket, hash, cells := loadBasket(t, twoVariantBasket)
 	manifest := filepath.Join(t.TempDir(), "m.jsonl")
-	require.NoError(t, runBenchCells(io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash)))
+	require.NoError(t, runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash)))
 
-	err := runBenchCells(io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash))
+	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash))
 	require.ErrorIs(t, err, errBenchRerun)
 }
 
@@ -108,7 +109,7 @@ func TestRunBenchCellsResumeSkipsCompleted(t *testing.T) {
 	require.NoError(t, os.WriteFile(manifest, append(raw, '\n'), 0o600))
 
 	var out bytes.Buffer
-	require.NoError(t, runBenchCells(&out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
+	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
 	assert.Contains(t, out.String(), "skip bench-bord-t1-v1-r1 (already completed)")
 	entries := readManifest(t, manifest)
 	require.Len(t, entries, 2)
@@ -123,7 +124,7 @@ func TestRunBenchCellsResumeAllSkippedOmitsMarked(t *testing.T) {
 	require.NoError(t, os.WriteFile(manifest, append(raw, '\n'), 0o600))
 
 	var out bytes.Buffer
-	require.NoError(t, runBenchCells(&out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
+	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
 	assert.Contains(t, out.String(), "skip bench-ball-t1-v1-r1")
 	assert.NotContains(t, out.String(), "marked")
 	assert.NotContains(t, out.String(), "checkpoints[")
@@ -136,7 +137,7 @@ func TestRunBenchCellsResumeHashMismatch(t *testing.T) {
 	raw, _ := json.Marshal(done)
 	require.NoError(t, os.WriteFile(manifest, append(raw, '\n'), 0o600))
 
-	err := runBenchCells(io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash))
+	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "delete the manifest")
 }
@@ -144,12 +145,12 @@ func TestRunBenchCellsResumeHashMismatch(t *testing.T) {
 func TestRunBenchCellsFailFastStops(t *testing.T) {
 	basket, hash, cells := loadBasket(t, twoVariantBasket)
 	manifest := filepath.Join(t.TempDir(), "m.jsonl")
-	failFn := func(cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
+	failFn := func(_ context.Context, cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
 		e := manifestFor(cell, hash, false)
 		e.ExitCode = 5
 		return e, true, false
 	}
-	err := runBenchCells(io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, failFast: true}, failFn)
+	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, failFast: true}, failFn)
 	require.ErrorIs(t, err, errBenchFailFast)
 	entries := readManifest(t, manifest)
 	require.Len(t, entries, 1)
@@ -161,7 +162,7 @@ func TestRunBenchCellsCompletedReadError(t *testing.T) {
 	manifestDir := filepath.Join(t.TempDir(), "manifest-is-a-dir")
 	require.NoError(t, os.Mkdir(manifestDir, 0o755))
 
-	err := runBenchCells(io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifestDir, resume: true}, markedCellFn(hash))
+	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifestDir, resume: true}, markedCellFn(hash))
 	require.Error(t, err)
 	var opErr *operationalError
 	require.ErrorAs(t, err, &opErr)
@@ -171,7 +172,7 @@ func TestRunBenchCellsManifestAppendError(t *testing.T) {
 	basket, hash, cells := loadBasket(t, twoVariantBasket)
 	manifest := filepath.Join(t.TempDir(), "no-such-dir", "m.jsonl")
 
-	err := runBenchCells(io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash))
+	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "manifest")
 }
@@ -179,7 +180,7 @@ func TestRunBenchCellsManifestAppendError(t *testing.T) {
 func TestRunBenchCellsCheckpointSummary(t *testing.T) {
 	basket, hash, cells := loadBasket(t, "basket: bcp\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"claude\"]\n    checkpoints: [plan, tests.pass]\n  - id: t2\n    cmd: [\"claude\"]\nvariants:\n  - id: v1\n")
 	manifest := filepath.Join(t.TempDir(), "m.jsonl")
-	cpFn := func(cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
+	cpFn := func(_ context.Context, cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
 		e := manifestFor(cell, hash, true)
 		if cell.Task.ID == "t1" {
 			e.MissingCheckpoints = []string{"tests.pass"}
@@ -187,7 +188,7 @@ func TestRunBenchCellsCheckpointSummary(t *testing.T) {
 		return e, false, true
 	}
 	var out bytes.Buffer
-	require.NoError(t, runBenchCells(&out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, cpFn))
+	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, cpFn))
 	assert.Contains(t, out.String(), "checkpoints[t1]: plan 1/1")
 	assert.Contains(t, out.String(), "checkpoints[t1]: tests.pass 0/1")
 	assert.NotContains(t, out.String(), "checkpoints[t2]")
@@ -220,7 +221,7 @@ func TestSpawnFailureExitHelper(t *testing.T) {
 func TestRunBenchDryRunPrintsTable(t *testing.T) {
 	basket := writeBasket(t, "basket: bdry\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"claude\"]\nvariants:\n  - id: v1\n")
 	var out, errBuf bytes.Buffer
-	require.NoError(t, runBench(&out, &errBuf, basket, benchFlags{dryRun: true}))
+	require.NoError(t, runBench(t.Context(), &out, &errBuf, basket, benchFlags{dryRun: true}))
 	for _, want := range []string{"RUN_ID", "TASK", "VARIANT", "REP", "bench-bdry-t1-v1-r1"} {
 		assert.Contains(t, out.String(), want)
 	}

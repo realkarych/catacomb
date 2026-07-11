@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,14 @@ func stubBenchChild(t *testing.T, env ...string) {
 	execCommand = func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command(os.Args[0], "-test.run=TestHelperBenchChild")
 	}
-	t.Cleanup(func() { execCommand = orig })
+	origCtx := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperBenchChild")
+	}
+	t.Cleanup(func() {
+		execCommand = orig
+		execCommandContext = origCtx
+	})
 }
 
 func offlineCell(runID string, task bench.Task, variant bench.Variant) bench.Cell {
@@ -68,7 +76,7 @@ func TestBenchOfflineEndToEnd(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
 
 	var out, errb bytes.Buffer
-	err := runBench(&out, &errb, basket, benchFlags{
+	err := runBench(t.Context(), &out, &errb, basket, benchFlags{
 		projectsDir: projects, runsDir: runs, manifest: manifestPath,
 	})
 	require.NoError(t, err)
@@ -102,7 +110,7 @@ func TestBenchOfflineCheckpointHitEndToEnd(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
 
 	var out, errb bytes.Buffer
-	err := runBench(&out, &errb, basket, benchFlags{
+	err := runBench(t.Context(), &out, &errb, basket, benchFlags{
 		projectsDir: projects, runsDir: runs, manifest: manifestPath,
 	})
 	require.NoError(t, err)
@@ -117,10 +125,53 @@ func TestBenchOfflineCheckpointHitEndToEnd(t *testing.T) {
 	assert.NotContains(t, errb.String(), "missing checkpoints")
 }
 
+func TestBenchOfflineTimeoutDeadline(t *testing.T) {
+	tests := []struct {
+		name         string
+		timeout      string
+		wantDeadline bool
+	}{
+		{"timeout set", "5s", true},
+		{"timeout unset", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GO_HELPER_BENCH", "1")
+			var hasDeadline bool
+			orig := execCommandContext
+			execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				_, hasDeadline = ctx.Deadline()
+				return exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperBenchChild")
+			}
+			t.Cleanup(func() { execCommandContext = orig })
+			cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}, Timeout: tt.timeout}, bench.Variant{ID: "base"})
+			entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
+				offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+			assert.Equal(t, tt.wantDeadline, hasDeadline)
+			assert.False(t, failed)
+			assert.Equal(t, "no session id observed", entry.Note)
+		})
+	}
+}
+
+func TestBenchOfflineTimeoutCancelledContext(t *testing.T) {
+	stubBenchChild(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}, Timeout: "1ms"}, bench.Variant{ID: "base"})
+	var errb bytes.Buffer
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, &errb, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Contains(t, entry.Note, "spawn failed: context canceled")
+	assert.True(t, failed)
+	assert.False(t, verified)
+	assert.Contains(t, errb.String(), "context canceled")
+}
+
 func TestBenchOfflineNoSessionNote(t *testing.T) {
 	stubBenchChild(t)
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
-	entry, failed, verified := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, failed, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
 	assert.Equal(t, "no session id observed", entry.Note)
 	assert.Empty(t, entry.SessionID)
@@ -134,7 +185,7 @@ func TestBenchOfflineResolveTimeoutNote(t *testing.T) {
 	t.Cleanup(func() { sleepFn = restore })
 	stubBenchChild(t, "HELPER_SESSION=ghost")
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
-	entry, _, verified := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, _, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
 	assert.Contains(t, entry.Note, "transcripts not found")
 	assert.False(t, verified)
@@ -145,7 +196,7 @@ func TestBenchOfflineGraphLoadFailureNote(t *testing.T) {
 	projects := t.TempDir()
 	stubBenchChild(t, "HELPER_SESSION=bad", "HELPER_PROJECTS="+projects, "HELPER_BODY={\"type\":")
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
-	entry, _, verified := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, _, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: projects, runsDir: t.TempDir()})
 	assert.Contains(t, entry.Note, "graph:")
 	assert.False(t, verified)
@@ -158,7 +209,7 @@ func TestBenchOfflineEvidenceWriteFailureNote(t *testing.T) {
 	runsFile := filepath.Join(t.TempDir(), "runs-is-a-file")
 	require.NoError(t, os.WriteFile(runsFile, []byte("x"), 0o600))
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
-	entry, _, _ := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, _, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: projects, runsDir: runsFile})
 	assert.Contains(t, entry.Note, "evidence write")
 	assert.Empty(t, entry.EvidenceDir)
@@ -167,7 +218,7 @@ func TestBenchOfflineEvidenceWriteFailureNote(t *testing.T) {
 func TestBenchOfflineSetupFailureNote(t *testing.T) {
 	stubBenchChild(t, "HELPER_EXIT1=1")
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base", Setup: []string{"boom"}})
-	entry, failed, verified := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, failed, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
 	assert.Equal(t, "setup failed", entry.Note)
 	assert.Equal(t, 1, entry.ExitCode)
@@ -176,14 +227,14 @@ func TestBenchOfflineSetupFailureNote(t *testing.T) {
 }
 
 func TestBenchOfflineSpawnFailureNote(t *testing.T) {
-	orig := execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(filepath.Join(t.TempDir(), "does-not-exist-binary"))
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "does-not-exist-binary"))
 	}
-	t.Cleanup(func() { execCommand = orig })
+	t.Cleanup(func() { execCommandContext = orig })
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"nope"}}, bench.Variant{ID: "base"})
 	var errb bytes.Buffer
-	entry, failed, verified := runBenchCellOffline(io.Discard, &errb, cell, "h", nil,
+	entry, failed, verified := runBenchCellOffline(t.Context(), io.Discard, &errb, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
 	assert.Contains(t, entry.Note, "spawn failed")
 	assert.True(t, failed)
@@ -196,7 +247,7 @@ func TestBenchOfflineNoCheckpointsWritesEvidence(t *testing.T) {
 	runs := t.TempDir()
 	stubBenchChild(t, "HELPER_SESSION=ok2", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
 	cell := offlineCell("bench-b-t1-base-r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
-	entry, failed, verified := runBenchCellOffline(io.Discard, io.Discard, cell, "hash-x",
+	entry, failed, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "hash-x",
 		map[string]string{"env": "ci"}, offlineOpts{projectsDir: projects, runsDir: runs})
 	assert.False(t, failed)
 	assert.False(t, verified)
@@ -221,7 +272,7 @@ func TestBenchOfflineVariantEnvAndEmptySetup(t *testing.T) {
 	cell := offlineCell("bench-b-t1-base-r1",
 		bench.Task{ID: "t1", Cmd: []string{"claude"}, Env: map[string]string{"TASKENV": "a"}},
 		bench.Variant{ID: "base", Env: map[string]string{"VARENV": "b"}, Setup: []string{""}})
-	entry, failed, _ := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: projects, runsDir: runs})
 	assert.False(t, failed)
 	assert.True(t, entry.Marked)
@@ -239,7 +290,7 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 
 	stubBenchChild(t, "HELPER_SESSION=subs1", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
 	cell := offlineCell("bench-b-t1-base-r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
-	entry, _, _ := runBenchCellOffline(io.Discard, io.Discard, cell, "h", nil,
+	entry, _, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: projects, runsDir: runs})
 	require.NotEmpty(t, entry.EvidenceDir)
 	_, err = os.Stat(filepath.Join(entry.EvidenceDir, "session.jsonl"))
@@ -251,7 +302,7 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 func TestBenchOfflineMissingDirsIsOperational(t *testing.T) {
 	basket := writeBasket(t, "basket: b\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"x\"]\nvariants:\n  - id: v1\n")
 	var out, errb bytes.Buffer
-	err := runBench(&out, &errb, basket,
+	err := runBench(t.Context(), &out, &errb, basket,
 		benchFlags{projectsDir: "", runsDir: t.TempDir()})
 	require.ErrorIs(t, err, errBenchOfflineDirs)
 	var opErr *operationalError

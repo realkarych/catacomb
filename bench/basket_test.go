@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,6 +85,55 @@ func TestLoadUnknownFieldError(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	_, _, err := bench.Load(path)
 	require.Error(t, err)
+}
+
+func TestTaskTimeoutDuration(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"empty is unset", "", 0, false},
+		{"thirty seconds", "30s", 30 * time.Second, false},
+		{"negative", "-1s", 0, true},
+		{"garbage", "banana", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := bench.Task{Timeout: tt.timeout}.TimeoutDuration()
+			if tt.wantErr {
+				require.ErrorIs(t, err, bench.ErrTimeout)
+				assert.Zero(t, d)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, d)
+		})
+	}
+}
+
+func TestLoadTimeoutRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "timeout.yaml")
+	body := "basket: c\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\n    timeout: 30s\nvariants:\n  - id: v\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	b, _, err := bench.Load(path)
+	require.NoError(t, err)
+	require.Len(t, b.Tasks, 1)
+	assert.Equal(t, "30s", b.Tasks[0].Timeout)
+	d, err := b.Tasks[0].TimeoutDuration()
+	require.NoError(t, err)
+	assert.Equal(t, 30*time.Second, d)
+}
+
+func TestLoadRejectsInvalidTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad-timeout.yaml")
+	body := "basket: c\nreps: 1\ntasks:\n  - id: t\n    cmd: [\"echo\"]\n    timeout: banana\nvariants:\n  - id: v\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	_, _, err := bench.Load(path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, bench.ErrTimeout)
+	assert.Contains(t, err.Error(), "timeout")
 }
 
 func TestLoadValidationError(t *testing.T) {

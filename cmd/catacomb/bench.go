@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -42,7 +43,7 @@ func newBenchCmd() *cobra.Command {
 		Short: "Run a benchmark basket: expand cells, execute, mark phases, record a manifest",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBench(cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], f)
+			return runBench(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], f)
 		},
 	}
 	home, _ := os.UserHomeDir()
@@ -62,9 +63,9 @@ func benchDefaultDir(home string, parts ...string) string {
 	return filepath.Join(append([]string{home}, parts...)...)
 }
 
-type cellRunner func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool)
+type cellRunner func(ctx context.Context, cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool)
 
-func runBench(stdout, stderr io.Writer, basketPath string, f benchFlags) error {
+func runBench(ctx context.Context, stdout, stderr io.Writer, basketPath string, f benchFlags) error {
 	basket, hash, err := bench.Load(basketPath)
 	if err != nil {
 		return operational(err)
@@ -78,7 +79,7 @@ func runBench(stdout, stderr io.Writer, basketPath string, f benchFlags) error {
 	if err != nil {
 		return operational(err)
 	}
-	return runBenchCells(stdout, basketPath, basket, cells, hash, f, cellFn)
+	return runBenchCells(ctx, stdout, basketPath, basket, cells, hash, f, cellFn)
 }
 
 func benchCellFunc(stdout, stderr io.Writer, hash string, f benchFlags) (cellRunner, error) {
@@ -86,12 +87,12 @@ func benchCellFunc(stdout, stderr io.Writer, hash string, f benchFlags) (cellRun
 		return nil, errBenchOfflineDirs
 	}
 	o := offlineOpts{projectsDir: f.projectsDir, runsDir: f.runsDir, pricer: newPricer()}
-	return func(cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
-		return runBenchCellOffline(stdout, stderr, cell, hash, ambient, o)
+	return func(ctx context.Context, cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
+		return runBenchCellOffline(ctx, stdout, stderr, cell, hash, ambient, o)
 	}, nil
 }
 
-func runBenchCells(stdout io.Writer, basketPath string, basket bench.Basket, cells []bench.Cell, hash string, f benchFlags, cellFn cellRunner) error {
+func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, basket bench.Basket, cells []bench.Cell, hash string, f benchFlags, cellFn cellRunner) error {
 	manifestPath := f.manifest
 	if manifestPath == "" {
 		manifestPath = basketPath + ".manifest.jsonl"
@@ -116,7 +117,7 @@ func runBenchCells(stdout io.Writer, basketPath string, basket bench.Basket, cel
 			fmt.Fprintf(stdout, "skip %s (already completed)\n", cell.RunID)
 			continue
 		}
-		entry, failed, verified := cellFn(cell, ambient)
+		entry, failed, verified := cellFn(ctx, cell, ambient)
 		if err := manifest.Append(entry); err != nil {
 			return operational(fmt.Errorf("bench: manifest: %w", err))
 		}
@@ -145,7 +146,7 @@ type offlineOpts struct {
 	pricer      reduce.Pricer
 }
 
-func runBenchCellOffline(stdout, stderr io.Writer, cell bench.Cell, hash string, ambient map[string]string, o offlineOpts) (bench.ManifestEntry, bool, bool) {
+func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell bench.Cell, hash string, ambient map[string]string, o offlineOpts) (bench.ManifestEntry, bool, bool) {
 	entry := bench.ManifestEntry{
 		RunID:      cell.RunID,
 		Task:       cell.Task.ID,
@@ -159,10 +160,15 @@ func runBenchCellOffline(stdout, stderr io.Writer, cell bench.Cell, hash string,
 		entry.FinishedAt = nowFn()
 		return entry, true, false
 	}
+	if d, _ := cell.Task.TimeoutDuration(); d > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
 	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
 	peek := &streamPeek{}
 	start := nowFn()
-	err := runChildLocal(stdout, stderr, cell.Task.Cmd, cell.Task.Dir, offlineEnv(cell, merged), peek.onLine)
+	err := runChildLocal(ctx, stdout, stderr, cell.Task.Cmd, cell.Task.Dir, offlineEnv(cell, merged), peek.onLine)
 	end := nowFn()
 	code, ok := exitInfo(err)
 	entry.ExitCode = code
