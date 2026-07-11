@@ -34,6 +34,10 @@ func captureArtifacts(dir, workdir string, globs []string, perFileCap, totalCap 
 		notes []string
 		total int64
 	)
+	realWork := workdir
+	if resolved, werr := filepath.EvalSymlinks(workdir); werr == nil {
+		realWork = resolved
+	}
 capture:
 	for _, g := range globs {
 		matches, gerr := filepath.Glob(filepath.Join(workdir, g))
@@ -44,6 +48,15 @@ capture:
 		for _, src := range matches {
 			rel, rerr := filepath.Rel(workdir, src)
 			if rerr != nil || !filepath.IsLocal(rel) {
+				notes = append(notes, fmt.Sprintf("skipped %q: escapes workdir", g))
+				continue
+			}
+			realSrc, eerr := filepath.EvalSymlinks(src)
+			if eerr != nil {
+				notes = append(notes, fmt.Sprintf("skipped %q: not a regular file", rel))
+				continue
+			}
+			if rrel, rrerr := filepath.Rel(realWork, realSrc); rrerr != nil || !filepath.IsLocal(rrel) {
 				notes = append(notes, fmt.Sprintf("skipped %q: escapes workdir", g))
 				continue
 			}
