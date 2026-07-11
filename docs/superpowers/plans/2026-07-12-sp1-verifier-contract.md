@@ -37,10 +37,12 @@
 ### Task A1: Run-level score lines in the scores parser
 
 **Files:**
+
 - Modify: `cmd/catacomb/scores.go`
 - Test: `cmd/catacomb/scores_test.go`
 
 **Interfaces:**
+
 - Consumes: existing `scoreEntry{StepKey, Key, Value, RunID string/float64}` and `parseScoreLine(line string) (scoreEntry, error)`.
 - Produces: `parseScoreLine` accepts lines without `step_key` (run-level). `loadScores(path string)` errors on a run-level entry with empty `run_id` (external files must address a run). Unknown JSON fields (e.g. `tool`, `tool_version`, `prompt_hash` provenance) are tolerated — assert, don't implement.
 
@@ -77,16 +79,19 @@ if e.StepKey == "" && e.RunID == "" {
 ```
 
 with `var errRunLevelNeedsRunID = errors.New(`run-level score requires "run_id"`)` at file top.
+
 - [ ] **Step 4:** `go test ./cmd/catacomb/ -run 'TestParseScoreLine|TestLoadScores' -v` → PASS; full `make test` green.
 - [ ] **Step 5:** Commit: `git commit -m "feat(scores): accept run-level score lines (no step_key)"`.
 
 ### Task A2: Run-level annotations in aggregate
 
 **Files:**
+
 - Modify: `aggregate/aggregate.go`
 - Test: `aggregate/aggregate_test.go`
 
 **Interfaces:**
+
 - Produces (later tasks rely on these exact shapes):
 
 ```go
@@ -105,7 +110,7 @@ type AnnotationTotals struct {
 }
 ```
 
-`RunTotals` gains `Annotations map[string]AnnotationTotals \`json:"annotations,omitempty"\``. One value per run per key (RunGraph.Annotations is a map — last writer wins upstream). `Binary` = every collected value is exactly 0 or 1. `Ones` counts values == 1.
+`RunTotals` gains `Annotations map[string]AnnotationTotals` (JSON `annotations`, omitempty). One value per run per key (RunGraph.Annotations is a map — last writer wins upstream). `Binary` = every collected value is exactly 0 or 1. `Ones` counts values == 1.
 
 - [ ] **Step 1: Write failing tests** (table-driven, alongside existing `runTotals` tests):
 
@@ -134,6 +139,7 @@ func TestRunTotalsAnnotationsEmpty(t *testing.T) {
 ```
 
 (`verifier.row_diff` is binary-ineligible because 3 ∉ {0,1}; note 0-only values ARE binary — add a table case `{0,0}` → `Binary: true, Ones: 0`.)
+
 - [ ] **Step 2:** `go test ./aggregate/ -run TestRunTotalsAnnotations -v` → FAIL (unknown fields).
 - [ ] **Step 3: Implement.** Add the two type changes above. In `runTotals`, collect:
 
@@ -177,10 +183,12 @@ func annotationTotals(vals map[string][]float64) map[string]AnnotationTotals {
 ### Task A3: Apply run-level scores; auto-discover evidence scores.jsonl
 
 **Files:**
+
 - Modify: `cmd/catacomb/scores.go` (apply path), `cmd/catacomb/runsdir.go` (evidence auto-discovery)
 - Test: `cmd/catacomb/scores_test.go`, `cmd/catacomb/runsdir_test.go`
 
 **Interfaces:**
+
 - Consumes: `aggregate.RunGraph.Annotations` (A2), `scoreEntry` (A1), `evidenceRunGraph(dir, m, pricer)` (existing).
 - Produces:
 
@@ -232,6 +240,7 @@ func TestApplyScoresExternalOverridesEvidence(t *testing.T) {
 ```
 
 Plus a `runsdir_test.go` test: write a minimal evidence dir (reuse the existing fixture helper the current tests use for `evidenceRunGraph`) containing `scores.jsonl` with a run-level line, resolve via `resolveSelectorRunsDir`, and assert the resulting `RunGraph.Annotations["verifier.pass"] == 1`.
+
 - [ ] **Step 2:** Run the four tests → FAIL (functions undefined / wrong signatures).
 - [ ] **Step 3: Implement.** In `scores.go`: rewrite `applyScores` to return `(applied, unmatched, overridden int)`, iterating groups by index; step-level entries keep today's node loop but count overrides when `n.Annotations[e.Key]` already exists; run-level entries (`StepKey == ""`) match `group[i].Run.ID == e.RunID`, initialize the map, count override on existing key, set value. Add `applyEntriesToRunGraph` reusing the same logic over a single graph (evidence context: no override counting — evidence is the base layer). Add `loadEvidenceScores` (os.ReadFile; `errors.Is(err, fs.ErrNotExist)` → nil,nil; parse lines via `parseScoreLine`; fill empty RunID). In `runsdir.go`, at the end of `evidenceRunGraph` (both selector paths flow through it): load + apply evidence scores keyed by `m.RunID`, returning the error wrapped as `operational`.
 - [ ] **Step 4:** `go test ./cmd/catacomb/ -v` → PASS; `make cover` 100%.
@@ -240,10 +249,12 @@ Plus a `runsdir_test.go` test: write a minimal evidence dir (reuse the existing 
 ### Task A4: Gate run-level annotations in regress
 
 **Files:**
+
 - Modify: `regress/compare.go` (Thresholds), `regress/regress.go` (findings), `regress/sensitivity.go`
 - Test: `regress/regress_test.go` (or the package's existing test files, matching their layout)
 
 **Interfaces:**
+
 - Consumes: `aggregate.AnnotationTotals` (A2), `compareRate`/`compareAnnotation`/`annotationAbsentFinding` (existing).
 - Produces:
 
@@ -251,7 +262,7 @@ Plus a `runsdir_test.go` test: write a minimal evidence dir (reuse the existing 
 const VerifierPassKey = "verifier.pass"
 ```
 
-`Thresholds` gains `AnnotationRateDelta float64` (DefaultThresholds: `0.1`). `Sensitivity` gains `Annotation *RateSensitivity \`json:"annotation,omitempty"\``. `Compare` emits total-scope findings `metric: "ann:<key>"` for run-level annotations: implicit spec `{VerifierPassKey, HigherBetter: true}` unless the caller already specced that key; binary×binary → rate machinery (higher-better feeds failure counts, so a pass-rate drop is a rising failure rate → regression); otherwise → `compareAnnotation` on `.Stats`; one-side-absent → insufficient.
+`Thresholds` gains `AnnotationRateDelta float64` (DefaultThresholds: `0.1`). `Sensitivity` gains `Annotation *RateSensitivity` (JSON `annotation`, omitempty). `Compare` emits total-scope findings `metric: "ann:<key>"` for run-level annotations: implicit spec `{VerifierPassKey, HigherBetter: true}` unless the caller already specced that key; binary×binary → rate machinery (higher-better feeds failure counts, so a pass-rate drop is a rising failure rate → regression); otherwise → `compareAnnotation` on `.Stats`; one-side-absent → insufficient.
 
 - [ ] **Step 1: Write failing tests** (table-driven; helper builds `aggregate.Report{Runs: k, Totals: aggregate.RunTotals{Annotations: ...}}` with all other metrics equal):
 
@@ -328,16 +339,19 @@ func runAnnotationRate(spec AnnotationSpec, bt, ct aggregate.AnnotationTotals, t
 ```
 
 Wire into `Compare`: `findings := totalsFindings(b, c, th)` → append `runAnnotationFindings(b, c, in.Annotations, th)...` right after. Sensitivity: change `computeSensitivity(bRuns, cRuns int, th Thresholds)` to `computeSensitivity(bRuns, cRuns int, th Thresholds, withAnnotations bool)`; when `withAnnotations`, fill `Annotation: &RateSensitivity{Reachable: rateGateReachable(bRuns, cRuns, th.AnnotationRateDelta, th), MinFullFlipRuns: minFullFlipRuns(th, th.AnnotationRateDelta)}` and include it in the all-reachable nil-return condition. `Compare` passes `withAnnotations := len(b.Totals.Annotations)+len(c.Totals.Annotations) > 0`.
+
 - [ ] **Step 4:** `go test ./regress/ -v` → PASS. Run the calibration guard: `go test ./regress/ -run TestGatePower -v` → PASS untouched (the new axis must not shift existing boundaries).
 - [ ] **Step 5:** `make cover` 100%; commit: `git commit -m "feat(regress): gate run-level annotations; verifier.pass gates by default"`.
 
 ### Task A5: CLI flag, rendering, docs
 
 **Files:**
+
 - Modify: `cmd/catacomb/regress.go` (flag `--annotation-rate-delta`), `regress/render.go` (human row for `ann:` totals findings renders like other totals), `docs/guide/cli.md`, `docs/guide/workflows.md`
 - Test: `cmd/catacomb/regress_test.go`, `regress/render_test.go`
 
 **Interfaces:**
+
 - Consumes: `Thresholds.AnnotationRateDelta` (A4).
 - Produces: `regress --annotation-rate-delta <float>` (default 0.1, validated > 0 like `--z` handling); human report shows run-level annotation findings in the totals block. Docs: scores schema (run-level dialect + provenance fields `tool`/`tool_version`/`prompt_hash`), `verifier.pass` default gating, override semantics of `--scores`.
 
@@ -354,10 +368,12 @@ Wire into `Compare`: `findings := totalsFindings(b, c, th)` → append `runAnnot
 ### Task B1: `verify:` and `artifacts:` in the basket schema
 
 **Files:**
+
 - Modify: `bench/basket.go`
 - Test: `bench/basket_test.go`
 
 **Interfaces:**
+
 - Produces:
 
 ```go
@@ -370,7 +386,7 @@ type Verify struct {
 func (v Verify) TimeoutDuration() (time.Duration, error)
 ```
 
-`Task` gains `Artifacts []string \`yaml:"artifacts,omitempty" json:"artifacts,omitempty"\`` and `Verify *Verify \`yaml:"verify,omitempty" json:"verify,omitempty"\``. `Verify.TimeoutDuration()` returns 60s default when `Timeout == ""`. Validation errors: `ErrVerifyCmd = errors.New("bench: verify cmd is empty")`, `ErrArtifactGlob = errors.New("bench: invalid artifact glob")` (empty string or `filepath.IsLocal` false for the non-glob prefix — reject absolute/parent-escaping patterns).
+`Task` gains `Artifacts []string` (yaml/json `artifacts`, omitempty) and `Verify *Verify` (yaml/json `verify`, omitempty). `Verify.TimeoutDuration()` returns 60s default when `Timeout == ""`. Validation errors: `ErrVerifyCmd = errors.New("bench: verify cmd is empty")`, `ErrArtifactGlob = errors.New("bench: invalid artifact glob")` (empty string or `filepath.IsLocal` false for the non-glob prefix — reject absolute/parent-escaping patterns).
 
 - [ ] **Step 1:** Failing table-driven tests in `bench/basket_test.go`: YAML with `verify:` block parses (cmd/env/timeout round-trip); `verify: {cmd: []}` → `ErrVerifyCmd`; `verify: {cmd: [x], timeout: "nope"}` → `ErrTimeout`; `artifacts: [""]` → `ErrArtifactGlob`; `artifacts: ["../x"]` → `ErrArtifactGlob`; `TimeoutDuration()` default == `time.Minute`; basket hash changes when verify block changes (hash is over raw bytes — assert two loads differ).
 - [ ] **Step 2:** Run → FAIL (yaml.KnownFields rejects unknown `verify`).
@@ -381,11 +397,13 @@ func (v Verify) TimeoutDuration() (time.Duration, error)
 ### Task B2: Artifact capture into evidence
 
 **Files:**
+
 - Create: `evidence/artifacts.go`
 - Modify: `evidence/evidence.go` (Meta fields)
 - Test: `evidence/artifacts_test.go`
 
 **Interfaces:**
+
 - Produces:
 
 ```go
@@ -404,7 +422,7 @@ const (
 func CaptureArtifacts(dir, workdir string, globs []string) ([]ArtifactMeta, string, error)
 ```
 
-`Meta` gains `Artifacts []ArtifactMeta \`json:"artifacts,omitempty"\`` and `ArtifactsNote string \`json:"artifacts_note,omitempty"\``. Behavior: globs resolve relative to `workdir` (`filepath.Glob(filepath.Join(workdir, g))`); each match copies to `<dir>/artifacts/<rel>` where rel is the path relative to workdir; text files (valid UTF-8 in the first 8KB, no NUL byte) pass through `redactLines`, others copy raw; a file over `ArtifactPerFileCap` is skipped with a note; capture stops at `ArtifactTotalCap` with a note; the returned note aggregates skips (`""` when none). SHA256 is computed over the **written** (post-redaction) bytes. Returned `error` is only for I/O failures on files that should have been copied.
+`Meta` gains `Artifacts []ArtifactMeta` (JSON `artifacts`, omitempty) and `ArtifactsNote string` (JSON `artifacts_note`, omitempty). Behavior: globs resolve relative to `workdir` (`filepath.Glob(filepath.Join(workdir, g))`); each match copies to `<dir>/artifacts/<rel>` where rel is the path relative to workdir; text files (valid UTF-8 in the first 8KB, no NUL byte) pass through `redactLines`, others copy raw; a file over `ArtifactPerFileCap` is skipped with a note; capture stops at `ArtifactTotalCap` with a note; the returned note aggregates skips (`""` when none). SHA256 is computed over the **written** (post-redaction) bytes. Returned `error` is only for I/O failures on files that should have been copied.
 
 - [ ] **Step 1:** Failing tests: text artifact is redacted (write a line containing a fake secret the `redact` package rewrites — reuse whatever fixture `evidence`'s existing redaction tests use — assert the copied file differs and sha matches written bytes); binary artifact (bytes with NUL) copies byte-identical; per-file cap skip (write 1 byte over a test-shrunk cap — make caps parameters of an unexported `captureArtifacts(dir, workdir string, globs []string, perFileCap, totalCap int64)` and have the exported one pass the constants, so tests drive tiny caps); total cap stop; glob with no matches → empty meta, empty note, nil error; rel-path preservation for nested `out/sub/x.csv`.
 - [ ] **Step 2:** Run → FAIL.
@@ -415,10 +433,12 @@ func CaptureArtifacts(dir, workdir string, globs []string) ([]ArtifactMeta, stri
 ### Task B3: verify.json record
 
 **Files:**
+
 - Create: `evidence/verifyrecord.go`
 - Test: `evidence/verifyrecord_test.go`
 
 **Interfaces:**
+
 - Produces:
 
 ```go
@@ -445,11 +465,13 @@ File: `<dir>/verify.json`, 0o600, overwritten on each verification (idempotent).
 ### Task B4: Verifier runner wired into bench
 
 **Files:**
+
 - Create: `cmd/catacomb/verifycell.go`
 - Modify: `cmd/catacomb/bench.go` (call site, epilogue), `bench/manifest.go` (entry fields)
 - Test: `cmd/catacomb/verifycell_test.go`, `cmd/catacomb/bench_offline_test.go` (extend)
 
 **Interfaces:**
+
 - Consumes: `bench.Verify` (B1), `evidence.CaptureArtifacts` (B2), `evidence.WriteVerify`/`VerifyConfigSHA256` (B3), `parseScoreLine` (A1), `execCommandContext` var (existing, test seam).
 - Produces:
 
@@ -470,7 +492,7 @@ type verifySpec struct {
 func runVerifyCell(ctx context.Context, stderr io.Writer, v bench.Verify, spec verifySpec) evidence.VerifyRecord
 ```
 
-Behavior: builds env = `os.Environ()` + `spec.ExtraEnv` (variant env) + verify env + contract vars (`CATACOMB_EVIDENCE_DIR`, `CATACOMB_WORKDIR` — empty string when `spec.Mode == "offline"`, `CATACOMB_RUN_ID`, `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP`, `CATACOMB_AGENT_EXIT_CODE`); cwd = Workdir in bench mode, EvidenceDir offline; applies `v.TimeoutDuration()` via `context.WithTimeout`; captures stdout to 1MB cap (over-cap = operational error); on exit 0 parses every non-blank stdout line via `parseScoreLine`, fills empty `RunID` with `spec.RunID`, any parse error = operational error (no scores written); on success writes `<EvidenceDir>/scores.jsonl` (re-marshaled lines) and always writes verify.json (Error set on operational failure; scores absent on failure). stderr of the child streams to `stderr`. `ManifestEntry` gains `Verified bool \`json:"verified,omitempty"\`` and `VerifyError string \`json:"verify_error,omitempty"\``.
+Behavior: builds env = `os.Environ()` + `spec.ExtraEnv` (variant env) + verify env + contract vars (`CATACOMB_EVIDENCE_DIR`, `CATACOMB_WORKDIR` — empty string when `spec.Mode == "offline"`, `CATACOMB_RUN_ID`, `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP`, `CATACOMB_AGENT_EXIT_CODE`); cwd = Workdir in bench mode, EvidenceDir offline; applies `v.TimeoutDuration()` via `context.WithTimeout`; captures stdout to 1MB cap (over-cap = operational error); on exit 0 parses every non-blank stdout line via `parseScoreLine`, fills empty `RunID` with `spec.RunID`, any parse error = operational error (no scores written); on success writes `<EvidenceDir>/scores.jsonl` (re-marshaled lines) and always writes verify.json (Error set on operational failure; scores absent on failure). stderr of the child streams to `stderr`. `ManifestEntry` gains `Verified bool` (JSON `verified`, omitempty) and `VerifyError string` (JSON `verify_error`, omitempty).
 
 - [ ] **Step 1:** Failing tests in `verifycell_test.go` using a stub script (the package's existing tests already exec helper scripts via `execCommandContext`; on Windows the offline tests are build-tagged — follow `bench_offline_test.go`'s existing pattern): success path writes scores.jsonl + verify.json with exit 0 and mode stamped; failing verifier (exit 3) → verify.json has ExitCode 3 + Error, no scores.jsonl; invalid stdout line → Error mentions the line number, no scores.jsonl; env contract — a verifier script that dumps env proves all `CATACOMB_*` vars present and `CATACOMB_WORKDIR` empty in offline mode; timeout (a sleeping script + 50ms verify timeout using the script clock, not test sleeps) → Error records `timed out`.
 - [ ] **Step 2:** Run → FAIL. **Step 3:** Implement `verifycell.go` (~120 lines). **Step 4:** PASS + 100%.
@@ -485,11 +507,13 @@ Behavior: builds env = `os.Environ()` + `spec.ExtraEnv` (variant env) + verify e
 ### Task C1: The verb
 
 **Files:**
+
 - Create: `cmd/catacomb/verify.go`
 - Modify: `cmd/catacomb/root.go` (register command)
 - Test: `cmd/catacomb/verify_test.go`
 
 **Interfaces:**
+
 - Consumes: `bench.Load` (basket + hash), `evidence.ScanRuns`/`ReadMeta`, `runVerifyCell` (B4, mode `"offline"`).
 - Produces: `catacomb verify <basket.yaml> --runs-dir <dir> [--label k=v[,k2=v2]]`. Matching: cells whose `meta.Labels["basket"] == basket.Name`, task id resolves to a basket task carrying `verify:`, and (when given) `--label` filters via `evidence.MatchLabels`. Per cell: `runVerifyCell` with `verifySpec{Mode: "offline", Workdir: "", EvidenceDir: dir, AgentExit: meta.ExitCode, ...}` and the variant env of the matching basket variant (variant id from labels; unknown variant → operational failure recorded for that cell). Warn once per differing hash: `warning: basket hash differs from recorded runs (verifiers may be newer than the evidence)`. Output one line per cell: `verify <run_id>: ok|error (<detail>)`. Exit codes: 0 all verified; 1 ≥1 operational verifier failure; 2 usage/IO (no runs matched is exit 2 with `ErrEmptyGroup`-style message).
 
@@ -505,9 +529,11 @@ Behavior: builds env = `os.Environ()` + `spec.ExtraEnv` (variant env) + verify e
 ### Task D1: Package scaffold, `Cell`, `emit`
 
 **Files:**
+
 - Create: `integrations/verifier/pyproject.toml`, `integrations/verifier/README.md`, `integrations/verifier/src/catacomb_verifier/__init__.py`, `integrations/verifier/tests/test_cell.py`, `integrations/verifier/tests/test_emit.py`
 
 **Interfaces:**
+
 - Produces (public API, all in `__init__.py`):
 
 ```python
@@ -541,10 +567,12 @@ def emit(passed: bool | None = None, key: str | None = None, value: float | None
 ### Task D2: `compare_tables`
 
 **Files:**
+
 - Create: `integrations/verifier/src/catacomb_verifier/_tables.py`, `integrations/verifier/tests/test_compare_tables.py`
 - Modify: `integrations/verifier/src/catacomb_verifier/__init__.py` (re-export)
 
 **Interfaces:**
+
 - Produces:
 
 ```python
@@ -568,6 +596,7 @@ Rules (the benchmark canon, spec §4): format by extension (`.csv` via `csv` mod
 ### Task D3: CI
 
 **Files:**
+
 - Modify: `.github/workflows/python-deepeval.yml`
 
 - [ ] **Step 1:** Add a `verifier-sdk` job mirroring the deepeval job (same python version matrix, `working-directory: integrations/verifier`, `pip install -e . pytest && pytest -q`). Trigger paths: add `integrations/verifier/**` to the workflow's path filters if present.
@@ -581,9 +610,11 @@ Rules (the benchmark canon, spec §4): format by extension (`.csv` via `csv` mod
 ### Task E1: Fixtures
 
 **Files:**
+
 - Create: `e2e/hermetic/seed.sql`, `e2e/hermetic/golden.csv`, `e2e/hermetic/agent.sh`, `e2e/hermetic/verify_sql.py`, `e2e/hermetic/basket.yaml.tmpl`, `e2e/hermetic/transcript.jsonl.tmpl`
 
 **Interfaces:**
+
 - Consumes: SDK (D1/D2) via `PYTHONPATH`, bench `--projects-dir` transcript resolution `<projects>/<any-dir>/<session_id>.jsonl` (see `cmd/catacomb/transcripts.go:23`), stream-json peek (`session_id` on any line, `total_cost_usd` on the `result` line — `cmd/catacomb/childlocal.go`).
 - Produces: a scripted agent that really solves a SQL task and is transcript-faithful.
 
@@ -665,9 +696,11 @@ variants:
 ### Task E2: Hermetic driver
 
 **Files:**
+
 - Create: `e2e/hermetic/run.sh`
 
 **Interfaces:**
+
 - Consumes: built binary via `CATACOMB_BIN` (same contract as `e2e/run.sh`); fixtures (E1); SDK via `PYTHONPATH=$repo/integrations/verifier/src`.
 - Produces: self-asserting driver, exit 0 = all assertions pass. Reuse `e2e/run.sh`'s helper conventions (`pass`/`failrec`/`run_expect`/`run_json`, failure array, summary block) — copy those helpers, keep the file standalone.
 
@@ -689,6 +722,7 @@ Assertion sequence (each a `run_expect`/`run_json` + explicit checks):
 ### Task E3: Per-PR workflow
 
 **Files:**
+
 - Create: `.github/workflows/e2e-hermetic.yml`
 
 ```yaml
@@ -718,10 +752,12 @@ jobs:
 ### Task E4: Live weekly SQL basket
 
 **Files:**
+
 - Modify: `e2e/run.sh` (basket 3 + assertions), `docs/guide/workflows.md` (verifier-contract section)
 - Create: `e2e/sql-live.sh`, `e2e/basket-sql.yaml`, `e2e/sql-seed.sql`, `e2e/sql-golden.csv` (reuse E1's seed/golden content)
 
 **Interfaces:**
+
 - Consumes: live-gate conventions from `e2e/run.sh` (auth env, `run_expect`, widened A-vs-A metric band, `--setting-sources project --strict-mcp-config`, pinned CLI, `CHILD_MODEL` mechanism — read the existing baskets first and mirror them exactly).
 - Produces: third live basket `e2e-sql`, 3 variants × 5 reps, wrapper:
 
