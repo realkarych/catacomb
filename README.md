@@ -60,9 +60,11 @@ mechanism.
 ```sh
 brew tap realkarych/tap
 brew trust realkarych/tap   # newer Homebrew requires trusting third-party taps
-brew install catacomb       # first install
-brew upgrade catacomb       # later updates
+brew install --cask catacomb   # first install
+brew upgrade --cask catacomb   # later updates
 ```
+
+Migrating from the old formula: `brew uninstall catacomb && brew install --cask catacomb`.
 
 ### Docker images
 
