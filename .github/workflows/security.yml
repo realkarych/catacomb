@@ -31,3 +31,42 @@ jobs:
           GITLEAKS_CONFIG: .gitleaks.toml
           # keep the job on contents: read — PR comments would need pull-requests: write
           GITLEAKS_ENABLE_COMMENTS: "false"
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          # stdlib findings are keyed to the toolchain patch level — always scan on the latest
+          check-latest: true
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  gosec:
+    name: gosec
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run gosec
+        # G304 (file inclusion via variable) is excluded wholesale: catacomb is a
+        # local CLI whose purpose is opening transcript/session files the invoking
+        # user names on the command line — there is no privilege boundary to
+        # traverse. gosec's -conf file cannot exclude rules, so the exclusion
+        # lives here rather than in a .gosec.json.
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude=G304 ./...
