@@ -282,6 +282,41 @@ func TestPhaseFoldSumsMembers(t *testing.T) {
 	assert.Equal(t, float64(5), rep.Phases[0].TokensOut.Median)
 }
 
+func TestRunTotalsAnnotations(t *testing.T) {
+	group := []RunGraph{
+		{Run: model.Run{ID: "r1"}, Annotations: map[string]float64{"verifier.pass": 1, "verifier.row_diff": 0, "verifier.zero": 0}},
+		{Run: model.Run{ID: "r2"}, Annotations: map[string]float64{"verifier.pass": 0, "verifier.row_diff": 3, "verifier.zero": 0}},
+		{Run: model.Run{ID: "r3"}},
+	}
+	ann := Aggregate(group, Options{}).Totals.Annotations
+	require.NotNil(t, ann)
+	for _, c := range []struct {
+		key    string
+		n      int
+		ones   int
+		binary bool
+		p75    float64
+	}{
+		{"verifier.pass", 2, 1, true, 1},
+		{"verifier.row_diff", 2, 0, false, 3},
+		{"verifier.zero", 2, 0, true, 0},
+	} {
+		t.Run(c.key, func(t *testing.T) {
+			got := ann[c.key]
+			assert.Equal(t, c.n, got.N)
+			assert.Equal(t, c.ones, got.Ones)
+			assert.Equal(t, c.binary, got.Binary)
+			assert.Equal(t, c.n, got.Stats.N)
+			assert.Equal(t, c.p75, got.Stats.P75)
+		})
+	}
+}
+
+func TestRunTotalsAnnotationsEmpty(t *testing.T) {
+	rep := Aggregate([]RunGraph{{Run: model.Run{ID: "r1"}}}, Options{})
+	assert.Nil(t, rep.Totals.Annotations)
+}
+
 func TestStepFoldSumsMembers(t *testing.T) {
 	group := []RunGraph{{
 		Run: model.Run{ID: "r1", Status: model.StatusOK},

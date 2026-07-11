@@ -8,9 +8,10 @@ import (
 )
 
 type RunGraph struct {
-	Run   model.Run
-	Nodes []*model.Node
-	Edges []*model.Edge
+	Run         model.Run
+	Nodes       []*model.Node
+	Edges       []*model.Edge
+	Annotations map[string]float64
 }
 
 type Options struct {
@@ -39,13 +40,21 @@ type Row struct {
 	Annotations  map[string]MetricStats   `json:"annotations,omitempty"`
 }
 
+type AnnotationTotals struct {
+	N      int         `json:"n"`
+	Ones   int         `json:"ones"`
+	Binary bool        `json:"binary"`
+	Stats  MetricStats `json:"stats"`
+}
+
 type RunTotals struct {
-	DurationMS MetricStats `json:"duration_ms"`
-	CostUSD    MetricStats `json:"cost_usd"`
-	TokensIn   MetricStats `json:"tokens_in"`
-	TokensOut  MetricStats `json:"tokens_out"`
-	Nodes      MetricStats `json:"nodes"`
-	ErrorRate  float64     `json:"error_rate"`
+	DurationMS  MetricStats                 `json:"duration_ms"`
+	CostUSD     MetricStats                 `json:"cost_usd"`
+	TokensIn    MetricStats                 `json:"tokens_in"`
+	TokensOut   MetricStats                 `json:"tokens_out"`
+	Nodes       MetricStats                 `json:"nodes"`
+	ErrorRate   float64                     `json:"error_rate"`
+	Annotations map[string]AnnotationTotals `json:"annotations,omitempty"`
 }
 
 type Report struct {
@@ -342,6 +351,7 @@ func runTotals(group []RunGraph) RunTotals {
 		return RunTotals{}
 	}
 	var durations, costs, tokensIn, tokensOut, nodes []float64
+	annVals := map[string][]float64{}
 	errorRuns := 0
 	for _, rg := range group {
 		var sums metricSums
@@ -356,6 +366,9 @@ func runTotals(group []RunGraph) RunTotals {
 			sums.tokensIn += derefI(n.TokensIn)
 			sums.tokensOut += derefI(n.TokensOut)
 		}
+		for k, v := range rg.Annotations {
+			annVals[k] = append(annVals[k], v)
+		}
 		if d, ok := runDuration(rg.Run); ok {
 			durations = append(durations, d)
 		}
@@ -368,13 +381,35 @@ func runTotals(group []RunGraph) RunTotals {
 		}
 	}
 	return RunTotals{
-		DurationMS: stats(durations),
-		CostUSD:    stats(costs),
-		TokensIn:   stats(tokensIn),
-		TokensOut:  stats(tokensOut),
-		Nodes:      stats(nodes),
-		ErrorRate:  float64(errorRuns) / float64(len(group)),
+		DurationMS:  stats(durations),
+		CostUSD:     stats(costs),
+		TokensIn:    stats(tokensIn),
+		TokensOut:   stats(tokensOut),
+		Nodes:       stats(nodes),
+		ErrorRate:   float64(errorRuns) / float64(len(group)),
+		Annotations: annotationTotals(annVals),
 	}
+}
+
+func annotationTotals(vals map[string][]float64) map[string]AnnotationTotals {
+	if len(vals) == 0 {
+		return nil
+	}
+	out := make(map[string]AnnotationTotals, len(vals))
+	for k, vs := range vals {
+		t := AnnotationTotals{N: len(vs), Binary: true, Stats: stats(vs)}
+		for _, v := range vs {
+			switch v {
+			case 1:
+				t.Ones++
+			case 0:
+			default:
+				t.Binary = false
+			}
+		}
+		out[k] = t
+	}
+	return out
 }
 
 func runDuration(r model.Run) (float64, bool) {
