@@ -117,6 +117,7 @@ var entropyRules = []entropyRule{
 	{regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`), "high-entropy", 3.2},
 	{regexp.MustCompile(`\b[A-Za-z0-9+]{32,}={0,2}\b`), "high-entropy", 4.0},
 	{regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}={0,2}\b`), "high-entropy", 4.3},
+	{regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`), "high-entropy", 4.4},
 }
 
 var sensitiveKeyTokens = []string{

@@ -45,6 +45,31 @@ func TestEntropyGatedDetectionBase64URL(t *testing.T) {
 	}
 }
 
+func TestEntropyGatedDetectionSlashBase64(t *testing.T) {
+	secret := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+	inJSON := string(Redact([]byte(`{"v":"` + secret + `"}`)).Data)
+	require.Contains(t, inJSON, placeholder("high-entropy"))
+	require.NotContains(t, inJSON, secret)
+
+	free := Redact([]byte("export AWS_SECRET_ACCESS_KEY=" + secret))
+	require.True(t, free.Redacted)
+	require.Contains(t, string(free.Data), placeholder("high-entropy"))
+	require.NotContains(t, string(free.Data), secret)
+
+	for _, benign := range []string{
+		"/Users/karych/src/observability/web/src/components/SessionView.svelte",
+		"/Users/somebody/projects/my-awesome-project/internal/handlers/authentication.go",
+		"/home/runner/work/catacomb/catacomb/redact/redact.go",
+		"f10d7209-f2aa-4f86-a656-0d93f3ab12e9",
+	} {
+		in := `{"v":"` + benign + `"}`
+		result := Redact([]byte(in))
+		require.False(t, result.Redacted, benign)
+		require.Equal(t, in, string(result.Data), benign)
+	}
+}
+
 func TestEntropyGateSensitiveKeyClassifier(t *testing.T) {
 	high := string(Redact([]byte(`{"token":"9f86d081884c7d659a2feaa0c55ad015"}`)).Data)
 	require.Contains(t, high, placeholder("high-entropy"))
