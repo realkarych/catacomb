@@ -1,0 +1,116 @@
+version: 2
+
+project_name: catacomb
+
+builds:
+  - main: ./cmd/catacomb
+    binary: catacomb
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .Tag }}_catacomb_{{ .Os }}_{{ .Arch }}"
+    files:
+      - none*
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - id: checksum
+    cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+  - id: sbom
+    cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: sbom
+    output: true
+
+nfpms:
+  - formats:
+      - deb
+    file_name_template: "{{ .ConventionalFileName }}"
+    bindir: /usr/bin
+    maintainer: "Andrey Karchevsky <kaarych@gmail.com>"
+    description: "Offline eval gate for Claude Code agentic pipelines"
+    license: Apache-2.0
+    homepage: "https://github.com/realkarych/catacomb"
+
+homebrew_casks:
+  - repository:
+      owner: realkarych
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/realkarych/catacomb"
+    description: "Offline eval gate for Claude Code agentic pipelines"
+    binaries:
+      - catacomb
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/catacomb"]
+          end
+
+dockers_v2:
+  - images:
+      - "ghcr.io/realkarych/catacomb"
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    dockerfile: Dockerfile.goreleaser
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      "org.opencontainers.image.source": "https://github.com/realkarych/catacomb"
+
+docker_signs:
+  - cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    output: true
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+
+release:
+  name_template: "{{ .Tag }}"
