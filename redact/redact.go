@@ -60,10 +60,6 @@ var (
 	reGitLabPAT = regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}\b`)
 
 	reGoogleOAuth = regexp.MustCompile(`\bya29\.[A-Za-z0-9._-]{20,}\b`)
-
-	reHexEntropy = regexp.MustCompile(`\b[0-9a-fA-F]{40,}\b`)
-
-	reBase64Entropy = regexp.MustCompile(`\b[A-Za-z0-9+]{40,}={0,2}\b`)
 )
 
 func shannonEntropy(s string) float64 {
@@ -109,8 +105,18 @@ var valueRules = []valueRule{
 	{rePyPIToken, "pypi-token"},
 	{reGitLabPAT, "gitlab-token"},
 	{reGoogleOAuth, "google-oauth"},
-	{reHexEntropy, "high-entropy"},
-	{reBase64Entropy, "high-entropy"},
+}
+
+type entropyRule struct {
+	re      *regexp.Regexp
+	reason  string
+	minBits float64
+}
+
+var entropyRules = []entropyRule{
+	{regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`), "high-entropy", 3.2},
+	{regexp.MustCompile(`\b[A-Za-z0-9+]{32,}={0,2}\b`), "high-entropy", 4.0},
+	{regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}={0,2}\b`), "high-entropy", 4.3},
 }
 
 var sensitiveKeyTokens = []string{
@@ -140,6 +146,9 @@ var knownPlaceholders = func() map[string]bool {
 	for _, rule := range valueRules {
 		m[placeholder(rule.reason)] = true
 	}
+	for _, rule := range entropyRules {
+		m[placeholder(rule.reason)] = true
+	}
 	return m
 }()
 
@@ -159,6 +168,13 @@ func matchValueRule(s string) string {
 	for _, rule := range valueRules {
 		if rule.re.MatchString(s) {
 			return rule.reason
+		}
+	}
+	for _, rule := range entropyRules {
+		for _, m := range rule.re.FindAllString(s, -1) {
+			if shannonEntropy(m) >= rule.minBits {
+				return rule.reason
+			}
 		}
 	}
 	return ""
@@ -314,6 +330,19 @@ func replaceSecretSpans(text string) (string, []string) {
 			result = rule.re.ReplaceAllStringFunc(result, func(string) string {
 				return placeholder(rule.reason)
 			})
+			reasons = append(reasons, rule.reason)
+		}
+	}
+	for _, rule := range entropyRules {
+		replaced := false
+		result = rule.re.ReplaceAllStringFunc(result, func(m string) string {
+			if shannonEntropy(m) < rule.minBits {
+				return m
+			}
+			replaced = true
+			return placeholder(rule.reason)
+		})
+		if replaced {
 			reasons = append(reasons, rule.reason)
 		}
 	}

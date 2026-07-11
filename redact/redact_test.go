@@ -375,11 +375,17 @@ func TestRedact_ValueScan_ConnectionString(t *testing.T) {
 
 func TestRedact_ValueScan_HighEntropy(t *testing.T) {
 	t.Run("long hex positive under non-sensitive key", func(t *testing.T) {
-		hex := strings.Repeat("a1b2c3d4", 6)
+		hex := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822c"
 		input := []byte(`{"note":"` + hex + `"}`)
 		result := redact.Redact(input)
 		assert.True(t, result.Redacted)
 		assert.Contains(t, findingReasons(result.Findings), "high-entropy")
+	})
+	t.Run("long patterned hex below entropy gate not redacted", func(t *testing.T) {
+		hex := strings.Repeat("a1b2c3d4", 6)
+		input := []byte(`{"note":"` + hex + `"}`)
+		result := redact.Redact(input)
+		assert.False(t, result.Redacted, "repeated-pattern hex must stay below the entropy gate")
 	})
 	t.Run("long base64 positive under non-sensitive key", func(t *testing.T) {
 		b64 := strings.Repeat("ABCDEFGHabcdefgh01234567", 3)
