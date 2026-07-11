@@ -10,14 +10,15 @@ on:
         description: 'SemVer tag to release (e.g. v0.1.0)'
         required: true
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+permissions: {}
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     outputs:
       tag: ${{ steps.tag.outputs.TAG }}
 
@@ -80,6 +81,8 @@ jobs:
   update-apt:
     needs: goreleaser
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     env:
       TAG: ${{ needs.goreleaser.outputs.tag }}
