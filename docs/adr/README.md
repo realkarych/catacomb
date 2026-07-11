@@ -30,6 +30,7 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0024](0024-secrets-at-rest-write-path-redaction.md) | Secrets at rest: enforcing redaction on the write path | Accepted |
 | [0025](0025-capture-format-drift-detection.md) | Capture format drift detection | Accepted |
 | [0026](0026-form-factor-pivot-offline-eval-gate.md) | Form factor pivot: offline eval gate over vendor observability | Accepted |
+| [0027](0027-verification-layer-and-reliability-metrics.md) | Verification layer and reliability metrics (post-pivot vector) | Accepted |
 
 Design spec: [`../specs/2026-06-20-catacomb-design.md`](../specs/2026-06-20-catacomb-design.md).
 
