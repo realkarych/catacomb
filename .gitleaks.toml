@@ -1,0 +1,21 @@
+title = "catacomb gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and redaction tables intentionally contain fake secrets"
+paths = [
+  '''redact/.*_test\.go''',
+  '''redact/testdata/.*''',
+  '''reduce/testdata/.*''',
+  '''regress/testdata/.*''',
+  '''bench/testdata/.*''',
+  '''cmd/catacomb/testdata/.*''',
+  '''e2e/.*''',
+  '''docs/superpowers/plans/.*''',
+]
+regexTarget = "line"
+regexes = [
+  '''"step_key": "[0-9a-f]{16}"''',
+]

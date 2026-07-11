@@ -1,0 +1,33 @@
+name: Security
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+  schedule:
+    # Mondays 05:00 UTC — catches newly disclosed vulnerabilities in unchanged code.
+    - cron: "0 5 * * 1"
+
+permissions: {}
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          # full history so gitleaks can scan past commits, not just the checkout
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # keep the job on contents: read — PR comments would need pull-requests: write
+          GITLEAKS_ENABLE_COMMENTS: "false"
