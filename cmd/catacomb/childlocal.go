@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
 )
 
-var execCommand = exec.Command
+var (
+	execCommand        = exec.Command
+	execCommandContext = exec.CommandContext
+)
 
 const maxObserverBuffer = 1 << 20
 
@@ -68,8 +72,8 @@ func (w *lineObserver) flush() {
 	w.buf = nil
 }
 
-func runChildLocal(stdout, stderr io.Writer, args []string, dir string, extraEnv []string, observe func(line []byte)) error {
-	child := execCommand(args[0], args[1:]...)
+func runChildLocal(ctx context.Context, stdout, stderr io.Writer, args []string, dir string, extraEnv []string, observe func(line []byte)) error {
+	child := execCommandContext(ctx, args[0], args[1:]...)
 	child.Stdin = os.Stdin
 	child.Dir = dir
 	child.Env = append(os.Environ(), extraEnv...)

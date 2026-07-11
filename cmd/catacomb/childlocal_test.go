@@ -2,16 +2,28 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func stubChildContext(t *testing.T) {
+	t.Helper()
+	t.Setenv("GO_HELPER_OFFLINE", "1")
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperOfflineChild")
+	}
+	t.Cleanup(func() { execCommandContext = orig })
+}
 
 func TestStreamPeek(t *testing.T) {
 	p := &streamPeek{}
@@ -34,42 +46,48 @@ func TestStreamPeekCostOnlyFromResult(t *testing.T) {
 }
 
 func TestRunChildLocal(t *testing.T) {
-	t.Setenv("GO_HELPER_OFFLINE", "1")
-	orig := execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(os.Args[0], "-test.run=TestHelperOfflineChild")
-	}
-	t.Cleanup(func() { execCommand = orig })
+	stubChildContext(t)
 	var out bytes.Buffer
 	peek := &streamPeek{}
-	err := runChildLocal(&out, io.Discard, []string{"claude"}, "", []string{"X=1"}, peek.onLine)
+	err := runChildLocal(t.Context(), &out, io.Discard, []string{"claude"}, "", []string{"X=1"}, peek.onLine)
 	require.NoError(t, err)
 	require.Equal(t, "sess-h", peek.sessionID)
 	require.Contains(t, out.String(), "sess-h")
 }
 
 func TestRunChildLocalExitCode(t *testing.T) {
-	t.Setenv("GO_HELPER_OFFLINE", "1")
+	stubChildContext(t)
 	t.Setenv("GO_HELPER_OFFLINE_EXIT3", "1")
-	orig := execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(os.Args[0], "-test.run=TestHelperOfflineChild")
-	}
-	t.Cleanup(func() { execCommand = orig })
-	err := runChildLocal(io.Discard, io.Discard, []string{"claude"}, "", nil, func([]byte) {})
+	err := runChildLocal(t.Context(), io.Discard, io.Discard, []string{"claude"}, "", nil, func([]byte) {})
 	code, ok := exitInfo(err)
 	require.False(t, ok)
 	require.Equal(t, 3, code)
 }
 
 func TestRunChildLocalStartError(t *testing.T) {
-	orig := execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(filepath.Join(t.TempDir(), "does-not-exist-binary"))
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "does-not-exist-binary"))
 	}
-	t.Cleanup(func() { execCommand = orig })
-	err := runChildLocal(io.Discard, io.Discard, []string{"nope"}, "", nil, func([]byte) {})
+	t.Cleanup(func() { execCommandContext = orig })
+	err := runChildLocal(t.Context(), io.Discard, io.Discard, []string{"nope"}, "", nil, func([]byte) {})
 	require.Error(t, err)
+}
+
+func TestRunChildLocalCancelled(t *testing.T) {
+	stubChildContext(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := runChildLocal(ctx, io.Discard, io.Discard, []string{"claude"}, "", nil, func([]byte) {})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRunChildLocalTimeout(t *testing.T) {
+	stubChildContext(t)
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Hour))
+	defer cancel()
+	err := runChildLocal(ctx, io.Discard, io.Discard, []string{"claude"}, "", nil, func([]byte) {})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestHelperOfflineChild(t *testing.T) {

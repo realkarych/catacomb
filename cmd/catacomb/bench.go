@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -162,7 +163,7 @@ func runBenchCellOffline(stdout, stderr io.Writer, cell bench.Cell, hash string,
 	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
 	peek := &streamPeek{}
 	start := nowFn()
-	err := runChildLocal(stdout, stderr, cell.Task.Cmd, cell.Task.Dir, offlineEnv(cell, merged), peek.onLine)
+	err := runChildLocal(context.Background(), stdout, stderr, cell.Task.Cmd, cell.Task.Dir, offlineEnv(cell, merged), peek.onLine)
 	end := nowFn()
 	code, ok := exitInfo(err)
 	entry.ExitCode = code

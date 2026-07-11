@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,14 @@ func stubBenchChild(t *testing.T, env ...string) {
 	execCommand = func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command(os.Args[0], "-test.run=TestHelperBenchChild")
 	}
-	t.Cleanup(func() { execCommand = orig })
+	origCtx := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperBenchChild")
+	}
+	t.Cleanup(func() {
+		execCommand = orig
+		execCommandContext = origCtx
+	})
 }
 
 func offlineCell(runID string, task bench.Task, variant bench.Variant) bench.Cell {
@@ -176,11 +184,11 @@ func TestBenchOfflineSetupFailureNote(t *testing.T) {
 }
 
 func TestBenchOfflineSpawnFailureNote(t *testing.T) {
-	orig := execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command(filepath.Join(t.TempDir(), "does-not-exist-binary"))
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "does-not-exist-binary"))
 	}
-	t.Cleanup(func() { execCommand = orig })
+	t.Cleanup(func() { execCommandContext = orig })
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"nope"}}, bench.Variant{ID: "base"})
 	var errb bytes.Buffer
 	entry, failed, verified := runBenchCellOffline(io.Discard, &errb, cell, "h", nil,
