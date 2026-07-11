@@ -51,12 +51,6 @@ func (g *Graph) Apply(o model.Observation) {
 			}
 			n.Attrs["model"] = m
 		}
-		if sessionTotalObservation(o) {
-			if n.Attrs == nil {
-				n.Attrs = map[string]any{}
-			}
-			n.Attrs["session_total"] = true
-		}
 		g.mergePayload(n, o.Payload, o.Source)
 		g.parentTurn(o, n.ID)
 	case "assistant_tool_use", "tool_result":
@@ -408,11 +402,6 @@ func (g *Graph) applyTokens(n *model.Node, attrs map[string]any) {
 	if v, ok := toInt64(attrs["tokens_out"]); ok {
 		n.TokensOut = &v
 	}
-}
-
-func sessionTotalObservation(o model.Observation) bool {
-	v, ok := o.Attrs["session_total"].(bool)
-	return ok && v
 }
 
 func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {

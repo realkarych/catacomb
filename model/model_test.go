@@ -25,10 +25,3 @@ func TestNodeStepKeyOmitemptyWhenUnset(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(b), "step_key")
 }
-
-func TestNodeSessionTotal(t *testing.T) {
-	assert.False(t, (&Node{}).SessionTotal())
-	assert.False(t, (&Node{Attrs: map[string]any{"session_total": false}}).SessionTotal())
-	assert.False(t, (&Node{Attrs: map[string]any{"session_total": "true"}}).SessionTotal())
-	assert.True(t, (&Node{Attrs: map[string]any{"session_total": true}}).SessionTotal())
-}

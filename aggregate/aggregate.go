@@ -132,7 +132,7 @@ func derefF(p *float64) float64 {
 func foldRunSteps(rg RunGraph, allow map[string]struct{}) map[string]runKey {
 	acc := map[string]runKey{}
 	for _, n := range rg.Nodes {
-		if n.StepKey == "" || n.SessionTotal() {
+		if n.StepKey == "" {
 			continue
 		}
 		rk := accumulate(acc[n.StepKey], n)
@@ -213,7 +213,7 @@ func foldRunPhases(rg RunGraph) map[string]runKey {
 		}
 		for _, mid := range members[n.ID] {
 			m := byID[mid]
-			if m == nil || m.SessionTotal() {
+			if m == nil {
 				continue
 			}
 			rk.sums.cost += derefF(m.CostUSD)
@@ -347,26 +347,14 @@ func runTotals(group []RunGraph) RunTotals {
 		var sums metricSums
 		count := 0
 		hasError := rg.Run.Status == model.StatusError
-		var reported float64
-		hasReported := false
 		for _, n := range rg.Nodes {
 			count++
 			if n.Status == model.StatusError {
 				hasError = true
 			}
-			if n.SessionTotal() {
-				if n.CostUSD != nil {
-					hasReported = true
-					reported += *n.CostUSD
-				}
-				continue
-			}
 			sums.cost += derefF(n.CostUSD)
 			sums.tokensIn += derefI(n.TokensIn)
 			sums.tokensOut += derefI(n.TokensOut)
-		}
-		if hasReported {
-			sums.cost = reported
 		}
 		if d, ok := runDuration(rg.Run); ok {
 			durations = append(durations, d)

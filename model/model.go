@@ -103,11 +103,6 @@ type Node struct {
 	Rev           uint64         `json:"rev,omitempty"`
 }
 
-func (n *Node) SessionTotal() bool {
-	v, ok := n.Attrs["session_total"].(bool)
-	return ok && v
-}
-
 type Edge struct {
 	ID    string         `json:"id"`
 	RunID string         `json:"run_id"`

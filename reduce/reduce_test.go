@@ -1932,30 +1932,3 @@ func TestPromptObsFallbackDistinctObsIDs(t *testing.T) {
 	assert.NotEqual(t, n1.ID, n2.ID)
 	assert.Nil(t, g.Nodes[model.UserPromptID(execID, "")])
 }
-
-func TestResultObservationTagsSessionTotalNode(t *testing.T) {
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Attrs = map[string]any{"session_total": true, "model": "m", "tokens_in": int64(7), "tokens_out": int64(9)}
-
-	g := NewGraph()
-	g.Apply(o)
-
-	n := g.Nodes[model.AssistantTurnID(execID, "")]
-	require.NotNil(t, n)
-	assert.True(t, n.SessionTotal())
-}
-
-func TestSessionTotalTagSurvivesStoreRoundTrip(t *testing.T) {
-	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
-	o.Attrs = map[string]any{"session_total": true}
-
-	raw, err := json.Marshal(o)
-	require.NoError(t, err)
-	var rt model.Observation
-	require.NoError(t, json.Unmarshal(raw, &rt))
-
-	g := NewGraph()
-	g.Apply(rt)
-
-	assert.True(t, g.Nodes[model.AssistantTurnID(execID, "")].SessionTotal())
-}
