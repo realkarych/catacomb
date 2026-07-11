@@ -82,7 +82,8 @@ float_tol`), row-order insensitivity unless `ordered=True`, header normalization
 (lower-case, spaces and dashes to underscores) unless `normalize_headers=False`,
 type coercion (`int → float → stripped string`), and **strict by default** —
 extra rows or columns fail, the execution-accuracy false-positive lesson. Pass
-`strict=False` for the lenient mode where `want` need only be contained in `got`.
+`strict=False` for the lenient mode where `want` need only be contained in `got`
+(`ordered` is ignored in this mode).
 Formats are selected by extension: `.csv` (via the `csv` module) and `.jsonl`
 (one JSON object per line); the two can be compared cross-format. `mismatches`
 is a structured diff meant to be printed to stderr for a human.

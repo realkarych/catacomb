@@ -31,11 +31,14 @@ def compare_tables(
 
     `got` and `want` are file paths whose extension picks the parser (`.csv`,
     `.jsonl`). Cells coerce int -> float -> stripped string; numeric cells compare
-    within `float_tol`. Under `strict` (default) rows pair positionally after
-    sorting by their canonical string tuple (`ordered=True` keeps file order), and
-    differing column sets or row counts make the tables unequal, each named in
-    `mismatches`. Under non-strict `want` need only be contained in `got` (extra
-    rows and columns tolerated). `mismatches` holds the first 10 diffs.
+    within `float_tol`, while NaN/inf cells never compare equal (tolerance
+    arithmetic yields NaN). Under `strict` (default) rows pair positionally after
+    sorting by their canonical string tuple, falling back to a tolerance-aware
+    match when that surfaces mismatches (`ordered=True` keeps file order and skips
+    the fallback), and differing column sets or row counts make the tables
+    unequal, each named in `mismatches`. Under non-strict `want` need only be
+    contained in `got` (extra rows and columns tolerated, `ordered` ignored).
+    `mismatches` holds the first 10 diffs.
     """
     got_cols, got_rows = _load(got, normalize_headers)
     want_cols, want_rows = _load(want, normalize_headers)
@@ -70,6 +73,18 @@ def _paired_mismatches(
 ) -> list[str]:
     left = got_rows if ordered else _sorted(got_rows, cols)
     right = want_rows if ordered else _sorted(want_rows, cols)
+    out = _positional_mismatches(left, right, cols, float_tol)
+    if ordered or not out:
+        return out
+    return _greedy_mismatches(left, right, cols, float_tol)
+
+
+def _positional_mismatches(
+    left: list[dict[str, object]],
+    right: list[dict[str, object]],
+    cols: list[str],
+    float_tol: float,
+) -> list[str]:
     out: list[str] = []
     for i in range(len(right)):
         for col in cols:
@@ -79,6 +94,27 @@ def _paired_mismatches(
                 if len(out) >= _MAX_MISMATCHES:
                     return out
     return out
+
+
+def _greedy_mismatches(
+    left: list[dict[str, object]],
+    right: list[dict[str, object]],
+    cols: list[str],
+    float_tol: float,
+) -> list[str]:
+    matched = [False] * len(right)
+    leftover_left: list[dict[str, object]] = []
+    for got_row in left:
+        for j, want_row in enumerate(right):
+            if not matched[j] and all(
+                _cell_eq(got_row.get(c), want_row.get(c), float_tol) for c in cols
+            ):
+                matched[j] = True
+                break
+        else:
+            leftover_left.append(got_row)
+    leftover_right = [right[j] for j, hit in enumerate(matched) if not hit]
+    return _positional_mismatches(leftover_left, leftover_right, cols, float_tol)
 
 
 def _contained_mismatches(

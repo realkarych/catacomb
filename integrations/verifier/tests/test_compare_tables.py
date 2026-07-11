@@ -212,6 +212,40 @@ def test_unsupported_extension_raises(tmp_path):
         compare_tables(got, want)
 
 
+def test_tolerance_equal_rows_straddling_sort_boundary_compare_equal(tmp_path):
+    got = _write(tmp_path, "got.csv", "total\n9.99995\n15.0\n")
+    want = _write(tmp_path, "want.csv", "total\n10.0\n15.00003\n")
+    res = compare_tables(got, want, float_tol=1e-4)
+    assert res.equal is True
+    assert res.mismatches == []
+
+
+def test_unordered_genuine_mismatch_reports_leftover_rows(tmp_path):
+    got = _write(tmp_path, "got.csv", "total\n1.0\n2.0\n")
+    want = _write(tmp_path, "want.csv", "total\n1.0\n9.0\n")
+    res = compare_tables(got, want)
+    assert res.equal is False
+    assert res.mismatches == ["row 0 col total: 2.0 != 9.0"]
+
+
+def test_strict_row_count_mismatch_reports_only_row_count(tmp_path):
+    got = _write(tmp_path, "got.csv", "region,total\nnorth,10\nsouth,20\neast,30\n")
+    want = _write(tmp_path, "want.csv", "region,total\nnorth,11\nsouth,22\n")
+    res = compare_tables(got, want, strict=True)
+    assert res.equal is False
+    assert res.mismatches == ["row count: got 3, want 2"]
+    assert not any("col" in m for m in res.mismatches)
+
+
+def test_ordered_ignored_in_containment_mode(tmp_path):
+    got = _write(tmp_path, "got.csv", "region,total\nnorth,10\nsouth,20\n")
+    want = _write(tmp_path, "want.csv", "region,total\nsouth,20\nnorth,10\n")
+    ordered = compare_tables(got, want, ordered=True, strict=False)
+    unordered = compare_tables(got, want, ordered=False, strict=False)
+    assert ordered == unordered
+    assert ordered.equal is True
+
+
 def test_result_is_frozen_dataclass():
     res = CompareResult(equal=True, row_diff=0, mismatches=[])
     assert dataclasses.is_dataclass(res)
