@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import csv
+import dataclasses
+import json
+import os
+
+_MAX_MISMATCHES = 10
+
+
+@dataclasses.dataclass(frozen=True)
+class CompareResult:
+    """Structured diff of two tables: overall verdict, row-count delta, capped diffs."""
+
+    equal: bool
+    row_diff: int
+    mismatches: list[str]
+
+
+def compare_tables(
+    got: str,
+    want: str,
+    *,
+    float_tol: float = 1e-4,
+    ordered: bool = False,
+    strict: bool = True,
+    normalize_headers: bool = True,
+) -> CompareResult:
+    """Compare two tables under the benchmark canon (numeric tolerance, order- and
+    header-insensitive by default, strict about extra rows/columns).
+
+    `got` and `want` are file paths whose extension picks the parser (`.csv`,
+    `.jsonl`). Cells coerce int -> float -> stripped string; numeric cells compare
+    within `float_tol`. Under `strict` (default) rows pair positionally after
+    sorting by their canonical string tuple (`ordered=True` keeps file order), and
+    differing column sets or row counts make the tables unequal, each named in
+    `mismatches`. Under non-strict `want` need only be contained in `got` (extra
+    rows and columns tolerated). `mismatches` holds the first 10 diffs.
+    """
+    got_cols, got_rows = _load(got, normalize_headers)
+    want_cols, want_rows = _load(want, normalize_headers)
+
+    row_diff = abs(len(got_rows) - len(want_rows))
+    cols = want_cols or got_cols
+    mismatches: list[str] = []
+
+    if strict:
+        for col in sorted(set(got_cols) - set(want_cols)):
+            mismatches.append(f"column {col}: in got, not in want")
+        for col in sorted(set(want_cols) - set(got_cols)):
+            mismatches.append(f"column {col}: in want, not in got")
+        if row_diff != 0:
+            mismatches.append(f"row count: got {len(got_rows)}, want {len(want_rows)}")
+        else:
+            mismatches += _paired_mismatches(got_rows, want_rows, cols, ordered, float_tol)
+    else:
+        mismatches += _contained_mismatches(got_rows, want_rows, cols, float_tol)
+
+    return CompareResult(
+        equal=not mismatches, row_diff=row_diff, mismatches=mismatches[:_MAX_MISMATCHES]
+    )
+
+
+def _paired_mismatches(
+    got_rows: list[dict[str, object]],
+    want_rows: list[dict[str, object]],
+    cols: list[str],
+    ordered: bool,
+    float_tol: float,
+) -> list[str]:
+    left = got_rows if ordered else _sorted(got_rows, cols)
+    right = want_rows if ordered else _sorted(want_rows, cols)
+    out: list[str] = []
+    for i in range(len(right)):
+        for col in cols:
+            a, b = left[i].get(col), right[i].get(col)
+            if not _cell_eq(a, b, float_tol):
+                out.append(f"row {i} col {col}: {_fmt(a)} != {_fmt(b)}")
+                if len(out) >= _MAX_MISMATCHES:
+                    return out
+    return out
+
+
+def _contained_mismatches(
+    got_rows: list[dict[str, object]],
+    want_rows: list[dict[str, object]],
+    cols: list[str],
+    float_tol: float,
+) -> list[str]:
+    remaining = list(got_rows)
+    out: list[str] = []
+    for want_row in want_rows:
+        for i, got_row in enumerate(remaining):
+            if all(_cell_eq(got_row.get(c), want_row.get(c), float_tol) for c in cols):
+                del remaining[i]
+                break
+        else:
+            out.append("missing row: " + ", ".join(f"{c}={_fmt(want_row.get(c))}" for c in cols))
+            if len(out) >= _MAX_MISMATCHES:
+                break
+    return out
+
+
+def _load(path: str, normalize_headers: bool) -> tuple[list[str], list[dict[str, object]]]:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".csv":
+        return _load_csv(path, normalize_headers)
+    if ext == ".jsonl":
+        return _load_jsonl(path, normalize_headers)
+    raise ValueError(f"unsupported table format: {path!r}")
+
+
+def _load_csv(path: str, normalize_headers: bool) -> tuple[list[str], list[dict[str, object]]]:
+    with open(path, newline="", encoding="utf-8") as handle:
+        records = list(csv.reader(handle))
+    if not records:
+        return [], []
+    header = [_col_name(cell, normalize_headers) for cell in records[0]]
+    rows = [
+        {col: _coerce(raw[i]) if i < len(raw) else None for i, col in enumerate(header)}
+        for raw in records[1:]
+    ]
+    return header, rows
+
+
+def _load_jsonl(path: str, normalize_headers: bool) -> tuple[list[str], list[dict[str, object]]]:
+    header: list[str] = []
+    seen: set[str] = set()
+    rows: list[dict[str, object]] = []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            row: dict[str, object] = {}
+            for key, value in json.loads(line).items():
+                col = _col_name(key, normalize_headers)
+                if col not in seen:
+                    seen.add(col)
+                    header.append(col)
+                row[col] = _coerce(value)
+            rows.append(row)
+    return header, rows
+
+
+def _col_name(name: object, normalize: bool) -> str:
+    text = str(name)
+    if not normalize:
+        return text
+    return text.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _coerce(value: object) -> object:
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    text = str(value).strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def _as_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _cell_eq(a: object, b: object, float_tol: float) -> bool:
+    an, bn = _as_number(a), _as_number(b)
+    if an is not None and bn is not None:
+        return abs(an - bn) <= float_tol
+    return a == b
+
+
+def _fmt(value: object) -> str:
+    return str(value)
+
+
+def _sorted(rows: list[dict[str, object]], cols: list[str]) -> list[dict[str, object]]:
+    return sorted(rows, key=lambda row: tuple(_fmt(row.get(col)) for col in cols))

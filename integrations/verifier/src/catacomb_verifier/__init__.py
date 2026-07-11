@@ -5,9 +5,11 @@ import json
 import os
 import sys
 
+from catacomb_verifier._tables import CompareResult, compare_tables
+
 __version__ = "0.1.0"
 
-__all__ = ["Cell", "emit"]
+__all__ = ["Cell", "CompareResult", "compare_tables", "emit"]
 
 
 @dataclasses.dataclass(frozen=True)

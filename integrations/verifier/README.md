@@ -57,6 +57,36 @@ The exit code is not the verdict: a failed task is `verifier.pass: 0` with exit
 0. A non-zero exit means the verifier itself broke, and the gate records that as
 a missing verdict rather than silently passing.
 
+## Comparing tables
+
+`compare_tables(got, want, ...)` compares two result-set files under the
+benchmark canon and returns a `CompareResult(equal, row_diff, mismatches)` — the
+verdict, `abs` row-count delta, and the first 10 human-readable cell/row diffs.
+
+```python
+from catacomb_verifier import Cell, emit, compare_tables
+
+cell = Cell.from_env()                        # parses CATACOMB_*; .artifact(path) reads
+                                              # from evidence, falls back to workdir in bench mode
+res = compare_tables(
+    cell.artifact("out/result.csv"), "golden.csv",
+    float_tol=1e-4, ordered=False)            # defaults: strict (extra rows/cols fail),
+                                              # unordered, tolerance 1e-4, header normalization
+emit(passed=res.equal)                        # -> {"key":"verifier.pass","value":1}
+emit(key="verifier.row_diff", value=res.row_diff)
+```
+
+The rules follow the benchmark canon (Text2Analysis / DABStep / Databricks
+strictness): numeric tolerance instead of exact floats (`abs(a - b) <=
+float_tol`), row-order insensitivity unless `ordered=True`, header normalization
+(lower-case, spaces and dashes to underscores) unless `normalize_headers=False`,
+type coercion (`int → float → stripped string`), and **strict by default** —
+extra rows or columns fail, the execution-accuracy false-positive lesson. Pass
+`strict=False` for the lenient mode where `want` need only be contained in `got`.
+Formats are selected by extension: `.csv` (via the `csv` module) and `.jsonl`
+(one JSON object per line); the two can be compared cross-format. `mismatches`
+is a structured diff meant to be printed to stderr for a human.
+
 ## Testing
 
 ```bash
