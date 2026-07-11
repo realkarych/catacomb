@@ -47,7 +47,7 @@ func TestScoresLoadErrors(t *testing.T) {
 		{"bad key form no dot", `{"step_key":"sk","key":"nodot","value":1}`, []string{"line 1", "owner.key"}},
 		{"bad key form double dot", `{"step_key":"sk","key":"a.b.c","value":1}`, []string{"line 1", "owner.key"}},
 		{"missing key", `{"step_key":"sk","value":1}`, []string{"line 1", "owner.key"}},
-		{"missing step_key", "\n\n" + `{"key":"owner.quality","value":1}`, []string{"line 3", "step_key"}},
+		{"run-level without run_id", "\n\n" + `{"key":"owner.quality","value":1}`, []string{"line 3", "run_id"}},
 		{"missing value", `{"step_key":"sk","key":"owner.quality"}`, []string{"line 1", "value"}},
 		{"non-numeric value", `{"step_key":"sk","key":"owner.quality","value":"high"}`, []string{"line 1"}},
 	}
@@ -68,6 +68,25 @@ func TestScoresLoadFileAbsent(t *testing.T) {
 	_, err := loadScores(filepath.Join(t.TempDir(), "absent.jsonl"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "scores")
+}
+
+func TestParseScoreLineRunLevel(t *testing.T) {
+	e, err := parseScoreLine(`{"key":"verifier.pass","value":1,"run_id":"r1"}`)
+	require.NoError(t, err)
+	assert.Equal(t, scoreEntry{Key: "verifier.pass", Value: 1, RunID: "r1"}, e)
+}
+
+func TestParseScoreLineToleratesProvenanceFields(t *testing.T) {
+	e, err := parseScoreLine(`{"key":"judge.groundedness","value":0.8,"run_id":"r1","tool":"deepeval","tool_version":"3.1","prompt_hash":"abc"}`)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.8, e.Value, 1e-9)
+}
+
+func TestLoadScoresRunLevelRequiresRunID(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	require.NoError(t, os.WriteFile(p, []byte(`{"key":"verifier.pass","value":1}`+"\n"), 0o600))
+	_, err := loadScores(p)
+	require.ErrorContains(t, err, `run-level score requires "run_id"`)
 }
 
 func TestRunRegressScoresMissingFileNamesPath(t *testing.T) {

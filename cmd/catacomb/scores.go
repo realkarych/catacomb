@@ -11,6 +11,8 @@ import (
 	"github.com/realkarych/catacomb/aggregate"
 )
 
+var errRunLevelNeedsRunID = errors.New(`run-level score requires "run_id"`)
+
 type scoreEntry struct {
 	StepKey string
 	Key     string
@@ -39,6 +41,9 @@ func loadScores(path string) ([]scoreEntry, error) {
 		if perr != nil {
 			return nil, fmt.Errorf("scores %s line %d: %w", path, i+1, perr)
 		}
+		if e.StepKey == "" && e.RunID == "" {
+			return nil, fmt.Errorf("scores %s line %d: %w", path, i+1, errRunLevelNeedsRunID)
+		}
 		entries = append(entries, e)
 	}
 	return entries, nil
@@ -48,9 +53,6 @@ func parseScoreLine(line string) (scoreEntry, error) {
 	var l scoreLine
 	if err := json.Unmarshal([]byte(line), &l); err != nil {
 		return scoreEntry{}, err
-	}
-	if l.StepKey == "" {
-		return scoreEntry{}, errors.New(`missing "step_key"`)
 	}
 	if !validAnnotationKey(l.Key) {
 		return scoreEntry{}, fmt.Errorf("key %q must be owner.key", l.Key)
