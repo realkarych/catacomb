@@ -65,7 +65,7 @@ jobs:
       - name: Install Claude Code CLI
         # Pinned to the live-validated CLI version; bump deliberately after a green
         # dispatch on the new version.
-        run: npm install -g @anthropic-ai/claude-code@2.1.207
+        run: npm install -g @anthropic-ai/claude-code@2.1.207 # zizmor: ignore[adhoc-packages] version-pinned
 
       - name: Build catacomb
         run: make build
