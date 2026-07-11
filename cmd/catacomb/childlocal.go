@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"time"
 )
 
 var (
@@ -80,6 +81,7 @@ func runChildLocal(ctx context.Context, stdout, stderr io.Writer, args []string,
 	obs := &lineObserver{observe: observe}
 	child.Stdout = io.MultiWriter(stdout, obs)
 	child.Stderr = stderr
+	child.WaitDelay = 10 * time.Second
 	err := child.Run()
 	obs.flush()
 	return err
