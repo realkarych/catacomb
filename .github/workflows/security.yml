@@ -67,8 +67,11 @@ jobs:
         # G304 (file inclusion via variable) is excluded wholesale: catacomb is a
         # local CLI whose purpose is opening transcript/session files the invoking
         # user names on the command line — there is no privilege boundary to
-        # traverse. gosec's -conf file cannot exclude rules, so the exclusion
-        # lives here rather than in a .gosec.json.
+        # traverse. Note: -exclude=G304 is global, so it would also mask a future
+        # G304 where a file path originates from untrusted transcript CONTENT (not
+        # argv) — revisit this exclusion if such code is added. gosec's -conf file
+        # cannot exclude rules, so the exclusion lives here rather than in a
+        # .gosec.json.
         run: go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude=G304 ./...
 
   codeql:
