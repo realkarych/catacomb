@@ -5,13 +5,18 @@ push:
 
 - **GitHub Releases** — cross-compiled archives for linux/darwin/windows on
   amd64/arm64
-- **Homebrew** (macOS) — `realkarych/homebrew-tap`
+- **Homebrew cask** (macOS) — `realkarych/homebrew-tap`
 - **APT** (Debian/Ubuntu) — `realkarych/catacomb-apt`, served via GitHub Pages
 - **Docker** — `ghcr.io/realkarych/catacomb`
 - **`go install`** — straight from the tagged source
 
 The pipeline lives in
 [`.github/workflows/publish.yml`](../.github/workflows/publish.yml).
+
+Alongside the archives, each release publishes supply-chain evidence: a
+`checksums.txt`, syft SBOMs for the archives, and keyless cosign signatures over
+the checksum file, the SBOMs, and the GHCR images (built with buildx, which
+attaches its default build-provenance attestation on push).
 
 ## Cutting a release
 
@@ -30,7 +35,10 @@ These must exist before the first release.
 ### Repositories
 
 - **`realkarych/homebrew-tap`** — shared Homebrew tap (already exists). The
-  release job writes `Formula/catacomb.rb` into it.
+  release job writes the cask `Casks/catacomb.rb` into it. One-time, on the
+  first cask release: delete the stale `Formula/catacomb.rb` from the tap;
+  existing formula users migrate with
+  `brew uninstall catacomb && brew install --cask catacomb`.
 - **`realkarych/catacomb-apt`** — APT host. Create it with a `gh-pages` branch
   and enable GitHub Pages (branch `gh-pages`, root). The job publishes the
   signed apt repo there.
