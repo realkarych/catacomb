@@ -32,10 +32,10 @@ Three artifacts leave a catacomb run, each with a defined redaction story
    payloads at all — only baseline definitions (name, pinned run IDs, selector, stamps)
    and the recorded regression reports (verdicts, step names, metric aggregates).
 
-Step keys are also secret-safe by construction: the content term is the hash of the
-**redacted**, salient-projected tool input (for example just the `file_path` of an
-edit or the `command` of a shell call, after redaction), so a step key never encodes a
-raw secret.
+Step keys hash only redacted content by construction: the content term is the hash of
+the **redacted**, salient-projected tool input (for example just the `file_path` of an
+edit or the `command` of a shell call, after redaction), so a step key never hashes
+pre-redaction bytes.
 
 ### Redaction rules
 
@@ -47,10 +47,17 @@ The `redact` package applies value patterns for:
 - OpenAI `sk-` keys
 - Slack `xox*` tokens
 - PEM private key blocks
-- Google `AIza` keys
+- Google `AIza` keys and `ya29.` OAuth tokens
 - `Bearer` tokens
 - JWTs
-- High-entropy hex and base64 strings
+- Stripe `sk_live_`/`sk_test_` (and `rk_`/`pk_`) keys
+- SendGrid `SG.` keys
+- Twilio `SK` keys
+- npm `npm_` and PyPI `pypi-` tokens
+- GitLab `glpat-` tokens
+- High-entropy hex, base64, and base64url strings, gated by a Shannon-entropy
+  threshold so low-entropy lookalikes (file paths, UUIDs, repeated patterns) pass
+  through untouched
 
 It also redacts any value whose key path matches a sensitive token: `password`,
 `passwd`, `secret`, `token`, `apikey`/`api_key`, `auth`, `credential`,
@@ -62,15 +69,18 @@ typed `‹redacted:reason›` placeholders.
 Redaction narrows what a copied evidence dir or store can leak; it does not make your
 filesystem a vault. Deliberate trade-offs to know about:
 
-1. **The source transcripts are not catacomb's.** Claude Code's own files under
+1. **The denylist is best-effort, not a guarantee.** A secret in a shape no rule
+   recognizes — or a generic token below the entropy gate — survives redaction. Treat
+   evidence dirs as reduced-risk, not secret-free.
+2. **The source transcripts are not catacomb's.** Claude Code's own files under
    `~/.claude/projects` remain unredacted on disk; catacomb reads them but never
    rewrites them. Evidence dirs are the redacted, shareable copy.
-2. **Redaction false positives destroy data in the evidence copy.** There is no raw
+3. **Redaction false positives destroy data in the evidence copy.** There is no raw
    copy inside the evidence dir to recover from — by design. The original transcript
    under `~/.claude/projects` is the fallback while Claude Code retains it.
-3. **Literal `‹redacted:…›`/`‹ref:…›` text in genuine content** is indistinguishable
+4. **Literal `‹redacted:…›`/`‹ref:…›` text in genuine content** is indistinguishable
    from a real redaction marker downstream.
-4. **`--scores` files are yours.** Catacomb reads them and applies the values in
+5. **`--scores` files are yours.** Catacomb reads them and applies the values in
    memory; it neither redacts nor stores them.
 
 ## Operations
