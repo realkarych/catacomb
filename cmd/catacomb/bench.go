@@ -162,6 +162,9 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 	if code, ok := runSetup(ctx, stdout, stderr, cell); !ok {
 		entry.ExitCode = code
 		entry.Note = "setup failed"
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			entry.Note = appendNote(entry.Note, ctxNote(ctxErr))
+		}
 		entry.FinishedAt = nowFn()
 		return entry, true, false
 	}

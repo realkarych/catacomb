@@ -174,8 +174,21 @@ func TestBenchOfflineSetupCancelledContext(t *testing.T) {
 		bench.Variant{ID: "base", Setup: []string{"prep"}})
 	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
-	assert.Equal(t, "setup failed", entry.Note)
+	assert.Equal(t, "setup failed; cancelled", entry.Note)
 	assert.Equal(t, -1, entry.ExitCode)
+	assert.True(t, failed)
+	assert.False(t, verified)
+}
+
+func TestBenchOfflineSetupTimedOutNote(t *testing.T) {
+	stubBenchChild(t)
+	ctx, cancel := context.WithTimeout(t.Context(), -time.Second)
+	defer cancel()
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}},
+		bench.Variant{ID: "base", Setup: []string{"prep"}})
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Equal(t, "setup failed; timed out", entry.Note)
 	assert.True(t, failed)
 	assert.False(t, verified)
 }
