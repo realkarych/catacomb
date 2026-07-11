@@ -55,9 +55,9 @@ The `redact` package applies value patterns for:
 - Twilio `SK` keys
 - npm `npm_` and PyPI `pypi-` tokens
 - GitLab `glpat-` tokens
-- High-entropy hex, base64, and base64url strings, gated by a Shannon-entropy
-  threshold so low-entropy lookalikes (file paths, UUIDs, repeated patterns) pass
-  through untouched
+- High-entropy hex, base64 (including `/`-bearing spans such as AWS secret access
+  keys), and base64url strings, gated by a Shannon-entropy threshold so low-entropy
+  lookalikes (file paths, UUIDs, repeated patterns) pass through untouched
 
 It also redacts any value whose key path matches a sensitive token: `password`,
 `passwd`, `secret`, `token`, `apikey`/`api_key`, `auth`, `credential`,
@@ -71,7 +71,19 @@ filesystem a vault. Deliberate trade-offs to know about:
 
 1. **The denylist is best-effort, not a guarantee.** A secret in a shape no rule
    recognizes — or a generic token below the entropy gate — survives redaction. Treat
-   evidence dirs as reduced-risk, not secret-free.
+   evidence dirs as reduced-risk, not secret-free. Classes the entropy gate
+   deliberately does not catch:
+   - **Hex- or base32-encoded ASCII secrets.** Encoding ASCII this way caps entropy
+     around 2.8 bits — squarely inside the band of legitimate hashes and identifiers
+     the gate exists to spare. No threshold separates the two.
+   - **UUID-shaped secrets** (Heroku API keys, for example) are structurally
+     indistinguishable from the session-id UUIDs that saturate every transcript.
+   - **Adversarial padding dilution.** Content shaped by an attacker can pad a secret
+     with repetitive filler until the span falls below the entropy gate — inherent to
+     any span-based denylist.
+   - **A sub-threshold tail at minimum length.** Roughly 3% of random 32-character
+     base64url secrets happen to measure below the 4.3-bit gate; the tail is
+     near-zero by 36 characters.
 2. **The source transcripts are not catacomb's.** Claude Code's own files under
    `~/.claude/projects` remain unredacted on disk; catacomb reads them but never
    rewrites them. Evidence dirs are the redacted, shareable copy.

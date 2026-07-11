@@ -208,9 +208,11 @@ transcript copies it stores as evidence pass through secret redaction on the wri
 (ADR-0024) — a denylist that reduces the blast radius of leaked secrets by replacing
 API keys, tokens, private keys, connection strings, and high-entropy values with typed
 markers before they touch disk. It is best-effort, not a guarantee: no denylist catches
-every secret. Graphs carry a content *hash* per node, computed after redaction; step
-keys likewise hash only redacted content. The SQLite store holds baselines and
-regression reports — never transcripts or payloads.
+every secret — the classes it deliberately does not catch are listed under
+[Known residuals](docs/guide/privacy-and-operations.md#known-residuals). Graphs carry
+a content *hash* per node, computed after redaction; step keys likewise hash only
+redacted content. The SQLite store holds baselines and regression reports — never
+transcripts or payloads.
 
 <hr>
 
