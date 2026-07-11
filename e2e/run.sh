@@ -19,7 +19,11 @@
 #                   server (mcp.json's `catacomb mcp`) resolves the same binary.
 #   E2E_ARTIFACTS   directory for manifests + every regress --json (default:
 #                   ./e2e-artifacts, resolved against the invocation cwd).
-#   ANTHROPIC_API_KEY   required by `claude -p` (checked by the caller/workflow).
+#   ANTHROPIC_API_KEY   Anthropic auth for `claude -p`; either this (API billing) or
+#                       CLAUDE_CODE_OAUTH_TOKEN is required (checked by the caller/
+#                       workflow). If both are set, ANTHROPIC_API_KEY takes precedence.
+#   CLAUDE_CODE_OAUTH_TOKEN   Claude Pro/Max subscription auth for `claude -p`, an
+#                       alternative to ANTHROPIC_API_KEY (generate: `claude setup-token`).
 #
 # The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json`
 # relative to the e2e directory, so this driver cd's into its own directory
