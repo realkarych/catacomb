@@ -95,9 +95,10 @@ more than one) records the reason in the cell's manifest `note` and skips verifi
 and evidence for that cell.
 
 A task's optional `timeout:` — a Go duration string such as `30s` or `5m` — puts a
-per-cell deadline on the child process. The value is validated at basket load (an
-invalid or negative duration rejects the basket), and it is opt-in: unset means no
-deadline, though `Ctrl-C`/`SIGTERM` still cancels the run either way.
+per-cell deadline on the whole cell: the variant's `setup:` commands and the child
+process share one deadline. The value is validated at basket load (an invalid or
+negative duration rejects the basket), and it is opt-in: unset means no deadline,
+though `Ctrl-C`/`SIGTERM` still cancels the run either way.
 
 For each cell the runner synthesizes `task:<id>` start/end phase markers from the
 child's wall-clock start and end, giving `regress` a stable checkpoint axis even when

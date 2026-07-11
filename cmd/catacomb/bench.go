@@ -154,16 +154,16 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 		Rep:        cell.Rep,
 		BasketHash: hash,
 	}
-	if code, ok := runSetup(stdout, stderr, cell); !ok {
-		entry.ExitCode = code
-		entry.Note = "setup failed"
-		entry.FinishedAt = nowFn()
-		return entry, true, false
-	}
 	if d, _ := cell.Task.TimeoutDuration(); d > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
+	}
+	if code, ok := runSetup(ctx, stdout, stderr, cell); !ok {
+		entry.ExitCode = code
+		entry.Note = "setup failed"
+		entry.FinishedAt = nowFn()
+		return entry, true, false
 	}
 	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
 	peek := &streamPeek{}
@@ -352,16 +352,17 @@ func spawnFailure(err error) string {
 	return "spawn failed: " + err.Error()
 }
 
-func runSetup(stdout, stderr io.Writer, cell bench.Cell) (int, bool) {
+func runSetup(ctx context.Context, stdout, stderr io.Writer, cell bench.Cell) (int, bool) {
 	for _, raw := range cell.Variant.Setup {
 		fields := strings.Fields(raw)
 		if len(fields) == 0 {
 			continue
 		}
-		c := execCommand(fields[0], fields[1:]...)
+		c := execCommandContext(ctx, fields[0], fields[1:]...)
 		c.Dir = cell.Task.Dir
 		c.Stdout = stdout
 		c.Stderr = stderr
+		c.WaitDelay = 10 * time.Second
 		if code, ok := exitInfo(c.Run()); !ok {
 			return code, false
 		}
