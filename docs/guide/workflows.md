@@ -323,3 +323,27 @@ This snapshot is the input format of the
 [DeepEval bridge](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval)
 and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 [export](cli.md#export) for flags.
+
+## Continuous live validation
+
+The offline gate is itself validated end-to-end against the real `claude -p` CLI by the
+[E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
+CI-portable rerun of the [PV-6b calibration](../reviews/2026-07-08-pv6b-live-calibration.md)
+methodology. It runs two live baskets and asserts the gate's behavior on the real
+evidence: the A-vs-A controls must raise no presence false positives at default
+sensitivity (their continuous metrics are asserted at a widened band, since sequential
+batches drift on API latency, cost, and tokens), while a seeded checkpoint-presence
+regression (phase axis) and a seeded continuous (`tokens_out`) regression must each gate at
+default thresholds, and a seeded step-scope regression (a guaranteed Bash step that
+vanishes) must surface in the report — all attributed to the swapped instruction. It also
+smoke-tests baseline
+pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
+Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
+config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
+The checkpoint (mark) task runs on Sonnet for instruction-following reliability while the
+step and continuous tasks stay on Haiku, which also exercises multi-model pricing.
+
+Because it spends real API budget (~$1 per run), it is not part of per-PR CI: trigger it
+by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
+needs the `ANTHROPIC_API_KEY` repository secret and fails fast with a clear message when
+the secret is absent.

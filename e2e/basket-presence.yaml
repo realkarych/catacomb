@@ -1,0 +1,54 @@
+# Presence basket: two independent axes in one live run.
+#
+# 2 tasks x 3 variants x 5 reps = 30 live cells.
+#   - task `haiku` (PHASE axis): does the agent mark the `verify` checkpoint?
+#     baseline/baseline2 mark it (must stay ~5/5), degraded omits it (~0/5) — the
+#     seeded checkpoint-presence regression. Mark-only tool surface for reliable
+#     obedience (see presence.sh).
+#   - task `echo` (STEP axis): a guaranteed Bash `echo` step. baseline/baseline2
+#     run it (a stable, cross-variant step key), degraded runs no tool — a seeded
+#     STEP-scope regression, and the guaranteed step-key node the diff/export/scores
+#     smokes need (see echo.sh).
+#
+# Separating the axes keeps each task single-tool: run 1 showed a single allowed
+# tool + the exact PV-6b instruction gives reliable obedience, which a second tool
+# or a longer composite instruction dilutes.
+#
+# `dir: .` — run.sh cd's into e2e before invoking bench, so `./presence.sh`,
+# `./echo.sh`, and `mcp.json` resolve here.
+basket: e2e-presence
+reps: 5
+tasks:
+  - id: haiku
+    cmd: ["./presence.sh"]
+    dir: .
+    # claude-haiku-4-5 (CLI 2.1.206) no longer reliably follows the mark instruction
+    # (run 5: baseline 4/5, baseline2 2/5), so the mark-dependent task runs on sonnet.
+    # Task-level env: no variant sets CHILD_MODEL, so it survives the task+variant
+    # merge (bench merges task env first, then variant env; variant would win a clash).
+    env:
+      CHILD_MODEL: claude-sonnet-5
+    checkpoints:
+      - verify
+  # echo stays on the default haiku (CHILD_MODEL unset) — cheap, and Bash obedience
+  # held on haiku in run 5. This also exercises multi-model pricing in the gate.
+  - id: echo
+    cmd: ["./echo.sh"]
+    dir: .
+variants:
+  # baseline: haiku marks verify; echo runs the Bash step. The A-vs-A reference.
+  - id: baseline
+    env:
+      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+      STEP_INSTRUCTION: "Run the Bash command `echo catacomb-e2e` using the Bash tool, then reply done. Run it yourself, directly — no subagents, no skills."
+  # degraded: seeded regressions on both axes — no tools, so neither `verify` nor
+  # the echo step lands.
+  - id: degraded
+    env:
+      PHASE_INSTRUCTION: "Do not use any tools. Just write the haiku."
+      STEP_INSTRUCTION: "Do not use any tools. Just reply done."
+  # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
+  - id: baseline2
+    env:
+      PHASE_INSTRUCTION: "Before writing, call mcp__catacomb__mark name=verify boundary=start; after writing, call it name=verify boundary=end."
+      STEP_INSTRUCTION: "Run the Bash command `echo catacomb-e2e` using the Bash tool, then reply done. Run it yourself, directly — no subagents, no skills."

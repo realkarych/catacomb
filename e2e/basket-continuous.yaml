@@ -1,0 +1,28 @@
+# Continuous basket: does a large output-token increase gate?
+#
+# 1 task x 3 variants x 5 reps = 15 live `claude -p` cells. The gate must:
+#   - see baseline and baseline2 (A-vs-A control) stay within the noise band, and
+#   - see `verbose` trip the continuous gate on `tokens_out` (a long essay vs a
+#     one-sentence answer is the seeded regression).
+#
+# `dir: .` — same cwd contract as basket-presence.yaml: run.sh cd's into e2e so
+# `./answer.sh` resolves here. No checkpoints: this basket gates on metrics only.
+basket: e2e-continuous
+reps: 5
+tasks:
+  - id: answer
+    cmd: ["./answer.sh"]
+    dir: .
+variants:
+  # baseline: a terse answer — the low-token reference.
+  - id: baseline
+    env:
+      TASK_PROMPT: "In one short sentence, what is a hash function?"
+  # verbose: seeded regression — a long essay drives tokens_out far past the band.
+  - id: verbose
+    env:
+      TASK_PROMPT: "Explain what a hash function is in a detailed six-paragraph essay. Write at least six full paragraphs covering definition, properties, collisions, cryptographic vs non-cryptographic uses, common algorithms, and practical pitfalls."
+  # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
+  - id: baseline2
+    env:
+      TASK_PROMPT: "In one short sentence, what is a hash function?"
