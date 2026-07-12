@@ -235,3 +235,20 @@ func sampleArtifactMeta() Meta {
 		ArtifactsNote: "skipped \"big.bin\": exceeds per-file cap",
 	}
 }
+
+func TestStampArtifacts(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	require.NoError(t, Write(dir, Meta{RunID: "r1", Task: "t1", MarkerName: "task:t1"}, nil))
+	arts := []ArtifactMeta{{Rel: "out/result.csv", SHA256: "deadbeef", Bytes: 7}}
+	require.NoError(t, StampArtifacts(dir, arts, "note-x"))
+	got, err := ReadMeta(dir)
+	require.NoError(t, err)
+	assert.Equal(t, arts, got.Artifacts)
+	assert.Equal(t, "note-x", got.ArtifactsNote)
+}
+
+func TestStampArtifactsReadMetaError(t *testing.T) {
+	err := StampArtifacts(t.TempDir(), nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "evidence.StampArtifacts")
+}

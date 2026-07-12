@@ -94,3 +94,14 @@ func TestCaptureArtifactsWorkdirUnderSymlinkedParent(t *testing.T) {
 	_, serr := os.Stat(filepath.Join(dir, ArtifactsDirName, "own.txt"))
 	require.NoError(t, serr)
 }
+
+func TestStampArtifactsWriteError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	require.NoError(t, Write(dir, Meta{RunID: "r1", Task: "t1", MarkerName: "task:t1"}, nil))
+	meta := filepath.Join(dir, "meta.json")
+	require.NoError(t, os.Chmod(meta, 0o400))
+	t.Cleanup(func() { _ = os.Chmod(meta, 0o600) })
+	err := StampArtifacts(dir, []ArtifactMeta{{Rel: "a", SHA256: "b", Bytes: 1}}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "evidence.StampArtifacts")
+}

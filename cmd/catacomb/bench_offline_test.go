@@ -419,3 +419,119 @@ func writeHelperTranscript(sid string) {
 		os.Exit(1)
 	}
 }
+
+func stubBenchAndVerify(t *testing.T, env ...string) {
+	t.Helper()
+	t.Setenv("GO_HELPER_BENCH", "1")
+	t.Setenv("GO_HELPER_VERIFY", "1")
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, _ ...string) *exec.Cmd {
+		run := "TestHelperBenchChild"
+		if name == "verify" {
+			run = "TestHelperVerify"
+		}
+		return exec.CommandContext(ctx, os.Args[0], "-test.run="+run)
+	}
+	t.Cleanup(func() { execCommandContext = orig })
+}
+
+func TestBenchOfflineWithArtifactsAndVerify(t *testing.T) {
+	projects := t.TempDir()
+	runs := t.TempDir()
+	work := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(work, "out"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(work, "out", "result.csv"), []byte("a,b\n1,2\n"), 0o600))
+	stubBenchAndVerify(t, "HELPER_SESSION=vsess", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+
+	basket := filepath.Join(t.TempDir(), "b.yaml")
+	yaml := fmt.Sprintf("basket: bx\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"agent\"]\n    dir: %q\n    artifacts:\n      - \"out/*.csv\"\n    verify:\n      cmd: [\"verify\"]\nvariants:\n  - id: base\n  - id: bad\n", work)
+	require.NoError(t, os.WriteFile(basket, []byte(yaml), 0o600))
+	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
+
+	var out, errb bytes.Buffer
+	require.NoError(t, runBench(t.Context(), &out, &errb, basket, benchFlags{projectsDir: projects, runsDir: runs, manifest: manifestPath}))
+
+	entries, err := bench.Manifest{Path: manifestPath}.Completed()
+	require.NoError(t, err)
+	base := entries["bench-bx-t1-base-r1"]
+	bad := entries["bench-bx-t1-bad-r1"]
+
+	assert.True(t, base.Verified)
+	assert.Empty(t, base.VerifyError)
+	_, statErr := os.Stat(filepath.Join(base.EvidenceDir, "artifacts", "out", "result.csv"))
+	require.NoError(t, statErr)
+	_, statErr = os.Stat(filepath.Join(base.EvidenceDir, "scores.jsonl"))
+	require.NoError(t, statErr)
+	rec, ok, verr := evidence.ReadVerify(base.EvidenceDir)
+	require.NoError(t, verr)
+	require.True(t, ok)
+	assert.Equal(t, "bench", rec.Mode)
+	meta, err := evidence.ReadMeta(base.EvidenceDir)
+	require.NoError(t, err)
+	require.Len(t, meta.Artifacts, 1)
+	assert.Equal(t, filepath.Join("out", "result.csv"), meta.Artifacts[0].Rel)
+
+	assert.False(t, bad.Verified)
+	assert.NotEmpty(t, bad.VerifyError)
+	assert.Contains(t, errb.String(), "bench bench-bx-t1-bad-r1: verify failed:")
+	assert.Contains(t, out.String(), "verify[t1]: pass 1/1")
+}
+
+func TestCaptureArtifactsOfflineCaptureError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, evidence.Write(dir, evidence.Meta{RunID: "r", Task: "t", MarkerName: "task:t"}, nil))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "artifacts"), []byte("x"), 0o600))
+	work := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(work, "f.txt"), []byte("hi\n"), 0o600))
+	entry := &bench.ManifestEntry{}
+	cell := offlineCell("r", bench.Task{ID: "t", Dir: work, Artifacts: []string{"f.txt"}}, bench.Variant{ID: "base"})
+	captureArtifactsOffline(cell, dir, entry)
+	assert.Contains(t, entry.Note, "artifacts:")
+}
+
+func TestCaptureArtifactsOfflineStampError(t *testing.T) {
+	dir := t.TempDir()
+	work := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(work, "f.txt"), []byte("hi\n"), 0o600))
+	entry := &bench.ManifestEntry{}
+	cell := offlineCell("r", bench.Task{ID: "t", Dir: work, Artifacts: []string{"f.txt"}}, bench.Variant{ID: "base"})
+	captureArtifactsOffline(cell, dir, entry)
+	assert.Contains(t, entry.Note, "artifacts stamp:")
+}
+
+func TestVerifierPassed(t *testing.T) {
+	pass := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(pass, "scores.jsonl"),
+		[]byte(`{"key":"verifier.pass","value":1,"run_id":"r"}`+"\n"), 0o600))
+	assert.True(t, verifierPassed(pass, "r"))
+
+	fail := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(fail, "scores.jsonl"),
+		[]byte(`{"key":"verifier.pass","value":0,"run_id":"r"}`+"\n"), 0o600))
+	assert.False(t, verifierPassed(fail, "r"))
+
+	assert.False(t, verifierPassed(t.TempDir(), "r"))
+
+	bad := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(bad, "scores.jsonl"), 0o700))
+	assert.False(t, verifierPassed(bad, "r"))
+}
+
+func TestVerifyStatsAndSummary(t *testing.T) {
+	s := newVerifyStats()
+	tk := bench.Task{ID: "t1", Verify: &bench.Verify{Cmd: []string{"v"}}}
+	s.record(tk, true)
+	s.record(tk, false)
+	var b bytes.Buffer
+	printVerifySummary(&b, bench.Basket{Tasks: []bench.Task{tk, {ID: "t2"}}}, s)
+	assert.Contains(t, b.String(), "verify[t1]: pass 1/2")
+	assert.NotContains(t, b.String(), "t2")
+
+	var none bytes.Buffer
+	printVerifySummary(&none, bench.Basket{Tasks: []bench.Task{{ID: "t2"}}}, newVerifyStats())
+	assert.Empty(t, none.String())
+}

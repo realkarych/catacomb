@@ -111,6 +111,7 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 	}
 	ambient := model.ParseLabels(os.Getenv("CATACOMB_LABELS"))
 	stats := newCheckpointStats()
+	vstats := newVerifyStats()
 	executed, marked := 0, 0
 	for _, cell := range cells {
 		if _, done := completed[cell.RunID]; f.resume && done {
@@ -128,6 +129,9 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 		if verified {
 			stats.record(cell.Task, entry.MissingCheckpoints)
 		}
+		if entry.Verified {
+			vstats.record(cell.Task, verifierPassed(entry.EvidenceDir, cell.RunID))
+		}
 		if failed && f.failFast {
 			return errBenchFailFast
 		}
@@ -135,6 +139,7 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 	if executed > 0 {
 		fmt.Fprintf(stdout, "marked %d/%d cells\n", marked, executed)
 		printCheckpointSummary(stdout, basket, stats)
+		printVerifySummary(stdout, basket, vstats)
 	}
 	printOfflineEpilogue(stdout, basket, f.runsDir)
 	return nil
@@ -183,7 +188,7 @@ func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell ben
 	if offlineChildFailed(stderr, cell, err, &entry) {
 		return entry, !ok, false
 	}
-	verified := recordOfflineEvidence(stderr, cell, o, merged, start, end, &entry)
+	verified := recordOfflineEvidence(ctx, stderr, cell, o, merged, start, end, &entry)
 	return entry, !ok, verified
 }
 
@@ -209,7 +214,7 @@ func offlineChildFailed(stderr io.Writer, cell bench.Cell, err error, entry *ben
 	return false
 }
 
-func recordOfflineEvidence(stderr io.Writer, cell bench.Cell, o offlineOpts, labels map[string]string, start, end time.Time, entry *bench.ManifestEntry) bool {
+func recordOfflineEvidence(ctx context.Context, stderr io.Writer, cell bench.Cell, o offlineOpts, labels map[string]string, start, end time.Time, entry *bench.ManifestEntry) bool {
 	ts, err := resolveTranscriptsRetry(o.projectsDir, entry.SessionID, 6, 500*time.Millisecond)
 	if err != nil {
 		entry.Note = appendNote(entry.Note, "transcripts not found: "+err.Error())
@@ -228,8 +233,64 @@ func recordOfflineEvidence(stderr io.Writer, cell bench.Cell, o offlineOpts, lab
 	verified := verifyCheckpointsOffline(stderr, cell, marks, entry)
 	finishedAt := nowFn()
 	entry.FinishedAt = finishedAt
-	writeOfflineEvidence(filepath.Join(o.runsDir, cell.RunID), offlineMeta(*entry, labels, start, end, finishedAt), ts, entry)
+	dir := filepath.Join(o.runsDir, cell.RunID)
+	writeOfflineEvidence(dir, offlineMeta(*entry, labels, start, end, finishedAt), ts, entry)
+	if entry.EvidenceDir != "" {
+		captureArtifactsOffline(cell, dir, entry)
+		verifyCellOffline(ctx, stderr, cell, dir, entry)
+	}
 	return verified
+}
+
+func captureArtifactsOffline(cell bench.Cell, dir string, entry *bench.ManifestEntry) {
+	if len(cell.Task.Artifacts) == 0 {
+		return
+	}
+	arts, note, err := evidence.CaptureArtifacts(dir, cell.Task.Dir, cell.Task.Artifacts)
+	if err != nil {
+		entry.Note = appendNote(entry.Note, "artifacts: "+err.Error())
+		return
+	}
+	if serr := evidence.StampArtifacts(dir, arts, note); serr != nil {
+		entry.Note = appendNote(entry.Note, "artifacts stamp: "+serr.Error())
+	}
+}
+
+func verifyCellOffline(ctx context.Context, stderr io.Writer, cell bench.Cell, dir string, entry *bench.ManifestEntry) {
+	if cell.Task.Verify == nil {
+		return
+	}
+	rec := runVerifyCell(ctx, stderr, *cell.Task.Verify, verifySpec{
+		EvidenceDir: dir,
+		Workdir:     cell.Task.Dir,
+		RunID:       cell.RunID,
+		Basket:      cell.Labels["basket"],
+		Task:        cell.Task.ID,
+		Variant:     cell.Variant.ID,
+		Rep:         cell.Rep,
+		AgentExit:   entry.ExitCode,
+		Mode:        "bench",
+		ExtraEnv:    cellEnv(cell),
+	})
+	if rec.Error != "" {
+		entry.VerifyError = rec.Error
+		fmt.Fprintf(stderr, "bench %s: verify failed: %s\n", cell.RunID, rec.Error)
+		return
+	}
+	entry.Verified = true
+}
+
+func verifierPassed(dir, runID string) bool {
+	entries, err := loadEvidenceScores(dir, runID)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Key == "verifier.pass" && e.Value == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func verifyCheckpointsOffline(stderr io.Writer, cell bench.Cell, marks map[string]struct{}, entry *bench.ManifestEntry) bool {
@@ -351,6 +412,44 @@ func printCheckpointSummary(out io.Writer, b bench.Basket, s checkpointStats) {
 		for _, name := range t.Checkpoints {
 			fmt.Fprintf(out, "checkpoints[%s]: %s %d/%d\n", t.ID, name, s.hits[t.ID][name], s.verified[t.ID])
 		}
+	}
+}
+
+type verifyStats struct {
+	verified map[string]int
+	passed   map[string]int
+}
+
+func newVerifyStats() verifyStats {
+	return verifyStats{
+		verified: map[string]int{},
+		passed:   map[string]int{},
+	}
+}
+
+func (s verifyStats) record(t bench.Task, pass bool) {
+	s.verified[t.ID]++
+	if pass {
+		s.passed[t.ID]++
+	}
+}
+
+func printVerifySummary(out io.Writer, b bench.Basket, s verifyStats) {
+	declared := false
+	for _, t := range b.Tasks {
+		if t.Verify != nil {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return
+	}
+	for _, t := range b.Tasks {
+		if t.Verify == nil {
+			continue
+		}
+		fmt.Fprintf(out, "verify[%s]: pass %d/%d\n", t.ID, s.passed[t.ID], s.verified[t.ID])
 	}
 }
 

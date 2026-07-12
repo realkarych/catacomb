@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,20 @@ const (
 
 func CaptureArtifacts(dir, workdir string, globs []string) ([]ArtifactMeta, string, error) {
 	return captureArtifacts(dir, workdir, globs, ArtifactPerFileCap, ArtifactTotalCap)
+}
+
+func StampArtifacts(dir string, arts []ArtifactMeta, note string) error {
+	m, err := ReadMeta(dir)
+	if err != nil {
+		return fmt.Errorf("evidence.StampArtifacts: %w", err)
+	}
+	m.Artifacts = arts
+	m.ArtifactsNote = note
+	data, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, metaFileName), data, 0o600); err != nil {
+		return fmt.Errorf("evidence.StampArtifacts: %w", err)
+	}
+	return nil
 }
 
 func captureArtifacts(dir, workdir string, globs []string, perFileCap, totalCap int64) ([]ArtifactMeta, string, error) {
