@@ -21,6 +21,8 @@ func TestDefaultThresholds(t *testing.T) {
 		CoverageFloor:       0.7,
 		Z:                   1.645,
 		AnnotationRateDelta: 0.1,
+		PairedAlpha:         0.05,
+		PairedMinTasks:      5,
 	}, th)
 }
 

@@ -20,6 +20,9 @@ func RenderHuman(r Report, w io.Writer) {
 		if r.Sensitivity.Annotation != nil {
 			axes = append(axes, formatSensitivity("annotation", *r.Sensitivity.Annotation))
 		}
+		if r.Sensitivity.Paired != nil {
+			axes = append(axes, formatPairedSensitivity(*r.Sensitivity.Paired))
+		}
 		_, _ = fmt.Fprintf(w, "sensitivity: rate gate cannot fire at this support (%s)\n", strings.Join(axes, ", "))
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -55,6 +58,10 @@ func formatSensitivity(name string, rs RateSensitivity) string {
 		return fmt.Sprintf("full flip unreachable %s", name)
 	}
 	return fmt.Sprintf("full flip needs k>=%d %s", rs.MinFullFlipRuns, name)
+}
+
+func formatPairedSensitivity(rs RateSensitivity) string {
+	return fmt.Sprintf("paired gate needs k>=%d tasks", rs.MinFullFlipRuns)
 }
 
 func keyOrDash(key string) string {

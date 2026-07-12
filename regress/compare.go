@@ -17,6 +17,8 @@ type Thresholds struct {
 	Z                   float64
 	FailOnNotable       bool
 	AnnotationRateDelta float64
+	PairedAlpha         float64
+	PairedMinTasks      int
 }
 
 func DefaultThresholds() Thresholds {
@@ -29,6 +31,8 @@ func DefaultThresholds() Thresholds {
 		CoverageFloor:       0.7,
 		Z:                   1.645,
 		AnnotationRateDelta: 0.1,
+		PairedAlpha:         0.05,
+		PairedMinTasks:      5,
 	}
 }
 
