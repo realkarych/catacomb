@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -301,11 +302,8 @@ func redactValueWithTail(node any, raw []byte, off int64) Result {
 		return Result{Data: raw}
 	}
 	sortFindings(findings)
-	out := make([]byte, 0, len(head)+len(tail.Data))
-	out = append(out, head...)
-	out = append(out, tail.Data...)
 	return Result{
-		Data:     out,
+		Data:     slices.Concat(head, tail.Data),
 		Findings: findings,
 		Redacted: true,
 	}
