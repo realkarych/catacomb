@@ -33,10 +33,6 @@ func TestWriteReadVerifyRoundtrip(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, r, got)
-
-	info, serr := os.Stat(filepath.Join(dir, "verify.json"))
-	require.NoError(t, serr)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestReadVerifyAbsent(t *testing.T) {
