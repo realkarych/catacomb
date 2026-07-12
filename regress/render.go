@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 )
 
@@ -12,9 +13,14 @@ func RenderHuman(r Report, w io.Writer) {
 	_, _ = fmt.Fprintf(w, "coverage steps %.2f  phases %.2f  steps_trusted %t  overall %s\n",
 		r.Coverage.Steps, r.Coverage.Phases, r.StepsTrusted, r.OverallVerdict)
 	if r.Sensitivity != nil {
-		_, _ = fmt.Fprintf(w, "sensitivity: rate gate cannot fire at this support (%s, %s)\n",
+		axes := []string{
 			formatSensitivity("presence", r.Sensitivity.Presence),
-			formatSensitivity("error_rate", r.Sensitivity.ErrorRate))
+			formatSensitivity("error_rate", r.Sensitivity.ErrorRate),
+		}
+		if r.Sensitivity.Annotation != nil {
+			axes = append(axes, formatSensitivity("annotation", *r.Sensitivity.Annotation))
+		}
+		_, _ = fmt.Fprintf(w, "sensitivity: rate gate cannot fire at this support (%s)\n", strings.Join(axes, ", "))
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "VERDICT\tSCOPE\tKEY\tNAME\tMETRIC\tBASELINE\tCANDIDATE\tBAND\tDETAIL")

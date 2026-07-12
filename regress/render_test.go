@@ -174,6 +174,34 @@ func TestRenderHumanSensitivityUnreachable(t *testing.T) {
 	assert.NotContains(t, out, "k>=never")
 }
 
+func TestRenderHumanSensitivityAnnotation(t *testing.T) {
+	t.Parallel()
+	withAnn := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:   RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate:  RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			Annotation: &RateSensitivity{Reachable: false, MinFullFlipRuns: 6},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(withAnn, &buf)
+	require.Contains(t, buf.String(), "sensitivity: rate gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate, full flip needs k>=6 annotation)")
+
+	noAnn := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:  RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate: RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+		},
+	}
+	buf.Reset()
+	RenderHuman(noAnn, &buf)
+	out := buf.String()
+	require.Contains(t, out, "sensitivity:")
+	assert.NotContains(t, out, "annotation")
+}
+
 func TestRenderHumanNoSensitivityNote(t *testing.T) {
 	t.Parallel()
 	rep := Report{BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK}
