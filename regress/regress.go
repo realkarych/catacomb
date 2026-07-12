@@ -17,7 +17,7 @@ type AnnotationSpec struct {
 
 const RecordVersion = 1
 
-const VerifierPassKey = "verifier.pass"
+const VerifierOutcomeKey = "verifier.pass"
 
 type Record struct {
 	V                 int              `json:"v"`
@@ -128,11 +128,11 @@ func totalsFindings(b, c aggregate.Report, th Thresholds) []Finding {
 
 func effectiveRunAnnotationSpecs(specs []AnnotationSpec) []AnnotationSpec {
 	for _, s := range specs {
-		if s.Key == VerifierPassKey {
+		if s.Key == VerifierOutcomeKey {
 			return specs
 		}
 	}
-	return append([]AnnotationSpec{{Key: VerifierPassKey, HigherBetter: true}}, specs...)
+	return append([]AnnotationSpec{{Key: VerifierOutcomeKey, HigherBetter: true}}, specs...)
 }
 
 func runAnnotationFindings(b, c aggregate.Report, specs []AnnotationSpec, th Thresholds) []Finding {

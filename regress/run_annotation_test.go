@@ -37,7 +37,7 @@ func reportWithAnnKey(k int, key string, ann aggregate.AnnotationTotals) aggrega
 }
 
 func reportWithAnn(k int, ann aggregate.AnnotationTotals) aggregate.Report {
-	return reportWithAnnKey(k, VerifierPassKey, ann)
+	return reportWithAnnKey(k, VerifierOutcomeKey, ann)
 }
 
 func findingByMetric(t *testing.T, fs []Finding, metricName string) Finding {
@@ -144,7 +144,7 @@ func TestCompareRunAnnotationExplicitSpecOverridesDefault(t *testing.T) {
 	rep := Compare(Input{
 		Baseline:    b,
 		Candidate:   c,
-		Annotations: []AnnotationSpec{{Key: VerifierPassKey, HigherBetter: false}},
+		Annotations: []AnnotationSpec{{Key: VerifierOutcomeKey, HigherBetter: false}},
 	}, DefaultThresholds())
 	f := findingByMetric(t, rep.Findings, "ann:verifier.pass")
 	assert.Equal(t, VerdictImprovement, f.Verdict)
