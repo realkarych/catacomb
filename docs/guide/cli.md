@@ -339,7 +339,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--runs-dir` | `~/.catacomb/runs` | Evidence dir to resolve selectors from: `label:` scans it, `name:` reads `--db`'s baselines table, `--record` appends there |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path for `name:` baselines and `--record` |
 | `--json` | false | Emit the full report as JSON |
-| `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer matched tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
+| `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
 | `--scores` | (none) | JSONL file of external scores applied as node annotations before comparison (see [Gating on external scores](#gating-on-external-scores)) |

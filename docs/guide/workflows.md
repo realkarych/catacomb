@@ -261,7 +261,7 @@ comparison.
   unanimous per-task shifts is also the smallest signal that can reach `regression`
   (0.5⁵ = 0.03125) — a smaller basket reports `insufficient` and the `sensitivity:` line
   discloses it, no matter how strong the drift. Under `--strict` that is a structural failure,
-  not a flaky one: with fewer matched tasks than `--paired-min-tasks` the paired findings are
+  not a flaky one: with fewer tasks than `--paired-min-tasks` in the basket the paired findings are
   always `insufficient`, so an otherwise-clean report lands `insufficient` — never `ok` — and
   exits `1` on every run, however many repetitions you add. Grow the basket to five tasks, or
   lower `--paired-min-tasks` as a conscious choice. Five or more tasks per basket give systematic
