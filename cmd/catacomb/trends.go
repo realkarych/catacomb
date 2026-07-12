@@ -33,22 +33,26 @@ type trendsJSONEntry struct {
 
 func newTrendsCmd() *cobra.Command {
 	var dbPath, metric string
-	var asJSON bool
+	var asJSON, pareto bool
 	cmd := &cobra.Command{
 		Use:   "trends <baseline>",
 		Short: "Show the recorded regression history for a baseline",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTrends(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, dbPath, args[0], metric, asJSON)
+			return runTrends(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, dbPath, args[0], metric, asJSON, pareto)
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&metric, "metric", "", "restrict to a total-scope metric: "+strings.Join(totalMetrics, "|"))
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	cmd.Flags().BoolVar(&pareto, "pareto", false, "accuracy-vs-cost pareto table over the recorded history")
 	return cmd
 }
 
-func runTrends(out io.Writer, open storeOpener, dbPath, name, metric string, asJSON bool) error {
+func runTrends(out io.Writer, open storeOpener, dbPath, name, metric string, asJSON, pareto bool) error {
+	if pareto && metric != "" {
+		return operational(errors.New("trends: --pareto and --metric are mutually exclusive"))
+	}
 	if metric != "" && !isTotalMetric(metric) {
 		return operational(fmt.Errorf("trends: unknown --metric %q (want one of %s)", metric, strings.Join(totalMetrics, ", ")))
 	}
@@ -84,6 +88,13 @@ func runTrends(out io.Writer, open storeOpener, dbPath, name, metric string, asJ
 		return operational(err)
 	}
 
+	if pareto {
+		rep := buildParetoReport(name, records, baseline.CreatedAt)
+		if asJSON {
+			return renderParetoJSON(out, rep)
+		}
+		return renderParetoTable(out, rep)
+	}
 	if asJSON {
 		return renderTrendsJSON(out, records)
 	}
