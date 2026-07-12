@@ -66,14 +66,14 @@ func buildParetoReport(name string, records []seqRecord, current time.Time) pare
 }
 
 func baselineAxis(rep regress.Report, metric string) *float64 {
-	if f, ok := totalFinding(rep, metric); ok {
+	if f, ok := totalFinding(rep, metric); ok && !f.AnnotationAbsent() {
 		return &f.Baseline
 	}
 	return nil
 }
 
 func candidateAxis(rep regress.Report, metric string) *float64 {
-	if f, ok := totalFinding(rep, metric); ok {
+	if f, ok := totalFinding(rep, metric); ok && !f.AnnotationAbsent() {
 		return &f.Candidate
 	}
 	return nil

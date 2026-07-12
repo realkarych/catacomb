@@ -664,11 +664,15 @@ costly, with strict advantage on at least one axis — rows equal on both axes (
 first two above) do not dominate each other and both stay `no`. Rows sort by cost
 ascending, then accuracy descending, then sequence ascending, so the Pareto frontier
 reads top-down. A row that lacks an axis — either accuracy (a record whose report
-carries no total-scope `ann:verifier.pass` finding: pre-verifier history) or cost
-(cost-less evidence) — carries no domination verdict: it renders `-` in the missing
-cells and in `DOMINATED`, sinks to the bottom of the table in sequence order, and one
-epilogue note counts how many rows were not compared. The splice marker (`*` and its
-footnote) applies unchanged.
+carries no total-scope `ann:verifier.pass` measurement: pre-verifier history, or a
+mixed comparison where only one side carried the verifier annotation) or cost (a
+report with no total-scope `cost_usd` finding) — carries no domination verdict: it
+renders `-` in the missing cells and in `DOMINATED`, sinks to the bottom of the table
+in sequence order, and one epilogue note counts how many rows were not compared.
+Evidence without reported cost aggregates as cost `0.0`, not as a missing axis — a
+record written by this binary always carries a cost value (it renders `0.0000` and
+can dominate); the missing-cost path serves records produced by other writers. The
+splice marker (`*` and its footnote) applies unchanged.
 
 `--pareto --json` emits `{"baseline": "<name>", "points": [...]}` instead: every point
 carries `source` (`"baseline"` or `"record"`), and record points add `seq`,

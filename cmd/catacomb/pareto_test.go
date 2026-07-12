@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
 	"github.com/realkarych/catacomb/store"
@@ -108,6 +109,81 @@ func TestBuildParetoReportExtraction(t *testing.T) {
 			rep := buildParetoReport("golden", tc.records, base)
 			assert.Equal(t, "golden", rep.Baseline)
 			assert.Equal(t, tc.want, rep.Points)
+		})
+	}
+}
+
+func paretoAggregateReport(withVerifier bool) aggregate.Report {
+	rep := aggregate.Report{
+		Runs: 5,
+		Totals: aggregate.RunTotals{
+			CostUSD: aggregate.MetricStats{N: 5, Median: 0.01, P25: 0.01, P75: 0.01, P90: 0.01},
+		},
+	}
+	if withVerifier {
+		rep.Totals.Annotations = map[string]aggregate.AnnotationTotals{
+			regress.VerifierOutcomeKey: {N: 5, Ones: 5, Binary: true, Stats: aggregate.MetricStats{N: 5, Median: 1, P25: 1, P75: 1, P90: 1}},
+		}
+	}
+	return rep
+}
+
+func TestBuildParetoReportAbsenceFindingProvidesNoAxis(t *testing.T) {
+	base := time.Date(2026, 7, 12, 17, 0, 0, 0, time.UTC)
+	created := base.Add(time.Hour)
+	cases := []struct {
+		name              string
+		baselineVerified  bool
+		candidateVerified bool
+	}{
+		{name: "absence on baseline side", baselineVerified: false, candidateVerified: true},
+		{name: "absence on candidate side", baselineVerified: true, candidateVerified: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mixed := regress.Compare(regress.Input{
+				Baseline:  paretoAggregateReport(tc.baselineVerified),
+				Candidate: paretoAggregateReport(tc.candidateVerified),
+			}, regress.DefaultThresholds())
+			f, ok := totalFinding(mixed, paretoAccuracyMetric)
+			require.True(t, ok)
+			require.Equal(t, regress.VerdictInsufficient, f.Verdict)
+
+			records := []seqRecord{{seq: 1, rec: regress.Record{
+				V:                 regress.RecordVersion,
+				CandidateSelector: "label:variant=cand",
+				CreatedAt:         created,
+				BaselineCreatedAt: base,
+				Report:            mixed,
+			}}}
+			rep := buildParetoReport("golden", records, base)
+			require.Len(t, rep.Points, 2)
+			for _, p := range rep.Points {
+				assert.Nil(t, p.Accuracy)
+				assert.Nil(t, p.Dominated)
+				require.NotNil(t, p.CostUSD)
+			}
+
+			var table bytes.Buffer
+			require.NoError(t, renderParetoTable(&table, rep))
+			lines := strings.Split(strings.TrimSpace(table.String()), "\n")
+			require.Len(t, lines, 4)
+			assert.Equal(t, []string{"-", "-", "baseline", "-", "0.0100", "-"}, strings.Fields(lines[1]))
+			assert.Equal(t, []string{"1", "2026-07-12T18:00:00Z", "label:variant=cand", "-", "0.0100", "-"}, strings.Fields(lines[2]))
+			assert.Equal(t, "pareto: 2 row(s) lack an accuracy axis (no ann:verifier.pass finding) and are not compared", lines[3])
+
+			var jsonBuf bytes.Buffer
+			require.NoError(t, renderParetoJSON(&jsonBuf, rep))
+			var doc struct {
+				Points []map[string]any `json:"points"`
+			}
+			require.NoError(t, json.Unmarshal(jsonBuf.Bytes(), &doc))
+			require.Len(t, doc.Points, 2)
+			for _, p := range doc.Points {
+				assert.NotContains(t, p, "accuracy")
+				assert.NotContains(t, p, "dominated")
+				assert.Contains(t, p, "cost_usd")
+			}
 		})
 	}
 }

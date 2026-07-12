@@ -205,8 +205,11 @@ strict advantage on one of the two — same accuracy for more money, or less acc
 same money, has no reason to win. Two rows equal on both axes — an A-vs-A control recorded
 against its own baseline, say — dominate nothing and both stay `no`: domination needs a strict
 advantage somewhere, and between exact ties the table has no opinion. A row that lacks an axis
-(recorded before the task had a verifier, or from cost-less evidence) is listed but never
-compared — it carries no verdict either way, and a note under the table counts such rows.
+(recorded before the task had a verifier, when only one side of the comparison carried it, or
+written without a cost axis by another tool) is listed but never compared — it carries no
+verdict either way, and a note under the table counts such rows. Rows are comparable to the
+extent the recorded comparisons share the task basket: the table marks baseline redefinition
+(the `*` splice marker) but not drift in candidate composition.
 
 `trends` reads the store read-only; see [`trends`](cli.md#trends) for the full table shapes, the
 [Pareto column and JSON semantics](cli.md#accuracy-vs-cost-pareto), the `--json` form, and exit

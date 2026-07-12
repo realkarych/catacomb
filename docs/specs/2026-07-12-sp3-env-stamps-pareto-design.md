@@ -76,7 +76,10 @@ schema untouched).
     (median cost per run).
   One **baseline point** is added from the newest record's `Baseline` values of the same two
   findings (label `baseline`). A point missing either finding (pre-SP1 records with no
-  verifier axis, cost-less evidence) is still listed but is **not comparable**.
+  verifier axis, cost-less evidence) is still listed but is **not comparable**. An absence
+  finding — the total-scope `ann:verifier.pass` finding recorded when exactly one comparison
+  side carried the annotation — provides no axis for either point: its zero-valued sides are
+  placeholders, not measurements, so such rows take the non-comparable path above.
 - **Domination rule.** Over comparable points only: point A is dominated iff some point B has
   `accuracy(B) >= accuracy(A)` and `cost(B) <= cost(A)` with strict inequality on at least
   one axis. Equal-on-both-axes points do not dominate each other (the hermetic A-vs-A pair

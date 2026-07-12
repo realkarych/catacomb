@@ -150,6 +150,61 @@ func TestCompareRunAnnotationExplicitSpecOverridesDefault(t *testing.T) {
 	assert.Equal(t, VerdictImprovement, f.Verdict)
 }
 
+func TestFindingAnnotationAbsent(t *testing.T) {
+	t.Parallel()
+	withAnn := reportWithAnn(5, aggregate.AnnotationTotals{N: 5, Ones: 5, Binary: true, Stats: onesStats(5)})
+	plain := reportPlainTotals(5)
+	smallAnn := reportWithAnn(2, aggregate.AnnotationTotals{N: 2, Ones: 2, Binary: true, Stats: onesStats(2)})
+	smallPlain := reportPlainTotals(2)
+	cases := []struct {
+		name    string
+		finding Finding
+		want    bool
+	}{
+		{
+			name:    "absent in candidate",
+			finding: findingByMetric(t, Compare(Input{Baseline: withAnn, Candidate: plain}, DefaultThresholds()).Findings, "ann:verifier.pass"),
+			want:    true,
+		},
+		{
+			name:    "absent in baseline",
+			finding: findingByMetric(t, Compare(Input{Baseline: plain, Candidate: withAnn}, DefaultThresholds()).Findings, "ann:verifier.pass"),
+			want:    true,
+		},
+		{
+			name:    "insufficient support with annotation on both sides",
+			finding: findingByMetric(t, Compare(Input{Baseline: smallAnn, Candidate: smallAnn}, DefaultThresholds()).Findings, "ann:verifier.pass"),
+			want:    false,
+		},
+		{
+			name:    "compared annotation",
+			finding: findingByMetric(t, Compare(Input{Baseline: withAnn, Candidate: withAnn}, DefaultThresholds()).Findings, "ann:verifier.pass"),
+			want:    false,
+		},
+		{
+			name:    "insufficient non-annotation metric",
+			finding: findingByMetric(t, Compare(Input{Baseline: smallPlain, Candidate: smallPlain}, DefaultThresholds()).Findings, "cost_usd"),
+			want:    false,
+		},
+		{
+			name:    "missing-row detail on annotation metric",
+			finding: Finding{Scope: "step", Metric: "ann:verifier.pass", Verdict: VerdictInsufficient, Detail: "absent in candidate"},
+			want:    false,
+		},
+		{
+			name:    "matching detail without insufficient verdict",
+			finding: Finding{Scope: "total", Metric: "ann:verifier.pass", Verdict: VerdictOK, Detail: "annotation absent in candidate"},
+			want:    false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.finding.AnnotationAbsent())
+		})
+	}
+}
+
 func TestSensitivityAnnotationAxisDisclosed(t *testing.T) {
 	t.Parallel()
 	b := reportWithAnn(2, aggregate.AnnotationTotals{N: 2, Ones: 2, Binary: true, Stats: onesStats(2)})
