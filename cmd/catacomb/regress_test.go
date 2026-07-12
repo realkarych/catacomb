@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
 	"github.com/realkarych/catacomb/store"
@@ -182,6 +183,20 @@ func TestRegressUnfiredAnnotationWarns(t *testing.T) {
 	assert.NotContains(t, out.String(), "ann:")
 	assert.Contains(t, errBuf.String(), `annotation "owner.never" produced no findings`)
 	assert.Contains(t, errBuf.String(), "step-key-eligible")
+}
+
+func TestWarnUnfiredAnnotationRunLevelOnly(t *testing.T) {
+	specs := []regress.AnnotationSpec{{Key: "judge.groundedness", HigherBetter: true}}
+	base := aggregate.Report{
+		Totals: aggregate.RunTotals{
+			Annotations: map[string]aggregate.AnnotationTotals{
+				"judge.groundedness": {N: 5, Binary: false},
+			},
+		},
+	}
+	var errBuf bytes.Buffer
+	warnUnfiredAnnotations(&errBuf, specs, base, aggregate.Report{})
+	assert.Empty(t, errBuf.String())
 }
 
 func TestParseAnnotationFlags(t *testing.T) {

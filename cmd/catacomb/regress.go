@@ -276,6 +276,9 @@ func warnUnfiredAnnotations(errOut io.Writer, specs []regress.AnnotationSpec, ba
 }
 
 func annotationFired(rep aggregate.Report, key string) bool {
+	if _, ok := rep.Totals.Annotations[key]; ok {
+		return true
+	}
 	for _, r := range rep.Steps {
 		if _, ok := r.Annotations[key]; ok {
 			return true

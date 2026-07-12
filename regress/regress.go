@@ -67,7 +67,7 @@ func Compare(in Input, th Thresholds) Report {
 		},
 	}
 	rep.StepsTrusted = rep.Coverage.Steps >= th.CoverageFloor
-	withAnnotations := len(b.Totals.Annotations)+len(c.Totals.Annotations) > 0
+	withAnnotations := hasBinaryRunAnnotation(b) || hasBinaryRunAnnotation(c)
 	rep.Sensitivity = computeSensitivity(b.Runs, c.Runs, th, withAnnotations)
 
 	findings := totalsFindings(b, c, th)
@@ -84,6 +84,15 @@ func Compare(in Input, th Thresholds) Report {
 	rep.Insufficient = countVerdict(findings, VerdictInsufficient)
 	rep.OverallVerdict = overallVerdict(findings, rep.Regressions, rep.Notables, rep.Insufficient, th.FailOnNotable)
 	return rep
+}
+
+func hasBinaryRunAnnotation(r aggregate.Report) bool {
+	for _, a := range r.Totals.Annotations {
+		if a.Binary {
+			return true
+		}
+	}
+	return false
 }
 
 func coverageFraction(baseline, candidate []aggregate.Row) float64 {
@@ -150,6 +159,14 @@ func runAnnotationRate(spec AnnotationSpec, bt, ct aggregate.AnnotationTotals, t
 		bBad, cBad = bt.N-bt.Ones, ct.N-ct.Ones
 	}
 	f := compareRate("total", "", "", "ann:"+spec.Key, bBad, bt.N, cBad, ct.N, th.AnnotationRateDelta, th)
+	if spec.HigherBetter {
+		f.Baseline = 1 - f.Baseline
+		f.Candidate = 1 - f.Candidate
+		f.Delta = -f.Delta
+		if f.Verdict != VerdictInsufficient {
+			f.BandLo, f.BandHi = 1-f.BandHi, 1-f.BandLo
+		}
+	}
 	note := fmt.Sprintf("ones %d/%d -> %d/%d", bt.Ones, bt.N, ct.Ones, ct.N)
 	if f.Detail == "" {
 		f.Detail = note
