@@ -48,7 +48,13 @@ func captureArtifacts(dir, workdir string, globs []string, perFileCap, totalCap 
 		metas []ArtifactMeta
 		notes []string
 		total int64
+		root  *os.Root
 	)
+	defer func() {
+		if root != nil {
+			_ = root.Close()
+		}
+	}()
 	realWork := workdir
 	if resolved, werr := filepath.EvalSymlinks(workdir); werr == nil {
 		realWork = resolved
@@ -88,7 +94,14 @@ capture:
 				notes = append(notes, fmt.Sprintf("stopped at %q: total cap reached", rel))
 				break capture
 			}
-			n, sum, cerr := copyArtifact(src, filepath.Join(dir, ArtifactsDirName, rel))
+			if root == nil {
+				r, oerr := openArtifactsRoot(dir)
+				if oerr != nil {
+					return nil, "", fmt.Errorf("evidence.CaptureArtifacts: %w", oerr)
+				}
+				root = r
+			}
+			n, sum, cerr := copyArtifact(root, rel, src)
 			if cerr != nil {
 				return nil, "", fmt.Errorf("evidence.CaptureArtifacts: %w", cerr)
 			}
@@ -99,7 +112,15 @@ capture:
 	return metas, strings.Join(notes, "; "), nil
 }
 
-func copyArtifact(src, dst string) (int64, string, error) {
+func openArtifactsRoot(dir string) (*os.Root, error) {
+	base := filepath.Join(dir, ArtifactsDirName)
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(base)
+}
+
+func copyArtifact(root *os.Root, rel, src string) (int64, string, error) {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return 0, "", err
@@ -110,10 +131,12 @@ func copyArtifact(src, dst string) (int64, string, error) {
 		_ = redactLines(bytes.NewReader(data), &buf)
 		out = buf.Bytes()
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return 0, "", err
+	if parent := filepath.Dir(rel); parent != "." {
+		if err := root.MkdirAll(parent, 0o700); err != nil {
+			return 0, "", err
+		}
 	}
-	if err := os.WriteFile(dst, out, 0o600); err != nil {
+	if err := root.WriteFile(rel, out, 0o600); err != nil {
 		return 0, "", err
 	}
 	sum := sha256.Sum256(out)

@@ -171,30 +171,57 @@ func TestCaptureArtifactsCopyError(t *testing.T) {
 	assert.Contains(t, err.Error(), "CaptureArtifacts")
 }
 
+func TestCaptureArtifactsWriteError(t *testing.T) {
+	work := t.TempDir()
+	writeFile(t, filepath.Join(work, "keep.txt"), []byte{0, 9})
+	dir := filepath.Join(t.TempDir(), "run")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ArtifactsDirName, "keep.txt"), 0o700))
+
+	_, _, err := CaptureArtifacts(dir, work, []string{"keep.txt"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CaptureArtifacts")
+}
+
 func TestCopyArtifactIOErrors(t *testing.T) {
 	realFile := filepath.Join(t.TempDir(), "real.txt")
 	require.NoError(t, os.WriteFile(realFile, []byte("hi\n"), 0o600))
 
-	existingDir := filepath.Join(t.TempDir(), "asdir")
-	require.NoError(t, os.MkdirAll(existingDir, 0o700))
-
-	fileParent := filepath.Join(t.TempDir(), "afile")
-	require.NoError(t, os.WriteFile(fileParent, []byte("x"), 0o600))
+	root, err := openArtifactsRoot(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+	require.NoError(t, root.Mkdir("existing-dir", 0o700))
+	require.NoError(t, root.WriteFile("file-parent", []byte("x"), 0o600))
 
 	tests := []struct {
 		name string
+		rel  string
 		src  string
-		dst  string
 	}{
-		{"read error on directory source", t.TempDir(), filepath.Join(t.TempDir(), "dst")},
-		{"write error on directory dest", realFile, existingDir},
-		{"mkdir error on file parent", realFile, filepath.Join(fileParent, "sub", "x")},
+		{"read error on directory source", "ok.txt", t.TempDir()},
+		{"write error on directory dest", "existing-dir", realFile},
+		{"mkdir error on file parent", filepath.Join("file-parent", "sub", "x"), realFile},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := copyArtifact(tc.src, tc.dst)
-			require.Error(t, err)
+			_, _, cerr := copyArtifact(root, tc.rel, tc.src)
+			require.Error(t, cerr)
 		})
+	}
+}
+
+func TestCaptureArtifactsMultipleFiles(t *testing.T) {
+	work := t.TempDir()
+	writeFile(t, filepath.Join(work, "a.txt"), []byte("aaa\n"))
+	writeFile(t, filepath.Join(work, "b.txt"), []byte("bbb\n"))
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"*.txt"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 2)
+	for _, m := range metas {
+		_, serr := os.Stat(filepath.Join(dir, ArtifactsDirName, m.Rel))
+		require.NoError(t, serr)
 	}
 }
 
