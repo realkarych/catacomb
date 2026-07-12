@@ -1,0 +1,51 @@
+# SQL basket: the SP1 verifier contract on a real `claude -p`.
+#
+# 1 task x 3 variants x 5 reps = 15 live cells. The agent runs a seeded SQLite query
+# and saves out/result.csv; bench captures it as an artifact and the verify hook
+# (verify_sql.py) scores it against the golden into the run-level `verifier.pass`
+# annotation. The gate must:
+#   - see baseline and baseline2 (the A-vs-A control) both verify (~5/5 pass) and NOT
+#     gate, and
+#   - see degraded — the all-orders total instead of paid-only — fail verification
+#     (~0/5 pass) and trip the gate on `ann:verifier.pass` (the seeded regression).
+#
+# `dir: .` — same cwd contract as basket-presence.yaml: run.sh cd's into e2e so
+# `./sql-live.sh` and the verify cmd `./verify_sql.py` resolve here. Two env vars are
+# supplied by the driver (e2e/run.sh), not this file, because both point into the
+# driver's per-run work dir: SQL_DB (the seeded database the agent reads) and GOLDEN
+# (the expected table the verifier reads). Keeping the golden in the driver's work dir
+# rather than this workdir is the documented anti-gaming layout — the verifier's ground
+# truth lives outside the directory the agent runs in.
+basket: e2e-sql
+reps: 5
+tasks:
+  - id: sql
+    cmd: ["./sql-live.sh"]
+    dir: .
+    timeout: 120s
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_sql.py"]
+      timeout: 30s
+    # The SQL + CSV-header instruction is multi-step, and claude-haiku-4-5 (CLI 2.1.x)
+    # follows multi-step tool instructions only ~60-80% (the presence checkpoint task
+    # hit the same wall and moved to sonnet). The gate can only be trusted when baseline
+    # verifies reliably, so the task runs on sonnet. Task-level env: no variant sets
+    # CHILD_MODEL, so it survives the task+variant merge (variant would win a clash).
+    env:
+      CHILD_MODEL: claude-sonnet-5
+variants:
+  # baseline: paid-only total per region — the correct result the golden encodes. The
+  # A-vs-A reference.
+  - id: baseline
+    env:
+      SQL_INSTRUCTION: "Compute the total paid amount (status = 'paid') per region, with columns named region and total, ordered by region."
+  # degraded: seeded regression — sums every order regardless of status, so east and
+  # north differ from the paid-only golden and verification fails.
+  - id: degraded
+    env:
+      SQL_INSTRUCTION: "Compute the total amount across all orders per region — do not filter by status, include every row — with columns named region and total, ordered by region."
+  # baseline2: identical to baseline; the A-vs-A control that must NOT gate.
+  - id: baseline2
+    env:
+      SQL_INSTRUCTION: "Compute the total paid amount (status = 'paid') per region, with columns named region and total, ordered by region."

@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # E2E live gate — the PV-6b calibration methodology as a self-asserting driver.
 #
-# Runs two heterogeneous live `claude -p` baskets through `catacomb bench` and
+# Runs three heterogeneous live `claude -p` baskets through `catacomb bench` and
 # then exercises the full offline pipeline against the real evidence:
-#   - both A-vs-A controls must NOT gate (zero false positives), and
-#   - a seeded checkpoint-presence regression AND a seeded continuous
-#     (tokens_out) regression MUST gate, attributed to the swapped instruction.
+#   - every A-vs-A control must NOT gate (zero false positives), and
+#   - a seeded checkpoint-presence regression, a seeded continuous (tokens_out)
+#     regression, AND a seeded verifier-contract regression (a wrong SQL result
+#     fails verification) MUST each gate, attributed to the swapped instruction.
 # It also smoke-tests baseline pin/record/trends, diff/subgraph/export, and the
 # external-scores path — all on the live evidence.
 #
 # See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$1 of real API spend (45 bench cells; checkpoint task on sonnet, PV-6b scale).
+# Cost: ~$1.7 of real API spend (60 bench cells; checkpoint + SQL tasks on sonnet).
 #
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
@@ -25,10 +26,10 @@
 #   CLAUDE_CODE_OAUTH_TOKEN   Claude Pro/Max subscription auth for `claude -p`, an
 #                       alternative to ANTHROPIC_API_KEY (generate: `claude setup-token`).
 #
-# The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json`
-# relative to the e2e directory, so this driver cd's into its own directory
-# before invoking bench (the baskets declare `dir: .`). All other paths are
-# absolute, so the cd does not affect them.
+# The bench cells resolve `./presence.sh` / `./answer.sh` / `./sql-live.sh`, the
+# `./verify_sql.py` verify hook, and `mcp.json` relative to the e2e directory, so this
+# driver cd's into its own directory before invoking bench (the baskets declare
+# `dir: .`). All other paths are absolute, so the cd does not affect them.
 set -euo pipefail
 
 e2e_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -56,20 +57,48 @@ command -v catacomb >/dev/null 2>&1 ||
 command -v claude >/dev/null 2>&1 ||
 	fatal "claude CLI not found on PATH (npm install -g @anthropic-ai/claude-code)"
 command -v python3 >/dev/null 2>&1 || fatal "python3 not found on PATH"
+command -v sqlite3 >/dev/null 2>&1 || fatal "sqlite3 not found on PATH (the SQL basket's agent and seed need it)"
+
+# The SQL basket's verify hook imports catacomb_verifier; the SDK is not installed on
+# runners, so it is sourced from the repo. Resolve the repo root from this driver's
+# location and put the SDK on PYTHONPATH for the verify children bench spawns.
+repo="$(cd "$e2e_dir/.." && pwd)"
+[ -d "$repo/integrations/verifier/src" ] ||
+	fatal "verifier SDK not found at integrations/verifier/src (PYTHONPATH source for the SQL verify hook)"
+export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # --- workspace ----------------------------------------------------------------
 work="$(mktemp -d)"
 runs1="$work/runs-presence"
 runs2="$work/runs-continuous"
+runs3="$work/runs-sql"
 manifest1="$work/manifest-presence.jsonl"
 manifest2="$work/manifest-continuous.jsonl"
+manifest3="$work/manifest-sql.jsonl"
 db="$work/e2e.db"
-mkdir -p "$runs1" "$runs2"
+mkdir -p "$runs1" "$runs2" "$runs3"
+
+# The SQL basket's agent reads a seeded database and its verifier reads the golden; both
+# live here in the work dir, OUTSIDE the cells' `dir: .` workdir (e2e/) — the documented
+# anti-gaming layout. The driver hands them to bench as ambient env: the wrapper reads
+# SQL_DB, the verify hook reads GOLDEN.
+sqldb="$work/sql.db"
+sqlgolden="$work/sql-golden.csv"
+sqlite3 "$sqldb" <"$e2e_dir/sql-seed.sql" || fatal "cannot seed the SQL basket database"
+cp -f "$e2e_dir/sql-golden.csv" "$sqlgolden" || fatal "cannot stage the SQL basket golden"
+export SQL_DB="$sqldb"
+export GOLDEN="$sqlgolden"
+
+# The SQL cells run in e2e/ (dir: .) and can only run sqlite3, so out/ is created by the
+# wrapper; clean the whole tree on exit so a live run leaves the source dir pristine.
+sqlout="$e2e_dir/out"
 
 # shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below
 copy_artifacts() {
 	cp -f "$manifest1" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest2" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest3" "$artifacts"/ 2>/dev/null || true
+	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
 
@@ -533,12 +562,119 @@ else
 	failrec "no echo baseline/baseline2 evidence for the external-scores test"
 fi
 
-echo "== i. cost report =="
-python3 - "$manifest1" "$manifest2" "$artifacts/cost.txt" <<'PY'
+echo "== i. bench sql basket (15 live claude -p cells) — the verifier contract =="
+run_expect 0 "bench sql basket" -- \
+	catacomb bench basket-sql.yaml --runs-dir "$runs3" --manifest "$manifest3"
+
+echo "== j. sql manifest + verifier.pass calibration assertions =="
+# Verified in the manifest means the verify hook RAN cleanly, not that it passed — the
+# pass/fail lands in each cell's scores.jsonl (verifier.pass 1/0). Baseline/baseline2
+# must verify reliably (>=4/5, one stochastic miss tolerated) and degraded must fail
+# entirely (0/5), or the seeded gate below is not a trustworthy signal.
+rc=0
+python3 - "$manifest3" <<'PY' || rc=$?
+import json, os, sys
+
+entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+errs = []
+if len(entries) != 15:
+    errs.append(f"expected 15 cells (1 task x 3 variants x 5 reps), got {len(entries)}")
+passed = {"baseline": 0, "degraded": 0, "baseline2": 0}
+total = {"baseline": 0, "degraded": 0, "baseline2": 0}
+for e in entries:
+    rid = e.get("run_id", "?")
+    if e.get("exit_code") != 0:
+        errs.append(f"{rid}: exit_code={e.get('exit_code')} note={e.get('note','')}")
+    if not e.get("session_id"):
+        errs.append(f"{rid}: empty session_id note={e.get('note','')}")
+    ev = e.get("evidence_dir", "")
+    if not ev or not os.path.isdir(ev):
+        errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+        continue
+    if not e.get("verified"):
+        errs.append(f"{rid}: verify hook did not run cleanly (verify_error={e.get('verify_error','')!r})")
+    v = e.get("variant")
+    if v not in total:
+        continue
+    total[v] += 1
+    try:
+        for line in open(os.path.join(ev, "scores.jsonl")):
+            line = line.strip()
+            if not line:
+                continue
+            s = json.loads(line)
+            if s.get("key") == "verifier.pass" and s.get("value") == 1:
+                passed[v] += 1
+    except OSError as ex:
+        errs.append(f"{rid}: scores.jsonl unreadable: {ex}")
+for v in ("baseline", "baseline2"):
+    if passed[v] < 4:
+        errs.append(
+            f"verifier.pass {passed[v]}/{total[v]} on {v} (< 4/5, one stochastic miss "
+            f"tolerated) — investigate model/instruction drift before trusting the gate"
+        )
+if passed["degraded"] != 0:
+    errs.append(
+        f"verifier.pass {passed['degraded']}/{total['degraded']} on degraded (want 0/5) "
+        f"— the all-orders instruction failed to produce a wrong result-set"
+    )
+if errs:
+    print("sql manifest assertion failures:", file=sys.stderr)
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"sql manifest OK: {len(entries)} cells, all exit 0, session ids + evidence + "
+      f"verify ran; verifier.pass baseline={passed['baseline']}/5 "
+      f"baseline2={passed['baseline2']}/5 degraded={passed['degraded']}/5")
+PY
+record "$rc" "sql manifest: 15 cells/exit0/session/evidence/verify-ran; verifier.pass baseline&baseline2 >=4/5, degraded 0/5"
+
+echo "== k. sql seeded regression (baseline vs degraded) must gate on verifier.pass =="
+run_json 1 "$artifacts/regress-sql-degraded.json" \
+	"sql seeded regression (baseline vs degraded)" -- \
+	catacomb regress --runs-dir "$runs3" \
+	--baseline label:basket=e2e-sql,variant=baseline \
+	--candidate label:basket=e2e-sql,variant=degraded --json
+rc=0
+python3 - "$artifacts/regress-sql-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "total" and f.get("metric") == "ann:verifier.pass"
+    and f.get("verdict") == "regression"
+]
+if not hits:
+    print("no total ann:verifier.pass regression; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print(f"decisive finding: ann:verifier.pass {hits[0].get('detail', '')} (regression)")
+PY
+record "$rc" "sql degraded gate attributed to ann:verifier.pass total regression"
+
+echo "== l. sql A-vs-A control (baseline vs baseline2) must NOT gate =="
+# verifier.pass is equal across the identical variants (both ~5/5), so the annotation
+# axis never gates; only the continuous metrics can drift on live API latency/cost/token
+# jitter, so the continuous band is WIDENED (same rationale as steps c/f). A one-cell
+# pass-rate wobble stays under the annotation-rate floor at k=5.
+run_json 0 "$artifacts/regress-sql-AvA.json" \
+	"sql A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs3" \
+	--baseline label:basket=e2e-sql,variant=baseline \
+	--candidate label:basket=e2e-sql,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-sql-AvA.json" || rc=$?
+record "$rc" "sql A-vs-A reports zero regressions"
+
+echo "== m. cost report =="
+python3 - "$manifest1" "$manifest2" "$manifest3" "$artifacts/cost.txt" <<'PY'
 import json, sys
 
 total = 0.0
-for p in sys.argv[1:3]:
+for p in sys.argv[1:4]:
     try:
         for line in open(p):
             line = line.strip()
@@ -549,7 +685,7 @@ for p in sys.argv[1:3]:
                 total += c
     except FileNotFoundError:
         pass
-open(sys.argv[3], "w").write(f"total live spend: ${total:.2f}\n")
+open(sys.argv[4], "w").write(f"total live spend: ${total:.2f}\n")
 print(f"total live spend: ${total:.2f}")
 PY
 

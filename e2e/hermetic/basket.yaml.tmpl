@@ -1,0 +1,19 @@
+basket: hermetic-sql
+reps: 5
+tasks:
+  - id: sql
+    cmd: ["./agent.sh"]
+    dir: __WORK__/cellwork
+    timeout: 60s
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "__WORK__/verify_sql.py"]
+      env: { GOLDEN: "__WORK__/golden.csv" }
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { SQL_QUERY: "SELECT region, SUM(amount) AS total FROM orders WHERE status='paid' GROUP BY region ORDER BY region;" }
+  - id: degraded
+    env: { SQL_QUERY: "SELECT region, SUM(amount) AS total FROM orders GROUP BY region ORDER BY region;" }
+  - id: baseline2
+    env: { SQL_QUERY: "SELECT region, SUM(amount) AS total FROM orders WHERE status='paid' GROUP BY region ORDER BY region;" }

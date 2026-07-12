@@ -242,6 +242,118 @@ comparison.
   task `checkpoints:` and wire `mcp__catacomb__mark` so there is always a stable, noise-robust
   comparison axis; see [Checkpoints and phase-scoped diff](#checkpoints-and-phase-scoped-diff).
 
+## Verifying task outcomes
+
+`regress` compares deterministic observables — status, presence, duration, cost, tokens — but
+whether the agent produced the *right answer* is task-specific. The verifier contract folds an
+outcome check into the same gate: a task declares the files it produces and a command that scores
+them, `bench` runs that command after each cell, and its verdict rides through `regress` as the
+run-level `verifier.pass` annotation, which
+[gates by default](#gate-on-external-scores-optional).
+
+### Declare artifacts and a verifier
+
+Add `artifacts:` (the workdir-relative files the cell produces) and a `verify:` block (a `cmd`,
+an optional `env`, and an optional `timeout`) to the task:
+
+```yaml
+# sql.yaml
+basket: sql
+reps: 5
+tasks:
+  - id: sql
+    cmd: ["./agent.sh"]            # runs the agent, writes out/result.csv
+    dir: work                      # the cell's workdir
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_sql.py"]
+      env: { GOLDEN: "/fixtures/golden.csv" }   # ground truth, OUTSIDE the workdir
+      timeout: 30s
+variants:
+  - id: baseline
+  - id: candidate
+    setup: ["git checkout candidate-branch"]
+```
+
+After each cell `bench` captures the declared `artifacts:` into the evidence dir, then runs
+`verify.cmd` as a plain `exec` (argv, no shell) with the contract on its environment. The
+verifier reads the captured artifacts (and any ground truth), decides pass/fail, and prints one
+scores-JSONL line — the
+[verifier SDK](https://github.com/realkarych/catacomb/tree/master/integrations/verifier) reduces
+that to two calls:
+
+```python
+import os
+from catacomb_verifier import Cell, emit, compare_tables
+
+cell = Cell.from_env()
+res = compare_tables(cell.artifact("out/result.csv"), os.environ["GOLDEN"], ordered=False)
+emit(passed=res.equal, tool="verify_sql", tool_version="1")
+```
+
+`emit(passed=…)` writes the reserved `verifier.pass` key (`1`/`0`) to the cell's `scores.jsonl`.
+
+### The verifier contract
+
+`bench` (inline, after each cell) and [`verify`](cli.md#verify) (offline, re-run over recorded
+evidence) hand the verifier the same environment; `Cell.from_env()` reads it:
+
+| Variable | Value |
+| --- | --- |
+| `CATACOMB_EVIDENCE_DIR` | the cell's evidence dir — redacted transcripts, `meta.json`, captured `artifacts/` |
+| `CATACOMB_WORKDIR` | the hot workdir under `bench`; **empty** offline, so a re-runnable verifier reads only from evidence |
+| `CATACOMB_RUN_ID`, `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP` | the cell's coordinates |
+| `CATACOMB_AGENT_EXIT_CODE` | the agent child's exit code |
+
+`Cell.artifact(rel)` resolves a captured artifact, preferring the evidence copy so the verifier
+reads the same bytes under `bench` and offline `verify`. The task/variant `env:` maps and the
+verifier's own `verify.env` are layered on top, so a fixture path travels in `verify.env`. A
+**non-zero verifier exit is an operational failure, not a failing verdict** — a failing check is
+`verifier.pass: 0` at exit `0`. On a crash the scores are not applied and the error is stamped
+into the cell's `verify.json`; keep verifiers total so a real regression never hides behind a
+broken comparator.
+
+### The bench → verify → regress cycle
+
+Record once, iterate the verifier at zero agent cost, then gate:
+
+```sh
+catacomb bench sql.yaml --runs-dir runs        # agents + inline verification
+catacomb verify sql.yaml --runs-dir runs       # re-score saved evidence, no agent spend
+catacomb regress --runs-dir runs \
+  --baseline label:basket=sql,variant=baseline \
+  --candidate label:basket=sql,variant=candidate   # gates on ann:verifier.pass
+```
+
+`regress` auto-loads each cell's `scores.jsonl` and gates on `verifier.pass` by default (no
+`--annotation` flag): when every value is `0`/`1` the key is gated as a rate with the same Wilson
+bounds as presence, so a candidate whose pass rate drops out of the baseline band is a
+`regression`. This is exercised on a real `claude -p` every week — a wrong SQL result-set failing
+verification — by the SQL basket in the [live gate](#continuous-live-validation).
+
+### Keep ground truth out of the workdir
+
+The agent runs in the cell's workdir with whatever tools the task allows, and anything reachable
+there is fair game for a model that has learned to satisfy a check by reading its answer. Keep the
+golden — and any answer key the verifier compares against — **outside** the workdir, and hand its
+path to the verifier through `verify.env` (or the driver's ambient env), rather than staging it
+beside the agent's output. The verifier resolves the captured artifact from the evidence dir and
+the golden from its own path, so the two never share a directory the agent can see.
+
+### What capture does to artifacts
+
+Captured artifacts are not byte-faithful copies — write verifiers against their *content*, not
+their exact bytes:
+
+- **Text artifacts are redacted and normalized.** A captured text file (valid UTF-8, no NUL) has
+  its secrets redacted line by line, blank lines dropped, and a trailing newline forced. Compare
+  parsed values (rows, fields, numbers), never a whole-file hash.
+- **Binary artifacts are copied raw**, subject to the per-file (10 MiB) and total (50 MiB) caps;
+  their fidelity — and staying under the caps — is the task author's responsibility.
+- **`verify.json` error text is not redacted.** The operational-failure detail recorded on a
+  verifier crash passes through verbatim, so keep secrets out of a verifier's stderr and error
+  messages — print diffs and counts, not raw inputs.
+
 ## Compare two runs
 
 `catacomb diff` diffs two session transcripts by `step_key` and reports added, removed,
@@ -342,21 +454,23 @@ and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 The offline gate is itself validated end-to-end against the real `claude -p` CLI by the
 [E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
 CI-portable rerun of the [PV-6b calibration](../reviews/2026-07-08-pv6b-live-calibration.md)
-methodology. It runs two live baskets and asserts the gate's behavior on the real
-evidence: the A-vs-A controls must raise no presence false positives at default
+methodology. It runs three live baskets and asserts the gate's behavior on the real
+evidence: the A-vs-A controls must raise no presence or verifier false positives at default
 sensitivity (their continuous metrics are asserted at a widened band, since sequential
 batches drift on API latency, cost, and tokens), while a seeded checkpoint-presence
-regression (phase axis) and a seeded continuous (`tokens_out`) regression must each gate at
-default thresholds, and a seeded step-scope regression (a guaranteed Bash step that
-vanishes) must surface in the report — all attributed to the swapped instruction. It also
-smoke-tests baseline
+regression (phase axis), a seeded continuous (`tokens_out`) regression, and a seeded
+verifier-contract regression (a wrong SQL result-set that fails verification, gating on
+`ann:verifier.pass`) must each gate at default thresholds, and a seeded step-scope
+regression (a guaranteed Bash step that vanishes) must surface in the report — all
+attributed to the swapped instruction. It also smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
 Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
-The checkpoint (mark) task runs on Sonnet for instruction-following reliability while the
-step and continuous tasks stay on Haiku, which also exercises multi-model pricing.
+The checkpoint (mark) and SQL (verifier) tasks run on Sonnet for instruction-following
+reliability while the step and continuous tasks stay on Haiku, which also exercises
+multi-model pricing.
 
-Because it spends real API budget (~$1 per run), it is not part of per-PR CI: trigger it
+Because it spends real API budget (~$1.7 per run), it is not part of per-PR CI: trigger it
 by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
 needs either the `ANTHROPIC_API_KEY` repository secret (API billing) or
 `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
