@@ -51,14 +51,14 @@ func taskGroup() []RunGraph {
 		Nodes: []*model.Node{{ID: "u2-n", RunID: "u2", Type: model.NodeToolCall, Status: model.StatusOK, CostUSD: f64(888)}},
 	}
 	return []RunGraph{
-		taskRun("a1", "alpha", 1000, 1, 10, 5, one),
-		taskRun("a2", "alpha", 3000, 3, 30, 15, zero),
-		taskRun("a3", "alpha", -1, 2, 20, 10, nil),
-		beta1,
-		taskRun("b2", "beta", 6000, 20, 200, 100, one),
-		taskRun("g1", "gamma", 500, 7, 70, 35, nil),
-		unlabeled,
 		emptyTask,
+		unlabeled,
+		taskRun("g1", "gamma", 500, 7, 70, 35, nil),
+		taskRun("b2", "beta", 6000, 20, 200, 100, one),
+		beta1,
+		taskRun("a3", "alpha", -1, 2, 20, 10, nil),
+		taskRun("a2", "alpha", 3000, 3, 30, 15, zero),
+		taskRun("a1", "alpha", 1000, 1, 10, 5, one),
 	}
 }
 
