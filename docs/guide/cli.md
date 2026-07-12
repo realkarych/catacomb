@@ -11,6 +11,7 @@ The command set:
 | Command | Purpose |
 | --- | --- |
 | [`bench`](#bench) | Run a benchmark basket and record redacted evidence per cell |
+| [`verify`](#verify) | Re-run a basket's verifiers offline over recorded evidence dirs |
 | [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`) |
 | [`regress`](#regress) | Compare a candidate run group against a baseline and gate |
 | [`trends`](#trends) | Replay a baseline's recorded regression history |
@@ -21,8 +22,9 @@ The command set:
 | [`mcp`](#mcp) | Run the stdio MCP server exposing the `mark` checkpoint tool |
 | [`version`](#version) | Print the version |
 
-Exit codes are uniform: `0` success, `1` regression (or a stopped `--fail-fast`
-basket), `2` operational error (bad input, missing files, store problems).
+Exit codes are uniform: `0` success, `1` regression (a stopped `--fail-fast`
+basket, or a failing [`verify`](#verify) cell), `2` operational error (bad input,
+missing files, store problems).
 
 Any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`, `export`,
 `replay`) may print up to two advisory lines to **stderr**: a format-drift count for
@@ -162,6 +164,77 @@ basket declares `reps < 5`, the epilogue also appends a one-line note recommendi
 catacomb bench checkout.yaml
 catacomb bench checkout.yaml --dry-run
 catacomb bench checkout.yaml --resume --fail-fast
+```
+
+---
+
+## verify
+
+Re-run a basket's verifiers **offline** over already-recorded evidence directories,
+without launching any agent. The basket file is the source of truth for each task's
+`verify:` block (a `cmd`, an optional `env`, and an optional `timeout`), so a verifier can
+evolve after the runs were recorded — fix a comparator, tighten a judge prompt, add a
+score — and be replayed against the saved evidence at zero agent cost.
+
+```sh
+catacomb verify <basket.yaml> --runs-dir <dir> [--label k=v[,k=v...]]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence directory holding the recorded [`bench`](#bench) runs to re-verify |
+| `--label` | (none) | Restrict to runs whose recorded labels match every comma-separated `k=v` term (AND) |
+
+`verify` scans `<runs-dir>/*/meta.json` and re-verifies each recorded cell whose `basket`
+label equals the basket's name, whose task id resolves to a basket task that declares
+`verify:`, and — when `--label` is given — whose labels match every term. A cell whose
+resolved task carries no `verify:` is skipped silently, as is any run belonging to another
+basket or filtered out by `--label`. The variant `env` is taken from the matching basket
+variant, resolved by the run's recorded `variant` label; a run whose recorded variant is
+no longer in the basket is reported as a per-cell error and does not abort the rest.
+
+Each matched cell runs the task's `verify.cmd` as a **plain `exec`** (argv, no shell) with
+its working directory set to the cell's evidence dir and the verifier contract on its
+environment:
+
+| Variable | Value |
+| --- | --- |
+| `CATACOMB_EVIDENCE_DIR` | the cell's evidence dir (redacted transcripts, `meta.json`, captured `artifacts/`) |
+| `CATACOMB_WORKDIR` | **empty** offline — there is no hot workdir, so a re-verifiable verifier reads only from evidence |
+| `CATACOMB_RUN_ID`, `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP` | the cell's coordinates from `meta.json` |
+| `CATACOMB_AGENT_EXIT_CODE` | the agent child's recorded exit code |
+
+The task and variant `env:` maps and the verifier's own `verify.env` are layered on top.
+The verifier's stdout is scores JSONL (the [run-level scores](#run-level-scores) dialect)
+and is rewritten to `<evidence>/scores.jsonl`; stderr passes through to the operator. A
+verification record — `cmd`, a sha256 of cmd+env, exit code, duration, timestamp, and
+`mode` (`offline` here, `bench` when [`bench`](#bench) ran the verifier inline) — is
+written to `<evidence>/verify.json`, leaving the immutable `meta.json` execution ledger
+untouched. Re-verification is idempotent: each run rewrites `verify.json` and
+`scores.jsonl`, so a recorded verdict is reproduced by re-running.
+
+A **non-zero verifier exit is an operational failure**, not a failing verdict (a failing
+check is `verifier.pass: 0` at exit `0`): its scores are not applied and the failure is
+recorded in that cell's `verify.json`. `verify` prints one line per matched cell to stdout
+— `verify <run-id>: ok` or `verify <run-id>: error (<detail>)` — and when any matched
+cell's recorded basket hash differs from the current basket file it prints one advisory
+line to stderr (`warning: basket hash differs from recorded runs (verifiers may be newer
+than the evidence)`).
+
+Exit codes: `0` every matched cell verified cleanly, `1` one or more operational verifier
+failures (each recorded in its `verify.json`), `2` operational error (a bad basket, an
+unreadable `--runs-dir`, or a selector that matched no runs).
+
+`verify` slots between [`bench`](#bench) and [`regress`](#regress): record once, iterate on
+the verifiers offline, then gate. `regress --runs-dir` auto-loads each cell's rewritten
+`scores.jsonl` and gates on `verifier.pass` by default (see
+[Run-level scores](#run-level-scores)).
+
+```sh
+catacomb bench basket.yaml --runs-dir runs    # agents + inline verification
+catacomb verify basket.yaml --runs-dir runs   # iterate on verifiers, zero agent cost
+catacomb regress --runs-dir runs \
+  --baseline label:basket=checkout,variant=a --candidate label:basket=checkout,variant=b
 ```
 
 ---
