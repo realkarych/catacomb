@@ -94,6 +94,28 @@ type metricSums struct {
 	tokensOut float64
 }
 
+func runNodeSums(rg RunGraph) metricSums {
+	var sums metricSums
+	for _, n := range rg.Nodes {
+		sums.cost += derefF(n.CostUSD)
+		sums.tokensIn += derefI(n.TokensIn)
+		sums.tokensOut += derefI(n.TokensOut)
+	}
+	return sums
+}
+
+func runHasError(rg RunGraph) bool {
+	if rg.Run.Status == model.StatusError {
+		return true
+	}
+	for _, n := range rg.Nodes {
+		if n.Status == model.StatusError {
+			return true
+		}
+	}
+	return false
+}
+
 type runKey struct {
 	count            float64
 	sums             metricSums
@@ -356,18 +378,7 @@ func runTotals(group []RunGraph) RunTotals {
 	annVals := map[string][]float64{}
 	errorRuns := 0
 	for _, rg := range group {
-		var sums metricSums
-		count := 0
-		hasError := rg.Run.Status == model.StatusError
-		for _, n := range rg.Nodes {
-			count++
-			if n.Status == model.StatusError {
-				hasError = true
-			}
-			sums.cost += derefF(n.CostUSD)
-			sums.tokensIn += derefI(n.TokensIn)
-			sums.tokensOut += derefI(n.TokensOut)
-		}
+		sums := runNodeSums(rg)
 		for k, v := range rg.Annotations {
 			annVals[k] = append(annVals[k], v)
 		}
@@ -377,8 +388,8 @@ func runTotals(group []RunGraph) RunTotals {
 		costs = append(costs, sums.cost)
 		tokensIn = append(tokensIn, sums.tokensIn)
 		tokensOut = append(tokensOut, sums.tokensOut)
-		nodes = append(nodes, float64(count))
-		if hasError {
+		nodes = append(nodes, float64(len(rg.Nodes)))
+		if runHasError(rg) {
 			errorRuns++
 		}
 	}
