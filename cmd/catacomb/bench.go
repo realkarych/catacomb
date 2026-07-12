@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -234,7 +235,8 @@ func recordOfflineEvidence(ctx context.Context, stderr io.Writer, cell bench.Cel
 	finishedAt := nowFn()
 	entry.FinishedAt = finishedAt
 	dir := filepath.Join(o.runsDir, cell.RunID)
-	writeOfflineEvidence(dir, offlineMeta(*entry, labels, start, end, finishedAt), ts, entry)
+	env := benchEnvStamps(g.RunsSnapshot(), entry.SessionID)
+	writeOfflineEvidence(dir, offlineMeta(*entry, labels, start, end, finishedAt, env), ts, entry)
 	if entry.EvidenceDir != "" {
 		captureArtifactsOffline(stderr, cell, dir, entry)
 		verifyCellOffline(ctx, stderr, cell, dir, entry)
@@ -320,7 +322,7 @@ func writeOfflineEvidence(dir string, meta evidence.Meta, ts transcriptSet, entr
 	entry.EvidenceDir = dir
 }
 
-func offlineMeta(entry bench.ManifestEntry, labels map[string]string, start, end, finishedAt time.Time) evidence.Meta {
+func offlineMeta(entry bench.ManifestEntry, labels map[string]string, start, end, finishedAt time.Time, env *evidence.EnvStamps) evidence.Meta {
 	return evidence.Meta{
 		RunID:       entry.RunID,
 		Task:        entry.Task,
@@ -335,7 +337,25 @@ func offlineMeta(entry bench.ManifestEntry, labels map[string]string, start, end
 		MarkerStart: start.UTC(),
 		MarkerEnd:   end.UTC(),
 		FinishedAt:  finishedAt.UTC(),
+		Env:         env,
 	}
+}
+
+func benchEnvStamps(runs []model.Run, sessionID string) *evidence.EnvStamps {
+	env := &evidence.EnvStamps{
+		CatacombVersion: Version,
+		Resources:       evidence.Resources{OS: runtime.GOOS, Arch: runtime.GOARCH, CPUs: runtime.NumCPU()},
+	}
+	for _, r := range runs {
+		if r.ID != sessionID {
+			continue
+		}
+		env.ModelID = r.ModelID
+		if r.Repro != nil {
+			env.ClaudeCodeVersion = r.Repro.ClaudeCodeVersion
+		}
+	}
+	return env
 }
 
 func offlineFiles(ts transcriptSet) []evidence.SourceFile {

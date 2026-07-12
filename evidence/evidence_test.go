@@ -1,6 +1,7 @@
 package evidence_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,6 +83,96 @@ func TestWriteRemovesStaleFiles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, "meta.json"))
 	require.NoError(t, err)
+}
+
+func TestMetaEnvJSONShape(t *testing.T) {
+	tests := []struct {
+		name string
+		env  *evidence.EnvStamps
+		want map[string]any
+	}{
+		{name: "nil env omits key", env: nil, want: nil},
+		{
+			name: "full env",
+			env: &evidence.EnvStamps{
+				CatacombVersion:   "1.2.3",
+				ModelID:           "claude-opus-4-8",
+				ClaudeCodeVersion: "2.1.100",
+				Resources:         evidence.Resources{OS: "linux", Arch: "amd64", CPUs: 8},
+			},
+			want: map[string]any{
+				"catacomb_version":    "1.2.3",
+				"model_id":            "claude-opus-4-8",
+				"claude_code_version": "2.1.100",
+				"resources":           map[string]any{"os": "linux", "arch": "amd64", "cpus": float64(8)},
+			},
+		},
+		{
+			name: "empty model and claude code version omitted",
+			env: &evidence.EnvStamps{
+				CatacombVersion: "1.2.3",
+				Resources:       evidence.Resources{OS: "darwin", Arch: "arm64", CPUs: 1},
+			},
+			want: map[string]any{
+				"catacomb_version": "1.2.3",
+				"resources":        map[string]any{"os": "darwin", "arch": "arm64", "cpus": float64(1)},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := sampleMeta("run-env", "base")
+			m.Env = tt.env
+			data, err := json.Marshal(m)
+			require.NoError(t, err)
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(data, &raw))
+			gotEnv, ok := raw["env"]
+			if tt.want == nil {
+				require.False(t, ok)
+				return
+			}
+			require.True(t, ok)
+			require.Equal(t, tt.want, gotEnv)
+			var back evidence.Meta
+			require.NoError(t, json.Unmarshal(data, &back))
+			require.Equal(t, m, back)
+		})
+	}
+}
+
+func TestWriteReadRoundtripWithEnv(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run-env")
+	m := sampleMeta("run-env", "base")
+	m.Env = &evidence.EnvStamps{
+		CatacombVersion:   "9.9.9",
+		ModelID:           "m-1",
+		ClaudeCodeVersion: "2.0.0",
+		Resources:         evidence.Resources{OS: "linux", Arch: "arm64", CPUs: 4},
+	}
+	require.NoError(t, evidence.Write(dir, m, nil))
+	got, err := evidence.ReadMeta(dir)
+	require.NoError(t, err)
+	require.Equal(t, m, got)
+}
+
+func TestReadMetaLegacyWithoutEnv(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "run-legacy")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	legacy := `{"run_id":"run-legacy","task":"t1","variant":"base","rep":1,` +
+		`"session_id":"s","exit_code":0,"basket_hash":"h","marker_name":"task:t1",` +
+		`"marker_start":"2026-06-20T10:00:00Z","marker_end":"2026-06-20T10:01:00Z",` +
+		`"finished_at":"2026-06-20T10:01:01Z"}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.json"), []byte(legacy), 0o600))
+	got, err := evidence.ReadMeta(dir)
+	require.NoError(t, err)
+	require.Nil(t, got.Env)
+	require.Equal(t, "run-legacy", got.RunID)
+	runs, err := evidence.ScanRuns(root)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.Nil(t, runs[0].Meta.Env)
 }
 
 func TestReadMetaErrors(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/realkarych/catacomb/aggregate"
@@ -240,10 +241,15 @@ func annotationFinding(scope, key, name string, spec AnnotationSpec, br, cr aggr
 	}
 }
 
+const (
+	annotationAbsentInCandidateDetail = "annotation absent in candidate"
+	annotationAbsentInBaselineDetail  = "annotation absent in baseline"
+)
+
 func annotationAbsentFinding(scope, key, name string, spec AnnotationSpec, bok bool) Finding {
-	detail := "annotation absent in candidate"
+	detail := annotationAbsentInCandidateDetail
 	if !bok {
-		detail = "annotation absent in baseline"
+		detail = annotationAbsentInBaselineDetail
 	}
 	return Finding{
 		Scope:   scope,
@@ -253,6 +259,12 @@ func annotationAbsentFinding(scope, key, name string, spec AnnotationSpec, bok b
 		Verdict: VerdictInsufficient,
 		Detail:  detail,
 	}
+}
+
+func (f Finding) AnnotationAbsent() bool {
+	return f.Verdict == VerdictInsufficient &&
+		strings.HasPrefix(f.Metric, "ann:") &&
+		(f.Detail == annotationAbsentInCandidateDetail || f.Detail == annotationAbsentInBaselineDetail)
 }
 
 func missingMetricsFinding(scope, key, name string, bok bool) Finding {

@@ -129,6 +129,20 @@ plus a `meta.json` (run id, task, variant, rep, session id, labels, exit code,
 evidence-write failure keeps the cell's result and notes the error. See
 [Privacy and operations](privacy-and-operations.md) for what redaction removes.
 
+`meta.json` also carries an `env` block stamping the environment the cell ran under:
+`catacomb_version` (the recording binary), `model_id` (the model the child *actually*
+ran, read from the transcript's assistant messages — ground truth, not the requested
+model; omitted when the transcript carries no assistant turn), `claude_code_version`
+(the transcript's Claude Code version; omitted when the transcript does not report
+one), and `resources` (`os`, `arch`, and `cpus` of the host that executed the cell).
+The stamps are descriptive provenance only — they never gate, join no `--strict` check,
+and carry no hostname or runner identity: model drift between groups is often the very
+axis under comparison, and host resources legitimately vary across runners. Sampling
+parameters are not stamped — Claude Code transcripts do not report them, and the child
+argv that could set them is already pinned byte-exactly by the basket hash. Evidence
+recorded before the stamps existed simply lacks the `env` key and stays valid
+everywhere.
+
 The manifest is JSONL, written incrementally — one object per completed cell (run-id,
 task, variant, rep, exit code, session id, `marked`, an optional `missing_checkpoints`
 list, `cost_usd`, `evidence_dir`, basket hash, finish time, and an optional `note`).
@@ -597,10 +611,11 @@ catacomb trends <baseline> [flags]
 | --- | --- | --- |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
 | `--metric` | (empty) | Narrow to one total-scope metric: `duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, `nodes`, or `error_rate` |
+| `--pareto` | false | Render the history as an [accuracy-vs-cost Pareto table](#accuracy-vs-cost-pareto); composes with `--json`, mutually exclusive with `--metric` |
 | `--json` | false | Emit the history as JSON |
 
-Records print oldest-first by sequence number. Without `--metric`, the wide table
-prints one row per recorded run — `SEQ CREATED CANDIDATE VERDICT REGRESSIONS
+Records print oldest-first by sequence number. Without `--metric` or `--pareto`, the
+wide table prints one row per recorded run — `SEQ CREATED CANDIDATE VERDICT REGRESSIONS
 INSUFFICIENT DURATION_MS COST_USD ERROR_RATE` — a per-run scoreboard of the overall
 verdict, the finding counts, and the candidate run-total values. `--metric <m>` swaps
 to a narrowed table — `SEQ CREATED CANDIDATE VERDICT BASELINE-VALUE CANDIDATE-VALUE
@@ -627,16 +642,61 @@ written before stamps existed lack the field) — ready for dashboards or diffin
 scripts. A record whose `v` is not understood by this binary is an exit-`2` error
 naming the sequence and version (upgrade catacomb).
 
+### Accuracy-vs-cost Pareto
+
+`--pareto` re-reads the same recorded history as a two-axis trade-off table. Each
+record contributes one point: accuracy is its total-scope `ann:verifier.pass` finding's
+candidate value (the pass rate the gate already uses) and cost is its total-scope
+`cost_usd` finding's candidate value (the median per-run cost); one `baseline` row is
+added from the newest record's baseline values of the same two findings. Nothing is computed or persisted
+anew — every value comes from reports already stored by `--record`.
+
+```text
+SEQ  CREATED               CANDIDATE                 ACCURACY  COST_USD  DOMINATED
+-    -                     baseline                  1.00      0.0102    no
+2    2026-07-12T18:04:11Z  label:variant=cand        1.00      0.0102    no
+1*   2026-07-12T17:58:03Z  label:variant=degraded    0.00      0.0102    yes
+3    2026-07-12T18:09:44Z  label:variant=old         -         0.0110    -
+```
+
+A row is `DOMINATED yes` when some other row is at least as accurate and at most as
+costly, with strict advantage on at least one axis — rows equal on both axes (the
+first two above) do not dominate each other and both stay `no`. Rows sort by cost
+ascending, then accuracy descending, then sequence ascending, so the Pareto frontier
+reads top-down. A row that lacks an axis — either accuracy (a record whose report
+carries no total-scope `ann:verifier.pass` measurement: pre-verifier history, or a
+mixed comparison where only one side carried the verifier annotation) or cost (a
+report with no total-scope `cost_usd` finding) — carries no domination verdict: it
+renders `-` in the missing cells and in `DOMINATED`, sinks to the bottom of the table
+in sequence order, and one epilogue note counts how many rows were not compared.
+Evidence without reported cost aggregates as cost `0.0`, not as a missing axis — a
+record written by this binary always carries a cost value (it renders `0.0000` and
+can dominate); the missing-cost path serves records produced by other writers. The
+splice marker (`*` and its footnote) applies unchanged.
+
+`--pareto --json` emits `{"baseline": "<name>", "points": [...]}` instead: every point
+carries `source` (`"baseline"` or `"record"`), and record points add `seq`,
+`candidate`, `created_at`, and `spliced` (the baseline point carries none of those).
+`accuracy` and `cost_usd` are omitted when the record's report carries no measurement
+for that axis (the finding is missing, or is the absence placeholder a one-sided
+annotation history produces), and `dominated` is omitted — not `false` — for a point
+that lacks an axis.
+
+`--pareto` is mutually exclusive with `--metric` (operational error, exit `2`) and
+composes with `--json`.
+
 Exit codes: `0` success, `2` operational error. An unknown `--metric` (outside the set
-above), an unknown baseline (`baseline not found`), a known baseline with no recorded
-runs (`has no recorded regress runs`), and a record written by a newer schema version
-are distinct exit-`2` errors, as are a missing store and one created by an older binary
-whose schema needs migrating (run a write-path command such as `baseline set`).
-`trends` opens the store read-only and never migrates it.
+above), `--pareto` combined with `--metric`, an unknown baseline (`baseline not
+found`), a known baseline with no recorded runs (`has no recorded regress runs`), and a
+record written by a newer schema version are distinct exit-`2` errors, as are a missing
+store and one created by an older binary whose schema needs migrating (run a write-path
+command such as `baseline set`). `trends` opens the store read-only and never migrates
+it.
 
 ```sh
 catacomb trends golden
 catacomb trends golden --metric error_rate
+catacomb trends golden --pareto
 catacomb trends golden --json
 ```
 

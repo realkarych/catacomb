@@ -3,6 +3,7 @@ package evidence
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,6 +273,39 @@ func TestStampArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, arts, got.Artifacts)
 	assert.Equal(t, "note-x", got.ArtifactsNote)
+}
+
+func TestStampArtifactsPreservesEnv(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	m := Meta{
+		RunID: "r1", Task: "t1", MarkerName: "task:t1",
+		Env: &EnvStamps{
+			CatacombVersion:   "1.0.0",
+			ModelID:           "m-x",
+			ClaudeCodeVersion: "2.0.0",
+			Resources:         Resources{OS: "linux", Arch: "amd64", CPUs: 2},
+		},
+	}
+	require.NoError(t, Write(dir, m, nil))
+	before := rawMetaEnv(t, dir)
+	require.NoError(t, StampArtifacts(dir, []ArtifactMeta{{Rel: "a.txt", SHA256: "x", Bytes: 1}}, "note"))
+	after := rawMetaEnv(t, dir)
+	assert.Equal(t, string(before), string(after))
+	got, err := ReadMeta(dir)
+	require.NoError(t, err)
+	assert.Equal(t, m.Env, got.Env)
+	assert.Len(t, got.Artifacts, 1)
+}
+
+func rawMetaEnv(t *testing.T, dir string) json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	require.NoError(t, err)
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+	v, ok := raw["env"]
+	require.True(t, ok)
+	return v
 }
 
 func TestStampArtifactsReadMetaError(t *testing.T) {

@@ -16,13 +16,17 @@
 #   verify (scores byte-identical, mode "offline") -> 5 degraded gate (exit 1) ->
 #   6 A-vs-A control (exit 0) -> 7 operational-failure visibility (broken verifier) +
 #   restore -> 8 --scores override -> 9 SP2 reliability/paired shape (re-reads the
-#   step-5 report JSON).
+#   step-5 report JSON) -> 10 SP3 env stamps (re-reads the bench-time meta.json) ->
+#   11 SP3 pareto (re-records the step-5/6 comparisons into a fresh store).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
 # the gates and is immediately followed by a clean re-verify that restores (and asserts)
 # the offline state. Step 8 reads only scores.jsonl; step 9 re-reads the step-5 report
-# JSON from disk and runs last.
+# JSON from disk. Steps 10/11 are SP3: step 10 re-reads meta.json exactly as bench
+# wrote it (offline verify rewrites verify.json and scores.jsonl, never meta.json), and
+# step 11 re-runs the step-5/6 comparisons with --record against a fresh store and
+# asserts the pareto view over that history.
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -305,6 +309,131 @@ record "$rc" "paired sign test reports insufficient at n_tasks=1"
 rc=0
 python3 -c 'import json,sys; p=(json.load(open(sys.argv[1])).get("sensitivity") or {}).get("paired") or {}; sys.exit(0 if p.get("reachable") is False and p.get("min_tasks") == 5 else 1)' "$work/regress-degraded.json" || rc=$?
 record "$rc" "sensitivity discloses the paired gate needs k>=5 tasks"
+
+echo "== 10. SP3 env stamps in meta.json (bench-time provenance) =="
+# Env stamps are written once at bench time (step 2); the offline re-verifies in steps
+# 4 and 7 rewrite verify.json and scores.jsonl but never meta.json, so this also proves
+# the stamps survive the whole verify cycle. The fixture pins the assertions exactly:
+# agent.sh seds ONE generated uuid into both the transcript's sessionId and the
+# stream-json session_id, and every assistant turn in transcript.jsonl.tmpl carries
+# model "claude-opus-4-8" — so model_id MUST be present with that value; the template
+# has no top-level "version" field, so claude_code_version MUST be absent.
+rc=0
+python3 - "$base1_dir" <<'PY' || rc=$?
+import json, sys
+
+env = json.load(open(sys.argv[1] + "/meta.json")).get("env") or {}
+res = env.get("resources") or {}
+errs = []
+if not env.get("catacomb_version"):
+    errs.append(f"catacomb_version empty: {env.get('catacomb_version')!r}")
+for k in ("os", "arch"):
+    if not res.get(k):
+        errs.append(f"resources.{k} empty: {res.get(k)!r}")
+if not isinstance(res.get("cpus"), int) or res["cpus"] < 1:
+    errs.append(f"resources.cpus not an int >= 1: {res.get('cpus')!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"env: catacomb_version={env['catacomb_version']} resources={res['os']}/{res['arch']} cpus={res['cpus']}")
+PY
+record "$rc" "meta.json env: catacomb_version + resources (os/arch non-empty, cpus >= 1)"
+rc=0
+python3 - "$base1_dir" <<'PY' || rc=$?
+import json, sys
+
+env = json.load(open(sys.argv[1] + "/meta.json")).get("env") or {}
+errs = []
+if env.get("model_id") != "claude-opus-4-8":
+    errs.append(f"model_id={env.get('model_id')!r} want 'claude-opus-4-8' (fixture assistant turns)")
+if "claude_code_version" in env:
+    errs.append(f"claude_code_version present ({env['claude_code_version']!r}) but the fixture transcript has no version field")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("env: model_id=claude-opus-4-8 (fixture model), claude_code_version absent")
+PY
+record "$rc" "meta.json env: model_id pinned to the fixture model, claude_code_version absent"
+
+echo "== 11. SP3 pareto: record history, read the accuracy-vs-cost table =="
+# A fresh store pins the baseline variant, then the step-6 A-vs-A control and the step-5
+# degraded gate are re-run with --record. Hermetic cost is exactly 0.0 on every cell
+# (agent.sh reports total_cost_usd 0.0 and the fixture transcript carries no usage), so
+# the three pareto points differ only on accuracy: the degraded point (equal cost,
+# strictly worse accuracy) must be dominated, while the baseline point and the A-vs-A
+# point are equal on BOTH axes and must both stay non-dominated — equal points never
+# dominate each other. Hermetic runs always carry cost + verifier, so every point must
+# have both axes (the no-axis note path is untestable here by construction).
+run_expect 0 "baseline set hermetic-trends (fresh store)" -- \
+	catacomb baseline set hermetic-trends --label basket=hermetic-sql,variant=baseline \
+	--db "$work/trends.db" --runs-dir "$runs"
+run_json 0 "$work/record-AvA.json" \
+	"record A-vs-A comparison (exit 0)" -- \
+	catacomb regress --runs-dir "$runs" --db "$work/trends.db" \
+	--baseline name:hermetic-trends \
+	--candidate label:basket=hermetic-sql,variant=baseline2 \
+	--metric-rel-delta 0.5 --record --json
+run_json 1 "$work/record-degraded.json" \
+	"record degraded comparison (still gates, exit 1)" -- \
+	catacomb regress --runs-dir "$runs" --db "$work/trends.db" \
+	--baseline name:hermetic-trends \
+	--candidate label:basket=hermetic-sql,variant=degraded \
+	--record --json
+run_json 0 "$work/pareto.json" \
+	"trends --pareto --json over the recorded history" -- \
+	catacomb trends hermetic-trends --pareto --json --db "$work/trends.db"
+rc=0
+python3 - "$work/pareto.json" <<'PY' || rc=$?
+import json, sys
+
+points = json.load(open(sys.argv[1]))["points"]
+errs = []
+
+def one(what, pred):
+    hits = [p for p in points if pred(p)]
+    if len(hits) != 1:
+        errs.append(f"want exactly 1 {what} point, got {len(hits)}")
+        return {}
+    return hits[0]
+
+base = one("baseline", lambda p: p.get("source") == "baseline")
+ava = one("A-vs-A", lambda p: "variant=baseline2" in p.get("candidate", ""))
+deg = one("degraded", lambda p: "variant=degraded" in p.get("candidate", ""))
+for what, p, dom, acc in (("baseline", base, False, 1.0), ("A-vs-A", ava, False, 1.0), ("degraded", deg, True, 0.0)):
+    if not p:
+        continue
+    if p.get("dominated") is not dom:
+        errs.append(f"{what}: dominated={p.get('dominated')!r} want {dom}")
+    if p.get("accuracy") != acc or p.get("cost_usd") != 0.0:
+        errs.append(f"{what}: accuracy={p.get('accuracy')!r} cost_usd={p.get('cost_usd')!r} want {acc}/0.0")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("pareto: degraded dominated (equal cost, worse accuracy); baseline + A-vs-A equal on both axes, both non-dominated")
+PY
+record "$rc" "pareto marks only the degraded point dominated (equal points both stay)"
+rc=0
+python3 - "$work/pareto.json" <<'PY' || rc=$?
+import json, sys
+
+points = json.load(open(sys.argv[1]))["points"]
+errs = []
+if len(points) != 3:
+    errs.append(f"want 3 points (baseline + 2 records), got {len(points)}")
+for p in points:
+    tag = p.get("candidate") or p.get("source")
+    if "accuracy" not in p or "cost_usd" not in p:
+        errs.append(f"{tag}: lacks an axis, keys={sorted(p)}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("pareto: 3 points, every point carries both axes (accuracy + cost_usd)")
+PY
+record "$rc" "pareto lists baseline + 2 records, both axes on every point"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

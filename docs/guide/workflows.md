@@ -190,8 +190,30 @@ candidate value, and noise band per run:
 catacomb trends checkout-main --metric error_rate
 ```
 
+The same history also reads as an accuracy-vs-cost trade-off. `--pareto` turns each recorded
+comparison into a point — accuracy is the candidate's recorded `verifier.pass` rate, cost its
+recorded `cost_usd` — plus one row for the baseline itself:
+
+```sh
+catacomb trends checkout-main --pareto
+```
+
+Read the table top-down: rows sort by cost ascending, then accuracy descending, so the Pareto
+frontier — the candidates no other row beats — leads the table. A `DOMINATED yes` row is a
+strictly worse deal: some row above it is at least as accurate *and* at least as cheap, with a
+strict advantage on one of the two — same accuracy for more money, or less accuracy for the
+same money, has no reason to win. Two rows equal on both axes — an A-vs-A control recorded
+against its own baseline, say — dominate nothing and both stay `no`: domination needs a strict
+advantage somewhere, and between exact ties the table has no opinion. A row that lacks an axis
+(recorded before the task had a verifier, when only one side of the comparison carried it, or
+written without a cost axis by another tool) is listed but never compared — it carries no
+verdict either way, and a note under the table counts such rows. Rows are comparable to the
+extent the recorded comparisons share the task basket: the table marks baseline redefinition
+(the `*` splice marker) but not drift in candidate composition.
+
 `trends` reads the store read-only; see [`trends`](cli.md#trends) for the full table shapes, the
-`--json` form, and exit codes.
+[Pareto column and JSON semantics](cli.md#accuracy-vs-cost-pareto), the `--json` form, and exit
+codes.
 
 ### Gate on external scores (optional)
 
