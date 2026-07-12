@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/realkarych/catacomb/bench"
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/model"
 )
 
 func stubBenchChild(t *testing.T, env ...string) {
@@ -315,6 +318,112 @@ func TestBenchOfflineNoCheckpointsWritesEvidence(t *testing.T) {
 	assert.Equal(t, "ci", meta.Labels["env"])
 	assert.Equal(t, "base", meta.Labels["variant"])
 	require.NotNil(t, meta.CostUSD)
+}
+
+func TestBenchEnvStamps(t *testing.T) {
+	tests := []struct {
+		name      string
+		runs      []model.Run
+		wantModel string
+		wantCCV   string
+	}{
+		{
+			name: "model and repro from matching run",
+			runs: []model.Run{
+				{ID: "other", ModelID: "skip-me", Repro: &model.ReproMeta{ClaudeCodeVersion: "9.9.9"}},
+				{ID: "sess", ModelID: "m-1", Repro: &model.ReproMeta{ClaudeCodeVersion: "2.1.50"}},
+			},
+			wantModel: "m-1",
+			wantCCV:   "2.1.50",
+		},
+		{
+			name:      "matching run without repro",
+			runs:      []model.Run{{ID: "sess", ModelID: "m-2"}},
+			wantModel: "m-2",
+		},
+		{
+			name: "no matching run",
+			runs: []model.Run{{ID: "other", ModelID: "m-3"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := benchEnvStamps(tt.runs, "sess")
+			require.NotNil(t, env)
+			assert.Equal(t, Version, env.CatacombVersion)
+			assert.Equal(t, runtime.GOOS, env.Resources.OS)
+			assert.Equal(t, runtime.GOARCH, env.Resources.Arch)
+			assert.Equal(t, runtime.NumCPU(), env.Resources.CPUs)
+			assert.Equal(t, tt.wantModel, env.ModelID)
+			assert.Equal(t, tt.wantCCV, env.ClaudeCodeVersion)
+		})
+	}
+}
+
+func TestBenchOfflineEnvStampsInMeta(t *testing.T) {
+	tests := []struct {
+		name      string
+		session   string
+		fixture   bool
+		body      string
+		wantModel string
+		wantCCV   string
+	}{
+		{
+			name:      "transcript with model and claude code version",
+			session:   "envsess",
+			fixture:   true,
+			wantModel: "claude-opus-4-8",
+			wantCCV:   "2.1.100",
+		},
+		{
+			name:    "transcript without model or claude code version",
+			session: "noenvsess",
+			body:    `{"type":"user","uuid":"u1","sessionId":"noenvsess","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"go"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projects := t.TempDir()
+			runs := t.TempDir()
+			helperEnv := []string{"HELPER_SESSION=" + tt.session, "HELPER_PROJECTS=" + projects}
+			if tt.fixture {
+				fx, err := filepath.Abs(filepath.Join("testdata", "session_envstamps.jsonl"))
+				require.NoError(t, err)
+				helperEnv = append(helperEnv, "HELPER_FIXTURE="+fx)
+			} else {
+				helperEnv = append(helperEnv, "HELPER_BODY="+tt.body)
+			}
+			stubBenchChild(t, helperEnv...)
+			cell := offlineCell("bench-b-t1-base-r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
+			entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
+				offlineOpts{projectsDir: projects, runsDir: runs})
+			require.False(t, failed)
+			require.NotEmpty(t, entry.EvidenceDir)
+
+			meta, err := evidence.ReadMeta(entry.EvidenceDir)
+			require.NoError(t, err)
+			require.NotNil(t, meta.Env)
+			assert.Equal(t, Version, meta.Env.CatacombVersion)
+			assert.Equal(t, runtime.GOOS, meta.Env.Resources.OS)
+			assert.Equal(t, runtime.GOARCH, meta.Env.Resources.Arch)
+			assert.GreaterOrEqual(t, meta.Env.Resources.CPUs, 1)
+			assert.Equal(t, tt.wantModel, meta.Env.ModelID)
+			assert.Equal(t, tt.wantCCV, meta.Env.ClaudeCodeVersion)
+
+			data, err := os.ReadFile(filepath.Join(entry.EvidenceDir, "meta.json"))
+			require.NoError(t, err)
+			var raw struct {
+				Env map[string]any `json:"env"`
+			}
+			require.NoError(t, json.Unmarshal(data, &raw))
+			require.NotNil(t, raw.Env)
+			_, hasModel := raw.Env["model_id"]
+			assert.Equal(t, tt.wantModel != "", hasModel)
+			_, hasCCV := raw.Env["claude_code_version"]
+			assert.Equal(t, tt.wantCCV != "", hasCCV)
+		})
+	}
 }
 
 func TestBenchOfflineVariantEnvAndEmptySetup(t *testing.T) {

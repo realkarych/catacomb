@@ -33,6 +33,21 @@ type Meta struct {
 
 	Artifacts     []ArtifactMeta `json:"artifacts,omitempty"`
 	ArtifactsNote string         `json:"artifacts_note,omitempty"`
+
+	Env *EnvStamps `json:"env,omitempty"`
+}
+
+type EnvStamps struct {
+	CatacombVersion   string    `json:"catacomb_version"`
+	ModelID           string    `json:"model_id,omitempty"`
+	ClaudeCodeVersion string    `json:"claude_code_version,omitempty"`
+	Resources         Resources `json:"resources"`
+}
+
+type Resources struct {
+	OS   string `json:"os"`
+	Arch string `json:"arch"`
+	CPUs int    `json:"cpus"`
 }
 
 type SourceFile struct {
