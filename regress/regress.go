@@ -52,6 +52,7 @@ type Report struct {
 	Insufficient   int          `json:"insufficient"`
 	OverallVerdict Verdict      `json:"overall_verdict"`
 	Sensitivity    *Sensitivity `json:"sensitivity,omitempty"`
+	Reliability    *Reliability `json:"reliability,omitempty"`
 }
 
 var scopeOrder = map[string]int{"total": 0, "phase": 1, "step": 2}
@@ -83,6 +84,7 @@ func Compare(in Input, th Thresholds) Report {
 	rep.Notables = countVerdict(findings, VerdictNotable)
 	rep.Insufficient = countVerdict(findings, VerdictInsufficient)
 	rep.OverallVerdict = overallVerdict(findings, rep.Regressions, rep.Notables, rep.Insufficient, th.FailOnNotable)
+	rep.Reliability = computeReliability(b, c)
 	return rep
 }
 

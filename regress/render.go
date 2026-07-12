@@ -30,6 +30,18 @@ func RenderHuman(r Report, w io.Writer) {
 			renderValue(f, f.Baseline), renderValue(f, f.Candidate), formatBand(f), keyOrDash(f.Detail))
 	}
 	_ = tw.Flush()
+	if r.Reliability != nil {
+		_, _ = fmt.Fprintln(w, formatReliability("baseline", r.Reliability.Baseline))
+		_, _ = fmt.Fprintln(w, formatReliability("candidate", r.Reliability.Candidate))
+	}
+}
+
+func formatReliability(group string, gr GroupReliability) string {
+	head := fmt.Sprintf("reliability (%s): pass^1 %.2f", group, gr.Mean[0])
+	if gr.KMax == 1 {
+		return fmt.Sprintf("%s (%d tasks)", head, len(gr.Tasks))
+	}
+	return fmt.Sprintf("%s -> pass^%d %.2f (%d tasks)", head, gr.KMax, gr.Mean[gr.KMax-1], len(gr.Tasks))
 }
 
 func RenderJSON(r Report, w io.Writer) error {
