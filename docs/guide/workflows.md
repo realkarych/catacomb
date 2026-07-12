@@ -152,6 +152,27 @@ so a gate that cannot fire is never silent about it. Add `--fail-on-notable` to 
 findings toward the gate (exit `1`); it trades precision for recall at small k, since at `k=3`
 the delta threshold alone would also flag ordinary sampling noise such as 1/3 → 2/3.
 
+### Catching drift below the band: the paired sign test
+
+The metric noise band is rep-count-invariant: `duration_ms`, `cost_usd`, and token medians flag
+only when the candidate leaves the baseline median ± `max(0.25 × |median|, 1.5 × IQR)` band, so
+a systematic drift smaller than the relative delta — a +10% cost creep, say — can never flag
+there, no matter how many reps you run. The paired sign test is the axis built for exactly that
+shape: for every task present in both groups (with `--min-support` runs per side) it takes the
+candidate-minus-baseline delta of the per-task medians and asks how likely that many increases
+are under no change. Repeated *direction across tasks* is the signal, not magnitude:
+
+- a +10% cost creep on **8 of 8** tasks gives p = 0.0039 ≤ `--paired-alpha` (default 0.05) and
+  gates (exit `1`) — invisible to the band at any rep count;
+- the same creep on **6 of 8** tasks does not fire (p = 0.1445) — direction that weak stays a
+  band question, however large the deltas.
+
+At the default `--paired-alpha` the smallest signal that can fire is five unanimous per-task
+shifts (0.5⁵ = 0.03125), and `--paired-min-tasks` (default 5) refuses to gate below five
+matched tasks regardless. When the paired layer is active but cannot fire, the `sensitivity:`
+line names the smallest task count at which a unanimous shift would gate — same discipline as
+the rate-gate disclosure above. See [regress](cli.md#regress) for the finding semantics.
+
 ### Watching drift over time
 
 With `--record` in the gate, each run accumulates in the baseline's append-only history. `trends`
@@ -235,6 +256,13 @@ comparison.
   presence or error-rate flip hard-flags a `regression` from `k=3`; a partial drop needs `k` ≥ 5
   to reach `regression` (see the [sensitivity table above](#gate-sensitivity-at-small-k)). Five or
   more repetitions per variant keeps headroom for a real flip to gate.
+- **Use ≥ 5 tasks when you want the paired axis.** The paired sign test refuses to gate below
+  `--paired-min-tasks` (default 5) matched tasks, and at the default `--paired-alpha` (0.05) five
+  unanimous per-task shifts is also the smallest signal that can reach `regression`
+  (0.5⁵ = 0.03125) — a smaller basket reports `insufficient` and the `sensitivity:` line
+  discloses it, no matter how strong the drift. Five or more tasks per basket give systematic
+  sub-band drift a path to gate; see
+  [the paired sign test](#catching-drift-below-the-band-the-paired-sign-test).
 - **Lean on checkpoints when the change rewrites prompts.** Changing the component under test
   alters some prompt hashes, so `step_key` alignment degrades and step-level coverage drops.
   Below `--coverage-floor` (default 0.7) step verdicts are downgraded to `notable`, and the

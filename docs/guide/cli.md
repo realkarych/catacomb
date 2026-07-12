@@ -347,6 +347,8 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
 | `--error-delta` | 0.1 | Error-rate delta threshold |
 | `--annotation-rate-delta` | 0.1 | Rate delta threshold for run-level binary annotations (e.g. `verifier.pass`; must be > 0) |
+| `--paired-alpha` | 0.05 | Significance level for the paired per-task sign test (must be in (0,1)) |
+| `--paired-min-tasks` | 5 | Minimum matched tasks before the paired sign test can gate (must be > 0) |
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
@@ -386,11 +388,49 @@ Groups are aggregated and compared per
   [ADR-0022 Amendments](../adr/0022-regression-detection-over-repeated-runs.md#amendments),
   so a pipeline that legitimately grew may need `--metric-rel-delta` raised to keep
   ordinary growth inside the band.
+- **Paired per-task deltas** (scope `paired`): when both groups carry `task` labels
+  (any [`bench`](#bench) basket does), every task present in both groups with
+  `--min-support` runs per side contributes one delta per continuous metric
+  (`duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`) — the candidate per-task
+  median minus the baseline per-task median. An exact one-sided sign test over the
+  non-zero deltas (zero deltas are dropped) flags `regression` when the probability of
+  seeing that many increases under no change is at most `--paired-alpha`; the detail
+  always carries the evidence (`+7/8 tasks, p=0.03516`), `improvement` is symmetric,
+  and a paired `regression` gates (exit `1`) like any other. This is the axis that
+  catches systematic drift *below* the metric band: a +10% cost creep repeated across
+  8 tasks fires at p=0.0039 while staying inside every median band. Fewer than
+  `--paired-min-tasks` matched tasks reports `insufficient` instead of a guess, and
+  whenever the paired layer is active but cannot fire — too few matched tasks, or
+  unanimity at the current task count cannot reach `--paired-alpha` — the
+  `sensitivity:` note names the smallest task count at which a unanimous shift would
+  gate. An `ok` paired row is omitted from the findings like any non-total row. See
+  [when the paired test fires](workflows.md#catching-drift-below-the-band-the-paired-sign-test).
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is
   always reported; below `--coverage-floor` step-level regressions are downgraded to
   `notable` and the checkpoint (phase) level carries the verdict (under
   `--fail-on-notable` those downgraded findings still gate).
 - Groups below `--min-support` yield an `insufficient` verdict instead of a guess.
+
+### Task reliability (pass^k)
+
+When both groups carry per-task `verifier.pass` outcomes (a [`bench`](#bench) basket
+with a [verifier](workflows.md#verifying-task-outcomes)), the report carries a
+`reliability` block: for a task with `n` scored runs and `c` passes,
+`pass^k = C(c,k)/C(n,k)` — the unbiased estimate of "all `k` independent trials
+succeed" — computed for `k` = 1..`k_max`, where `k_max` is the smallest scored `n` in
+the group so curves stay comparable across tasks. `--json` carries the full per-task
+curves plus the unweighted `mean` curve over tasks; the human report renders one
+epilogue line per group with the mean curve's endpoints:
+
+```text
+reliability (candidate): pass^1 0.93 -> pass^5 0.67 (7 tasks)
+```
+
+A flat curve is a reliable agent; a steep drop from pass^1 to pass^k is a coin-flipper
+that happens to average well. The block is **informational only — it never gates**: the
+same binary data already gates through the `ann:verifier.pass` rate axis
+([run-level scores](#run-level-scores)), and double-gating one signal would only
+inflate false positives.
 
 ## Baseline version stamps
 
@@ -485,7 +525,8 @@ file is layered on top; when one of its entries sets a key an evidence file alre
 provided, the flag value wins and a stderr warning notes the count
 (`N entries overrode evidence-provided values`).
 
-Comparison runs at three scopes — run totals, checkpoint phases, and steps. The human
+Comparison runs at four scopes — run totals, paired per-task deltas, checkpoint
+phases, and steps. The human
 table prints `VERDICT SCOPE KEY NAME METRIC BASELINE CANDIDATE BAND DETAIL` with
 presence-normalized values (presence rate, not absence); the `DETAIL` column carries the
 per-finding note (raw counts such as `present a/n -> b/m` or `ones a/n -> b/m`, an

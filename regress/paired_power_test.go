@@ -115,15 +115,24 @@ func TestPairedScopeOrder(t *testing.T) {
 
 func TestPairedDisclosureFires(t *testing.T) {
 	t.Parallel()
-	rep := Compare(pairedDurationInput(repeatDeltas(4, 0, 0)), DefaultThresholds())
-	require.NotNil(t, rep.Sensitivity)
-	require.NotNil(t, rep.Sensitivity.Paired)
-	assert.False(t, rep.Sensitivity.Paired.Reachable)
-	assert.Equal(t, 5, rep.Sensitivity.Paired.MinFullFlipRuns)
+	for _, nTasks := range []int{1, 2, 3, 4} {
+		t.Run(fmt.Sprintf("tasks_%d", nTasks), func(t *testing.T) {
+			t.Parallel()
+			rep := Compare(pairedDurationInput(repeatDeltas(nTasks, 0, 0)), DefaultThresholds())
+			f := findFinding(rep.Findings, "paired", "", "duration_ms")
+			require.NotNil(t, f)
+			assert.Equal(t, VerdictInsufficient, f.Verdict)
+			assert.Equal(t, fmt.Sprintf("matched %d tasks below paired min 5", nTasks), f.Detail)
+			require.NotNil(t, rep.Sensitivity)
+			require.NotNil(t, rep.Sensitivity.Paired)
+			assert.False(t, rep.Sensitivity.Paired.Reachable)
+			assert.Equal(t, 5, rep.Sensitivity.Paired.MinFullFlipRuns)
 
-	var buf bytes.Buffer
-	RenderHuman(rep, &buf)
-	assert.Contains(t, buf.String(), "paired gate needs k>=5 tasks")
+			var buf bytes.Buffer
+			RenderHuman(rep, &buf)
+			assert.Contains(t, buf.String(), "paired gate needs k>=5 tasks")
+		})
+	}
 }
 
 func TestPairedDisclosureAlphaUnreachable(t *testing.T) {
@@ -147,9 +156,7 @@ func TestPairedDisclosureReachableOmitted(t *testing.T) {
 	t.Parallel()
 	rep := Compare(pairedDurationInput(repeatDeltas(5, 0, 0)), DefaultThresholds())
 	require.Equal(t, VerdictRegression, rep.OverallVerdict)
-	if rep.Sensitivity != nil && rep.Sensitivity.Paired != nil {
-		assert.True(t, rep.Sensitivity.Paired.Reachable)
-	}
+	assert.Nil(t, rep.Sensitivity)
 }
 
 func TestPairedSensitivityRoundTrip(t *testing.T) {
