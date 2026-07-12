@@ -1,6 +1,7 @@
 package regress
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,6 +48,11 @@ func TestMinUnanimousTasks(t *testing.T) {
 		{0.05, 5},
 		{0.03125, 5},
 		{0.01, 7},
+		{math.Ldexp(1, -999), 999},
+		{math.Ldexp(1, -1000), 1000},
+		{math.SmallestNonzeroFloat64, minUnanimousSearchCap},
+		{0, minUnanimousSearchCap},
+		{-1, minUnanimousSearchCap},
 	}
 	for _, tc := range cases {
 		require.Equal(t, tc.want, minUnanimousTasks(tc.alpha), "alpha=%g", tc.alpha)

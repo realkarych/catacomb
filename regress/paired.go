@@ -7,6 +7,8 @@ import (
 	"github.com/realkarych/catacomb/aggregate"
 )
 
+const minUnanimousSearchCap = 1000
+
 type taskPair struct {
 	base aggregate.TaskStats
 	cand aggregate.TaskStats
@@ -41,11 +43,12 @@ func binomTailGE(s, m int) float64 {
 }
 
 func minUnanimousTasks(alpha float64) int {
-	n := 1
-	for math.Ldexp(1, -n) > alpha {
-		n++
+	for n := 1; n < minUnanimousSearchCap; n++ {
+		if math.Ldexp(1, -n) <= alpha {
+			return n
+		}
 	}
-	return n
+	return minUnanimousSearchCap
 }
 
 func smallestFiringTasks(th Thresholds) int {
