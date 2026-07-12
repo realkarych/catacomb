@@ -35,12 +35,7 @@ type taskAcc struct {
 
 func (a *taskAcc) add(rg RunGraph) {
 	a.runs++
-	var sums metricSums
-	for _, n := range rg.Nodes {
-		sums.cost += derefF(n.CostUSD)
-		sums.tokensIn += derefI(n.TokensIn)
-		sums.tokensOut += derefI(n.TokensOut)
-	}
+	sums := runNodeSums(rg)
 	if d, ok := runDuration(rg.Run); ok {
 		a.duration = append(a.duration, d)
 	}
