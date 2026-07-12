@@ -80,3 +80,74 @@ def test_emit_key_without_value_raises(capsys):
     with pytest.raises(ValueError):
         emit(key="verifier.row_diff")
     assert capsys.readouterr().out == ""
+
+
+def test_emit_bool_value_rejected(capsys):
+    with pytest.raises(ValueError, match="finite number"):
+        emit(key="verifier.row_diff", value=True)
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_nan_value_rejected(capsys):
+    with pytest.raises(ValueError, match="finite number"):
+        emit(key="judge.groundedness", value=float("nan"))
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_positive_inf_value_rejected(capsys):
+    with pytest.raises(ValueError, match="finite number"):
+        emit(key="judge.groundedness", value=float("inf"))
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_negative_inf_value_rejected(capsys):
+    with pytest.raises(ValueError, match="finite number"):
+        emit(key="judge.groundedness", value=float("-inf"))
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_string_value_rejected(capsys):
+    with pytest.raises(ValueError, match="finite number"):
+        emit(key="judge.groundedness", value="1.0")  # type: ignore[arg-type]
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_key_with_too_many_dots_rejected(capsys):
+    with pytest.raises(ValueError, match="owner.key"):
+        emit(key="a.b.c", value=1)
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_key_without_dot_rejected(capsys):
+    with pytest.raises(ValueError, match="owner.key"):
+        emit(key="ab", value=1)
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_key_empty_owner_rejected(capsys):
+    with pytest.raises(ValueError, match="owner.key"):
+        emit(key=".b", value=1)
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_key_empty_rest_rejected(capsys):
+    with pytest.raises(ValueError, match="owner.key"):
+        emit(key="a.", value=1)
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_valid_owner_key_accepted(capsys):
+    line = _emit_line(capsys, key="owner.key", value=2)
+    assert json.loads(line) == {"key": "owner.key", "value": 2}
+
+
+def test_emit_passed_with_value_rejected(capsys):
+    with pytest.raises(ValueError):
+        emit(passed=True, value=1)
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_passed_false_with_value_rejected(capsys):
+    with pytest.raises(ValueError):
+        emit(passed=False, value=0)
+    assert capsys.readouterr().out == ""

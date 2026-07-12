@@ -254,6 +254,41 @@ def test_ordered_ignored_in_containment_mode(tmp_path):
     assert ordered.equal is True
 
 
+def test_csv_normalized_header_collision_raises(tmp_path):
+    got = _write(tmp_path, "got.csv", "Total,total\n1,2\n")
+    want = _write(tmp_path, "want.csv", "total\n2\n")
+    with pytest.raises(ValueError, match="Total"):
+        compare_tables(got, want)
+
+
+def test_csv_space_dash_normalize_collision_raises(tmp_path):
+    got = _write(tmp_path, "got.csv", "total sales,total-sales\n1,2\n")
+    want = _write(tmp_path, "want.csv", "total_sales\n2\n")
+    with pytest.raises(ValueError):
+        compare_tables(got, want)
+
+
+def test_csv_literal_duplicate_header_raises(tmp_path):
+    got = _write(tmp_path, "got.csv", "total,total\n1,2\n")
+    want = _write(tmp_path, "want.csv", "total\n2\n")
+    with pytest.raises(ValueError):
+        compare_tables(got, want)
+
+
+def test_csv_case_distinct_headers_not_collision_when_unnormalized(tmp_path):
+    got = _write(tmp_path, "got.csv", "Total,total\n1,2\n")
+    want = _write(tmp_path, "want.csv", "Total,total\n1,2\n")
+    res = compare_tables(got, want, normalize_headers=False)
+    assert res.equal is True
+
+
+def test_jsonl_normalized_key_collision_raises(tmp_path):
+    got = _write(tmp_path, "got.jsonl", '{"Total":1,"total":2}\n')
+    want = _write(tmp_path, "want.csv", "total\n2\n")
+    with pytest.raises(ValueError, match="Total"):
+        compare_tables(got, want)
+
+
 def test_result_is_frozen_dataclass():
     res = CompareResult(equal=True, row_diff=0, mismatches=[])
     assert dataclasses.is_dataclass(res)

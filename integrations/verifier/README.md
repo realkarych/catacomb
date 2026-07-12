@@ -7,7 +7,7 @@ aggregates into pass rates and continuous metrics.
 
 This directory is outside the Go 100%-coverage gate and the no-comments rule;
 both apply only to Go packages. The package depends on nothing but the standard
-library (`dataclasses`, `json`, `os`, `sys`).
+library (`csv`, `dataclasses`, `json`, `math`, `os`, `sys`).
 
 ## The exec contract
 
@@ -86,7 +86,10 @@ extra rows or columns fail, the execution-accuracy false-positive lesson. Pass
 (`ordered` is ignored in this mode).
 Formats are selected by extension: `.csv` (via the `csv` module) and `.jsonl`
 (one JSON object per line); the two can be compared cross-format. `mismatches`
-is a structured diff meant to be printed to stderr for a human.
+is a structured diff meant to be printed to stderr for a human. A nested JSON
+value (an object or array cell) has no numeric form, so it compares via its
+Python string form rather than structurally. Two headers that normalize to the
+same column name raise `ValueError` rather than silently collapsing to one.
 
 ## Testing
 

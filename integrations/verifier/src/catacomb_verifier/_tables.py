@@ -166,7 +166,9 @@ def _load_csv(path: str, normalize_headers: bool) -> tuple[list[str], list[dict[
         records = list(csv.reader(handle))
     if not records:
         return [], []
-    header = [_col_name(cell, normalize_headers) for cell in records[0]]
+    originals = records[0]
+    header = [_col_name(cell, normalize_headers) for cell in originals]
+    _reject_collisions(header, originals, path)
     rows = [
         {col: _coerce(raw[i]) if i < len(raw) else None for i, col in enumerate(header)}
         for raw in records[1:]
@@ -183,15 +185,28 @@ def _load_jsonl(path: str, normalize_headers: bool) -> tuple[list[str], list[dic
             line = line.strip()
             if not line:
                 continue
+            obj = json.loads(line)
+            originals = [str(key) for key in obj]
+            names = [_col_name(key, normalize_headers) for key in obj]
+            _reject_collisions(names, originals, path)
             row: dict[str, object] = {}
-            for key, value in json.loads(line).items():
-                col = _col_name(key, normalize_headers)
+            for col, value in zip(names, obj.values()):
                 if col not in seen:
                     seen.add(col)
                     header.append(col)
                 row[col] = _coerce(value)
             rows.append(row)
     return header, rows
+
+
+def _reject_collisions(names: list[str], originals: list[str], path: str) -> None:
+    groups: dict[str, list[str]] = {}
+    for original, name in zip(originals, names):
+        groups.setdefault(name, []).append(original)
+    collided = {name: origs for name, origs in groups.items() if len(origs) > 1}
+    if collided:
+        detail = "; ".join(f"{name!r} from {origs}" for name, origs in sorted(collided.items()))
+        raise ValueError(f"duplicate column after header normalization in {path!r}: {detail}")
 
 
 def _col_name(name: object, normalize: bool) -> str:

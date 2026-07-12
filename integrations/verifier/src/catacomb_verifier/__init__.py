@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import os
 import sys
 
@@ -83,20 +84,40 @@ def emit(
     """Print one scores-JSONL line to stdout.
 
     Exactly one of `passed` or `key` is required. `passed` emits the reserved
-    `verifier.pass` key as 1/0; `key` emits an arbitrary owner.key with `value`.
-    Numeric types are preserved verbatim (an int stays an int in the JSON), and
-    `run_id` plus any provenance kwargs (tool, tool_version, prompt_hash) pass
-    through as extra fields in insertion order.
+    `verifier.pass` key as 1/0 and takes no `value`; `key` emits an arbitrary
+    owner.key with `value`. Numeric types are preserved verbatim (an int stays an
+    int in the JSON), and `run_id` plus any provenance kwargs (tool, tool_version,
+    prompt_hash) pass through as extra fields in insertion order.
+
+    The output must survive the Go gate's scores parser, which unmarshals `value`
+    into a `float64` and requires an `owner.key` key: a `value` that is a bool,
+    non-numeric, or non-finite, or a `key` outside that grammar, is rejected here
+    with `ValueError` rather than written as a line the gate would choke on.
     """
     if (passed is None) == (key is None):
         raise ValueError("emit requires exactly one of passed= or key=")
     if passed is not None:
+        if value is not None:
+            raise ValueError("emit(passed=...) takes no value=")
         line: dict[str, object] = {"key": "verifier.pass", "value": 1 if passed else 0}
     else:
         if value is None:
             raise ValueError("emit(key=...) requires a numeric value=")
+        _validate_value(value)
+        _validate_key(key)
         line = {"key": key, "value": value}
     if run_id is not None:
         line["run_id"] = run_id
     line.update(provenance)
     print(json.dumps(line, separators=(",", ":")))
+
+
+def _validate_value(value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("emit value must be a finite number")
+
+
+def _validate_key(key: str) -> None:
+    owner, sep, rest = key.partition(".")
+    if not sep or not owner or not rest or "." in rest:
+        raise ValueError(f"emit key {key!r} must be owner.key")
