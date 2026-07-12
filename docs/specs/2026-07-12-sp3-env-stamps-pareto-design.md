@@ -87,7 +87,7 @@ schema untouched).
 
   ```text
   SEQ  CREATED               CANDIDATE                 ACCURACY  COST_USD  DOMINATED
-  -    -                     baseline                  1.00      0.0104    no
+  -    -                     baseline                  1.00      0.0102    no
   2    2026-07-12T18:04:11Z  label:variant=cand        1.00      0.0102    no
   1*   2026-07-12T17:58:03Z  label:variant=degraded    0.00      0.0102    yes
   3    2026-07-12T18:09:44Z  label:variant=old         -         0.0110    -
@@ -103,7 +103,7 @@ schema untouched).
   {
     "baseline": "sql-suite",
     "points": [
-      {"source": "baseline", "accuracy": 1.0, "cost_usd": 0.0104, "dominated": false},
+      {"source": "baseline", "accuracy": 1.0, "cost_usd": 0.0102, "dominated": false},
       {"source": "record", "seq": 2, "candidate": "label:variant=cand",
        "created_at": "2026-07-12T18:04:11Z", "accuracy": 1.0, "cost_usd": 0.0102,
        "dominated": false, "spliced": false},
