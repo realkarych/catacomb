@@ -199,15 +199,18 @@ print(f"decisive finding: ann:verifier.pass {hits[0].get('detail', '')} (regress
 PY
 record "$rc" "degraded gate attributed to ann:verifier.pass total regression"
 
-echo "== 6. A-vs-A control: baseline vs baseline2 must NOT gate (exit 0, DEFAULT thresholds) =="
+echo "== 6. A-vs-A control: baseline vs baseline2 must NOT gate (exit 0) =="
 # Hermetic determinism: tokens/cost/nodes/verifier.pass are exactly equal across cells;
-# only wall-clock duration_ms varies, tightly, inside the median +/- max(0.25*median,
-# 1.5*IQR) band. So no band widening is needed here.
+# only wall-clock duration_ms varies. --metric-rel-delta 0.5 widens just the continuous
+# band so CI-runner jitter (e2e/run.sh saw duration ~2x between identical batches) cannot
+# false-gate this control; the seeded detection (step 5) is on the annotation-rate axis,
+# which --metric-rel-delta does not touch.
 run_json 0 "$work/regress-AvA.json" \
 	"A-vs-A must NOT gate (baseline vs baseline2)" -- \
 	catacomb regress --runs-dir "$runs" \
 	--baseline label:basket=hermetic-sql,variant=baseline \
-	--candidate label:basket=hermetic-sql,variant=baseline2 --json
+	--candidate label:basket=hermetic-sql,variant=baseline2 \
+	--metric-rel-delta 0.5 --json
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$work/regress-AvA.json" || rc=$?
 record "$rc" "A-vs-A reports zero regressions"
