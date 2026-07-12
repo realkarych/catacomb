@@ -132,9 +132,15 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 	if !m.MarkerEnd.IsZero() {
 		run.EndedAt = &m.MarkerEnd
 	}
-	return aggregate.RunGraph{
+	rg := aggregate.RunGraph{
 		Run:   run,
 		Nodes: nodes,
 		Edges: edges,
-	}, nil
+	}
+	scores, err := loadEvidenceScores(dir, m.RunID)
+	if err != nil {
+		return aggregate.RunGraph{}, operational(err)
+	}
+	applyEntriesToRunGraph(&rg, scores)
+	return rg, nil
 }

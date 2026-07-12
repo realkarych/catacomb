@@ -8,25 +8,27 @@ import (
 )
 
 type Thresholds struct {
-	PresenceDelta  float64
-	ErrorRateDelta float64
-	MetricRelDelta float64
-	IQRFactor      float64
-	MinSupport     int
-	CoverageFloor  float64
-	Z              float64
-	FailOnNotable  bool
+	PresenceDelta       float64
+	ErrorRateDelta      float64
+	MetricRelDelta      float64
+	IQRFactor           float64
+	MinSupport          int
+	CoverageFloor       float64
+	Z                   float64
+	FailOnNotable       bool
+	AnnotationRateDelta float64
 }
 
 func DefaultThresholds() Thresholds {
 	return Thresholds{
-		PresenceDelta:  0.2,
-		ErrorRateDelta: 0.1,
-		MetricRelDelta: 0.25,
-		IQRFactor:      1.5,
-		MinSupport:     3,
-		CoverageFloor:  0.7,
-		Z:              1.645,
+		PresenceDelta:       0.2,
+		ErrorRateDelta:      0.1,
+		MetricRelDelta:      0.25,
+		IQRFactor:           1.5,
+		MinSupport:          3,
+		CoverageFloor:       0.7,
+		Z:                   1.645,
+		AnnotationRateDelta: 0.1,
 	}
 }
 

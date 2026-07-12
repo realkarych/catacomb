@@ -211,10 +211,23 @@ comparison.
      --scores scores.jsonl --annotation deepeval.tool_correctness --strict
    ```
 
-   Annotation gating is step-scoped only (per ADR-0022); a key sampled below `--min-support` runs,
-   or present on only one side, is reported `insufficient` rather than guessed. In CI, add
-   `--strict` (as above) so an under-annotated group fails the gate with exit `1` instead of
-   passing silently.
+   This example gates a per-step score; a key sampled below `--min-support` runs, or present on
+   only one side, is reported `insufficient` rather than guessed. In CI, add `--strict` (as above)
+   so an under-annotated group fails the gate with exit `1` instead of passing silently.
+
+4. **Or gate a whole-run verdict.** A score line that omits `step_key` is a **run-level** score
+   ([`--scores` schema](cli.md#run-level-scores)) that gates at the run-total scope. In an external
+   file it must carry `run_id`; a `scores.jsonl` dropped into a run's evidence dir is auto-loaded
+   and may omit it. The reserved key `verifier.pass` gates **by default** — no `--annotation` flag
+   — so a pass/fail verifier folds into the gate with just `--scores`:
+
+   ```json
+   {"key": "verifier.pass", "value": 1, "run_id": "bench-checkout-work-task-candidate-r1"}
+   ```
+
+   When every value is `0`/`1` the key is gated as a rate (`--annotation-rate-delta`, default 0.1,
+   the same Wilson-bounds rule as presence and error rates), and the `DETAIL` column shows the
+   `ones a/n -> b/m` counts; a continuous score uses the metric band instead.
 
 ### Practical notes
 

@@ -77,6 +77,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().Float64Var(&f.thresholds.IQRFactor, "iqr-factor", def.IQRFactor, "IQR band factor")
 	cmd.Flags().Float64Var(&f.thresholds.CoverageFloor, "coverage-floor", def.CoverageFloor, "step alignment coverage floor")
 	cmd.Flags().Float64Var(&f.thresholds.Z, "z", def.Z, "one-sided Wilson z for rate gates (1.645 = 95% one-sided)")
+	cmd.Flags().Float64Var(&f.thresholds.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
 	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
 }
 
@@ -86,6 +87,9 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	}
 	if f.thresholds.Z <= 0 {
 		return operational(fmt.Errorf("regress: --z must be > 0, got %g", f.thresholds.Z))
+	}
+	if f.thresholds.AnnotationRateDelta <= 0 {
+		return operational(fmt.Errorf("regress: --annotation-rate-delta must be > 0, got %g", f.thresholds.AnnotationRateDelta))
 	}
 	if f.runsDir == "" {
 		return operational(errRegressNoRunsDir)
@@ -272,6 +276,9 @@ func warnUnfiredAnnotations(errOut io.Writer, specs []regress.AnnotationSpec, ba
 }
 
 func annotationFired(rep aggregate.Report, key string) bool {
+	if _, ok := rep.Totals.Annotations[key]; ok {
+		return true
+	}
 	for _, r := range rep.Steps {
 		if _, ok := r.Annotations[key]; ok {
 			return true

@@ -395,6 +395,29 @@ func TestEvidenceRunGraphOverlayNoSessionMatchLeavesRunZero(t *testing.T) {
 	assert.Empty(t, rg.Run.ModelID)
 }
 
+func TestRunsDirAppliesEvidenceScores(t *testing.T) {
+	root := t.TempDir()
+	writeEvidenceRun(t, root, "base-0", "base", "session_marked.jsonl")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "base-0", "scores.jsonl"),
+		[]byte(`{"key":"verifier.pass","value":1}`+"\n"), 0o600))
+	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	require.NoError(t, err)
+	require.Len(t, base, 1)
+	assert.InDelta(t, 1.0, base[0].Annotations["verifier.pass"], 1e-9)
+}
+
+func TestEvidenceRunGraphScoresParseError(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "r0")
+	m := evidence.Meta{RunID: "r0", SessionID: "s1"}
+	require.NoError(t, evidence.Write(dir, m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session.jsonl"), Rel: "session.jsonl"}}))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scores.jsonl"), []byte("{nope\n"), 0o600))
+	_, err := evidenceRunGraph(dir, m, newPricer())
+	require.Error(t, err)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
 func TestEvidenceRunGraphMergesSubagents(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "r1")

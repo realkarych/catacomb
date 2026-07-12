@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
 	"github.com/realkarych/catacomb/store"
@@ -89,6 +90,7 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		{"iqr-factor", "2.5", func(th regress.Thresholds) string { return strconv.FormatFloat(th.IQRFactor, 'g', -1, 64) }},
 		{"coverage-floor", "0.8", func(th regress.Thresholds) string { return strconv.FormatFloat(th.CoverageFloor, 'g', -1, 64) }},
 		{"z", "1.96", func(th regress.Thresholds) string { return strconv.FormatFloat(th.Z, 'g', -1, 64) }},
+		{"annotation-rate-delta", "0.15", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AnnotationRateDelta, 'g', -1, 64) }},
 	}
 	for _, tc := range cases {
 		var f regressFlags
@@ -140,6 +142,14 @@ func TestRegressZFlagRejectsNonPositive(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "--z must be > 0")
 }
 
+func TestRegressAnnotationRateDeltaRejectsNonPositive(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--annotation-rate-delta", "0"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--annotation-rate-delta must be > 0")
+}
+
 func TestRegressStrictInsufficientExitOne(t *testing.T) {
 	root := evidenceRoot(t)
 	var out, errBuf bytes.Buffer
@@ -173,6 +183,20 @@ func TestRegressUnfiredAnnotationWarns(t *testing.T) {
 	assert.NotContains(t, out.String(), "ann:")
 	assert.Contains(t, errBuf.String(), `annotation "owner.never" produced no findings`)
 	assert.Contains(t, errBuf.String(), "step-key-eligible")
+}
+
+func TestWarnUnfiredAnnotationRunLevelOnly(t *testing.T) {
+	specs := []regress.AnnotationSpec{{Key: "judge.groundedness", HigherBetter: true}}
+	base := aggregate.Report{
+		Totals: aggregate.RunTotals{
+			Annotations: map[string]aggregate.AnnotationTotals{
+				"judge.groundedness": {N: 5, Binary: false},
+			},
+		},
+	}
+	var errBuf bytes.Buffer
+	warnUnfiredAnnotations(&errBuf, specs, base, aggregate.Report{})
+	assert.Empty(t, errBuf.String())
 }
 
 func TestParseAnnotationFlags(t *testing.T) {

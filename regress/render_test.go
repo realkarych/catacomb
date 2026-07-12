@@ -96,6 +96,29 @@ func TestRenderHumanNameColumn(t *testing.T) {
 	assert.Equal(t, "-", rows["-"][3])
 }
 
+func TestRenderHumanAnnotationDetail(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictRegression,
+		Findings: []Finding{{
+			Scope:     "total",
+			Metric:    "ann:verifier.pass",
+			Verdict:   VerdictRegression,
+			Baseline:  1.0,
+			Candidate: 0.4,
+			BandLo:    0.6,
+			BandHi:    1.0,
+			Detail:    "ones 5/5 -> 2/5",
+		}},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "DETAIL")
+	assert.Contains(t, out, "ann:verifier.pass")
+	assert.Contains(t, out, "ones 5/5 -> 2/5")
+}
+
 func TestRenderHumanPresenceNormalized(t *testing.T) {
 	t.Parallel()
 	rep := Report{
@@ -149,6 +172,34 @@ func TestRenderHumanSensitivityUnreachable(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "full flip unreachable presence")
 	assert.NotContains(t, out, "k>=never")
+}
+
+func TestRenderHumanSensitivityAnnotation(t *testing.T) {
+	t.Parallel()
+	withAnn := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:   RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate:  RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			Annotation: &RateSensitivity{Reachable: false, MinFullFlipRuns: 6},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(withAnn, &buf)
+	require.Contains(t, buf.String(), "sensitivity: rate gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate, full flip needs k>=6 annotation)")
+
+	noAnn := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:  RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate: RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+		},
+	}
+	buf.Reset()
+	RenderHuman(noAnn, &buf)
+	out := buf.String()
+	require.Contains(t, out, "sensitivity:")
+	assert.NotContains(t, out, "annotation")
 }
 
 func TestRenderHumanNoSensitivityNote(t *testing.T) {
