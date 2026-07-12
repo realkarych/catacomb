@@ -162,7 +162,7 @@ func TestRenderHumanReliabilityPresent(t *testing.T) {
 	RenderHuman(rep, &buf)
 	out := buf.String()
 	assert.Contains(t, out, "reliability (baseline): pass^1 0.75 -> pass^2 0.50 (2 tasks)")
-	assert.Contains(t, out, "reliability (candidate): pass^1 0.00 -> pass^2 0.00 (1 tasks)")
+	assert.Contains(t, out, "reliability (candidate): pass^1 0.00 -> pass^2 0.00 (1 task)")
 }
 
 func TestRenderHumanReliabilitySinglePoint(t *testing.T) {
@@ -177,7 +177,7 @@ func TestRenderHumanReliabilitySinglePoint(t *testing.T) {
 	var buf bytes.Buffer
 	RenderHuman(rep, &buf)
 	out := buf.String()
-	assert.Contains(t, out, "reliability (baseline): pass^1 1.00 (1 tasks)")
+	assert.Contains(t, out, "reliability (baseline): pass^1 1.00 (1 task)")
 	assert.NotContains(t, out, "->")
 }
 

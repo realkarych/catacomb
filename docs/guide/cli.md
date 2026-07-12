@@ -339,7 +339,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--runs-dir` | `~/.catacomb/runs` | Evidence dir to resolve selectors from: `label:` scans it, `name:` reads `--db`'s baselines table, `--record` appends there |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path for `name:` baselines and `--record` |
 | `--json` | false | Emit the full report as JSON |
-| `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`) |
+| `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer matched tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
 | `--scores` | (none) | JSONL file of external scores applied as node annotations before comparison (see [Gating on external scores](#gating-on-external-scores)) |
@@ -396,7 +396,10 @@ Groups are aggregated and compared per
   non-zero deltas (zero deltas are dropped) flags `regression` when the probability of
   seeing that many increases under no change is at most `--paired-alpha`; the detail
   always carries the evidence (`+7/8 tasks, p=0.03516`), `improvement` is symmetric,
-  and a paired `regression` gates (exit `1`) like any other. This is the axis that
+  and a paired `regression` gates (exit `1`) like any other. All four paired metrics
+  are tested at the same `--paired-alpha` with no multiplicity correction: they are
+  strongly correlated, so the aggregate false-positive rate under the null is bounded
+  by ~4× alpha and lands well below that in practice. This is the axis that
   catches systematic drift *below* the metric band: a +10% cost creep repeated across
   8 tasks fires at p=0.0039 while staying inside every median band. Fewer than
   `--paired-min-tasks` matched tasks reports `insufficient` instead of a guess, and

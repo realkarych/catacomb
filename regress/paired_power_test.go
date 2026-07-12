@@ -122,15 +122,19 @@ func TestPairedDisclosureFires(t *testing.T) {
 			f := findFinding(rep.Findings, "paired", "", "duration_ms")
 			require.NotNil(t, f)
 			assert.Equal(t, VerdictInsufficient, f.Verdict)
-			assert.Equal(t, fmt.Sprintf("matched %d tasks below paired min 5", nTasks), f.Detail)
+			wantDetail := fmt.Sprintf("matched %d tasks below paired min 5", nTasks)
+			if nTasks == 1 {
+				wantDetail = "matched 1 task below paired min 5"
+			}
+			assert.Equal(t, wantDetail, f.Detail)
 			require.NotNil(t, rep.Sensitivity)
 			require.NotNil(t, rep.Sensitivity.Paired)
 			assert.False(t, rep.Sensitivity.Paired.Reachable)
-			assert.Equal(t, 5, rep.Sensitivity.Paired.MinFullFlipRuns)
+			assert.Equal(t, 5, rep.Sensitivity.Paired.MinTasks)
 
 			var buf bytes.Buffer
 			RenderHuman(rep, &buf)
-			assert.Contains(t, buf.String(), "paired gate needs k>=5 tasks")
+			assert.Contains(t, buf.String(), "sensitivity: gate cannot fire at this support (paired gate needs k>=5 tasks)\n")
 		})
 	}
 }
@@ -145,11 +149,11 @@ func TestPairedDisclosureAlphaUnreachable(t *testing.T) {
 	require.NotNil(t, rep.Sensitivity)
 	require.NotNil(t, rep.Sensitivity.Paired)
 	assert.False(t, rep.Sensitivity.Paired.Reachable)
-	assert.Equal(t, 7, rep.Sensitivity.Paired.MinFullFlipRuns)
+	assert.Equal(t, 7, rep.Sensitivity.Paired.MinTasks)
 
 	var buf bytes.Buffer
 	RenderHuman(rep, &buf)
-	assert.Contains(t, buf.String(), "paired gate needs k>=7 tasks")
+	assert.Contains(t, buf.String(), "sensitivity: gate cannot fire at this support (paired gate needs k>=7 tasks)\n")
 }
 
 func TestPairedDisclosureReachableOmitted(t *testing.T) {
@@ -166,12 +170,13 @@ func TestPairedSensitivityRoundTrip(t *testing.T) {
 		Sensitivity: &Sensitivity{
 			Presence:  RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
 			ErrorRate: RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
-			Paired:    &RateSensitivity{Reachable: false, MinFullFlipRuns: 5},
+			Paired:    &PairedSensitivity{Reachable: false, MinTasks: 5},
 		},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, RenderJSON(rep, &buf))
 	require.Contains(t, buf.String(), `"paired"`)
+	require.Contains(t, buf.String(), `"min_tasks"`)
 	var got Report
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
 	require.NotNil(t, got.Sensitivity)

@@ -293,17 +293,17 @@ metrics = sorted(f.get("metric") for f in paired)
 if metrics != ["cost_usd", "duration_ms", "tokens_in", "tokens_out"]:
     errs.append(f"paired metrics {metrics}")
 for f in paired:
-    if f.get("verdict") != "insufficient" or f.get("detail") != "matched 1 tasks below paired min 5":
+    if f.get("verdict") != "insufficient" or f.get("detail") != "matched 1 task below paired min 5":
         errs.append(f"{f.get('metric')}: verdict={f.get('verdict')!r} detail={f.get('detail')!r}")
 if errs:
     for x in errs:
         print("  -", x, file=sys.stderr)
     sys.exit(1)
-print("paired: all 4 metrics insufficient (matched 1 tasks below paired min 5)")
+print("paired: all 4 metrics insufficient (matched 1 task below paired min 5)")
 PY
 record "$rc" "paired sign test reports insufficient at n_tasks=1"
 rc=0
-python3 -c 'import json,sys; p=(json.load(open(sys.argv[1])).get("sensitivity") or {}).get("paired") or {}; sys.exit(0 if p.get("reachable") is False and p.get("min_full_flip_runs") == 5 else 1)' "$work/regress-degraded.json" || rc=$?
+python3 -c 'import json,sys; p=(json.load(open(sys.argv[1])).get("sensitivity") or {}).get("paired") or {}; sys.exit(0 if p.get("reachable") is False and p.get("min_tasks") == 5 else 1)' "$work/regress-degraded.json" || rc=$?
 record "$rc" "sensitivity discloses the paired gate needs k>=5 tasks"
 
 echo "== summary =="

@@ -93,7 +93,7 @@ func pairedFinding(metric string, nonzero, positive, matched int, th Thresholds)
 	f := Finding{Scope: "paired", Metric: metric}
 	if matched < th.PairedMinTasks {
 		f.Verdict = VerdictInsufficient
-		f.Detail = fmt.Sprintf("matched %d tasks below paired min %d", matched, th.PairedMinTasks)
+		f.Detail = fmt.Sprintf("matched %d %s below paired min %d", matched, taskWord(matched), th.PairedMinTasks)
 		return f
 	}
 	pReg := binomTailGE(positive, nonzero)
@@ -126,14 +126,14 @@ func pairedFindings(b, c aggregate.Report, th Thresholds) []Finding {
 	return out
 }
 
-func pairedSensitivity(b, c aggregate.Report, th Thresholds) *RateSensitivity {
+func pairedSensitivity(b, c aggregate.Report, th Thresholds) *PairedSensitivity {
 	if b.Tasks == nil || c.Tasks == nil {
 		return nil
 	}
 	matched := len(pairedTasks(b.Tasks, c.Tasks, th.MinSupport))
 	smallest := smallestFiringTasks(th)
-	return &RateSensitivity{
-		Reachable:       matched >= smallest,
-		MinFullFlipRuns: smallest,
+	return &PairedSensitivity{
+		Reachable: matched >= smallest,
+		MinTasks:  smallest,
 	}
 }

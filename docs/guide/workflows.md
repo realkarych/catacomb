@@ -260,7 +260,11 @@ comparison.
   `--paired-min-tasks` (default 5) matched tasks, and at the default `--paired-alpha` (0.05) five
   unanimous per-task shifts is also the smallest signal that can reach `regression`
   (0.5⁵ = 0.03125) — a smaller basket reports `insufficient` and the `sensitivity:` line
-  discloses it, no matter how strong the drift. Five or more tasks per basket give systematic
+  discloses it, no matter how strong the drift. Under `--strict` that is a structural failure,
+  not a flaky one: with fewer matched tasks than `--paired-min-tasks` the paired findings are
+  always `insufficient`, so an otherwise-clean report lands `insufficient` — never `ok` — and
+  exits `1` on every run, however many repetitions you add. Grow the basket to five tasks, or
+  lower `--paired-min-tasks` as a conscious choice. Five or more tasks per basket give systematic
   sub-band drift a path to gate; see
   [the paired sign test](#catching-drift-below-the-band-the-paired-sign-test).
 - **Lean on checkpoints when the change rewrites prompts.** Changing the component under test

@@ -132,6 +132,7 @@ func TestPairedFindingVerdicts(t *testing.T) {
 		wantDetail        string
 	}{
 		{"insufficient", 1, 1, 3, VerdictInsufficient, "matched 3 tasks below paired min 5"},
+		{"insufficient_singular", 1, 1, 1, VerdictInsufficient, "matched 1 task below paired min 5"},
 		{"regression_unanimous", 5, 5, 5, VerdictRegression, "+5/5 tasks, p=0.03125"},
 		{"regression_eight_seven", 8, 7, 8, VerdictRegression, "+7/8 tasks, p=0.03516"},
 		{"ok_eight_six", 8, 6, 8, VerdictOK, "+6/8 tasks, p=0.1445"},
@@ -186,10 +187,10 @@ func TestPairedSensitivity(t *testing.T) {
 	reach := pairedSensitivity(aggregate.Report{Tasks: b}, aggregate.Report{Tasks: c}, th)
 	require.NotNil(t, reach)
 	assert.True(t, reach.Reachable)
-	assert.Equal(t, 5, reach.MinFullFlipRuns)
+	assert.Equal(t, 5, reach.MinTasks)
 
 	unreach := pairedSensitivity(aggregate.Report{Tasks: b[:4]}, aggregate.Report{Tasks: c[:4]}, th)
 	require.NotNil(t, unreach)
 	assert.False(t, unreach.Reachable)
-	assert.Equal(t, 5, unreach.MinFullFlipRuns)
+	assert.Equal(t, 5, unreach.MinTasks)
 }
