@@ -68,9 +68,9 @@ graph `recordOfflineEvidence` already builds. `StampArtifacts` second pass must 
 Candidate string (json candidate, omitempty); CreatedAt time.Time (json created_at,
 omitzero); Accuracy *float64 (json accuracy, omitempty); CostUSD *float64 (json cost_usd,
 omitempty); Dominated *bool (json dominated, omitempty); Spliced *bool (json spliced,
-omitempty — pointer set for record points only, nil for the baseline point, so `false` still
-serializes for records)}` and `paretoReport{Baseline string (json
-baseline); Points []paretoPoint (json points)}`. Extraction: per record, accuracy = total
+omitempty)}` — Spliced is a pointer set for record points only and nil for the baseline
+point, so a false value still serializes for records — and `paretoReport{Baseline string
+(json baseline); Points []paretoPoint (json points)}`. Extraction: per record, accuracy = total
 finding `ann:verifier.pass` `.Candidate`, cost = total finding `cost_usd` `.Candidate`
 (reuse `totalFinding`); baseline point from the NEWEST record's `.Baseline` values.
 Domination over points with both axes: dominated iff ∃ other with `acc >= && cost <=` and
