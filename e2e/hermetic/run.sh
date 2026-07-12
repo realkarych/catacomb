@@ -15,12 +15,14 @@
 #   2 bench -> 3 evidence shape (verify.json mode "bench") -> 4 idempotent offline
 #   verify (scores byte-identical, mode "offline") -> 5 degraded gate (exit 1) ->
 #   6 A-vs-A control (exit 0) -> 7 operational-failure visibility (broken verifier) +
-#   restore -> 8 --scores override.
+#   restore -> 8 --scores override -> 9 SP2 reliability/paired shape (re-reads the
+#   step-5 report JSON).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
 # the gates and is immediately followed by a clean re-verify that restores (and asserts)
-# the offline state. Step 8 reads only scores.jsonl and runs last.
+# the offline state. Step 8 reads only scores.jsonl; step 9 re-reads the step-5 report
+# JSON from disk and runs last.
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -255,6 +257,54 @@ run_json 0 "$work/regress-scores.json" \
 rc=0
 grep -qi 'overrode' "$work/regress-scores.json.stderr" || rc=1
 record "$rc" "external --scores override reported on stderr (overrode)"
+
+echo "== 9. SP2 reliability + paired disclosure on the degraded comparison =="
+# Re-reads the step-5 report JSON. One task (sql) x 5 reps per side, baseline
+# verifier.pass 5/5 vs degraded 0/5, so the pass^k mean curves are exactly all-1.0 vs
+# all-0.0 at k_max=5. A single matched task can never fire the paired sign test
+# (paired min 5 tasks), so every paired finding must say insufficient and the
+# sensitivity block must disclose the smallest task count at which a unanimous shift
+# would gate — the gate says out loud that it cannot fire, never silently impotent.
+rc=0
+python3 - "$work/regress-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rel = json.load(open(sys.argv[1])).get("reliability") or {}
+errs = []
+for group, want in (("baseline", 1.0), ("candidate", 0.0)):
+    g = rel.get(group) or {}
+    mean = g.get("mean") or []
+    if g.get("k_max") != 5 or mean != [want] * 5:
+        errs.append(f"{group}: k_max={g.get('k_max')!r} mean={mean!r} want five x {want}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("reliability: baseline mean all 1.0, candidate mean all 0.0 (k_max=5)")
+PY
+record "$rc" "reliability pass^1..^5: baseline mean all 1.0, candidate all 0.0"
+rc=0
+python3 - "$work/regress-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+paired = [f for f in json.load(open(sys.argv[1])).get("findings", []) if f.get("scope") == "paired"]
+errs = []
+metrics = sorted(f.get("metric") for f in paired)
+if metrics != ["cost_usd", "duration_ms", "tokens_in", "tokens_out"]:
+    errs.append(f"paired metrics {metrics}")
+for f in paired:
+    if f.get("verdict") != "insufficient" or f.get("detail") != "matched 1 task below paired min 5":
+        errs.append(f"{f.get('metric')}: verdict={f.get('verdict')!r} detail={f.get('detail')!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("paired: all 4 metrics insufficient (matched 1 task below paired min 5)")
+PY
+record "$rc" "paired sign test reports insufficient at n_tasks=1"
+rc=0
+python3 -c 'import json,sys; p=(json.load(open(sys.argv[1])).get("sensitivity") or {}).get("paired") or {}; sys.exit(0 if p.get("reachable") is False and p.get("min_tasks") == 5 else 1)' "$work/regress-degraded.json" || rc=$?
+record "$rc" "sensitivity discloses the paired gate needs k>=5 tasks"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

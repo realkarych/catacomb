@@ -13,14 +13,22 @@ func RenderHuman(r Report, w io.Writer) {
 	_, _ = fmt.Fprintf(w, "coverage steps %.2f  phases %.2f  steps_trusted %t  overall %s\n",
 		r.Coverage.Steps, r.Coverage.Phases, r.StepsTrusted, r.OverallVerdict)
 	if r.Sensitivity != nil {
-		axes := []string{
-			formatSensitivity("presence", r.Sensitivity.Presence),
-			formatSensitivity("error_rate", r.Sensitivity.ErrorRate),
+		var axes []string
+		if !r.Sensitivity.Presence.Reachable {
+			axes = append(axes, formatSensitivity("presence", r.Sensitivity.Presence))
 		}
-		if r.Sensitivity.Annotation != nil {
+		if !r.Sensitivity.ErrorRate.Reachable {
+			axes = append(axes, formatSensitivity("error_rate", r.Sensitivity.ErrorRate))
+		}
+		if r.Sensitivity.Annotation != nil && !r.Sensitivity.Annotation.Reachable {
 			axes = append(axes, formatSensitivity("annotation", *r.Sensitivity.Annotation))
 		}
-		_, _ = fmt.Fprintf(w, "sensitivity: rate gate cannot fire at this support (%s)\n", strings.Join(axes, ", "))
+		if r.Sensitivity.Paired != nil && !r.Sensitivity.Paired.Reachable {
+			axes = append(axes, formatPairedSensitivity(*r.Sensitivity.Paired))
+		}
+		if len(axes) > 0 {
+			_, _ = fmt.Fprintf(w, "sensitivity: gate cannot fire at this support (%s)\n", strings.Join(axes, ", "))
+		}
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "VERDICT\tSCOPE\tKEY\tNAME\tMETRIC\tBASELINE\tCANDIDATE\tBAND\tDETAIL")
@@ -30,6 +38,25 @@ func RenderHuman(r Report, w io.Writer) {
 			renderValue(f, f.Baseline), renderValue(f, f.Candidate), formatBand(f), keyOrDash(f.Detail))
 	}
 	_ = tw.Flush()
+	if r.Reliability != nil {
+		_, _ = fmt.Fprintln(w, formatReliability("baseline", r.Reliability.Baseline))
+		_, _ = fmt.Fprintln(w, formatReliability("candidate", r.Reliability.Candidate))
+	}
+}
+
+func formatReliability(group string, gr GroupReliability) string {
+	head := fmt.Sprintf("reliability (%s): pass^1 %.2f", group, gr.Mean[0])
+	if gr.KMax == 1 {
+		return fmt.Sprintf("%s (%d %s)", head, len(gr.Tasks), taskWord(len(gr.Tasks)))
+	}
+	return fmt.Sprintf("%s -> pass^%d %.2f (%d %s)", head, gr.KMax, gr.Mean[gr.KMax-1], len(gr.Tasks), taskWord(len(gr.Tasks)))
+}
+
+func taskWord(n int) string {
+	if n == 1 {
+		return "task"
+	}
+	return "tasks"
 }
 
 func RenderJSON(r Report, w io.Writer) error {
@@ -43,6 +70,10 @@ func formatSensitivity(name string, rs RateSensitivity) string {
 		return fmt.Sprintf("full flip unreachable %s", name)
 	}
 	return fmt.Sprintf("full flip needs k>=%d %s", rs.MinFullFlipRuns, name)
+}
+
+func formatPairedSensitivity(ps PairedSensitivity) string {
+	return fmt.Sprintf("paired gate needs k>=%d tasks", ps.MinTasks)
 }
 
 func keyOrDash(key string) string {

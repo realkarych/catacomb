@@ -155,7 +155,42 @@ func TestRenderHumanSensitivityNote(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	RenderHuman(rep, &buf)
-	require.Contains(t, buf.String(), "sensitivity: rate gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate)")
+	require.Contains(t, buf.String(), "sensitivity: gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate)")
+}
+
+func TestRenderHumanSensitivityOnlyUnreachableAxes(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		BaselineRuns: 5, CandidateRuns: 5, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:   RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			ErrorRate:  RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			Annotation: &RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			Paired:     &PairedSensitivity{Reachable: false, MinTasks: 5},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "sensitivity: gate cannot fire at this support (paired gate needs k>=5 tasks)\n")
+	assert.NotContains(t, out, "presence")
+	assert.NotContains(t, out, "error_rate")
+	assert.NotContains(t, out, "annotation")
+}
+
+func TestRenderHumanSensitivityAllReachableSilent(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		BaselineRuns: 5, CandidateRuns: 5, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:  RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			ErrorRate: RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			Paired:    &PairedSensitivity{Reachable: true, MinTasks: 5},
+		},
+	}
+	var buf bytes.Buffer
+	RenderHuman(rep, &buf)
+	assert.NotContains(t, buf.String(), "sensitivity:")
 }
 
 func TestRenderHumanSensitivityUnreachable(t *testing.T) {
@@ -186,7 +221,7 @@ func TestRenderHumanSensitivityAnnotation(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	RenderHuman(withAnn, &buf)
-	require.Contains(t, buf.String(), "sensitivity: rate gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate, full flip needs k>=6 annotation)")
+	require.Contains(t, buf.String(), "sensitivity: gate cannot fire at this support (full flip needs k>=4 presence, full flip needs k>=4 error_rate, full flip needs k>=6 annotation)")
 
 	noAnn := Report{
 		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,

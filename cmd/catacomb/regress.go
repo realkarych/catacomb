@@ -78,6 +78,8 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().Float64Var(&f.thresholds.CoverageFloor, "coverage-floor", def.CoverageFloor, "step alignment coverage floor")
 	cmd.Flags().Float64Var(&f.thresholds.Z, "z", def.Z, "one-sided Wilson z for rate gates (1.645 = 95% one-sided)")
 	cmd.Flags().Float64Var(&f.thresholds.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
+	cmd.Flags().Float64Var(&f.thresholds.PairedAlpha, "paired-alpha", def.PairedAlpha, "paired sign-test significance level for per-task median deltas (0,1)")
+	cmd.Flags().IntVar(&f.thresholds.PairedMinTasks, "paired-min-tasks", def.PairedMinTasks, "minimum matched tasks before the paired sign test gates")
 	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
 }
 
@@ -90,6 +92,12 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	}
 	if f.thresholds.AnnotationRateDelta <= 0 {
 		return operational(fmt.Errorf("regress: --annotation-rate-delta must be > 0, got %g", f.thresholds.AnnotationRateDelta))
+	}
+	if f.thresholds.PairedAlpha <= 0 || f.thresholds.PairedAlpha >= 1 {
+		return operational(fmt.Errorf("regress: --paired-alpha must be in (0,1), got %g", f.thresholds.PairedAlpha))
+	}
+	if f.thresholds.PairedMinTasks < 1 {
+		return operational(fmt.Errorf("regress: --paired-min-tasks must be > 0, got %d", f.thresholds.PairedMinTasks))
 	}
 	if f.runsDir == "" {
 		return operational(errRegressNoRunsDir)

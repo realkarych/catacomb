@@ -52,9 +52,10 @@ type Report struct {
 	Insufficient   int          `json:"insufficient"`
 	OverallVerdict Verdict      `json:"overall_verdict"`
 	Sensitivity    *Sensitivity `json:"sensitivity,omitempty"`
+	Reliability    *Reliability `json:"reliability,omitempty"`
 }
 
-var scopeOrder = map[string]int{"total": 0, "phase": 1, "step": 2}
+var scopeOrder = map[string]int{"total": 0, "paired": 1, "phase": 2, "step": 3}
 
 func Compare(in Input, th Thresholds) Report {
 	b, c := in.Baseline, in.Candidate
@@ -68,10 +69,11 @@ func Compare(in Input, th Thresholds) Report {
 	}
 	rep.StepsTrusted = rep.Coverage.Steps >= th.CoverageFloor
 	withAnnotations := hasBinaryRunAnnotation(b) || hasBinaryRunAnnotation(c)
-	rep.Sensitivity = computeSensitivity(b.Runs, c.Runs, th, withAnnotations)
+	rep.Sensitivity = computeSensitivity(b.Runs, c.Runs, th, withAnnotations, pairedSensitivity(b, c, th))
 
 	findings := totalsFindings(b, c, th)
 	findings = append(findings, runAnnotationFindings(b, c, in.Annotations, th)...)
+	findings = append(findings, pairedFindings(b, c, th)...)
 	findings = append(findings, rowFindings("phase", b.Phases, c.Phases, b.Runs, c.Runs, th, false, 0, nil)...)
 	findings = append(findings, rowFindings("step", b.Steps, c.Steps, b.Runs, c.Runs, th, !rep.StepsTrusted, rep.Coverage.Steps, in.Annotations)...)
 
@@ -83,6 +85,7 @@ func Compare(in Input, th Thresholds) Report {
 	rep.Notables = countVerdict(findings, VerdictNotable)
 	rep.Insufficient = countVerdict(findings, VerdictInsufficient)
 	rep.OverallVerdict = overallVerdict(findings, rep.Regressions, rep.Notables, rep.Insufficient, th.FailOnNotable)
+	rep.Reliability = computeReliability(b, c)
 	return rep
 }
 

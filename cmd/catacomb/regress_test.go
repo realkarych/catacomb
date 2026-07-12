@@ -91,6 +91,8 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		{"coverage-floor", "0.8", func(th regress.Thresholds) string { return strconv.FormatFloat(th.CoverageFloor, 'g', -1, 64) }},
 		{"z", "1.96", func(th regress.Thresholds) string { return strconv.FormatFloat(th.Z, 'g', -1, 64) }},
 		{"annotation-rate-delta", "0.15", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AnnotationRateDelta, 'g', -1, 64) }},
+		{"paired-alpha", "0.02", func(th regress.Thresholds) string { return strconv.FormatFloat(th.PairedAlpha, 'g', -1, 64) }},
+		{"paired-min-tasks", "7", func(th regress.Thresholds) string { return strconv.Itoa(th.PairedMinTasks) }},
 	}
 	for _, tc := range cases {
 		var f regressFlags
@@ -148,6 +150,24 @@ func TestRegressAnnotationRateDeltaRejectsNonPositive(t *testing.T) {
 	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--annotation-rate-delta", "0"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "--annotation-rate-delta must be > 0")
+}
+
+func TestRegressPairedAlphaRejectsOutOfRange(t *testing.T) {
+	root := evidenceRoot(t)
+	for _, val := range []string{"0", "1"} {
+		var out, errBuf bytes.Buffer
+		code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--paired-alpha", val}, &out, &errBuf)
+		assert.Equal(t, 2, code)
+		assert.Contains(t, errBuf.String(), "--paired-alpha must be in (0,1)")
+	}
+}
+
+func TestRegressPairedMinTasksRejectsNonPositive(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--paired-min-tasks", "0"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--paired-min-tasks must be > 0")
 }
 
 func TestRegressStrictInsufficientExitOne(t *testing.T) {

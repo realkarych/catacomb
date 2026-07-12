@@ -7,10 +7,16 @@ type RateSensitivity struct {
 	MinFullFlipRuns int  `json:"min_full_flip_runs"`
 }
 
+type PairedSensitivity struct {
+	Reachable bool `json:"reachable"`
+	MinTasks  int  `json:"min_tasks"`
+}
+
 type Sensitivity struct {
-	Presence   RateSensitivity  `json:"presence"`
-	ErrorRate  RateSensitivity  `json:"error_rate"`
-	Annotation *RateSensitivity `json:"annotation,omitempty"`
+	Presence   RateSensitivity    `json:"presence"`
+	ErrorRate  RateSensitivity    `json:"error_rate"`
+	Annotation *RateSensitivity   `json:"annotation,omitempty"`
+	Paired     *PairedSensitivity `json:"paired,omitempty"`
 }
 
 func rateGateReachable(bN, cN int, delta float64, th Thresholds) bool {
@@ -26,7 +32,7 @@ func minFullFlipRuns(th Thresholds, delta float64) int {
 	return 0
 }
 
-func computeSensitivity(bRuns, cRuns int, th Thresholds, withAnnotations bool) *Sensitivity {
+func computeSensitivity(bRuns, cRuns int, th Thresholds, withAnnotations bool, paired *PairedSensitivity) *Sensitivity {
 	s := Sensitivity{
 		Presence: RateSensitivity{
 			Reachable:       rateGateReachable(bRuns, cRuns, th.PresenceDelta, th),
@@ -36,6 +42,7 @@ func computeSensitivity(bRuns, cRuns int, th Thresholds, withAnnotations bool) *
 			Reachable:       rateGateReachable(bRuns, cRuns, th.ErrorRateDelta, th),
 			MinFullFlipRuns: minFullFlipRuns(th, th.ErrorRateDelta),
 		},
+		Paired: paired,
 	}
 	if withAnnotations {
 		s.Annotation = &RateSensitivity{
@@ -43,7 +50,9 @@ func computeSensitivity(bRuns, cRuns int, th Thresholds, withAnnotations bool) *
 			MinFullFlipRuns: minFullFlipRuns(th, th.AnnotationRateDelta),
 		}
 	}
-	if s.Presence.Reachable && s.ErrorRate.Reachable && (s.Annotation == nil || s.Annotation.Reachable) {
+	if s.Presence.Reachable && s.ErrorRate.Reachable &&
+		(s.Annotation == nil || s.Annotation.Reachable) &&
+		(s.Paired == nil || s.Paired.Reachable) {
 		return nil
 	}
 	return &s

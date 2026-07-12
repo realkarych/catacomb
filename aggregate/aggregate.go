@@ -58,10 +58,11 @@ type RunTotals struct {
 }
 
 type Report struct {
-	Runs   int       `json:"runs"`
-	Steps  []Row     `json:"steps"`
-	Phases []Row     `json:"phases"`
-	Totals RunTotals `json:"totals"`
+	Runs   int         `json:"runs"`
+	Steps  []Row       `json:"steps"`
+	Phases []Row       `json:"phases"`
+	Totals RunTotals   `json:"totals"`
+	Tasks  []TaskStats `json:"tasks,omitempty"`
 }
 
 func Aggregate(group []RunGraph, opts Options) Report {
@@ -71,6 +72,7 @@ func Aggregate(group []RunGraph, opts Options) Report {
 		Steps:  buildRows(group, func(rg RunGraph) map[string]runKey { return foldRunSteps(rg, allow) }),
 		Phases: buildRows(group, foldRunPhases),
 		Totals: runTotals(group),
+		Tasks:  taskStats(group),
 	}
 }
 
