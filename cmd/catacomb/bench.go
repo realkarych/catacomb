@@ -236,23 +236,25 @@ func recordOfflineEvidence(ctx context.Context, stderr io.Writer, cell bench.Cel
 	dir := filepath.Join(o.runsDir, cell.RunID)
 	writeOfflineEvidence(dir, offlineMeta(*entry, labels, start, end, finishedAt), ts, entry)
 	if entry.EvidenceDir != "" {
-		captureArtifactsOffline(cell, dir, entry)
+		captureArtifactsOffline(stderr, cell, dir, entry)
 		verifyCellOffline(ctx, stderr, cell, dir, entry)
 	}
 	return verified
 }
 
-func captureArtifactsOffline(cell bench.Cell, dir string, entry *bench.ManifestEntry) {
+func captureArtifactsOffline(stderr io.Writer, cell bench.Cell, dir string, entry *bench.ManifestEntry) {
 	if len(cell.Task.Artifacts) == 0 {
 		return
 	}
 	arts, note, err := evidence.CaptureArtifacts(dir, cell.Task.Dir, cell.Task.Artifacts)
 	if err != nil {
 		entry.Note = appendNote(entry.Note, "artifacts: "+err.Error())
+		fmt.Fprintf(stderr, "bench %s: artifacts: %s\n", cell.RunID, err.Error())
 		return
 	}
 	if serr := evidence.StampArtifacts(dir, arts, note); serr != nil {
 		entry.Note = appendNote(entry.Note, "artifacts stamp: "+serr.Error())
+		fmt.Fprintf(stderr, "bench %s: artifacts stamp: %s\n", cell.RunID, serr.Error())
 	}
 }
 

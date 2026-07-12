@@ -159,7 +159,7 @@ func TestCaptureArtifactsBadGlob(t *testing.T) {
 	assert.Contains(t, note, "glob")
 }
 
-func TestCaptureArtifactsCopyError(t *testing.T) {
+func TestCaptureArtifactsRootOpenError(t *testing.T) {
 	work := t.TempDir()
 	writeFile(t, filepath.Join(work, "keep.txt"), []byte{0, 9})
 	dir := filepath.Join(t.TempDir(), "run")

@@ -489,8 +489,10 @@ func TestCaptureArtifactsOfflineCaptureError(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(work, "f.txt"), []byte("hi\n"), 0o600))
 	entry := &bench.ManifestEntry{}
 	cell := offlineCell("r", bench.Task{ID: "t", Dir: work, Artifacts: []string{"f.txt"}}, bench.Variant{ID: "base"})
-	captureArtifactsOffline(cell, dir, entry)
+	var errb bytes.Buffer
+	captureArtifactsOffline(&errb, cell, dir, entry)
 	assert.Contains(t, entry.Note, "artifacts:")
+	assert.Contains(t, errb.String(), "bench r: artifacts:")
 }
 
 func TestCaptureArtifactsOfflineStampError(t *testing.T) {
@@ -499,8 +501,10 @@ func TestCaptureArtifactsOfflineStampError(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(work, "f.txt"), []byte("hi\n"), 0o600))
 	entry := &bench.ManifestEntry{}
 	cell := offlineCell("r", bench.Task{ID: "t", Dir: work, Artifacts: []string{"f.txt"}}, bench.Variant{ID: "base"})
-	captureArtifactsOffline(cell, dir, entry)
+	var errb bytes.Buffer
+	captureArtifactsOffline(&errb, cell, dir, entry)
 	assert.Contains(t, entry.Note, "artifacts stamp:")
+	assert.Contains(t, errb.String(), "bench r: artifacts stamp:")
 }
 
 func TestVerifierPassed(t *testing.T) {

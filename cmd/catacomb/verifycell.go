@@ -71,40 +71,48 @@ func classifyVerify(ctx context.Context, spec verifySpec, stdout []byte, capped 
 }
 
 func persistVerifierScores(dir string, stdout []byte, runID string) string {
-	entries, err := parseVerifierScores(stdout, runID)
+	lines, err := parseVerifierScores(stdout, runID)
 	if err != nil {
 		return err.Error()
 	}
-	if err := writeVerifierScores(dir, entries); err != nil {
+	if err := writeVerifierScores(dir, lines); err != nil {
 		return err.Error()
 	}
 	return ""
 }
 
-func parseVerifierScores(stdout []byte, runID string) ([]scoreEntry, error) {
-	var entries []scoreEntry
-	for i, line := range strings.Split(string(stdout), "\n") {
-		if strings.TrimSpace(line) == "" {
+func parseVerifierScores(stdout []byte, runID string) ([][]byte, error) {
+	var lines [][]byte
+	for i, raw := range strings.Split(string(stdout), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
 			continue
 		}
 		e, perr := parseScoreLine(line)
 		if perr != nil {
 			return nil, fmt.Errorf("verifier stdout line %d: %w", i+1, perr)
 		}
-		if e.RunID == "" {
-			e.RunID = runID
-		}
-		entries = append(entries, e)
+		lines = append(lines, scoreLineWithRunID(line, e.RunID, runID))
 	}
-	return entries, nil
+	return lines, nil
 }
 
-func writeVerifierScores(dir string, entries []scoreEntry) error {
+func scoreLineWithRunID(line, present, fallback string) []byte {
+	if present != "" {
+		return []byte(line)
+	}
+	var obj map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(line), &obj)
+	id, _ := json.Marshal(fallback)
+	obj["run_id"] = id
+	out, _ := json.Marshal(obj)
+	return out
+}
+
+func writeVerifierScores(dir string, lines [][]byte) error {
 	var buf bytes.Buffer
-	for _, e := range entries {
-		val := e.Value
-		data, _ := json.Marshal(scoreLine{StepKey: e.StepKey, Key: e.Key, Value: &val, RunID: e.RunID})
-		buf.Write(data)
+	for _, line := range lines {
+		buf.Write(line)
 		buf.WriteByte('\n')
 	}
 	if err := os.WriteFile(filepath.Join(dir, "scores.jsonl"), buf.Bytes(), 0o600); err != nil {

@@ -67,6 +67,21 @@ func TestRunVerifyCellSuccess(t *testing.T) {
 	assert.Empty(t, got.Error)
 }
 
+func TestRunVerifyCellPreservesProvenance(t *testing.T) {
+	stubVerify(t, "VERIFY_PROVENANCE=1")
+	dir := t.TempDir()
+	rec := runVerifyCell(t.Context(), io.Discard, bench.Verify{Cmd: []string{"verify"}}, benchSpec(dir))
+	require.Empty(t, rec.Error)
+
+	data, err := os.ReadFile(filepath.Join(dir, "scores.jsonl"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	require.Len(t, lines, 2)
+
+	assert.JSONEq(t, `{"key":"judge.groundedness","value":0.8,"run_id":"explicit","tool":"deepeval","tool_version":"3.1","prompt_hash":"abc"}`, lines[0])
+	assert.JSONEq(t, `{"key":"verifier.pass","value":1,"run_id":"r1","tool":"deepeval","tool_version":"3.1","prompt_hash":"abc"}`, lines[1])
+}
+
 func TestRunVerifyCellZeroTimeout(t *testing.T) {
 	stubVerify(t)
 	dir := t.TempDir()
@@ -161,11 +176,11 @@ func TestRunVerifyCellEnvContract(t *testing.T) {
 }
 
 func TestParseVerifierScores(t *testing.T) {
-	entries, err := parseVerifierScores([]byte("\n{\"key\":\"verifier.pass\",\"value\":1}\n{\"key\":\"a.b\",\"value\":2,\"run_id\":\"other\"}\n"), "fill-me")
+	lines, err := parseVerifierScores([]byte("\n{\"key\":\"verifier.pass\",\"value\":1}\n{\"key\":\"a.b\",\"value\":2,\"run_id\":\"other\"}\n"), "fill-me")
 	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	assert.Equal(t, "fill-me", entries[0].RunID)
-	assert.Equal(t, "other", entries[1].RunID)
+	require.Len(t, lines, 2)
+	assert.JSONEq(t, `{"key":"verifier.pass","value":1,"run_id":"fill-me"}`, string(lines[0]))
+	assert.JSONEq(t, `{"key":"a.b","value":2,"run_id":"other"}`, string(lines[1]))
 
 	_, err = parseVerifierScores([]byte("not-json\n"), "r")
 	require.Error(t, err)
@@ -219,6 +234,11 @@ func TestHelperVerify(t *testing.T) {
 	}
 	if os.Getenv("VERIFY_BADLINE") == "1" {
 		fmt.Println("not-json")
+		os.Exit(0)
+	}
+	if os.Getenv("VERIFY_PROVENANCE") == "1" {
+		fmt.Println(`{"key":"judge.groundedness","value":0.8,"run_id":"explicit","tool":"deepeval","tool_version":"3.1","prompt_hash":"abc"}`)
+		fmt.Println(`{"key":"verifier.pass","value":1,"tool":"deepeval","tool_version":"3.1","prompt_hash":"abc"}`)
 		os.Exit(0)
 	}
 	if os.Getenv("VERIFY_EXIT3") == "1" || os.Getenv("CATACOMB_VARIANT") == "bad" {
