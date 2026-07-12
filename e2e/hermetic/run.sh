@@ -94,7 +94,7 @@ run_json() { # <want> <out> <label> -- cmd...
 # resolves catacomb_verifier from PYTHONPATH (the SDK is not installed).
 work="$(mktemp -d)"
 runs="$work/runs"
-cp "$here/golden.csv" "$here/verify_sql.py" "$here/transcript.jsonl.tmpl" "$work/"
+cp "$here/golden.csv" "$here/../verify_sql.py" "$here/transcript.jsonl.tmpl" "$work/"
 sed "s|__WORK__|$work|g" "$here/basket.yaml.tmpl" >"$work/basket.yaml"
 # broken twin: same basket name/hash inputs, verify swapped to a guaranteed-failing
 # command. The `cmd:` line is the only one carrying verify_sql.py, so match on that.

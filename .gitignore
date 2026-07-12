@@ -50,6 +50,10 @@ tmp/
 # E2E live gate output (manifests + regress json; see e2e/run.sh)
 e2e-artifacts/
 
+# SQL basket agent scratch — the sql cells write out/result.csv under e2e/ (dir: .);
+# run.sh cleans it on exit, this catches a crashed run.
+e2e/out/
+
 # Subagent-driven-development scratch (ledger, briefs, reports, diffs) — not project docs
 .superpowers/
 
