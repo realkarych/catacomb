@@ -30,6 +30,9 @@ type Meta struct {
 	MarkerStart time.Time         `json:"marker_start"`
 	MarkerEnd   time.Time         `json:"marker_end"`
 	FinishedAt  time.Time         `json:"finished_at"`
+
+	Artifacts     []ArtifactMeta `json:"artifacts,omitempty"`
+	ArtifactsNote string         `json:"artifacts_note,omitempty"`
 }
 
 type SourceFile struct {

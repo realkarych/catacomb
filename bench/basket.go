@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -37,6 +39,8 @@ var (
 	ErrRunIDCollision  = errors.New("bench: run-id collision")
 	ErrCheckpoint      = errors.New("bench: invalid checkpoint")
 	ErrTimeout         = errors.New("bench: invalid timeout")
+	ErrVerifyCmd       = errors.New("bench: verify cmd is empty")
+	ErrArtifactGlob    = errors.New("bench: invalid artifact glob")
 )
 
 type Task struct {
@@ -46,10 +50,25 @@ type Task struct {
 	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 	Checkpoints []string          `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
 	Timeout     string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Artifacts   []string          `yaml:"artifacts,omitempty" json:"artifacts,omitempty"`
+	Verify      *Verify           `yaml:"verify,omitempty" json:"verify,omitempty"`
 }
 
 func (t Task) TimeoutDuration() (time.Duration, error) {
 	return parseTimeout(t.Timeout)
+}
+
+type Verify struct {
+	Cmd     []string          `yaml:"cmd" json:"cmd"`
+	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Timeout string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
+func (v Verify) TimeoutDuration() (time.Duration, error) {
+	if v.Timeout == "" {
+		return time.Minute, nil
+	}
+	return parseTimeout(v.Timeout)
 }
 
 func parseTimeout(s string) (time.Duration, error) {
@@ -167,8 +186,46 @@ func validateTasks(tasks []Task) error {
 		if err := validateCheckpoints(i, t); err != nil {
 			return err
 		}
+		if err := validateVerify(i, t); err != nil {
+			return err
+		}
+		if err := validateArtifacts(i, t); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func validateVerify(taskIdx int, t Task) error {
+	if t.Verify == nil {
+		return nil
+	}
+	if len(t.Verify.Cmd) == 0 {
+		return fmt.Errorf("bench.Load: task[%d].verify.cmd: %w", taskIdx, ErrVerifyCmd)
+	}
+	if _, err := t.Verify.TimeoutDuration(); err != nil {
+		return fmt.Errorf("bench.Load: task[%d].verify.timeout: %w", taskIdx, err)
+	}
+	return nil
+}
+
+func validateArtifacts(taskIdx int, t Task) error {
+	for j, glob := range t.Artifacts {
+		if glob == "" {
+			return fmt.Errorf("bench.Load: task[%d].artifacts[%d]: empty: %w", taskIdx, j, ErrArtifactGlob)
+		}
+		if prefix := nonGlobPrefix(glob); prefix != "" && !filepath.IsLocal(prefix) {
+			return fmt.Errorf("bench.Load: task[%d].artifacts[%d] %q: %w", taskIdx, j, glob, ErrArtifactGlob)
+		}
+	}
+	return nil
+}
+
+func nonGlobPrefix(pattern string) string {
+	if i := strings.IndexAny(pattern, `*?[`); i >= 0 {
+		return pattern[:i]
+	}
+	return pattern
 }
 
 func validateCheckpoints(taskIdx int, t Task) error {

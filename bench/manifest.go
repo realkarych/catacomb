@@ -23,6 +23,8 @@ type ManifestEntry struct {
 	BasketHash         string    `json:"basket_hash"`
 	FinishedAt         time.Time `json:"finished_at"`
 	Note               string    `json:"note,omitempty"`
+	Verified           bool      `json:"verified,omitempty"`
+	VerifyError        string    `json:"verify_error,omitempty"`
 }
 
 type Manifest struct {
