@@ -677,8 +677,10 @@ splice marker (`*` and its footnote) applies unchanged.
 `--pareto --json` emits `{"baseline": "<name>", "points": [...]}` instead: every point
 carries `source` (`"baseline"` or `"record"`), and record points add `seq`,
 `candidate`, `created_at`, and `spliced` (the baseline point carries none of those).
-`accuracy` and `cost_usd` are omitted when the finding is absent from the record's
-report, and `dominated` is omitted — not `false` — for a point that lacks an axis.
+`accuracy` and `cost_usd` are omitted when the record's report carries no measurement
+for that axis (the finding is missing, or is the absence placeholder a one-sided
+annotation history produces), and `dominated` is omitted — not `false` — for a point
+that lacks an axis.
 
 `--pareto` is mutually exclusive with `--metric` (operational error, exit `2`) and
 composes with `--json`.
