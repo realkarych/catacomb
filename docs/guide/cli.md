@@ -154,7 +154,7 @@ the manifest or revert the basket. If the manifest already has entries and you p
 neither `--resume` nor a fresh `--manifest`, `bench` refuses (exit `2`) rather than
 silently appending a second run's cells.
 
-`setup` commands run before **every** cell, in the task's working directory, as **plain
+`setup` commands run before **every** cell, in the cell's working directory, as **plain
 `exec`**: each line is split on whitespace and run directly, with **no shell** — pipes,
 redirects, `&&`, quoting, variable expansion, and globbing are not interpreted. Wrap a
 script if you need shell features. Setup inherits **only the parent process

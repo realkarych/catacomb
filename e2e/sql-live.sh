@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # SQL-basket cell wrapper: the SP1 verifier contract exercised on a real `claude -p`.
 #
-# `catacomb bench` execs this directly, with NO shell, using the task's `dir` (.) as
-# the working directory — e2e/, since run.sh cd's there before benching. The agent is
+# `catacomb bench` execs this directly, with NO shell, inside a fresh per-cell
+# workspace: the task's workspace.cmd copies this script (and verify_sql.py) in from
+# E2E_DIR, and that temp dir is the cell's working directory. The agent is
 # handed a seeded SQLite database (SQL_DB, an absolute path in the driver's work dir,
-# outside this workdir) and a per-variant SQL_INSTRUCTION (variant.env): baseline/
+# outside this workspace) and a per-variant SQL_INSTRUCTION (variant.env): baseline/
 # baseline2 ask for the paid-only total per region (the correct result the golden
 # encodes), degraded asks for the all-orders total (wrong by construction). It saves
 # out/result.csv, bench captures it as an artifact, and the verify hook (verify_sql.py)
@@ -20,10 +21,10 @@
 # reliable tool obedience.
 #
 # The agent may only run sqlite3, so it cannot create the output directory itself:
-# pre-create out/ here and clear any prior cell's result. All cells share this workdir,
-# so clearing it means a cell that fails to write leaves no stale CSV for bench to
-# capture — the artifact is then simply missing and verification fails, which is the
-# honest outcome for a cell that produced nothing.
+# pre-create out/ here. The workspace is per-cell, so out/ starts empty and no prior
+# cell's CSV can linger — the `rm -f` below is merely defensive. A cell that fails to
+# write leaves no CSV for bench to capture — the artifact is then simply missing and
+# verification fails, which is the honest outcome for a cell that produced nothing.
 #
 # The prompt steers the agent to sqlite3's own `.once` file output rather than a shell
 # `>` redirect: under a scoped --allowedTools, Claude Code blocks shell output

@@ -494,6 +494,56 @@ variants:
 	require.Equal(t, want, vw.PatchSHA256)
 }
 
+func TestLoadWorkspacePatchAbsIsAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fix.patch"), []byte("patch-bytes\n"), 0o600))
+
+	t.Run("relative basket path", func(t *testing.T) {
+		yaml := `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: ["true"], patch: fix.patch}
+variants:
+  - id: v1
+`
+		path := filepath.Join(dir, "basket.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil {
+			t.Skipf("basket path %q not relative to cwd %q: %v", path, cwd, err)
+		}
+		b, _, err := bench.Load(rel)
+		require.NoError(t, err)
+		got := b.Tasks[0].Workspace.PatchAbs
+		require.True(t, filepath.IsAbs(got))
+		require.Equal(t, filepath.Join(dir, "fix.patch"), got)
+	})
+
+	t.Run("absolute patch passthrough", func(t *testing.T) {
+		abs := filepath.Join(dir, "fix.patch")
+		yaml := fmt.Sprintf(`
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: ["true"], patch: %q}
+variants:
+  - id: v1
+`, abs)
+		path := filepath.Join(dir, "abs-basket.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+		b, _, err := bench.Load(path)
+		require.NoError(t, err)
+		require.Equal(t, abs, b.Tasks[0].Workspace.PatchAbs)
+	})
+}
+
 func TestEffectiveWorkspace(t *testing.T) {
 	taskWS := &bench.Workspace{Cmd: []string{"t"}}
 	varWS := &bench.Workspace{Cmd: []string{"v"}}

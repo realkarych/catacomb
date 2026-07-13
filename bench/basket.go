@@ -159,13 +159,19 @@ func resolvePatches(b *Basket, baseDir string) error {
 	return nil
 }
 
+var absFn = filepath.Abs
+
 func resolvePatch(w *Workspace, baseDir string) error {
 	if w == nil || w.Patch == "" {
 		return nil
 	}
-	abs := w.Patch
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(baseDir, abs)
+	joined := w.Patch
+	if !filepath.IsAbs(joined) {
+		joined = filepath.Join(baseDir, joined)
+	}
+	abs, err := absFn(joined)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrWorkspacePatch, err)
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {

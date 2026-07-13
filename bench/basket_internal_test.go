@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -19,6 +20,15 @@ func validBasket() Basket {
 
 func TestValidateHappy(t *testing.T) {
 	require.NoError(t, validate(validBasket()))
+}
+
+func TestResolvePatchAbsError(t *testing.T) {
+	orig := absFn
+	absFn = func(string) (string, error) { return "", errors.New("boom") }
+	t.Cleanup(func() { absFn = orig })
+	err := resolvePatch(&Workspace{Patch: "fix.patch"}, "base")
+	require.ErrorIs(t, err, ErrWorkspacePatch)
+	assert.ErrorContains(t, err, "boom")
 }
 
 func TestValidateErrors(t *testing.T) {

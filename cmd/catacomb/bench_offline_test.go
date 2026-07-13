@@ -678,6 +678,7 @@ func TestBenchWorkspaceCellOrderingAndWorkdirThreading(t *testing.T) {
 	require.Equal(t, wsDir, cap.cmds[3].Dir)
 	require.NoDirExists(t, wsDir)
 	require.NotEmpty(t, entry.EvidenceDir)
+	require.NotEmpty(t, cap.cmds[2].Env)
 	for _, kv := range cap.cmds[2].Env {
 		require.False(t, strings.HasPrefix(kv, "CATACOMB_PATCH="))
 	}
@@ -722,11 +723,11 @@ func TestBenchWorkspaceFailureNoteAndNoEvidence(t *testing.T) {
 
 func TestBenchWorkspaceSetupCancelledNote(t *testing.T) {
 	base := t.TempDir()
-	stubBenchExecRouted(t, "sess-a", nil)
+	cap := stubBenchExecRouted(t, "sess-a", nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	cell := offlineCell("bench-b-t1-v-r1",
-		bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}}},
+		bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}, Teardown: []string{"td-cmd"}}},
 		bench.Variant{ID: "v"})
 	o := offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir(), pricer: newPricer(), workspace: workspaceOpts{baseDir: base}}
 	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil, o)
@@ -734,6 +735,7 @@ func TestBenchWorkspaceSetupCancelledNote(t *testing.T) {
 	require.False(t, verified)
 	require.Equal(t, "workspace failed; cancelled", entry.Note)
 	require.Empty(t, entry.EvidenceDir)
+	require.Contains(t, cap.names, "td-cmd")
 }
 
 func TestBenchWorkspaceTeardownFailureNoteMerged(t *testing.T) {
