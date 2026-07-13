@@ -507,7 +507,7 @@ catacomb, the same boundary as the [audit loop](#auditing-cells) above.
    every time scores high accuracy while its TNR is 0. A metric that would be
    meaningless is omitted (`-` in the table, absent key in `--json`), not fudged:
    Spearman under two pairs or at zero variance, κ when both binarized sides are
-   constant, TPR without positive labels, TNR without negative ones.
+   constant at the same value, TPR without positive labels, TNR without negative ones.
 
 3. **Gate the calibration.** `--min-kappa 0.8` turns the report into a pass/fail step —
    the canon treats **κ > 0.8** as the trust threshold for letting a judge gate

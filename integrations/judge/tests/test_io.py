@@ -229,6 +229,17 @@ def test_load_labels_rejects_bad_lines(tmp_path, line):
         load_labels(path)
 
 
+@pytest.mark.parametrize("key", ["verifierpass", "a.b.c", ".b", "a."])
+def test_load_labels_rejects_bad_key_grammar(tmp_path, key):
+    path = write_jsonl(
+        tmp_path / "labels.jsonl", [{"run_id": "r1", "key": key, "label": 1}]
+    )
+    with pytest.raises(
+        FormatError, match=re.escape(f"{path}:1: key {key!r} must be owner.key")
+    ):
+        load_labels(path)
+
+
 def test_load_labels_malformed_json_names_file_and_line(tmp_path):
     path = write_jsonl(tmp_path / "labels.jsonl", ["{oops"])
     with pytest.raises(FormatError, match=re.escape(f"{path}:1: invalid JSON")):

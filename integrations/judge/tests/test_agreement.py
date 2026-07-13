@@ -179,6 +179,77 @@ def test_agreement_min_kappa_ignores_overall_and_label_only_keys(
     assert "judge.h  overall  0  -" in out
 
 
+def test_agreement_min_kappa_no_judge_rows_typoed_key_exit_1(two_judge_fixture, capsys):
+    labels, alpha, _ = two_judge_fixture
+    code, out, err = run_cli(
+        [
+            "agreement",
+            "--labels",
+            labels,
+            alpha,
+            "--key",
+            "judge.zzz",
+            "--min-kappa",
+            "0.8",
+        ],
+        capsys,
+    )
+    assert code == 1
+    assert "catacomb-judge: --min-kappa gate failed: no judge rows to evaluate" in err
+
+
+def test_agreement_min_kappa_empty_runs_dir_exit_1(two_judge_fixture, tmp_path, capsys):
+    labels, _, _ = two_judge_fixture
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    code, out, err = run_cli(
+        ["agreement", "--labels", labels, "--runs-dir", str(runs), "--min-kappa", "0.8"],
+        capsys,
+    )
+    assert code == 1
+    assert "catacomb-judge: --min-kappa gate failed: no judge rows to evaluate" in err
+
+
+def test_agreement_min_kappa_mixed_gold_set_gates_per_judge(two_judge_fixture, capsys):
+    labels, alpha, beta = two_judge_fixture
+    with open(labels, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(label_line("r1", "judge.h", 1)) + "\n")
+    code, out, err = run_cli(
+        ["agreement", "--labels", labels, alpha, beta, "--min-kappa", "0.8"], capsys
+    )
+    assert code == 1
+    assert "judge.g/beta: kappa 0.000 < 0.8" in err
+    assert "no judge rows" not in err
+
+
+def test_agreement_zero_keys_note_table_mode(two_judge_fixture, capsys):
+    labels, alpha, _ = two_judge_fixture
+    code, out, err = run_cli(
+        ["agreement", "--labels", labels, alpha, "--key", "judge.zzz"], capsys
+    )
+    assert code == 0
+    assert out == "KEY  JUDGE  N  SPEARMAN  KAPPA  TPR  TNR\n"
+    assert "catacomb-judge: note: no keys matched" in err
+
+
+def test_agreement_zero_keys_note_json_mode(two_judge_fixture, capsys):
+    labels, alpha, _ = two_judge_fixture
+    code, out, err = run_cli(
+        ["agreement", "--labels", labels, alpha, "--key", "judge.zzz", "--json"], capsys
+    )
+    assert code == 0
+    assert json.loads(out) == {"keys": []}
+    assert "catacomb-judge: note: no keys matched" in err
+
+
+def test_agreement_typoed_label_key_exit_2(two_judge_fixture, tmp_path, capsys):
+    _, alpha, _ = two_judge_fixture
+    bad = write_jsonl(tmp_path / "gold.jsonl", [label_line("r1", "verifierpass", 1)])
+    code, out, err = run_cli(["agreement", "--labels", bad, alpha], capsys)
+    assert code == 2
+    assert f"{bad}:1: key 'verifierpass' must be owner.key" in err
+
+
 def test_agreement_key_filter(two_judge_fixture, tmp_path, capsys):
     labels, alpha, _ = two_judge_fixture
     with open(labels, "a", encoding="utf-8") as handle:

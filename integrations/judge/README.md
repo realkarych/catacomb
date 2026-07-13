@@ -70,7 +70,8 @@ judge.groundedness  overall             8  0.775     0.750  1.000  0.750
 A metric that would be meaningless is omitted (`-` in the table, absent key in
 `--json`) rather than reported as a number: Spearman when there are fewer than
 two pairs or either side has zero variance; κ when both binarized sides are
-constant (chance agreement is certain, κ is undefined); TPR when the gold set
+constant at the same value (chance agreement is certain, κ is undefined); TPR
+when the gold set
 has no positives; TNR when it has no negatives.
 
 `--min-kappa K` is the opt-in calibration gate: exit 1 when any judge's κ is

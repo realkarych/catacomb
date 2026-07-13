@@ -94,6 +94,7 @@ def load_labels(path: str) -> list[Label]:
         key = _string_field(path, lineno, obj, "key")
         if not key:
             raise FormatError(f'{path}:{lineno}: label requires a non-empty "key"')
+        _validate_key(path, lineno, key)
         if "label" not in obj:
             raise FormatError(f'{path}:{lineno}: missing "label"')
         value = _number(path, lineno, obj["label"], "label")

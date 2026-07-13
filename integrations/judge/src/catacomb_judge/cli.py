@@ -99,7 +99,15 @@ def _run_agreement(args: argparse.Namespace) -> int:
         print(json.dumps({"keys": entries}, indent=2))
     else:
         _print_table(entries)
+    if not entries:
+        print("catacomb-judge: note: no keys matched", file=sys.stderr)
     if args.min_kappa is not None:
+        if not any(entry["judges"] for entry in entries):
+            print(
+                "catacomb-judge: --min-kappa gate failed: no judge rows to evaluate",
+                file=sys.stderr,
+            )
+            return 1
         failures = _gate_failures(entries, args.min_kappa)
         if failures:
             for failure in failures:

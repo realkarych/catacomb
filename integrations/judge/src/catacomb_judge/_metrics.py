@@ -28,7 +28,8 @@ def kappa(a: list[int], b: list[int]) -> float | None:
 
     p_o is the observed agreement rate; p_e is the chance agreement implied by
     each side's marginal rate of 1s. Returns None when p_e == 1 (both
-    marginals constant, kappa undefined) or when there are no pairs.
+    marginals constant at the same value, kappa undefined) or when there
+    are no pairs.
     """
     _require_same_length("kappa", a, b)
     n = len(a)
