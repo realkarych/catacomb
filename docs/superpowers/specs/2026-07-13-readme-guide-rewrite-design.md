@@ -31,6 +31,16 @@ step, then an "example upgrade" second act, then a recap.
    into `<details>` blocks in the same section.
 4. **Scope:** the whole doc bundle is restructured — README becomes the tutorial
    funnel, `docs/guide/` becomes the reference depth (approach A).
+5. **Methodology references (user amendment, 2026-07-13):** the README must cite the
+   published research backing the methodology. Placement: a dedicated
+   "📚 Methodology" section after "How it works" carrying the grouped list, plus
+   sparse inline citations where a specific claim appears in the text. The tutorial
+   itself stays citation-free. Selection rule: only sources whose claims survived the
+   deep-research 3-0 verification get "supports X" framing; domain benchmarks whose
+   claims did not survive verification may appear only as a further-reading line
+   without claim framing. No invented sources: the verified corpus contains
+   Anthropic, OpenAI, and academic papers — no Google paper is cited because none
+   was verified.
 
 ## Goals
 
@@ -96,12 +106,15 @@ Top to bottom:
    on step keys / phase keys as cross-run identity, one sentence on the
    implemented-end-to-end status with the ADR-0026 link (absorbs the current Status
    blockquote). Links to `concepts.md`.
-8. **Privacy** — trimmed to ~5 lines; keeps the honest best-effort caveat and the
+8. **📚 Methodology** — the research the gate's design follows, grouped, each entry
+   one line stating what it supports (see "Methodology references" below). Ends with
+   a single further-reading line for the domain benchmarks.
+9. **Privacy** — trimmed to ~5 lines; keeps the honest best-effort caveat and the
    known-residuals link.
-9. **Documentation map** — reading order with one-liners (start here → concepts →
-   workflows → cli → configuration → ingestion → privacy), plus the dev commands
-   block (`make build/test/cover/lint`) and AGENTS.md pointer.
-10. **Contribution / License** — kept, lightly trimmed.
+10. **Documentation map** — reading order with one-liners (start here → concepts →
+    workflows → cli → configuration → ingestion → privacy), plus the dev commands
+    block (`make build/test/cover/lint`) and AGENTS.md pointer.
+11. **Contribution / License** — kept, lightly trimmed.
 
 Removed outright: the `catacomb --help` dump; "✨ Highlights" in its current wording;
 the standalone Status blockquote.
@@ -140,6 +153,34 @@ Staleness risk is accepted: captured output can drift from future CLI output for
 Mitigation: the capture procedure is documented in the implementation plan so refresh
 is a mechanical re-run.
 
+## Methodology references
+
+The "📚 Methodology" section (and the sparse inline citations) draw exclusively from
+the verified corpus below. Mapping of README claim → source:
+
+| README claim | Source |
+| --- | --- |
+| Repeated runs per variant; per-trial isolation; tasks drawn from real failures; outcome-over-path scoring | Anthropic — *Demystifying evals for AI agents* (2026-01) |
+| Group comparison beats eyeballing single runs; paired designs as free variance reduction | Anthropic — *A statistical approach to model evals* + Miller, *Adding Error Bars to Evals* (arXiv 2411.00640) |
+| Wilson bounds and the exact sign test are the right small-n tools; naive CLT/SEM undercovers below a few hundred datapoints | Bowyer et al. (arXiv 2503.01747, ICML 2025) |
+| pass^k reporting; deterministic final-state verification as the verifier model | τ-bench (arXiv 2406.12045, ICLR 2025) |
+| The harness/transcripts are a first-class reliability concern; transcript inspection catches shortcuts that pass outcome verifiers | HAL — *Holistic Agent Leaderboard* (arXiv 2510.11977, ICLR 2026) |
+| Verifiers must themselves be validated: weak tests unfairly reject valid solutions; vetting reduces but does not eliminate verifier bias | OpenAI — *Introducing SWE-bench Verified* (2024-08); SWE-Bench+ (arXiv 2410.06992) |
+| LLM judges do not replace deterministic checks or humans; judge protocol discipline | OpenAI — GDPval (arXiv 2510.04374); OpenAI — *Evaluation best practices* |
+
+Inline placement: the opening/Features area carries at most one umbrella link to the
+Methodology section; individual inline citations appear where the specific concept
+is introduced (reps/pass^k in the tutorial's recap or How it works — not inside the
+tutorial steps — Wilson/sign test and verifier calibration in How it works or
+Methodology itself).
+
+Further-reading line (no claim framing, listed as domain benchmarks only):
+Spider 2.0 (arXiv 2411.07763), ELT-Bench (VLDB 2025, arXiv 2504.04808), BIRD-family
+(bird-bench.github.io).
+
+Link hygiene: every entry links to the primary source (vendor post or arXiv abstract
+page). Claims stated in the README must not exceed what the source says.
+
 ## Guide restructure
 
 - `docs/guide/README.md` — drop the duplicated 30-second quickstart; becomes a
@@ -160,7 +201,9 @@ is a mechanical re-run.
 1. **Reproducibility:** every tutorial command is executed verbatim during
    implementation; the shown output is the captured output.
 2. **Links:** all relative links and intra-doc anchors across README + docs/guide
-   resolve after the restructure (scripted check in the worktree).
+   resolve after the restructure (scripted check in the worktree); every external
+   citation URL resolves (arXiv abstract pages, vendor posts), and each cited claim
+   is checked against its source's wording.
 3. **Render:** visual check of the rendered README (GitHub-flavored markdown,
    including `<details>` blocks and the dark/light lockup) via a preview artifact,
    since the visual identity must survive.
