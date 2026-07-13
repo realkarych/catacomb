@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "catacomb-judge"
+version = "0.1.0"
+description = "Stdlib-only judge meta-evaluation utilities for catacomb (agreement metrics, panel aggregation over scores-JSONL)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+catacomb-judge = "catacomb_judge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/catacomb_judge"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]

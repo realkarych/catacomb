@@ -469,6 +469,76 @@ judge, its prompt, and its budget stay outside, the same boundary as
    `verifier.pass`); a key scored on only one side reports `insufficient` rather than
    guessing, so partial audits surface instead of silently passing.
 
+## Calibrating a judge
+
+An LLM judge is a measurement instrument, and an uncalibrated instrument should gate
+nothing. Before a judge's scores join a [`--scores` gate](cli.md#gating-on-external-scores),
+measure the judge against a small hand-labeled gold set; when single-judge agreement
+stalls, aggregate several judges into a panel instead of prompt-tuning one judge forever.
+Both utilities live in [`integrations/judge`](../../integrations/judge/README.md)
+(`catacomb-judge`, stdlib-only), read the same scores-JSONL dialect the gate consumes,
+and run fully offline — the judge itself, its prompt, and its spend stay outside
+catacomb, the same boundary as the [audit loop](#auditing-cells) above.
+
+1. **Hand-label a gold set.** One JSONL line per verdict, on the same coordinates the
+   judge scored — `run_id` plus the annotation `key` (plus `step_key` for step-level
+   scores):
+
+   ```json
+   {"run_id": "bench-checkout-work-task-candidate-r1", "key": "judge.groundedness", "label": 1}
+   ```
+
+   The canon's bar is lower than it looks: **~40 labeled transcripts suffice** to expose
+   a judge that cannot be trusted ([gap
+   review](../reviews/2026-07-12-eval-best-practices-gap-review.md) §2.4). Duplicate
+   labels for one coordinate are rejected outright — a gold set must be unambiguous.
+
+2. **Measure agreement.** Point the calculator at the labels and the judge's scores
+   (files or a whole evidence dir); each distinct `tool` on the score lines is reported
+   as its own judge:
+
+   ```sh
+   catacomb-judge agreement --labels gold.jsonl --runs-dir runs
+   ```
+
+   Spearman ρ ranks the raw values; κ and TPR/TNR see both sides binarized at
+   `--threshold` (default 0.5 — binary 0/1 judges pass through unchanged). TPR and TNR
+   replace accuracy on purpose: on an imbalanced gold set a judge that answers "pass"
+   every time scores high accuracy while its TNR is 0. A metric that would be
+   meaningless is omitted (`-` in the table, absent key in `--json`), not fudged:
+   Spearman under two pairs or at zero variance, κ when both binarized sides are
+   constant at the same value, TPR without positive labels, TNR without negative ones.
+
+3. **Gate the calibration.** `--min-kappa 0.8` turns the report into a pass/fail step —
+   the canon treats **κ > 0.8** as the trust threshold for letting a judge gate
+   anything. Exit 1 names each judge whose κ falls below the bar *or is omitted*
+   (an unmeasurable judge is an uncalibrated judge). The comparison is strictly `<`,
+   so a judge at exactly the bar passes; the pooled `overall` row never gates:
+
+   ```sh
+   catacomb-judge agreement --labels gold.jsonl --runs-dir runs --min-kappa 0.8
+   ```
+
+4. **Aggregate a panel.** Heterogeneous judges wash out each other's biases. `panel`
+   groups score lines by (run_id, key[, step_key]) — one judge per distinct `tool`,
+   provenance required — and emits one line per group in the same scores dialect:
+   the mean by default (binary in → agreement fraction out), or `--vote` for a strict
+   majority over an odd panel. The output is ordinary [`--scores`
+   input](cli.md#gating-on-external-scores), so the loop closes on the existing gate:
+
+   ```sh
+   catacomb-judge panel --runs-dir runs --key judge.groundedness --vote --out panel.jsonl
+   catacomb regress --runs-dir runs \
+     --baseline label:basket=checkout,variant=baseline \
+     --candidate label:basket=checkout,variant=candidate \
+     --scores panel.jsonl --annotation judge.groundedness:higher-better
+   ```
+
+Two caveats travel with every judge, calibrated or not: never pick the judge from the
+model family being tested — self-preference bias survives calibration — and re-measure
+whenever the judge's prompt or model changes, because κ certifies the (judge, prompt,
+threshold) triple you measured, not the judge in general.
+
 ## Compare two runs
 
 `catacomb diff` diffs two session transcripts by `step_key` and reports added, removed,

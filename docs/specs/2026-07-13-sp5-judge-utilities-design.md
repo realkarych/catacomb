@@ -73,7 +73,7 @@ Joins scores to labels on (run_id, key[, step_key]) and reports, per `key` and p
   same `--threshold` (default 0.5): `x >= threshold → 1`. The canon's dominant judge shape
   is binary 0/1, which passes through unchanged at the default.
 - **Cohen's κ** — on binarized pairs, `κ = (p_o − p_e)/(1 − p_e)`; omitted when `p_e = 1`
-  (both sides constant — κ undefined).
+  (both sides constant at the same value — κ undefined).
 - **TPR** = TP/(TP+FN), omitted when the label set has no positives; **TNR** = TN/(TN+FP),
   omitted when no negatives — the imbalance-robust pair the canon prescribes instead of
   accuracy (OpenAI flywheel; gap review §2.4).
