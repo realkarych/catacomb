@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -149,15 +150,70 @@ func TestReadOnlyDSN(t *testing.T) {
 		path string
 		want string
 	}{
-		{name: "posix absolute path", path: "/tmp/g.db", want: "file:///tmp/g.db?mode=ro"},
-		{name: "windows style path", path: "C:/Users/x.db", want: "file:///C:/Users/x.db?mode=ro"},
-		{name: "path with space", path: "/tmp/a b/g.db", want: "file:///tmp/a%20b/g.db?mode=ro"},
+		{name: "posix absolute path", path: "/tmp/g.db", want: "file:///tmp/g.db?mode=ro&_pragma=busy_timeout(5000)"},
+		{name: "windows style path", path: "C:/Users/x.db", want: "file:///C:/Users/x.db?mode=ro&_pragma=busy_timeout(5000)"},
+		{name: "path with space", path: "/tmp/a b/g.db", want: "file:///tmp/a%20b/g.db?mode=ro&_pragma=busy_timeout(5000)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, readOnlyDSN(tt.path))
 		})
 	}
+}
+
+func TestWriteDSN(t *testing.T) {
+	assert.Equal(t, "/tmp/g.db?_pragma=busy_timeout(5000)", writeDSN("/tmp/g.db"))
+}
+
+func busyTimeoutMillis(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var ms int
+	require.NoError(t, db.QueryRow("PRAGMA busy_timeout").Scan(&ms))
+	return ms
+}
+
+func TestOpenSQLiteSetsBusyTimeout(t *testing.T) {
+	s := fileStore(t)
+	assert.Equal(t, 5000, busyTimeoutMillis(t, s.db))
+}
+
+func TestOpenSQLiteReadOnlySetsBusyTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	s, err := OpenSQLite(path)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	ro, err := OpenSQLiteReadOnly(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ro.Close() })
+	assert.Equal(t, 5000, busyTimeoutMillis(t, ro.(*sqliteStore).db))
+}
+
+func TestSecondWriterWaitsWhileFirstHoldsWriteLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	first, err := OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := OpenSQLite(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	tx, err := first.(*sqliteStore).db.Begin()
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO baselines(name, body) VALUES('held','{"name":"held"}')`)
+	require.NoError(t, err)
+
+	release := time.AfterFunc(100*time.Millisecond, func() { _ = tx.Commit() })
+	t.Cleanup(func() { release.Stop() })
+
+	seq, err := second.AppendRegressResult("contended", json.RawMessage(`{"n":1}`))
+	require.NoError(t, err)
+	assert.Equal(t, 1, seq)
+
+	require.NoError(t, second.UpsertBaseline(model.Baseline{Name: "after-wait"}))
+	held, ok, err := second.GetBaseline("held")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "held", held.Name)
 }
 
 func TestOpenSQLiteReadOnlyPathWithSpace(t *testing.T) {

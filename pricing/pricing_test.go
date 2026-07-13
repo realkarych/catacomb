@@ -85,3 +85,67 @@ func TestCostNoFamiliesStillMissesUnknown(t *testing.T) {
 	_, ok := e.Cost(Inputs{ModelID: "claude-opus-4-9", TokensIn: 10})
 	assert.False(t, ok)
 }
+
+func TestCostNormalizesVendorFormsToKnownIDs(t *testing.T) {
+	cases := []struct {
+		name    string
+		modelID string
+		wantUSD float64
+	}{
+		{name: "bedrock dotted prefix", modelID: "anthropic.claude-opus-4-8", wantUSD: 5.00},
+		{name: "vertex slash prefix", modelID: "vertex_ai/claude-sonnet-4-5", wantUSD: 3.00},
+		{name: "bedrock slash prefix", modelID: "bedrock/claude-haiku-4-5", wantUSD: 1.00},
+		{name: "stacked prefixes", modelID: "bedrock/anthropic.claude-opus-4-8", wantUSD: 5.00},
+		{name: "at date snapshot", modelID: "claude-opus-4-5@20251101", wantUSD: 5.00},
+		{name: "prefix plus date snapshot", modelID: "anthropic.claude-opus-4-5@20251101", wantUSD: 5.00},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := New()
+			r, ok := e.Cost(Inputs{ModelID: tc.modelID, TokensIn: 1_000_000})
+			require.True(t, ok)
+			assert.Equal(t, "estimated", r.Source)
+			assert.InDelta(t, tc.wantUSD, r.USD, 1e-9)
+		})
+	}
+}
+
+func TestCostBedrockPrefixPricesIdenticallyToBareID(t *testing.T) {
+	e := New()
+	in := Inputs{TokensIn: 123_456, TokensOut: 78_910, CacheReadIn: 11_213, CacheWrite: 14_151}
+	in.ModelID = "claude-opus-4-8"
+	want, ok := e.Cost(in)
+	require.True(t, ok)
+	in.ModelID = "anthropic.claude-opus-4-8"
+	got, ok := e.Cost(in)
+	require.True(t, ok)
+	assert.Equal(t, want, got)
+}
+
+func TestCostDashDateSnapshotHitsExactTable(t *testing.T) {
+	e := newEngineWithFamilies(defaultTable(), nil)
+	r, ok := e.Cost(Inputs{ModelID: "claude-opus-4-5-20251101", TokensIn: 1_000_000})
+	require.True(t, ok)
+	assert.Equal(t, "estimated", r.Source)
+	assert.InDelta(t, 5.00, r.USD, 1e-9)
+}
+
+func TestCostNormalizedIDFallsBackToFamily(t *testing.T) {
+	e := New()
+	r, ok := e.Cost(Inputs{ModelID: "anthropic.claude-opus-4-9", TokensIn: 1_000_000})
+	require.True(t, ok)
+	assert.Equal(t, "estimated", r.Source)
+	assert.InDelta(t, 5.00, r.USD, 1e-9)
+}
+
+func TestCostNormalizedIDStillUnknown(t *testing.T) {
+	e := New()
+	_, ok := e.Cost(Inputs{ModelID: "anthropic.gpt-9@20260101", TokensIn: 10})
+	assert.False(t, ok)
+}
+
+func TestCostShortNumericSuffixNotStripped(t *testing.T) {
+	e := newEngineWithFamilies(testTable(), nil)
+	_, ok := e.Cost(Inputs{ModelID: "model-x-1234567", TokensIn: 10})
+	assert.False(t, ok)
+}

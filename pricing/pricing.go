@@ -1,6 +1,9 @@
 package pricing
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 type Tier struct {
 	InputPerMTok      float64
@@ -41,18 +44,47 @@ func newEngineWithFamilies(t map[string]Tier, fams []family) *Engine {
 }
 
 func (e *Engine) Cost(in Inputs) (Result, bool) {
-	tier, ok := e.table[in.ModelID]
+	tier, ok := e.tierFor(in.ModelID)
 	if !ok {
-		tier, ok = e.familyTier(in.ModelID)
-		if !ok {
-			return Result{}, false
-		}
+		return Result{}, false
 	}
 	usd := perMTok(in.TokensIn, tier.InputPerMTok) +
 		perMTok(in.TokensOut, tier.OutputPerMTok) +
 		perMTok(in.CacheReadIn, tier.CacheReadPerMTok) +
 		perMTok(in.CacheWrite, tier.CacheWritePerMTok)
 	return Result{USD: usd, Source: "estimated"}, true
+}
+
+func (e *Engine) tierFor(id string) (Tier, bool) {
+	if tier, ok := e.lookup(id); ok {
+		return tier, true
+	}
+	if norm := normalizeModelID(id); norm != id {
+		return e.lookup(norm)
+	}
+	return Tier{}, false
+}
+
+func (e *Engine) lookup(id string) (Tier, bool) {
+	if tier, ok := e.table[id]; ok {
+		return tier, true
+	}
+	return e.familyTier(id)
+}
+
+var dateSnapshotRE = regexp.MustCompile(`[@-]\d{8}$`)
+
+func normalizeModelID(id string) string {
+	for stripped := true; stripped; {
+		stripped = false
+		for _, p := range []string{"anthropic.", "vertex_ai/", "bedrock/"} {
+			if strings.HasPrefix(id, p) {
+				id = strings.TrimPrefix(id, p)
+				stripped = true
+			}
+		}
+	}
+	return dateSnapshotRE.ReplaceAllString(id, "")
 }
 
 func (e *Engine) familyTier(id string) (Tier, bool) {

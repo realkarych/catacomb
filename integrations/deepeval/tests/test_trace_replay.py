@@ -6,7 +6,7 @@ import pytest
 
 deepeval = pytest.importorskip("deepeval")
 
-from catacomb_deepeval.model import SessionData, StepData
+from catacomb_deepeval.model import SessionData
 from catacomb_deepeval.reader import load_jsonl, parse_session
 from catacomb_deepeval.trace_replay import build_trace_dict, session_to_trace_testcase
 
@@ -74,6 +74,37 @@ def test_session_to_trace_testcase_input_output():
     tc = session_to_trace_testcase(sd)
     assert tc.input == sd.input
     assert tc.actual_output == sd.actual_output
+
+
+def test_session_to_trace_testcase_rejects_seam_dropping_testcase(monkeypatch):
+    import deepeval.test_case as tc_mod
+
+    class DroppingTestCase:
+        def __init__(self, input: str, actual_output: str) -> None:
+            object.__setattr__(self, "input", input)
+            object.__setattr__(self, "actual_output", actual_output)
+
+        def __setattr__(self, name: str, value: object) -> None:
+            pass
+
+    monkeypatch.setattr(tc_mod, "LLMTestCase", DroppingTestCase)
+    with pytest.raises(RuntimeError, match="unsupported deepeval version"):
+        session_to_trace_testcase(_load("session.jsonl"))
+
+
+def test_session_to_trace_testcase_rejects_seam_raising_testcase(monkeypatch):
+    import deepeval.test_case as tc_mod
+
+    class RejectingTestCase:
+        __slots__ = ("input", "actual_output")
+
+        def __init__(self, input: str, actual_output: str) -> None:
+            self.input = input
+            self.actual_output = actual_output
+
+    monkeypatch.setattr(tc_mod, "LLMTestCase", RejectingTestCase)
+    with pytest.raises(RuntimeError, match="unsupported deepeval version"):
+        session_to_trace_testcase(_load("session.jsonl"))
 
 
 def test_build_trace_dict_fallback_empty_steps():

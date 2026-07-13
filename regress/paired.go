@@ -24,6 +24,13 @@ var pairedMetrics = []struct {
 	{"tokens_out", func(t aggregate.TaskStats) aggregate.MetricStats { return t.TokensOut }},
 }
 
+func logChoose(m, i int) float64 {
+	lm, _ := math.Lgamma(float64(m) + 1)
+	li, _ := math.Lgamma(float64(i) + 1)
+	lr, _ := math.Lgamma(float64(m-i) + 1)
+	return lm - li - lr
+}
+
 func binomTailGE(s, m int) float64 {
 	if s <= 0 {
 		return 1
@@ -31,15 +38,20 @@ func binomTailGE(s, m int) float64 {
 	if s > m {
 		return 0
 	}
-	p := math.Ldexp(1, -m)
-	total := 0.0
-	for i := 0; i <= m; i++ {
-		if i >= s {
-			total += p
+	logs := make([]float64, 0, m-s+1)
+	maxLog := math.Inf(-1)
+	for i := s; i <= m; i++ {
+		l := logChoose(m, i) - float64(m)*math.Ln2
+		logs = append(logs, l)
+		if l > maxLog {
+			maxLog = l
 		}
-		p = p * float64(m-i) / float64(i+1)
 	}
-	return total
+	sum := 0.0
+	for _, l := range logs {
+		sum += math.Exp(l - maxLog)
+	}
+	return math.Exp(maxLog + math.Log(sum))
 }
 
 func minUnanimousTasks(alpha float64) int {
@@ -78,9 +90,17 @@ func pairedTasks(b, c []aggregate.TaskStats, minSupport int) []taskPair {
 	return pairs
 }
 
-func signCounts(pairs []taskPair, sel func(aggregate.TaskStats) aggregate.MetricStats) (positive, nonzero int) {
+func metricSupported(ms aggregate.MetricStats, minSupport int) bool {
+	return ms.N > 0 && ms.N >= minSupport
+}
+
+func signCounts(pairs []taskPair, sel func(aggregate.TaskStats) aggregate.MetricStats, minSupport int) (positive, nonzero int) {
 	for _, p := range pairs {
-		d := sel(p.cand).Median - sel(p.base).Median
+		bs, cs := sel(p.base), sel(p.cand)
+		if !metricSupported(bs, minSupport) || !metricSupported(cs, minSupport) {
+			continue
+		}
+		d := cs.Median - bs.Median
 		switch {
 		case d > 0:
 			positive++
@@ -123,7 +143,7 @@ func pairedFindings(b, c aggregate.Report, th Thresholds) []Finding {
 	matched := len(pairs)
 	out := make([]Finding, 0, len(pairedMetrics))
 	for _, m := range pairedMetrics {
-		positive, nonzero := signCounts(pairs, m.sel)
+		positive, nonzero := signCounts(pairs, m.sel, th.MinSupport)
 		out = append(out, pairedFinding(m.name, nonzero, positive, matched, th))
 	}
 	return out

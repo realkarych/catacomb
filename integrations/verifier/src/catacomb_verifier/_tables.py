@@ -123,12 +123,31 @@ def _matched_mismatches(
 
 
 def _augment(i: int, compat: list[list[int]], seen: list[bool], match_right: list[int]) -> bool:
-    for j in compat[i]:
-        if not seen[j]:
-            seen[j] = True
-            if match_right[j] == -1 or _augment(match_right[j], compat, seen, match_right):
-                match_right[j] = i
-                return True
+    stack: list[tuple[int, int]] = [(i, 0)]
+    chosen: list[int] = []
+    while stack:
+        row, pos = stack[-1]
+        found = -1
+        while pos < len(compat[row]):
+            j = compat[row][pos]
+            pos += 1
+            if not seen[j]:
+                found = j
+                break
+        stack[-1] = (row, pos)
+        if found == -1:
+            stack.pop()
+            if chosen:
+                chosen.pop()
+            continue
+        seen[found] = True
+        if match_right[found] == -1:
+            match_right[found] = row
+            for depth in range(len(stack) - 1):
+                match_right[chosen[depth]] = stack[depth][0]
+            return True
+        chosen.append(found)
+        stack.append((match_right[found], 0))
     return False
 
 

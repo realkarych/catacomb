@@ -10,6 +10,7 @@ const TestedClaudeCodeVersion = "2.1.199"
 const (
 	ReasonUnknownRecordType   = "unknown_record_type"
 	ReasonUnknownContentBlock = "unknown_content_block"
+	ReasonBadTimestamp        = "bad_timestamp"
 )
 
 type Counts map[string]uint64

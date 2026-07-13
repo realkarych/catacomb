@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -266,7 +267,7 @@ func redactOnce(raw []byte) Result {
 	if err := dec.Decode(&node); err != nil {
 		return redactFreeText(raw)
 	}
-	if off := dec.InputOffset(); dec.More() {
+	if off := dec.InputOffset(); hasTrailingContent(raw, off) {
 		switch node.(type) {
 		case map[string]any, []any, string:
 			return redactValueWithTail(node, raw, off)
@@ -287,6 +288,10 @@ func redactOnce(raw []byte) Result {
 		Findings: findings,
 		Redacted: true,
 	}
+}
+
+func hasTrailingContent(raw []byte, off int64) bool {
+	return len(bytes.TrimLeft(raw[off:], " \t\r\n")) > 0
 }
 
 func redactValueWithTail(node any, raw []byte, off int64) Result {
@@ -399,25 +404,30 @@ func walkNode(node any, path string, findings *[]Finding) any {
 
 func walkObject(obj map[string]any, path string, findings *[]Finding) map[string]any {
 	result := make(map[string]any, len(obj))
-	for k, v := range obj {
-		childPath := joinPath(path, k)
+	for _, k := range slices.Sorted(maps.Keys(obj)) {
+		v := obj[k]
+		rk, keyReasons := replaceSecretSpans(k)
+		childPath := joinPath(path, rk)
+		for _, reason := range keyReasons {
+			*findings = append(*findings, Finding{Path: childPath, Reason: reason})
+		}
 		if isSensitiveKey(k) {
 			if sv, ok := v.(string); ok {
 				if isKnownPlaceholder(sv) || isTypedRefValue(sv) {
-					result[k] = sv
+					result[rk] = sv
 				} else {
 					reason := matchValueRule(sv)
 					if reason == "" {
 						reason = "sensitive-key"
 					}
-					result[k] = placeholder(reason)
+					result[rk] = placeholder(reason)
 					*findings = append(*findings, Finding{Path: childPath, Reason: reason})
 				}
 			} else {
-				result[k] = walkNode(v, childPath, findings)
+				result[rk] = walkNode(v, childPath, findings)
 			}
 		} else {
-			result[k] = walkNode(v, childPath, findings)
+			result[rk] = walkNode(v, childPath, findings)
 		}
 	}
 	return result

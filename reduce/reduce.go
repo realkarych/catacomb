@@ -326,6 +326,9 @@ func setDuration(n *model.Node) {
 }
 
 func (g *Graph) stampEnd(n *model.Node, o model.Observation) {
+	if o.EventTime.IsZero() {
+		return
+	}
 	fs := g.stampsFor(n.ID)
 	r := sourceRank(o.Source)
 	switch {
@@ -342,6 +345,16 @@ func (g *Graph) stampEnd(n *model.Node, o model.Observation) {
 }
 
 func (g *Graph) stamp(n *model.Node, o model.Observation) {
+	if !o.EventTime.IsZero() {
+		g.stampStart(n, o)
+	}
+	if o.Seq > n.Rev {
+		n.Rev = o.Seq
+	}
+	n.Sources = append(n.Sources, model.SourceRef{Source: o.Source, ObsID: o.ObsID, ObservedAt: o.ObservedAt})
+}
+
+func (g *Graph) stampStart(n *model.Node, o model.Observation) {
 	fs := g.stampsFor(n.ID)
 	r := sourceRank(o.Source)
 	if !fs.haveTiming || r > fs.timingRank {
@@ -355,10 +368,6 @@ func (g *Graph) stamp(n *model.Node, o model.Observation) {
 		n.TStart = &ts
 		setDuration(n)
 	}
-	if o.Seq > n.Rev {
-		n.Rev = o.Seq
-	}
-	n.Sources = append(n.Sources, model.SourceRef{Source: o.Source, ObsID: o.ObsID, ObservedAt: o.ObservedAt})
 }
 
 func (g *Graph) setName(n *model.Node, o model.Observation, name string, strong bool) {
@@ -426,6 +435,7 @@ func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
 	}
 	res, ok := g.pricer.Cost(in)
 	if !ok {
+		markUnpriced(n, in)
 		return
 	}
 	usd := res.USD
@@ -434,6 +444,19 @@ func (g *Graph) applyCost(n *model.Node, attrs map[string]any) {
 		n.Attrs = map[string]any{}
 	}
 	n.Attrs["cost_source"] = res.Source
+}
+
+func markUnpriced(n *model.Node, in PriceInputs) {
+	if n.CostUSD != nil {
+		return
+	}
+	if in.TokensIn <= 0 && in.TokensOut <= 0 && in.CacheReadIn <= 0 && in.CacheWrite <= 0 {
+		return
+	}
+	if n.Attrs == nil {
+		n.Attrs = map[string]any{}
+	}
+	n.Attrs["cost_source"] = "unpriced"
 }
 
 func toInt64(v any) (int64, bool) {

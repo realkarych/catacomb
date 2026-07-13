@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import dataclasses
+import random
 
 import pytest
 
 from catacomb_verifier import CompareResult, compare_tables
+from catacomb_verifier._tables import _augment
 
 
 def _write(tmp_path, name, text):
@@ -287,6 +289,77 @@ def test_jsonl_normalized_key_collision_raises(tmp_path):
     want = _write(tmp_path, "want.csv", "total\n2\n")
     with pytest.raises(ValueError, match="Total"):
         compare_tables(got, want)
+
+
+def test_inf_cells_never_compare_equal(tmp_path):
+    got = _write(tmp_path, "got.csv", "total\ninf\n")
+    want = _write(tmp_path, "want.csv", "total\ninf\n")
+    res = compare_tables(got, want)
+    assert res.equal is False
+    assert res.mismatches == ["row 0 col total: inf != inf"]
+
+
+def test_nan_cells_never_compare_equal(tmp_path):
+    got = _write(tmp_path, "got.csv", "total\nnan\n")
+    want = _write(tmp_path, "want.csv", "total\nnan\n")
+    res = compare_tables(got, want)
+    assert res.equal is False
+    assert res.mismatches == ["row 0 col total: nan != nan"]
+
+
+def test_negative_inf_vs_inf_unequal(tmp_path):
+    got = _write(tmp_path, "got.csv", "total\n-inf\n")
+    want = _write(tmp_path, "want.csv", "total\ninf\n")
+    res = compare_tables(got, want)
+    assert res.equal is False
+    assert res.mismatches == ["row 0 col total: -inf != inf"]
+
+
+def test_large_table_tolerance_fallback_completes(tmp_path):
+    # A single augmenting path of length m+1: chain row i tolerance-matches
+    # want rows {i, i+1}, and the last-processed row matches only want row 0,
+    # so the fallback must thread the whole chain without RecursionError.
+    tol = 1e-4
+    step = 0.8 * tol
+    offset = 1000.0
+    m = 2500
+    want_values = [offset + j * step for j in range(m + 1)] + [1020.0]
+    got_values = [offset + (i + 0.5) * step for i in range(m)] + [1010.0, offset - 0.5 * step]
+    got = _write(tmp_path, "got.csv", "total\n" + "".join(f"{v}\n" for v in got_values))
+    want = _write(tmp_path, "want.csv", "total\n" + "".join(f"{v}\n" for v in want_values))
+    res = compare_tables(got, want, float_tol=tol)
+    assert res.equal is False
+    assert res.row_diff == 0
+    assert res.mismatches == ["row 0 col total: 1010.0 != 1020.0"]
+
+
+def _augment_recursive_reference(i, compat, seen, match_right):
+    for j in compat[i]:
+        if not seen[j]:
+            seen[j] = True
+            if match_right[j] == -1 or _augment_recursive_reference(match_right[j], compat, seen, match_right):
+                match_right[j] = i
+                return True
+    return False
+
+
+def test_augment_matches_recursive_reference_on_random_graphs():
+    rng = random.Random(1729)
+    for _ in range(300):
+        n_left = rng.randint(0, 8)
+        n_right = rng.randint(0, 8)
+        density = rng.choice([0.1, 0.3, 0.5, 0.9])
+        compat = [[j for j in range(n_right) if rng.random() < density] for _ in range(n_left)]
+        got_match = [-1] * n_right
+        ref_match = [-1] * n_right
+        for i in range(n_left):
+            got_seen = [False] * n_right
+            ref_seen = [False] * n_right
+            got_found = _augment(i, compat, got_seen, got_match)
+            ref_found = _augment_recursive_reference(i, compat, ref_seen, ref_match)
+            assert got_found == ref_found
+            assert got_match == ref_match
+            assert got_seen == ref_seen
 
 
 def test_result_is_frozen_dataclass():

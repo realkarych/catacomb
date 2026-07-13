@@ -6,13 +6,13 @@ build-backend = "hatchling.build"
 name = "catacomb-deepeval"
 version = "0.1.0"
 description = "DeepEval adapter for catacomb JSONL exports"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-deepeval = ["deepeval>=4,<5"]
+deepeval = ["deepeval>=4.1,<4.2"]
 test = ["pytest>=7"]
-test-full = ["pytest>=7", "deepeval>=4,<5"]
+test-full = ["pytest>=7", "deepeval>=4.1,<4.2"]
 
 [project.scripts]
 catacomb-deepeval = "catacomb_deepeval.cli:main"
@@ -23,3 +23,22 @@ packages = ["src/catacomb_deepeval"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true

@@ -10,10 +10,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test-deepeval:
     name: pytest (Python 3.12 + deepeval)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: integrations/deepeval
@@ -29,13 +34,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install package with test-full extras
-        run: pip install -e '.[test-full]'
+        run: pip install -e '.[test-full]' ruff==0.15.21 mypy==2.3.0
+      - name: Lint and type-check
+        run: |
+          ruff check .
+          mypy src
       - name: Run tests
         run: pytest -q
 
   verifier-sdk:
     name: pytest (Python 3.12 + verifier-sdk)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: integrations/verifier
@@ -48,13 +58,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install package with test extras
-        run: pip install -e '.[test]'
+        run: pip install -e '.[test]' ruff==0.15.21 mypy==2.3.0
+      - name: Lint and type-check
+        run: |
+          ruff check .
+          mypy src
       - name: Run tests
         run: pytest -q
 
   judge-sdk:
     name: pytest (Python 3.12 + judge-sdk)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: integrations/judge

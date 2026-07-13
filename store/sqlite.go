@@ -78,19 +78,25 @@ func openSQLiteReadOnly(open func(driver, dsn string) (*sql.DB, error), path str
 	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }
 
+const busyTimeoutPragma = "_pragma=busy_timeout(5000)"
+
 func readOnlyDSN(path string) string {
 	p := filepath.ToSlash(path)
 	if len(p) == 0 || p[0] != '/' {
 		p = "/" + p
 	}
-	return (&url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro"}).String()
+	return (&url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro&" + busyTimeoutPragma}).String()
+}
+
+func writeDSN(path string) string {
+	return path + "?" + busyTimeoutPragma
 }
 
 func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("store.OpenSQLite mkdir: %w", err)
 	}
-	db, err := open("sqlite", path)
+	db, err := open("sqlite", writeDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("store.OpenSQLite: %w", err)
 	}
@@ -104,13 +110,13 @@ func openSQLite(open func(driver, dsn string) (*sql.DB, error), path string) (St
 		return nil, fmt.Errorf("store.OpenSQLite wal: %w", err)
 	}
 	logger := slog.Default()
-	changed, migErr := migrate(db, version, schemaMigrations, logger)
-	if migErr != nil {
+	if migErr := migrate(db, version, schemaMigrations, logger); migErr != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store.OpenSQLite migrate: %w", migErr)
 	}
-	if shouldVacuumAfterMigration(changed) {
-		vacuumAfterScrub(db, logger)
+	if err := finishPendingVacuum(db, logger); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store.OpenSQLite vacuum: %w", err)
 	}
 	return &sqliteStore{db: db, marshal: marshalVerbatim}, nil
 }

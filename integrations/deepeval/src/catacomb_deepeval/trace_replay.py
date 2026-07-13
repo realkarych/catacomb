@@ -136,7 +136,12 @@ def run_step_efficiency(
 
 
 def session_to_trace_testcase(session: SessionData) -> Any:
-    """Build a DeepEval LLMTestCase with _trace_dict set from the session replay."""
+    """Build a DeepEval LLMTestCase with _trace_dict set from the session replay.
+
+    Fails loudly if the installed deepeval's LLMTestCase does not honor the
+    private _trace_dict seam the trace metrics read; a silent drop would make
+    them judge an empty trace and return plausible-but-wrong scores.
+    """
     from deepeval.test_case import LLMTestCase
 
     trace_dict = build_trace_dict(session)
@@ -144,5 +149,21 @@ def session_to_trace_testcase(session: SessionData) -> Any:
         input=session.input or "",
         actual_output=session.actual_output or "",
     )
-    tc._trace_dict = trace_dict
+    try:
+        tc._trace_dict = trace_dict
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise RuntimeError(_seam_error()) from exc
+    if getattr(tc, "_trace_dict", None) is not trace_dict:
+        raise RuntimeError(_seam_error())
     return tc
+
+
+def _seam_error() -> str:
+    import deepeval
+
+    version = getattr(deepeval, "__version__", "unknown")
+    return (
+        f"unsupported deepeval version {version}: LLMTestCase does not honor the "
+        "_trace_dict seam, so trace metrics would judge an empty trace; "
+        "install a supported version (deepeval>=4.1,<4.2)"
+    )

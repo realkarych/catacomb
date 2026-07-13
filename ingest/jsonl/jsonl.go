@@ -78,7 +78,10 @@ func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt fu
 			return nil, nil, err
 		}
 		dc = dc.Merge(lineCounts)
-		ts, _ := time.Parse(time.RFC3339, ln.Timestamp)
+		ts, tsErr := time.Parse(time.RFC3339, ln.Timestamp)
+		if tsErr != nil && ln.Timestamp != "" {
+			dc = dc.Bump(drift.ReasonBadTimestamp)
+		}
 		for _, p := range parts {
 			out = append(out, model.Observation{
 				ObsID:       ulid.Make().String(),

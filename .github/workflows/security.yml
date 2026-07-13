@@ -12,10 +12,15 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -35,6 +40,7 @@ jobs:
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -48,11 +54,12 @@ jobs:
           # stdlib findings are keyed to the toolchain patch level — always scan on the latest
           check-latest: true
       - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
   gosec:
     name: gosec
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -72,11 +79,12 @@ jobs:
         # argv) — revisit this exclusion if such code is added. gosec's -conf file
         # cannot exclude rules, so the exclusion lives here rather than in a
         # .gosec.json.
-        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude=G304 ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.27.1 -exclude=G304 ./...
 
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
@@ -97,6 +105,7 @@ jobs:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -109,6 +118,7 @@ jobs:
   lint-workflows:
     name: actionlint + zizmor
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

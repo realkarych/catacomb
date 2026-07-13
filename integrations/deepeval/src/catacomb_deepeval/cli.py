@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import List, Optional
 
 from catacomb_deepeval.adapter import session_to_dicts, session_to_test_case
-from catacomb_deepeval.expected import ExpectedLoadError, load_expected_names
+from catacomb_deepeval.expected import ExpectedLoadError, expected_carries_field, load_expected_names
 from catacomb_deepeval.reader import list_run_ids, load_jsonl, parse_session
 
 DEFAULT_THRESHOLD = 0.5
@@ -31,7 +30,7 @@ def main() -> None:
     parser.add_argument(
         "--argument-correctness",
         action="store_true",
-        help="Reserved (not yet implemented); exits with error if ANTHROPIC_API_KEY is unset",
+        help="Reserved (not implemented); always exits with an error",
     )
     parser.add_argument(
         "--trace-metrics",
@@ -40,10 +39,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if (args.argument_correctness or args.trace_metrics) and not os.environ.get("ANTHROPIC_API_KEY"):
-        flag = "--trace-metrics" if args.trace_metrics else "--argument-correctness"
+    if args.argument_correctness:
+        print("error: --argument-correctness is not implemented", file=sys.stderr)
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            print(
+                "note: it would also require the ANTHROPIC_API_KEY environment variable "
+                "(LLM judge makes network calls)",
+                file=sys.stderr,
+            )
+        sys.exit(2)
+
+    if args.trace_metrics and not os.environ.get("ANTHROPIC_API_KEY"):
         print(
-            f"error: {flag} requires ANTHROPIC_API_KEY environment variable (LLM judge makes network calls)",
+            "error: --trace-metrics requires ANTHROPIC_API_KEY environment variable (LLM judge makes network calls)",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -55,7 +63,19 @@ def main() -> None:
         sys.exit(2)
 
     run_ids = list_run_ids(lines)
+
+    if not run_ids:
+        print(f"error: no runs found in {args.jsonl}", file=sys.stderr)
+        sys.exit(2)
+
     run_id = args.run_id
+
+    if run_id is not None and run_id not in run_ids:
+        print(
+            f"error: run {run_id} not found in {args.jsonl} (available: {', '.join(run_ids)})",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     if run_id is None:
         if len(run_ids) > 1:
@@ -64,7 +84,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
-        run_id = run_ids[0] if run_ids else ""
+        run_id = run_ids[0]
 
     session = parse_session(lines, run_id)
 
@@ -114,10 +134,32 @@ def main() -> None:
         print(f"error: cannot load expected tools from {args.expected}: {exc}", file=sys.stderr)
         sys.exit(2)
 
-    try:
-        from deepeval.test_case import ToolCallParams
+    if args.match != "name":
+        field = "input_parameters" if args.match == "input" else "output"
+        try:
+            carries_field = expected_carries_field(args.expected, field)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"error: cannot load expected tools from {args.expected}: {exc}", file=sys.stderr)
+            sys.exit(2)
+        if carries_field:
+            print(
+                f"error: --match {args.match} is not implemented: "
+                f"expected {field} are not carried through to the metric",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"error: --match {args.match} requires expected {field}, "
+                f"but {args.expected} carries tool names only",
+                file=sys.stderr,
+            )
+        sys.exit(2)
 
+    try:
         from catacomb_deepeval.adapter import make_offline_metric
+
+        metric = make_offline_metric()
+        tc = session_to_test_case(session, expected_names=expected_names)
     except ImportError:
         print(
             "error: deepeval is not installed; run: pip install 'catacomb-deepeval[deepeval]'",
@@ -125,18 +167,6 @@ def main() -> None:
         )
         sys.exit(2)
 
-    evaluation_params: Optional[List] = None
-    if args.match == "input":
-        evaluation_params = [ToolCallParams.INPUT_PARAMETERS]
-    elif args.match == "output":
-        evaluation_params = [ToolCallParams.OUTPUT]
-
-    metric_kwargs = {}
-    if evaluation_params is not None:
-        metric_kwargs["evaluation_params"] = evaluation_params
-
-    metric = make_offline_metric(**metric_kwargs)
-    tc = session_to_test_case(session, expected_names=expected_names)
     metric.measure(tc)
 
     verdict = "PASS" if metric.score >= metric.threshold else "FAIL"
