@@ -9,7 +9,8 @@ import sys
 
 
 class FormatError(Exception):
-    """A malformed scores or labels line; the message names file and line."""
+    """Malformed or ambiguous input; the message names the offending
+    file:line or (run_id, key[, step_key]) group."""
 
 
 @dataclasses.dataclass(frozen=True)

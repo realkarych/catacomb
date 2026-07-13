@@ -218,13 +218,63 @@ def test_agreement_threshold_rebinarizes_both_sides(tmp_path, capsys):
     )
     code, out, _ = run_cli(["agreement", "--labels", labels, scores, "--json"], capsys)
     assert code == 0
-    assert json.loads(out)["keys"][0]["judges"][0]["kappa"] == 1.0
+    judge = json.loads(out)["keys"][0]["judges"][0]
+    assert judge["kappa"] == 1.0
+    assert judge["spearman"] == 1.0
     code, out, _ = run_cli(
         ["agreement", "--labels", labels, scores, "--threshold", "0.9", "--json"],
         capsys,
     )
     assert code == 0
-    assert json.loads(out)["keys"][0]["judges"][0]["kappa"] == 0.0
+    judge = json.loads(out)["keys"][0]["judges"][0]
+    assert judge["kappa"] == 0.0
+    assert judge["spearman"] == 1.0
+
+
+def test_agreement_non_binary_label_binarizes_at_threshold(tmp_path, capsys):
+    labels = write_jsonl(
+        tmp_path / "labels.jsonl",
+        [label_line("r1", "judge.g", 0.6), label_line("r2", "judge.g", 1)],
+    )
+    scores = write_jsonl(
+        tmp_path / "scores.jsonl",
+        [
+            score_line("judge.g", 0.95, "r1", "alpha"),
+            score_line("judge.g", 0.95, "r2", "alpha"),
+        ],
+    )
+    code, out, _ = run_cli(["agreement", "--labels", labels, scores, "--json"], capsys)
+    assert code == 0
+    judge = json.loads(out)["keys"][0]["judges"][0]
+    assert "tnr" not in judge
+    assert judge["tpr"] == 1.0
+    code, out, _ = run_cli(
+        ["agreement", "--labels", labels, scores, "--threshold", "0.9", "--json"],
+        capsys,
+    )
+    assert code == 0
+    judge = json.loads(out)["keys"][0]["judges"][0]
+    assert judge["tnr"] == 0.0
+    assert judge["tpr"] == 1.0
+
+
+def test_agreement_label_only_key_omits_every_metric(two_judge_fixture, capsys):
+    labels, alpha, _ = two_judge_fixture
+    with open(labels, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(label_line("r1", "judge.h", 1)) + "\n")
+    code, out, err = run_cli(["agreement", "--labels", labels, alpha, "--json"], capsys)
+    assert code == 0
+    assert json.loads(out)["keys"][1] == {
+        "key": "judge.h",
+        "unmatched_labels": 1,
+        "unmatched_scores": 0,
+        "judges": [],
+        "overall": {"n": 0},
+    }
+    code, table, err = run_cli(["agreement", "--labels", labels, alpha], capsys)
+    assert code == 0
+    row = next(line for line in table.splitlines() if line.startswith("judge.h"))
+    assert row.split() == ["judge.h", "overall", "0", "-", "-", "-", "-"]
 
 
 def test_agreement_runs_dir_scanned_sorted(tmp_path, capsys):
