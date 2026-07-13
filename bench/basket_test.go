@@ -384,6 +384,139 @@ func TestLoadVerifyBlockChangesHash(t *testing.T) {
 	assert.NotEqual(t, h1, h2)
 }
 
+func TestLoadWorkspaceValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want error
+	}{
+		{"empty workspace cmd on task", `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: []}
+variants:
+  - id: v1
+`, bench.ErrWorkspaceCmd},
+		{"empty workspace cmd on variant", `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+variants:
+  - id: v1
+    workspace: {cmd: []}
+`, bench.ErrWorkspaceCmd},
+		{"task dir with task workspace", `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    dir: /tmp
+    workspace: {cmd: ["true"]}
+variants:
+  - id: v1
+`, bench.ErrWorkspaceDir},
+		{"task dir with variant workspace", `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    dir: /tmp
+variants:
+  - id: v1
+    workspace: {cmd: ["true"]}
+`, bench.ErrWorkspaceDir},
+		{"missing patch", `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: ["true"], patch: nope.patch}
+variants:
+  - id: v1
+`, bench.ErrWorkspacePatch},
+		{"missing patch on variant", `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+variants:
+  - id: v1
+    workspace: {cmd: ["true"], patch: nope.patch}
+`, bench.ErrWorkspacePatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "basket.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(tc.yaml), 0o600))
+			_, _, err := bench.Load(path)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+func TestLoadWorkspacePatchHashedAndResolved(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("patch-bytes\n")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fix.patch"), content, 0o600))
+	yaml := `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: ["true"], patch: fix.patch, rev: r42}
+variants:
+  - id: v1
+  - id: v2
+    workspace: {cmd: ["sh", "x.sh"], patch: fix.patch}
+`
+	path := filepath.Join(dir, "basket.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+	b, _, err := bench.Load(path)
+	require.NoError(t, err)
+	sum := sha256.Sum256(content)
+	want := hex.EncodeToString(sum[:])
+	tw := b.Tasks[0].Workspace
+	require.Equal(t, filepath.Join(dir, "fix.patch"), tw.PatchAbs)
+	require.Equal(t, want, tw.PatchSHA256)
+	require.Equal(t, "r42", tw.Rev)
+	vw := b.Variants[1].Workspace
+	require.Equal(t, want, vw.PatchSHA256)
+}
+
+func TestEffectiveWorkspace(t *testing.T) {
+	taskWS := &bench.Workspace{Cmd: []string{"t"}}
+	varWS := &bench.Workspace{Cmd: []string{"v"}}
+	cases := []struct {
+		name string
+		cell bench.Cell
+		want *bench.Workspace
+	}{
+		{"variant wins", bench.Cell{Task: bench.Task{Workspace: taskWS}, Variant: bench.Variant{Workspace: varWS}}, varWS},
+		{"task fallback", bench.Cell{Task: bench.Task{Workspace: taskWS}}, taskWS},
+		{"none", bench.Cell{}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.want == nil {
+				require.Nil(t, tc.cell.EffectiveWorkspace())
+				return
+			}
+			require.Same(t, tc.want, tc.cell.EffectiveWorkspace())
+		})
+	}
+}
+
 func TestLoadDashIDsNoCollision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dashy.yaml")
 	body := `basket: multi-word-basket
