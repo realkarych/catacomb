@@ -1,0 +1,17 @@
+basket: hermetic-ws
+reps: 3
+tasks:
+  - id: ws
+    cmd: ["./agent_ws.sh"]
+    timeout: 60s
+    artifacts: ["applied.txt"]
+    workspace:
+      cmd: ["sh", "-c", "cp __WORK__/agent_ws.sh . && cat \"$CATACOMB_PATCH\" > applied.txt && echo setup >> __WORK__/wslog/setup.log"]
+      patch: fix.patch
+      rev: seed-r1
+      teardown: ["sh", "-c", "echo torn >> __WORK__/wslog/teardown.log"]
+    verify:
+      cmd: ["python3", "__WORK__/verify_ws.py"]
+      timeout: 30s
+variants:
+  - id: only
