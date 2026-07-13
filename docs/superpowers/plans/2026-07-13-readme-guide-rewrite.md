@@ -184,7 +184,6 @@ Replace `README.md` wholesale with the guide-shaped version below, splicing the 
 
 Write `README.md` with exactly the following content. Rules for the splice markers:
 - `[SPLICE FILE: <path>]` → replace the marker line with the byte-exact content of that file (it sits inside a fenced code block already).
-- For output splices, trim only *repeated* per-cell progress lines in `bench.txt` to the first two and last two cells with a literal `…` line between, if the block exceeds ~25 lines. Never trim `regress.txt`'s verdict table.
 - `bench.txt` is spliced as a literal `…` line followed by only the tail — from the `marked N/N cells` line through the `Next steps:` epilogue. The leading raw stream-json passthrough is elided, and the README prose must disclose the elision.
 - `regress.txt` is spliced without its leading stderr `warning: transcript … newer than tested …` lines (the verdict table itself is never trimmed), and the README prose must disclose that such warnings may appear.
 - After splicing, `grep -n "SPLICE" README.md` must return nothing.
