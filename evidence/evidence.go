@@ -38,10 +38,16 @@ type Meta struct {
 }
 
 type EnvStamps struct {
-	CatacombVersion   string    `json:"catacomb_version"`
-	ModelID           string    `json:"model_id,omitempty"`
-	ClaudeCodeVersion string    `json:"claude_code_version,omitempty"`
-	Resources         Resources `json:"resources"`
+	CatacombVersion   string          `json:"catacomb_version"`
+	ModelID           string          `json:"model_id,omitempty"`
+	ClaudeCodeVersion string          `json:"claude_code_version,omitempty"`
+	Resources         Resources       `json:"resources"`
+	Workspace         *WorkspaceStamp `json:"workspace,omitempty"`
+}
+
+type WorkspaceStamp struct {
+	Rev         string `json:"rev,omitempty"`
+	PatchSHA256 string `json:"patch_sha256,omitempty"`
 }
 
 type Resources struct {
