@@ -408,6 +408,67 @@ their exact bytes:
   verifier crash passes through verbatim, so keep secrets out of a verifier's stderr and error
   messages — print diffs and counts, not raw inputs.
 
+## Auditing cells
+
+The gate compares group medians, so a single cell that cheats its way to a pass — or burns
+50× the tokens getting there — can hide inside a clean verdict. The audit loop is the
+counterpart: deterministic per-cell outlier flags point at runs worth reading, `pack`
+bundles their already-redacted evidence for an external reviewer, and the reviewer's
+findings come back through the same scores gate. Catacomb never calls an LLM itself — the
+judge, its prompt, and its budget stay outside, the same boundary as
+[external scores](#gate-on-external-scores-optional).
+
+1. **Read the audit flags.** Every `regress` report screens each group's cells against the
+   group median on `duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, and `turns`
+   ([rule and thresholds](cli.md#per-cell-outlier-audit); tune with `--audit-iqr-factor`
+   and `--audit-rel-delta`). A flag is an epilogue line, never a verdict — the exit code
+   is untouched:
+
+   ```text
+   audit: candidate run bench-sql-sql-candidate-r7 (task sql) tokens_out 1932 vs group median 243 (band 121.5)
+   ```
+
+   Trust `tokens_out` and `turns` flags most. Cost and duration are noisy by nature —
+   under prompt caching, real per-run cost spreads up to ~5× between byte-identical runs
+   ([PV-6b](../reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
+   inherits runner load — so read those flags as "look here", not as evidence by
+   themselves.
+
+2. **Pack the evidence.** [`pack`](cli.md#pack) exports a deterministic sample of the
+   flagged group — same-run-list-every-time stride sampling, evidence copied verbatim,
+   redacted by construction — plus a `pack.json` manifest and an `INSTRUCTIONS.md`
+   briefing for the reviewer:
+
+   ```sh
+   catacomb pack label:basket=sql,variant=candidate --runs-dir runs --out audit-pack
+   ```
+
+3. **Inspect it externally.** The bundle is self-describing, so any reviewer works: a
+   human reading transcripts, or an LLM you drive yourself — for example:
+
+   ```sh
+   claude -p "Read audit-pack/INSTRUCTIONS.md, inspect every run directory in
+   audit-pack/, and write your verdicts to findings.jsonl exactly as instructed."
+   ```
+
+   The prompt, the model, and the spend are yours; catacomb only defines the contract:
+   one JSONL line per run-level finding, an `audit.`-prefixed key, a numeric value, and
+   the `run_id` it applies to — `{"key":"audit.clean","value":1,"run_id":"<run id>"}`.
+
+4. **Gate the findings.** The returned file is an ordinary [`--scores`](cli.md#gating-on-external-scores)
+   file, and `--annotation` declares the gate direction:
+
+   ```sh
+   catacomb regress --runs-dir runs \
+     --baseline label:basket=sql,variant=baseline \
+     --candidate label:basket=sql,variant=candidate \
+     --scores findings.jsonl --annotation audit.clean:higher-better
+   ```
+
+   When every value is `0`/`1` the key gates as a rate (the same Wilson-bounds rule as
+   `verifier.pass`); a key scored on only one side reports `insufficient` rather than
+   guessing, so partial audits surface instead of silently passing.
+
 ## Compare two runs
 
 `catacomb diff` diffs two session transcripts by `step_key` and reports added, removed,
