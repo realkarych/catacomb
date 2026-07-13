@@ -33,6 +33,7 @@ Run 'catacomb <command> --help' for details on any command.`,
 	root.AddCommand(newDiffCmd())
 	root.AddCommand(newSubgraphCmd())
 	root.AddCommand(newExportCmd())
+	root.AddCommand(newPackCmd())
 	root.AddCommand(newReplayCmd())
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newVersionCmd())
