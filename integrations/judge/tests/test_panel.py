@@ -287,6 +287,35 @@ def test_panel_key_filter(tmp_path, capsys):
     assert [json.loads(line)["key"] for line in out.splitlines()] == ["judge.g"]
 
 
+def test_panel_mean_bytes_invariant_to_input_file_order(tmp_path, capsys):
+    values = {"alpha": 0.1, "beta": 0.2, "gamma": 0.3}
+    paths = [
+        write_jsonl(tmp_path / f"{tool}.jsonl", [score_line("judge.g", value, "r1", tool)])
+        for tool, value in values.items()
+    ]
+    code_fwd, out_fwd, _ = run_cli(["panel", *paths], capsys)
+    code_rev, out_rev, _ = run_cli(["panel", *reversed(paths)], capsys)
+    assert code_fwd == code_rev == 0
+    assert out_fwd == out_rev
+    assert json.loads(out_fwd)["value"] == sum((0.1, 0.2, 0.3)) / 3
+
+
+def test_panel_vote_min_judges_skip_precedes_even_panel_error(tmp_path, capsys):
+    scores = write_jsonl(
+        tmp_path / "scores.jsonl",
+        [
+            score_line("judge.g", 1, "r1", "alpha"),
+            score_line("judge.g", 0, "r1", "beta"),
+        ],
+    )
+    code, out, err = run_cli(["panel", "--vote", "--min-judges", "3", scores], capsys)
+    assert code == 0
+    assert out == ""
+    assert err == (
+        'note: skipped run_id="r1" key="judge.g": 2 judge(s) < --min-judges 3\n'
+    )
+
+
 def test_panel_deterministic_ordering_across_input_orders(tmp_path, capsys):
     first = write_jsonl(
         tmp_path / "first.jsonl",

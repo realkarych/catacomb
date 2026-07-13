@@ -252,7 +252,7 @@ def _panel_json(
     coord: tuple[str, str, str | None], members: list[ScoreLine], vote: bool
 ) -> str:
     run_id, key, step_key = coord
-    values = [s.value for s in members]
+    values = [s.value for s in sorted(members, key=lambda s: s.tool)]
     if vote:
         if len(values) % 2 == 0:
             raise FormatError(

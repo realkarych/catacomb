@@ -544,7 +544,10 @@ or omit it and the value lands on every run in **both** groups that carries the 
 key, which flattens both medians to the same value. A line that omits `step_key` is a
 **run-level** score ([below](#run-level-scores)). Extra provenance fields — `tool`,
 `tool_version`, `prompt_hash`, or any other key an evaluator emits — are tolerated and
-ignored, so a scorer can record its own metadata on the same line. Blank lines are
+ignored, so a scorer can record its own metadata on the same line. Ignored by the gate
+does not mean inert: the `catacomb-judge` utilities read `tool` back as the judge's
+identity, to measure judge-vs-gold agreement and to aggregate judge panels into new
+`--scores` input — see [Calibrating a judge](workflows.md#calibrating-a-judge). Blank lines are
 skipped; a malformed line is an operational error (exit `2`) naming the file and line.
 Values apply in memory to both groups before aggregation — nothing is written back to
 the evidence dirs or the store. Entries that match no node are counted into a single

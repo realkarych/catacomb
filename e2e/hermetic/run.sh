@@ -21,7 +21,10 @@
 #   12 SP4 audit (duration-pinned copy of the runs dir: dormancy at full defaults,
 #   then a planted outlier; both exits must match) -> 13 SP4 pack (deterministic
 #   stride bundle over the untouched runs dir) -> 14 SP4 scores round-trip (external
-#   audit.clean score -> annotation finding).
+#   audit.clean score -> annotation finding) -> 15 SP5 judge agreement (gold labels
+#   vs pooled baseline+degraded scores; kappa gate both directions incl. the exact
+#   ties-pass boundary) -> 16 SP5 judge panel (three-judge fixture -> byte-exact
+#   mean/vote streams; the vote stream gates through regress --scores).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -38,6 +41,12 @@
 # at FULL defaults; the planted comparison then re-runs on the same copy plus one
 # fabricated cell, and its exit must equal the clean one (audit never gates). Steps
 # 13/14 read only the untouched runs dir (plant and pinning live in the copy alone).
+# Steps 15/16 are SP5 and mutate no evidence: step 15 copies the baseline+degraded
+# scores.jsonl files into a two-variant pool and runs the judge agreement calculator
+# (python3 -m catacomb_judge off PYTHONPATH, like the verifier SDK) against fixture
+# gold labels — the judge id is the verifier's own recorded tool provenance
+# ("verify_sql", the SP1 seam read back); step 16 aggregates a fixture three-judge
+# panel and feeds its --vote output through the built binary via regress --scores.
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -67,6 +76,8 @@ command -v sqlite3 >/dev/null 2>&1 || fatal "sqlite3 not found on PATH"
 command -v python3 >/dev/null 2>&1 || fatal "python3 not found on PATH"
 [ -d "$repo/integrations/verifier/src" ] ||
 	fatal "verifier SDK not found at integrations/verifier/src (PYTHONPATH source)"
+[ -d "$repo/integrations/judge/src" ] ||
+	fatal "judge SDK not found at integrations/judge/src (PYTHONPATH source)"
 
 # --- assertion bookkeeping (conventions copied from e2e/run.sh) ---------------
 failures=()
@@ -124,7 +135,7 @@ chmod +x "$work/cellwork/agent.sh"
 export HERMETIC_DB="$work/e2e.db"
 export HERMETIC_PROJECTS="$work/projects"
 export HERMETIC_TDIR="$work"
-export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$repo/integrations/verifier/src:$repo/integrations/judge/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Run ids are deterministic: bench-<basket>-<task>-<variant>-r<rep>.
 base1="bench-hermetic-sql-sql-baseline-r1"
@@ -621,6 +632,184 @@ if errs:
 print("round-trip: ann:audit.clean total finding (insufficient, absent in candidate)")
 PY
 record "$rc" "returned score surfaces as the ann:audit.clean annotation finding"
+
+echo "== 15. SP5 judge agreement: gold labels vs pooled verifier scores =="
+# The judge utilities read only scores.jsonl, so a two-variant pool is staged by
+# copying the 10 baseline+degraded scores files (baseline2 stays out: 10 labels,
+# 10 matching scores, zero unmatched on either side). Every persisted line carries
+# the verifier's own provenance (tool "verify_sql") plus the run_id the binary
+# injected at persist time — the SP1 seam read back — so "verify_sql" is the judge
+# id the report must group under. Perfect agreement first: baseline runs pass
+# (label 1), degraded fail (label 0), so every metric is exactly 1.0 and the
+# --min-kappa 0.8 gate holds. One flipped label (degraded-r1 -> 1) gives p_o 0.9
+# and p_e 0.5, so kappa is (0.9-0.5)/(1-0.5) = exactly the float 0.8 — which
+# PASSES the strict-< gate at 0.8, the documented ties-pass boundary, pinned here
+# end-to-end. Two flipped labels (also baseline-r1 -> 0) rebalance the marginals
+# (p_o 0.8, p_e 0.5), kappa drops to (0.8-0.5)/0.5 = 0.6000000000000001 exactly,
+# and the gate fails with exit 1.
+runs_judge="$work/runs-judge"
+mkdir "$runs_judge"
+for d in "$runs"/bench-hermetic-sql-sql-baseline-r? "$runs"/bench-hermetic-sql-sql-degraded-r?; do
+	mkdir "$runs_judge/$(basename "$d")"
+	cp "$d/scores.jsonl" "$runs_judge/$(basename "$d")/scores.jsonl"
+done
+for rep in 1 2 3 4 5; do
+	printf '{"run_id":"bench-hermetic-sql-sql-baseline-r%d","key":"verifier.pass","label":1}\n' "$rep"
+	printf '{"run_id":"bench-hermetic-sql-sql-degraded-r%d","key":"verifier.pass","label":0}\n' "$rep"
+done >"$work/judge-labels.jsonl"
+run_json 0 "$work/judge-agree.json" \
+	"judge agreement over the pooled evidence (--min-kappa 0.8, exit 0)" -- \
+	python3 -m catacomb_judge agreement --labels "$work/judge-labels.jsonl" \
+	--runs-dir "$runs_judge" --key verifier.pass --json --min-kappa 0.8
+rc=0
+python3 - "$work/judge-agree.json" <<'PY' || rc=$?
+import json, sys
+
+got = json.load(open(sys.argv[1]))
+want = {
+    "keys": [
+        {
+            "key": "verifier.pass",
+            "unmatched_labels": 0,
+            "unmatched_scores": 0,
+            "judges": [
+                {"tool": "verify_sql", "n": 10,
+                 "spearman": 1.0, "kappa": 1.0, "tpr": 1.0, "tnr": 1.0}
+            ],
+            "overall": {"n": 10, "spearman": 1.0, "kappa": 1.0,
+                        "tpr": 1.0, "tnr": 1.0},
+        }
+    ]
+}
+if got != want:
+    print("agreement JSON mismatch:", file=sys.stderr)
+    print("  got:  " + json.dumps(got, sort_keys=True), file=sys.stderr)
+    print("  want: " + json.dumps(want, sort_keys=True), file=sys.stderr)
+    sys.exit(1)
+print("agreement: judge verify_sql n=10, spearman/kappa/tpr/tnr all exactly 1.0")
+PY
+record "$rc" "agreement JSON exact: judge verify_sql (provenance-grouped), perfect metrics"
+sed 's|"bench-hermetic-sql-sql-degraded-r1","key":"verifier.pass","label":0|"bench-hermetic-sql-sql-degraded-r1","key":"verifier.pass","label":1|' \
+	"$work/judge-labels.jsonl" >"$work/judge-labels-flip1.jsonl"
+sed 's|"bench-hermetic-sql-sql-baseline-r1","key":"verifier.pass","label":1|"bench-hermetic-sql-sql-baseline-r1","key":"verifier.pass","label":0|' \
+	"$work/judge-labels-flip1.jsonl" >"$work/judge-labels-flip2.jsonl"
+run_json 0 "$work/judge-agree-flip1.json" \
+	"one flipped label: kappa exactly 0.8 passes --min-kappa 0.8 (strict <)" -- \
+	python3 -m catacomb_judge agreement --labels "$work/judge-labels-flip1.jsonl" \
+	--runs-dir "$runs_judge" --key verifier.pass --json --min-kappa 0.8
+rc=0
+python3 - "$work/judge-agree-flip1.json" <<'PY' || rc=$?
+import json, math, sys
+
+key = json.load(open(sys.argv[1]))["keys"][0]
+judge = key["judges"][0]
+errs = []
+if judge.get("tool") != "verify_sql" or judge.get("n") != 10:
+    errs.append(f"judge row tool/n: {judge.get('tool')!r}/{judge.get('n')!r}")
+want = {
+    "kappa": 0.8,
+    "spearman": 50 / math.sqrt(3750),
+    "tpr": 5 / 6,
+    "tnr": 1.0,
+}
+for name, wantv in sorted(want.items()):
+    for row, where in ((judge, "judge"), (key["overall"], "overall")):
+        if row.get(name) != wantv:
+            errs.append(f"{where} {name}={row.get(name)!r} want {wantv!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"flip1: kappa exactly 0.8 (p_o 0.9, p_e 0.5), "
+      f"spearman {judge['spearman']:.6f} = 50/sqrt(3750), tpr 5/6, tnr 1.0")
+PY
+record "$rc" "one-flip metrics pinned: kappa 0.8 exact, spearman 50/sqrt(3750), tpr 5/6"
+run_json 1 "$work/judge-agree-flip2.json" \
+	"two flipped labels: kappa fails --min-kappa 0.8 (exit 1)" -- \
+	python3 -m catacomb_judge agreement --labels "$work/judge-labels-flip2.jsonl" \
+	--runs-dir "$runs_judge" --key verifier.pass --json --min-kappa 0.8
+rc=0
+grep -Fq 'verifier.pass/verify_sql: kappa 0.600 < 0.8' "$work/judge-agree-flip2.json.stderr" || rc=1
+record "$rc" "gate failure names the judge: verifier.pass/verify_sql kappa 0.600 < 0.8"
+rc=0
+python3 -c 'import json,sys; k=json.load(open(sys.argv[1]))["keys"][0]; sys.exit(0 if k["judges"][0]["kappa"] == 0.6000000000000001 and k["overall"]["kappa"] == 0.6000000000000001 else 1)' "$work/judge-agree-flip2.json" || rc=$?
+record "$rc" "two-flip kappa pinned to the exact float 0.6000000000000001"
+
+echo "== 16. SP5 judge panel: three-judge fixture -> mean/vote bytes -> regress =="
+# Three fixture judges score judge.grounded on every baseline and degraded run.
+# The values are dyadic — exact under any summation order and interpreter — and
+# chosen so the tool-sorted baseline mean is exactly 1, pinning the
+# int-preservation rule in the output bytes, while the degraded mean is 0.25;
+# --vote binarizes at 0.5 into 1 (bits 1,1,1) vs 0 (bits 0,0,1). Group order in
+# the output is sorted by (run_id, key), so the goldens list baseline-r1..r5 then
+# degraded-r1..r5. The vote stream then closes the loop through the BUILT binary:
+# regress --scores consumes it verbatim (tool/tool_version/panel_size ride along
+# as tolerated provenance) and gates judge.grounded as a binary rate, 5/5 -> 0/5.
+for judge in judge-a judge-b judge-c; do
+	case "$judge" in
+	judge-a) bval=0.5 dval=0 ;;
+	judge-b) bval=1 dval=0.25 ;;
+	judge-c) bval=1.5 dval=0.5 ;;
+	esac
+	for rep in 1 2 3 4 5; do
+		printf '{"key":"judge.grounded","value":%s,"run_id":"bench-hermetic-sql-sql-baseline-r%d","tool":"%s"}\n' "$bval" "$rep" "$judge"
+		printf '{"key":"judge.grounded","value":%s,"run_id":"bench-hermetic-sql-sql-degraded-r%d","tool":"%s"}\n' "$dval" "$rep" "$judge"
+	done >"$work/$judge.jsonl"
+done
+for rep in 1 2 3 4 5; do
+	printf '{"key":"judge.grounded","value":1,"run_id":"bench-hermetic-sql-sql-baseline-r%d","tool":"panel","tool_version":"0.1.0","panel_size":3}\n' "$rep"
+done >"$work/panel-mean.golden"
+for rep in 1 2 3 4 5; do
+	printf '{"key":"judge.grounded","value":0.25,"run_id":"bench-hermetic-sql-sql-degraded-r%d","tool":"panel","tool_version":"0.1.0","panel_size":3}\n' "$rep"
+done >>"$work/panel-mean.golden"
+for rep in 1 2 3 4 5; do
+	printf '{"key":"judge.grounded","value":1,"run_id":"bench-hermetic-sql-sql-baseline-r%d","tool":"panel","tool_version":"0.1.0","panel_size":3}\n' "$rep"
+done >"$work/panel-vote.golden"
+for rep in 1 2 3 4 5; do
+	printf '{"key":"judge.grounded","value":0,"run_id":"bench-hermetic-sql-sql-degraded-r%d","tool":"panel","tool_version":"0.1.0","panel_size":3}\n' "$rep"
+done >>"$work/panel-vote.golden"
+run_json 0 "$work/panel-mean.out" \
+	"panel mean over the three-judge fixture" -- \
+	python3 -m catacomb_judge panel "$work/judge-a.jsonl" "$work/judge-b.jsonl" \
+	"$work/judge-c.jsonl" --out "$work/panel-mean.jsonl"
+rc=0
+cmp -s "$work/panel-mean.jsonl" "$work/panel-mean.golden" || rc=1
+record "$rc" "mean output byte-exact (baseline mean 1 int-preserved, degraded 0.25)"
+run_json 0 "$work/panel-vote.out" \
+	"panel --vote over the three-judge fixture" -- \
+	python3 -m catacomb_judge panel "$work/judge-a.jsonl" "$work/judge-b.jsonl" \
+	"$work/judge-c.jsonl" --vote --out "$work/panel-vote.jsonl"
+rc=0
+cmp -s "$work/panel-vote.jsonl" "$work/panel-vote.golden" || rc=1
+record "$rc" "vote output byte-exact (baseline 1, degraded 0)"
+run_json 1 "$work/regress-panel.json" \
+	"regress consumes the panel vote stream (baseline vs degraded, exit 1)" -- \
+	catacomb regress --runs-dir "$runs" \
+	--baseline label:basket=hermetic-sql,variant=baseline \
+	--candidate label:basket=hermetic-sql,variant=degraded \
+	--scores "$work/panel-vote.jsonl" --annotation judge.grounded:higher-better --json
+rc=0
+python3 - "$work/regress-panel.json" <<'PY' || rc=$?
+import json, sys
+
+hits = [
+    f for f in json.load(open(sys.argv[1])).get("findings", [])
+    if f.get("metric") == "ann:judge.grounded"
+]
+errs = []
+if len(hits) != 1:
+    errs.append(f"want exactly 1 ann:judge.grounded finding, got {len(hits)}")
+for f in hits:
+    got = (f.get("scope"), f.get("verdict"), f.get("detail"))
+    if got != ("total", "regression", "ones 5/5 -> 0/5"):
+        errs.append(f"scope/verdict/detail {got!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("panel loop closed: ann:judge.grounded total regression (ones 5/5 -> 0/5)")
+PY
+record "$rc" "panel vote gates as ann:judge.grounded total regression through the built binary"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

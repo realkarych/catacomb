@@ -321,7 +321,7 @@ def test_agreement_combines_positional_and_runs_dir(two_judge_fixture, tmp_path,
 
 def test_agreement_runs_dir_missing_exit_2(two_judge_fixture, tmp_path, capsys):
     labels, _, _ = two_judge_fixture
-    code, out, err = run_cli(
+    code, _, err = run_cli(
         ["agreement", "--labels", labels, "--runs-dir", str(tmp_path / "nope")], capsys
     )
     assert code == 2
@@ -330,7 +330,7 @@ def test_agreement_runs_dir_missing_exit_2(two_judge_fixture, tmp_path, capsys):
 
 def test_agreement_requires_a_scores_source(two_judge_fixture, capsys):
     labels, _, _ = two_judge_fixture
-    code, out, err = run_cli(["agreement", "--labels", labels], capsys)
+    code, _, err = run_cli(["agreement", "--labels", labels], capsys)
     assert code == 2
     assert "usage: catacomb-judge agreement" in err
     assert "at least one scores file or --runs-dir is required" in err
