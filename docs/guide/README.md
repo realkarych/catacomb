@@ -1,37 +1,19 @@
 # Catacomb user guide
 
-Catacomb is an offline eval gate for Claude Code agentic pipelines. It runs prompt
-baskets, reduces the recorded transcripts into a canonical execution graph, derives
-step and phase keys, aggregates metrics, and gates regressions against saved baselines
-— all from local files, with no daemon and no network.
+Start with the [README tutorial](../../README.md#-tutorial) — it takes you from
+install to a working CI gate, with real command output at every step. This guide is
+the depth behind it.
 
-## 30-second quickstart
+Reading order:
 
-Install:
+1. [Concepts](concepts.md) — the action graph, step keys, and phases: the vocabulary
+   every other page uses
+2. [Workflows](workflows.md) — task recipes: benching, gating, baselines, trends,
+   verifiers, external scores, diff, and export
+3. [CLI reference](cli.md) — every command, flag, and exit code
+4. [Configuration](configuration.md) — flags, environment variables, and defaults
+5. [Ingestion](ingestion.md) — how transcripts become graphs
+6. [Privacy and operations](privacy-and-operations.md) — redaction, evidence dirs,
+   and troubleshooting
 
-```sh
-go install github.com/realkarych/catacomb/cmd/catacomb@latest
-```
-
-Run a basket and gate the candidate:
-
-```sh
-catacomb bench checkout.yaml
-catacomb regress --baseline label:basket=checkout,variant=main \
-  --candidate label:basket=checkout,variant=candidate
-```
-
-`bench` records a secret-redacted evidence directory per cell under `~/.catacomb/runs`;
-`regress` compares the two groups statistically and exits `1` on a regression. Watching
-runs live in a UI is delegated to a vendor substrate such as Phoenix
-([ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md) §2).
-
-## Contents
-
-- [Getting started](getting-started.md) — install, first basket, first gate
-- [Concepts](concepts.md) — the action graph, step keys, and phases
-- [CLI reference](cli.md) — every command, flag, and argument
-- [Configuration](configuration.md) — flags, environment variables, and defaults
-- [Ingestion](ingestion.md) — how transcripts become graphs
-- [Workflows](workflows.md) — benching, gating, baselines, trends, scores, diff, and export
-- [Privacy and operations](privacy-and-operations.md) — redaction, evidence dirs, and troubleshooting
+([Getting started](getting-started.md) is kept as a pointer for old links.)
