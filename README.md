@@ -178,7 +178,8 @@ catacomb bench demo.yaml --runs-dir runs
 ```
 
 Ten cells run sequentially — 2 variants × 5 reps, about a minute and a few cents on
-haiku:
+haiku. Each cell streams the agent's raw stream-json output to your terminal; the
+block below shows only the tail:
 
 ```text
 …
@@ -207,6 +208,10 @@ catacomb regress --runs-dir runs \
   --candidate label:basket=demo,variant=candidate
 ```
 
+(If your Claude Code is newer than the versions catacomb has been tested against, a
+few harmless `warning: transcript … newer than tested …` lines may precede the
+table.)
+
 ```text
 baseline runs 5  candidate runs 5
 coverage steps 1.00  phases 1.00  steps_trusted true  overall regression
@@ -231,10 +236,15 @@ audit: baseline run bench-demo-answer-main-r1 (task answer) cost_usd 0.010954549
 The chain-of-thought instruction made every run roughly 3× chattier (median
 `tokens_out` 147 → 465) and about 40% slower (median duration 5.1 s → 7.2 s), and
 even at haiku pennies the cost crossed its noise band — the overall verdict is
-`regression` and the exit code is `1`. That exit code is the gate:
+`regression` and the exit code is `1`. The `sensitivity:` line refers only to the
+paired per-task axis, which needs five tasks where this demo has one — the run-total
+metrics are what fired the gate. That exit code is the gate:
 
 ```sh
-catacomb regress … && echo "safe to merge"
+catacomb regress --runs-dir runs \
+  --baseline label:basket=demo,variant=main \
+  --candidate label:basket=demo,variant=candidate \
+  && echo "safe to merge"
 # 0 = ok · 1 = regression · 2 = operational error
 ```
 
@@ -356,7 +366,7 @@ The gate's design follows the published eval literature, not house heuristics:
 - **Wilson bounds and the exact sign test are the right small-n tools** — naive CLT-based intervals undercover below a few hundred datapoints: Bowyer et al., [Don't use the CLT for LLM evals](https://arxiv.org/abs/2503.01747) (ICML 2025).
 - **pass^k reporting and deterministic final-state verification** — [τ-bench](https://arxiv.org/abs/2406.12045) (ICLR 2025), which catacomb's [reliability block](docs/guide/cli.md#task-reliability-passk) and verifier model follow.
 - **The harness and its transcripts are a first-class reliability concern** — transcript inspection catches shortcuts that pass outcome verifiers: [Holistic Agent Leaderboard](https://arxiv.org/abs/2510.11977) (ICLR 2026).
-- **Verifiers must themselves be validated** — weak tests unfairly rejected valid solutions on 61.1% of flagged SWE-bench tasks ([SWE-bench Verified](https://openai.com/index/introducing-swe-bench-verified/)), and vetting reduces but does not eliminate the bias ([SWE-Bench+](https://arxiv.org/abs/2410.06992)). Hence catacomb's verifier contract keeps comparators total, offline-re-runnable, and out of the agent's reach.
+- **Verifiers must themselves be validated** — annotators flagged 61.1% of sampled SWE-bench tasks for unit tests that may unfairly reject valid solutions ([SWE-bench Verified](https://openai.com/index/introducing-swe-bench-verified/)), and vetting reduces but does not eliminate the bias ([SWE-Bench+](https://arxiv.org/abs/2410.06992)). Hence catacomb's verifier contract keeps comparators total, offline-re-runnable, and out of the agent's reach.
 - **LLM judges do not replace deterministic checks** — even expert-designed graders trail human inter-rater agreement ([GDPval](https://arxiv.org/abs/2510.04374)); judge protocol discipline per [OpenAI's evaluation best practices](https://platform.openai.com/docs/guides/evals). Catacomb gates on deterministic observables and lets external scorers ride the same mechanism instead of baking a judge in.
 
 Further reading on domain benchmarks: [Spider 2.0](https://arxiv.org/abs/2411.07763),
