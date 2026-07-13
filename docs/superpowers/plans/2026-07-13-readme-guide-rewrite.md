@@ -28,10 +28,12 @@
 Build catacomb, run the reproducible demo basket with the live `claude` CLI, and save every output the README will splice. **No repo files change in this task.** Deliverable: a populated `$CAPTURE_DIR` and a passing assertion that the gate fired (exit `1`) on a metric regression.
 
 **Files:**
+
 - Create (outside repo): `$CAPTURE_DIR/demo/agent.sh`, `$CAPTURE_DIR/demo/demo.yaml`
 - Create (outside repo): `$CAPTURE_DIR/out/bench.txt`, `$CAPTURE_DIR/out/regress.txt`, `$CAPTURE_DIR/out/regress-exit-code.txt`, `$CAPTURE_DIR/out/baseline-set.txt`, `$CAPTURE_DIR/out/regress-record.txt`, `$CAPTURE_DIR/out/trends.txt`
 
 **Interfaces:**
+
 - Consumes: nothing from other tasks.
 - Produces: `$CAPTURE_DIR/demo/*` (the exact demo files Task 2 embeds) and `$CAPTURE_DIR/out/*.txt` (the exact outputs Task 2 splices). Task 2 reads these paths verbatim.
 
@@ -174,15 +176,18 @@ Return to the orchestrator: the final candidate PROMPT used, run wall-time, tota
 Replace `README.md` wholesale with the guide-shaped version below, splicing the Task 1 captures. The full target text is given here; the only insertions are the five `[SPLICE: …]` markers.
 
 **Files:**
+
 - Modify: `README.md` (full replacement)
 
 **Interfaces:**
+
 - Consumes: `$CAPTURE_DIR/demo/agent.sh`, `$CAPTURE_DIR/demo/demo.yaml` (embedded byte-exact into the two "Create it" code blocks), `$CAPTURE_DIR/out/{bench,regress,baseline-set,regress-record,trends}.txt` (spliced byte-exact into the five output blocks).
 - Produces: the new `README.md` with anchors `#-tutorial`, `#-methodology`, `#-features` that Task 3's guide pages link to.
 
 - [ ] **Step 1: Write the new README**
 
 Write `README.md` with exactly the following content. Rules for the splice markers:
+
 - `[SPLICE FILE: <path>]` → replace the marker line with the byte-exact content of that file (it sits inside a fenced code block already).
 - `bench.txt` is spliced as a literal `…` line followed by only the tail — from the `marked N/N cells` line through the `Next steps:` epilogue. The leading raw stream-json passthrough is elided, and the README prose must disclose the elision.
 - `regress.txt` is spliced without its leading stderr `warning: transcript … newer than tested …` lines (the verdict table itself is never trimmed), and the README prose must disclose that such warnings may appear.
@@ -691,10 +696,12 @@ Rewrite `docs/guide/README.md` as a reading map and `docs/guide/getting-started.
 a thin pointer to the README tutorial. No other guide file's content changes.
 
 **Files:**
+
 - Modify: `docs/guide/README.md` (full replacement)
 - Modify: `docs/guide/getting-started.md` (full replacement)
 
 **Interfaces:**
+
 - Consumes: the README anchors produced by Task 2 (`#-tutorial`).
 - Produces: nothing later tasks depend on beyond valid links.
 
@@ -774,11 +781,13 @@ Verify every Markdown file in the repo still links cleanly after the restructure
 what broke. Mechanical task — may run on Opus.
 
 **Files:**
+
 - Modify: any `.md` file with a link broken by Tasks 2–3 (expected: none or few; the
   only known inbound link to a rewritten section was `docs/guide/README.md` →
   `getting-started.md`, already handled in Task 3)
 
 **Interfaces:**
+
 - Consumes: `$CAPTURE_DIR/linkcheck.py` (write it again verbatim from Task 2 Step 4 if absent).
 - Produces: a clean repo-wide link report.
 
@@ -818,6 +827,7 @@ internally consistent.
 **Files:** none modified.
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: a verification report for the orchestrator.
 
