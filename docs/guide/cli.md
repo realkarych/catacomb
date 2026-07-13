@@ -454,8 +454,8 @@ inflate false positives.
 ### Per-cell outlier audit
 
 The gate compares group medians, so a single anomalous cell — a run that spends wildly
-more tokens or turns than its group, how gaming, retry loops, and runaway tool use look
-from the outside — can hide inside a clean verdict. Every comparison therefore also
+more tokens or turns than its group — which is how gaming, retry loops, and runaway
+tool use look from the outside — can hide inside a clean verdict. Every comparison therefore also
 screens the individual cells (one cell = one run) of both groups. For each group and
 each of `duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, and `turns` (the run's
 assistant-turn count), a cell value `v` is flagged against the group median `m` when
@@ -485,7 +485,9 @@ run's evidence — [`pack`](#pack) bundles it for review — not a regression. W
 fires the block is omitted entirely. Treat `cost_usd` and `duration_ms` flags with
 care: under prompt caching, real per-run cost spreads up to ~5× between byte-identical
 runs ([PV-6b](../reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
-inherits runner load — `tokens_out` and `turns` are the trustworthy anomaly axes.
+inherits runner load — `tokens_out` and `turns` are the trustworthy anomaly axes. In
+particular, the first run of a bench batch often pays a cold-start premium and can flag
+on `duration_ms` routinely — expected, not an anomaly.
 
 ## Baseline version stamps
 
@@ -852,7 +854,10 @@ Each sampled run's evidence dir is copied **verbatim** into `<out>/<run_id>/`:
 `verify.json`, and captured `artifacts/` where present. Evidence content is
 secret-redacted at write time
 ([ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md)), so the bundle
-inherits the redaction guarantee with no second pass. Alongside the run dirs:
+inherits the redaction guarantee with no second pass — with the same caveats as
+evidence at rest: `verify.json` error text and binary artifacts pass through
+unredacted (see the [fidelity notes](workflows.md#what-capture-does-to-artifacts)),
+so review them before shipping a pack to an external service. Alongside the run dirs:
 
 - `pack.json` — the manifest: `selector`, `runs_dir`, `sample_rule` (the literal
   `"runid-stride"`; a future rule change must change the string), `requested` (the

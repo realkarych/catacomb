@@ -53,7 +53,7 @@ to. Run-level lines require run_id:
 Gate the findings with:
 
 ~~~sh
-catacomb regress --scores findings.jsonl --annotation audit.clean:higher-better
+catacomb regress --scores findings.jsonl --annotation audit.clean:higher-better ...
 ~~~
 
 Use lower-better instead of higher-better when a higher value is worse.
