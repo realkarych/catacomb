@@ -1,12 +1,15 @@
 package jsonl
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -381,6 +384,41 @@ func TestParseReaderDiscardsDriftCounts(t *testing.T) {
 	assert.Empty(t, obs)
 }
 
+func TestParseBadTimestampCountsDrift(t *testing.T) {
+	in := `{"type":"assistant","sessionId":"s1","timestamp":"not-a-timestamp","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.True(t, obs[0].EventTime.IsZero())
+	assert.Equal(t, drift.Counts{drift.ReasonBadTimestamp: 1}, dc)
+}
+
+func TestParseMissingTimestampNoDrift(t *testing.T) {
+	in := `{"type":"assistant","sessionId":"s1","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "exec-T", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	require.Len(t, obs, 1)
+	assert.True(t, obs[0].EventTime.IsZero())
+	assert.Empty(t, dc)
+}
+
+func TestParseBadTimestampDoesNotSaturateDuration(t *testing.T) {
+	in := `{"type":"assistant","uuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}` + "\n" +
+		`{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"20XX-13-99T99:99:99","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}` + "\n"
+	obs, dc, err := Parse(strings.NewReader(in), "e1", seqFor(t), func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	assert.Equal(t, drift.Counts{drift.ReasonBadTimestamp: 1}, dc)
+
+	g := reduce.NewGraph()
+	g.ApplyAll(obs)
+	n := g.Nodes[model.ToolCallID("e1", "toolu_1")]
+	require.NotNil(t, n)
+	require.NotNil(t, n.TStart)
+	assert.Equal(t, "2026-06-20T10:00:00Z", n.TStart.Format(time.RFC3339))
+	assert.Nil(t, n.TEnd)
+	assert.Nil(t, n.DurationMS)
+}
+
 func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	f, err := os.Open("testdata/subagent.jsonl")
 	require.NoError(t, err)
@@ -394,6 +432,51 @@ func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
 		model.ToolCallID("e1", "toolu_parent"), model.ToolCallID("e1", "toolu_child")))
 	_ = edges
+}
+
+func TestParseLineTooLongWrapsErrTooLong(t *testing.T) {
+	r := strings.NewReader(strings.Repeat("a", 16*1024*1024+1))
+	_, err := parseReader(r, "exec-T")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, bufio.ErrTooLong)
+	assert.Contains(t, err.Error(), "jsonl.Parse:")
+	assert.Contains(t, err.Error(), "token too long")
+}
+
+func TestParseInvalidUTF8InStringPayload(t *testing.T) {
+	in := "{\"type\":\"user\",\"sessionId\":\"s1\",\"message\":{\"role\":\"user\",\"content\":\"h\xffi\"}}\n"
+	obs, err := parseReader(strings.NewReader(in), "exec-T")
+	require.NoError(t, err)
+	up := byKind(obs, "user_prompt")
+	require.Len(t, up, 1)
+	require.NotNil(t, up[0].Payload)
+	var got string
+	require.NoError(t, json.Unmarshal(up[0].Payload.Input, &got))
+	assert.Equal(t, "h�i", got)
+	assert.True(t, utf8.ValidString(got))
+}
+
+func TestParseEmbeddedNULByteErrors(t *testing.T) {
+	in := "{\"type\":\"user\",\"uuid\":\"a\x00b\",\"sessionId\":\"s1\"}\n"
+	_, err := parseReader(strings.NewReader(in), "exec-T")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "jsonl.decodeLine")
+}
+
+func TestParseEscapedNULAccepted(t *testing.T) {
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":"a\u0000b"}}` + "\n"
+	obs, err := parseReader(strings.NewReader(in), "exec-T")
+	require.NoError(t, err)
+	require.Len(t, byKind(obs, "user_prompt"), 1)
+}
+
+func TestParseDeeplyNestedJSONErrors(t *testing.T) {
+	depth := 100000
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":` +
+		strings.Repeat("[", depth) + strings.Repeat("]", depth) + `}}` + "\n"
+	_, err := parseReader(strings.NewReader(in), "exec-T")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "jsonl.decodeLine")
 }
 
 func TestSkillToolReducesToNodeSkill(t *testing.T) {

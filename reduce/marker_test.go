@@ -95,6 +95,42 @@ func TestMarkerToolResultSuppressed(t *testing.T) {
 	assert.Nil(t, g.Nodes[toolID])
 }
 
+func findNode(nodes []*model.Node, id string) *model.Node {
+	for _, n := range nodes {
+		if n.ID == id {
+			return n
+		}
+	}
+	return nil
+}
+
+func TestMarkerZeroStartTimestampNoSaturatedDuration(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("tu1", "phase1", "start", "", nil, time.Time{}, 2))
+	g.Apply(markerToolUse("tu2", "phase1", "end", "", nil, t0.Add(time.Second), 3))
+
+	nodes, _ := g.Snapshot()
+	found := findNode(nodes, model.PhaseMarkerID(execID, "phase1", 0))
+	require.NotNil(t, found)
+	require.NotNil(t, found.TEnd)
+	assert.Nil(t, found.DurationMS)
+}
+
+func TestMarkerZeroEndTimestampNoDuration(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("tu1", "phase1", "start", "", nil, t0.Add(time.Second), 2))
+	g.Apply(markerToolUse("tu2", "phase1", "end", "", nil, time.Time{}, 3))
+
+	nodes, _ := g.Snapshot()
+	found := findNode(nodes, model.PhaseMarkerID(execID, "phase1", 0))
+	require.NotNil(t, found)
+	assert.Nil(t, found.DurationMS)
+}
+
 func TestSnapshotPhaseMarkerSynthesized(t *testing.T) {
 	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Second)

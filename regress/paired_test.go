@@ -26,6 +26,7 @@ func TestBinomTailGE(t *testing.T) {
 		{"seven_six", 6, 7, 0.0625},
 		{"half_of_two", 1, 2, 0.75},
 		{"m_zero", 0, 0, 1},
+		{"ten_six", 6, 10, 0.376953125},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -33,6 +34,17 @@ func TestBinomTailGE(t *testing.T) {
 			assert.InDelta(t, tc.want, binomTailGE(tc.s, tc.m), 1e-12)
 		})
 	}
+}
+
+func TestBinomTailGELargeM(t *testing.T) {
+	t.Parallel()
+	assert.InDelta(t, 0.5, binomTailGE(1000, 2000), 0.01)
+	assert.InDelta(t, 0.5089195055729272, binomTailGE(1000, 2000), 1e-9)
+	assert.InDelta(t, 0.5, binomTailGE(538, 1075), 1e-9)
+	assert.InDelta(t, 0.028443966820490395, binomTailGE(60, 100), 1e-9)
+	assert.InEpsilon(t, math.Ldexp(1, -20), binomTailGE(20, 20), 1e-12)
+	assert.Equal(t, 1.0, binomTailGE(0, 2000))
+	assert.Equal(t, 0.0, binomTailGE(2001, 2000))
 }
 
 func TestMinUnanimousTasks(t *testing.T) {
@@ -110,11 +122,12 @@ func TestSignCounts(t *testing.T) {
 		{base: metricTask("b", 5, 1000), cand: metricTask("b", 5, 900)},
 		{base: metricTask("c", 5, 1000), cand: metricTask("c", 5, 1000)},
 	}
-	pos, nonzero := signCounts(pairs, func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.DurationMS })
+	durSel := func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.DurationMS }
+	pos, nonzero := signCounts(pairs, durSel, 3)
 	assert.Equal(t, 1, pos)
 	assert.Equal(t, 2, nonzero)
 
-	pos, nonzero = signCounts(pairs, func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.CostUSD })
+	pos, nonzero = signCounts(pairs, func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.CostUSD }, 3)
 	assert.Equal(t, 0, pos)
 	assert.Equal(t, 0, nonzero)
 
@@ -122,9 +135,34 @@ func TestSignCounts(t *testing.T) {
 		{base: costTask("a", 1.0), cand: costTask("a", 1.2)},
 		{base: costTask("b", 2.0), cand: costTask("b", 1.5)},
 	}
-	pos, nonzero = signCounts(costPairs, func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.CostUSD })
+	pos, nonzero = signCounts(costPairs, func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.CostUSD }, 3)
 	assert.Equal(t, 1, pos)
 	assert.Equal(t, 2, nonzero)
+}
+
+func TestSignCountsSupportGuard(t *testing.T) {
+	t.Parallel()
+	durSel := func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.DurationMS }
+	noDur := metricTask("b", 5, 1100)
+	noDur.DurationMS = aggregate.MetricStats{}
+	lowDur := metricTask("c", 5, 900)
+	lowDur.DurationMS = aggregate.MetricStats{N: 2, Median: 900}
+	pairs := []taskPair{
+		{base: metricTask("a", 5, 1000), cand: metricTask("a", 5, 1100)},
+		{base: metricTask("b", 5, 1000), cand: noDur},
+		{base: metricTask("c", 5, 1000), cand: lowDur},
+	}
+	pos, nonzero := signCounts(pairs, durSel, 3)
+	assert.Equal(t, 1, pos)
+	assert.Equal(t, 1, nonzero)
+
+	pos, nonzero = signCounts(pairs[1:2], durSel, 0)
+	assert.Equal(t, 0, pos)
+	assert.Equal(t, 0, nonzero)
+
+	pos, nonzero = signCounts(pairs[2:], durSel, 0)
+	assert.Equal(t, 0, pos)
+	assert.Equal(t, 1, nonzero)
 }
 
 func TestPairedFindingVerdicts(t *testing.T) {
@@ -177,6 +215,55 @@ func TestPairedFindingsPerMetric(t *testing.T) {
 		assert.Equal(t, VerdictInsufficient, f.Verdict)
 	}
 	assert.Equal(t, map[string]bool{"duration_ms": true, "cost_usd": true, "tokens_in": true, "tokens_out": true}, names)
+}
+
+func findMetricFinding(t *testing.T, fs []Finding, metric string) Finding {
+	t.Helper()
+	for _, f := range fs {
+		if f.Metric == metric {
+			return f
+		}
+	}
+	t.Fatalf("no finding for metric %s", metric)
+	return Finding{}
+}
+
+func TestPairedFindingsUnsupportedMetric(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	cases := []struct {
+		name string
+		zero func(*aggregate.TaskStats)
+	}{
+		{"candidate_no_duration_samples", func(ts *aggregate.TaskStats) { ts.DurationMS = aggregate.MetricStats{} }},
+		{"baseline_no_duration_samples", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b, c []aggregate.TaskStats
+			for i := 0; i < 5; i++ {
+				id := string(rune('a' + i))
+				bt := metricTask(id, 5, 1000)
+				ct := metricTask(id, 5, 1000)
+				if tc.zero != nil {
+					tc.zero(&ct)
+				} else {
+					bt.DurationMS = aggregate.MetricStats{}
+				}
+				b = append(b, bt)
+				c = append(c, ct)
+			}
+			fs := pairedFindings(aggregate.Report{Tasks: b}, aggregate.Report{Tasks: c}, th)
+			f := findMetricFinding(t, fs, "duration_ms")
+			assert.NotEqual(t, VerdictRegression, f.Verdict)
+			assert.NotEqual(t, VerdictImprovement, f.Verdict)
+			assert.Equal(t, VerdictOK, f.Verdict)
+			assert.Equal(t, "+0/0 tasks, p=1", f.Detail)
+			cost := findMetricFinding(t, fs, "cost_usd")
+			assert.Equal(t, VerdictOK, cost.Verdict)
+		})
+	}
 }
 
 func TestPairedSensitivity(t *testing.T) {

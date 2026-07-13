@@ -4,6 +4,10 @@ APP_NAME := catacomb
 DIST_DIR := bin
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
+GOLANGCI_LINT_VERSION := v2.12.2
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+FUZZTIME ?= 20s
+
 .PHONY: all build test cover lint fmt tidy clean help fuzz
 
 all: help
@@ -21,17 +25,24 @@ test:
 cover: test
 	@go run github.com/vladopajic/go-test-coverage/v2@v2.18.8 --config=.testcoverage.yml
 
-## Fuzz the reducer commutativity property for a short burst (not part of cover/CI)
+## Fuzz every Fuzz* target for a short burst each (FUZZTIME, default 20s; not part of cover)
 fuzz:
-	@go test -run '^$$' -fuzz '^FuzzReductionCommutativity$$' -fuzztime 30s ./reduce
+	@set -euo pipefail; \
+	for pkg in $$(go list ./...); do \
+		listed=$$(go test -list '^Fuzz' "$$pkg"); \
+		for target in $$(grep '^Fuzz' <<<"$$listed" || true); do \
+			echo "==> $$target ($$pkg)"; \
+			go test -run '^$$' -fuzz "^$$target\$$" -fuzztime $(FUZZTIME) "$$pkg"; \
+		done; \
+	done
 
-## Run linters (golangci-lint)
+## Run linters (pinned golangci-lint)
 lint:
-	@golangci-lint run --timeout=5m ./...
+	@$(GOLANGCI_LINT) run --timeout=5m ./...
 
-## Apply formatters and import ordering (golangci-lint)
+## Apply formatters and import ordering (pinned golangci-lint)
 fmt:
-	@golangci-lint fmt ./...
+	@$(GOLANGCI_LINT) fmt ./...
 
 ## Tidy go.mod / go.sum
 tidy:
@@ -47,8 +58,8 @@ help:
 	@echo "  build   - build the binary into bin/"
 	@echo "  test    - run tests with -race and a coverage profile"
 	@echo "  cover   - test + enforce the 100% coverage gate"
-	@echo "  fuzz    - fuzz the reducer commutativity property (30s; not in cover/CI)"
-	@echo "  lint    - run golangci-lint"
-	@echo "  fmt     - apply gofumpt + goimports via golangci-lint"
+	@echo "  fuzz    - fuzz every Fuzz* target for FUZZTIME (default 20s) each; not in cover"
+	@echo "  lint    - run golangci-lint ($(GOLANGCI_LINT_VERSION), pinned)"
+	@echo "  fmt     - apply gofumpt + goimports via golangci-lint ($(GOLANGCI_LINT_VERSION), pinned)"
 	@echo "  tidy    - go mod tidy"
 	@echo "  clean   - remove build and coverage artifacts"

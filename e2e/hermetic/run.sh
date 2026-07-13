@@ -25,6 +25,7 @@
 #   vs pooled baseline+degraded scores; kappa gate both directions incl. the exact
 #   ties-pass boundary) -> 16 SP5 judge panel (three-judge fixture -> byte-exact
 #   mean/vote streams; the vote stream gates through regress --scores).
+#   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/rm -> 19 mcp stdio.
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -47,6 +48,11 @@
 # gold labels — the judge id is the verifier's own recorded tool provenance
 # ("verify_sql", the SP1 seam read back); step 16 aggregates a fixture three-judge
 # panel and feeds its --vote output through the built binary via regress --scores.
+# Steps 17-19 are CLI wiring coverage (renumbered after the SP4/SP5 additions): step
+# 17 replays the fixture transcript (fixed session id, so stdout must be byte-identical
+# across two runs), step 18 does a baseline list/rm roundtrip on the step-11 trends
+# store (so it must run after 11 and after the SP4/SP5 steps that read baselines), and
+# step 19 drives the `catacomb mcp` stdio JSON-RPC server with a fixed 3-request script.
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -810,6 +816,144 @@ if errs:
 print("panel loop closed: ann:judge.grounded total regression (ones 5/5 -> 0/5)")
 PY
 record "$rc" "panel vote gates as ann:judge.grounded total regression through the built binary"
+
+echo "== 17. replay: deterministic graph summary over the fixture transcript =="
+# The reducer input is fully pinned: a fixed session id is sed'd into the fixture
+# template (agent.sh generates a fresh uuid per cell; here determinism matters more
+# than uniqueness), so two replays of the same file must print byte-identical
+# stdout. Drift warnings go to stderr and are deliberately not compared.
+sed 's/__SESSION_ID__/hermetic-replay/g' "$work/transcript.jsonl.tmpl" >"$work/replay.jsonl"
+run_json 0 "$work/replay1.out" "replay fixture transcript (1st run)" -- \
+	catacomb replay "$work/replay.jsonl"
+run_json 0 "$work/replay2.out" "replay fixture transcript (2nd run)" -- \
+	catacomb replay "$work/replay.jsonl"
+rc=0
+grep -Eq 'replayed .+ -> [1-9][0-9]* nodes, [0-9]+ edges' "$work/replay1.out" || rc=1
+record "$rc" "replay prints a non-empty summary (>= 1 node)"
+rc=0
+cmp -s "$work/replay1.out" "$work/replay2.out" || rc=1
+record "$rc" "replay stdout byte-identical across two runs"
+
+echo "== 18. baseline list/rm roundtrip on the step-11 trends store =="
+# Reuses $work/trends.db, where step 11 pinned the hermetic-trends baseline over the
+# 5 baseline-variant cells. list --json must show exactly that baseline, rm must
+# delete it, and the follow-up list must come back empty (the store encodes an empty
+# baselines table as JSON null, so the assertion accepts null or []).
+run_json 0 "$work/baseline-list.json" "baseline list --json (trends store)" -- \
+	catacomb baseline list --db "$work/trends.db" --json
+rc=0
+python3 - "$work/baseline-list.json" <<'PY' || rc=$?
+import json, sys
+
+bs = json.load(open(sys.argv[1])) or []
+errs = []
+if len(bs) != 1:
+    errs.append(f"want exactly 1 baseline, got {len(bs)}")
+b = bs[0] if bs else {}
+if b.get("name") != "hermetic-trends":
+    errs.append(f"name={b.get('name')!r} want 'hermetic-trends'")
+if len(b.get("run_ids") or []) != 5:
+    errs.append(f"run_ids={b.get('run_ids')!r} want the 5 baseline cells")
+if b.get("selector") != {"basket": "hermetic-sql", "variant": "baseline"}:
+    errs.append(f"selector={b.get('selector')!r} want basket=hermetic-sql,variant=baseline")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("baseline list: hermetic-trends, 5 runs, selector basket=hermetic-sql,variant=baseline")
+PY
+record "$rc" "baseline list shows hermetic-trends (5 runs, recorded selector)"
+run_expect 0 "baseline rm hermetic-trends" -- \
+	catacomb baseline rm hermetic-trends --db "$work/trends.db"
+run_json 0 "$work/baseline-list2.json" "baseline list --json after rm" -- \
+	catacomb baseline list --db "$work/trends.db" --json
+rc=0
+python3 -c 'import json,sys; sys.exit(0 if not json.load(open(sys.argv[1])) else 1)' "$work/baseline-list2.json" || rc=$?
+record "$rc" "baseline list no longer shows hermetic-trends after rm"
+
+echo "== 19. mcp stdio session: initialize, tools/list, tools/call mark =="
+# The server answers one newline-delimited JSON-RPC response per request and exits 0
+# on stdin EOF, so a fixed 3-request script is fully deterministic (Go sorts map keys
+# when marshaling). ids must round-trip in order, every response must carry a result
+# and no error, tools/list must expose the mark tool, and the mark call must ack.
+printf '%s\n' \
+	'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"hermetic-e2e","version":"0"}}}' \
+	'{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+	'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mark","arguments":{"name":"impl","boundary":"start"}}}' \
+	>"$work/mcp-requests.jsonl"
+run_json 0 "$work/mcp.out" "mcp stdio session (3 requests, exit on EOF)" -- \
+	catacomb mcp <"$work/mcp-requests.jsonl"
+rc=0
+python3 - "$work/mcp.out" <<'PY' || rc=$?
+import json, sys
+
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+errs = []
+if len(lines) != 3:
+    errs.append(f"want exactly 3 response lines, got {len(lines)}")
+resps = []
+for i, l in enumerate(lines):
+    try:
+        resps.append(json.loads(l))
+    except ValueError as e:
+        errs.append(f"line {i + 1} is not JSON: {e}")
+for want_id, r in zip((1, 2, 3), resps):
+    if r.get("jsonrpc") != "2.0" or r.get("id") != want_id:
+        errs.append(f"id {want_id}: jsonrpc={r.get('jsonrpc')!r} id={r.get('id')!r}")
+    if "error" in r or "result" not in r:
+        errs.append(f"id {want_id}: error={r.get('error')!r}, result present: {'result' in r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("mcp framing: 3 responses, ids 1..3 round-trip, result present, no error")
+PY
+record "$rc" "mcp responses well-formed (3 replies, matching ids, result, no error)"
+rc=0
+python3 - "$work/mcp.out" <<'PY' || rc=$?
+import json, sys
+
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+init, tools = (json.loads(l).get("result") or {} for l in lines[:2])
+errs = []
+if init.get("protocolVersion") != "2025-06-18":
+    errs.append(f"protocolVersion={init.get('protocolVersion')!r} want the client's 2025-06-18")
+if (init.get("serverInfo") or {}).get("name") != "catacomb":
+    errs.append(f"serverInfo={init.get('serverInfo')!r} want name 'catacomb'")
+if "tools" not in (init.get("capabilities") or {}):
+    errs.append(f"capabilities={init.get('capabilities')!r} lack tools")
+names = [t.get("name") for t in tools.get("tools") or []]
+if names != ["mark"]:
+    errs.append(f"tools/list names={names!r} want exactly ['mark']")
+mark = (tools.get("tools") or [{}])[0]
+if sorted((mark.get("inputSchema") or {}).get("required") or []) != ["boundary", "name"]:
+    errs.append(f"mark inputSchema required={mark.get('inputSchema')!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("mcp: initialize echoes protocol 2025-06-18 (serverInfo catacomb), tools/list exposes mark")
+PY
+record "$rc" "mcp initialize + tools/list: serverInfo catacomb, mark tool exposed"
+rc=0
+python3 - "$work/mcp.out" <<'PY' || rc=$?
+import json, sys
+
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+res = json.loads(lines[2]).get("result") or {}
+content = res.get("content") or [{}]
+errs = []
+if res.get("isError") is not False:
+    errs.append(f"isError={res.get('isError')!r} want False")
+if content[0].get("type") != "text" or content[0].get("text") != "marked start impl":
+    errs.append(f"content={content!r} want text 'marked start impl'")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("mcp: tools/call mark acked 'marked start impl' with isError false")
+PY
+record "$rc" "mcp tools/call mark acks (marked start impl, isError false)"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

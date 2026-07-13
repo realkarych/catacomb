@@ -185,7 +185,7 @@ func TestMigrateAppliesInOrder(t *testing.T) {
 		{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { order = append(order, 1); return nil, nil }},
 		{from: 1, to: 2, apply: func(*sql.Tx) (map[string]int, error) { order = append(order, 2); return nil, nil }},
 	}
-	_, err := migrate(db, 0, migs, discardLogger())
+	err := migrate(db, 0, migs, discardLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []int{1, 2}, order)
 	assert.Equal(t, 2, userVersion(t, db))
@@ -197,7 +197,7 @@ func TestMigrateFailingStepRollsBackWithSentinel(t *testing.T) {
 		{from: 0, to: 1, apply: func(*sql.Tx) (map[string]int, error) { return nil, nil }},
 		{from: 1, to: 2, apply: func(*sql.Tx) (map[string]int, error) { return nil, errors.New("boom") }},
 	}
-	_, err := migrate(db, 0, migs, discardLogger())
+	err := migrate(db, 0, migs, discardLogger())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
 	assert.Equal(t, 1, userVersion(t, db))
@@ -216,7 +216,7 @@ func TestMigrateLogsStartAndFinishWithChangedRowCounts(t *testing.T) {
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	_, err = migrate(db, 3, schemaMigrations, logger)
+	err = migrate(db, 3, schemaMigrations, logger)
 	require.NoError(t, err)
 
 	logs := buf.String()
@@ -235,7 +235,7 @@ func TestMigrateAtCurrentVersionLogsNothing(t *testing.T) {
 	db := rawDB(t)
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	_, err := migrate(db, currentSchemaVersion, schemaMigrations, logger)
+	err := migrate(db, currentSchemaVersion, schemaMigrations, logger)
 	require.NoError(t, err)
 	assert.Empty(t, buf.String())
 }
@@ -255,11 +255,182 @@ func (execErrConn) Exec(string, ...any) (sql.Result, error) { return nil, errors
 func TestVacuumAfterScrubLogsErrors(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	vacuumAfterScrub(execErrConn{}, logger)
+	assert.False(t, vacuumAfterScrub(execErrConn{}, logger))
 	logs := buf.String()
 	assert.Contains(t, logs, "vacuum failed")
 	assert.Contains(t, logs, "wal checkpoint failed")
 	assert.Contains(t, logs, "exec boom")
+}
+
+const freezeStoreMetaInserts = `CREATE TRIGGER meta_frozen BEFORE INSERT ON store_meta BEGIN SELECT RAISE(ABORT, 'frozen'); END`
+
+func TestStampPendingVacuumSkipsWhenNothingChanged(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, stampPendingVacuum(tx, map[string]int{"runs": 0}))
+	require.NoError(t, tx.Commit())
+	var n int
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='store_meta'").Scan(&n))
+	assert.Zero(t, n)
+}
+
+func TestStampPendingVacuumMarksOnceForRepeatedStamps(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, stampPendingVacuum(tx, map[string]int{"runs": 1}))
+	require.NoError(t, stampPendingVacuum(tx, map[string]int{"nodes": 2}))
+	require.NoError(t, tx.Commit())
+	pending, err := pendingVacuum(db)
+	require.NoError(t, err)
+	assert.True(t, pending)
+	var n int
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM store_meta").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+func TestStampPendingVacuumTableError(t *testing.T) {
+	db := rawDB(t)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	err = stampPendingVacuum(tx, map[string]int{"runs": 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "table")
+}
+
+func TestStampPendingVacuumMarkError(t *testing.T) {
+	db := rawDB(t)
+	_, err := db.Exec(schemaStoreMeta)
+	require.NoError(t, err)
+	_, err = db.Exec(freezeStoreMetaInserts)
+	require.NoError(t, err)
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	err = stampPendingVacuum(tx, map[string]int{"runs": 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mark")
+}
+
+func TestApplyMigrationStampPendingVacuumErrorRollsBack(t *testing.T) {
+	db := rawDB(t)
+	m := migration{from: 0, to: 1, apply: func(tx *sql.Tx) (map[string]int, error) {
+		if _, err := tx.Exec(schemaStoreMeta); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(freezeStoreMetaInserts); err != nil {
+			return nil, err
+		}
+		return map[string]int{"runs": 1}, nil
+	}}
+	_, err := applyMigration(db, m)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSchemaMigrationFailed)
+	assert.Equal(t, 0, userVersion(t, db))
+}
+
+func TestPendingVacuumQueryError(t *testing.T) {
+	db := rawDB(t)
+	require.NoError(t, db.Close())
+	_, err := pendingVacuum(db)
+	require.Error(t, err)
+}
+
+type execFilterConn struct {
+	db     *sql.DB
+	failOn string
+}
+
+func (c execFilterConn) Exec(query string, args ...any) (sql.Result, error) {
+	if query == c.failOn {
+		return nil, errors.New("exec blocked: " + query)
+	}
+	return c.db.Exec(query, args...)
+}
+
+func (c execFilterConn) Query(query string, args ...any) (*sql.Rows, error) {
+	return c.db.Query(query, args...)
+}
+
+func (c execFilterConn) QueryRow(query string, args ...any) *sql.Row {
+	return c.db.QueryRow(query, args...)
+}
+
+func markedMetaDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db := rawDB(t)
+	_, err := db.Exec(schemaStoreMeta)
+	require.NoError(t, err)
+	_, err = db.Exec(markPendingVacuum)
+	require.NoError(t, err)
+	return db
+}
+
+func TestFinishPendingVacuumTableError(t *testing.T) {
+	db := rawDB(t)
+	require.NoError(t, db.Close())
+	err := finishPendingVacuum(db, discardLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "table")
+}
+
+func TestFinishPendingVacuumMarkerReadError(t *testing.T) {
+	db := rawDB(t)
+	_, err := db.Exec("CREATE TABLE store_meta (k TEXT)")
+	require.NoError(t, err)
+	err = finishPendingVacuum(db, discardLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pendingVacuum")
+}
+
+func TestFinishPendingVacuumWithoutMarkerOnlyEnsuresTable(t *testing.T) {
+	db := rawDB(t)
+	require.NoError(t, finishPendingVacuum(db, discardLogger()))
+	pending, err := pendingVacuum(db)
+	require.NoError(t, err)
+	assert.False(t, pending)
+}
+
+func TestFinishPendingVacuumKeepsMarkerWhenVacuumFails(t *testing.T) {
+	db := markedMetaDB(t)
+	require.NoError(t, finishPendingVacuum(execFilterConn{db: db, failOn: "VACUUM"}, discardLogger()))
+	pending, err := pendingVacuum(db)
+	require.NoError(t, err)
+	assert.True(t, pending)
+}
+
+func TestFinishPendingVacuumClearError(t *testing.T) {
+	db := markedMetaDB(t)
+	err := finishPendingVacuum(execFilterConn{db: db, failOn: deletePendingVacuum}, discardLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "clear")
+}
+
+func TestFinishPendingVacuumClearsMarkerAfterVacuum(t *testing.T) {
+	db := markedMetaDB(t)
+	require.NoError(t, finishPendingVacuum(db, discardLogger()))
+	pending, err := pendingVacuum(db)
+	require.NoError(t, err)
+	assert.False(t, pending)
+}
+
+func TestOpenSQLiteFinishPendingVacuumError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seed, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = seed.Exec(schema)
+	require.NoError(t, err)
+	_, err = seed.Exec("CREATE TABLE store_meta (k TEXT)")
+	require.NoError(t, err)
+	_, err = seed.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion))
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+
+	_, err = openSQLite(sql.Open, path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store.OpenSQLite vacuum")
 }
 
 func TestReadSchemaVersionError(t *testing.T) {
@@ -369,7 +540,7 @@ func TestOpenMigratesV1ToV2CreatingBaselines(t *testing.T) {
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
 
-	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, migrated.(*sqliteStore).db))
+	assert.Equal(t, []string{"baselines", "regress_results", "store_meta"}, tableNames(t, migrated.(*sqliteStore).db))
 
 	require.NoError(t, migrated.UpsertBaseline(model.Baseline{Name: "base", RunIDs: []string{"r1"}}))
 	got, ok, err := migrated.GetBaseline("base")
@@ -445,7 +616,7 @@ func TestOpenMigratesV2ToV3CreatingRegressResults(t *testing.T) {
 	t.Cleanup(func() { _ = migrated.Close() })
 	assert.Equal(t, currentSchemaVersion, userVersion(t, migrated.(*sqliteStore).db))
 
-	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, migrated.(*sqliteStore).db))
+	assert.Equal(t, []string{"baselines", "regress_results", "store_meta"}, tableNames(t, migrated.(*sqliteStore).db))
 
 	seq, err := migrated.AppendRegressResult("base", json.RawMessage(`{"ok":true}`))
 	require.NoError(t, err)
@@ -553,7 +724,7 @@ func migrateToV4(t *testing.T, path string) *sql.DB {
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = migrate(db, 3, schemaMigrations[:4], discardLogger())
+	err = migrate(db, 3, schemaMigrations[:4], discardLogger())
 	require.NoError(t, err)
 	return db
 }
@@ -628,6 +799,11 @@ func TestMigrationLeavesNoSecretBytesInFile(t *testing.T) {
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
+	assertNoSecretBytesInFiles(t, path)
+}
+
+func assertNoSecretBytesInFiles(t *testing.T, path string) {
+	t.Helper()
 	for _, f := range []string{path, path + "-wal"} {
 		blob, rerr := os.ReadFile(f)
 		if rerr != nil {
@@ -638,6 +814,35 @@ func TestMigrationLeavesNoSecretBytesInFile(t *testing.T) {
 		assert.NotContains(t, string(blob), seedRunCwdSecret, f)
 		assert.NotContains(t, string(blob), "run_label_password", f)
 	}
+}
+
+func TestReopenAfterCrashBetweenScrubCommitAndVacuumPurgesSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.db")
+	seedV3DB(t, path)
+	crashed, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = crashed.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+	err = migrate(crashed, 3, schemaMigrations, discardLogger())
+	require.NoError(t, err)
+	assert.Equal(t, currentSchemaVersion, userVersion(t, crashed))
+	pending, err := pendingVacuum(crashed)
+	require.NoError(t, err)
+	assert.True(t, pending)
+	require.NoError(t, crashed.Close())
+
+	reopened, err := openSQLite(sql.Open, path)
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+
+	assertNoSecretBytesInFiles(t, path)
+
+	check, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = check.Close() })
+	pending, err = pendingVacuum(check)
+	require.NoError(t, err)
+	assert.False(t, pending)
 }
 
 func TestOpenVacuumsUnversionedV0DBWithScrubbedData(t *testing.T) {
@@ -879,7 +1084,7 @@ func TestMigrationKeepsVerbatimBytesOfCleanRows(t *testing.T) {
 
 func TestFreshDBHasExactlyOfflineTables(t *testing.T) {
 	s := fileStore(t)
-	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, s.db))
+	assert.Equal(t, []string{"baselines", "regress_results", "store_meta"}, tableNames(t, s.db))
 }
 
 func TestOpenMigratesVOldToV5DroppingGraphTables(t *testing.T) {
@@ -896,7 +1101,7 @@ func TestOpenMigratesVOldToV5DroppingGraphTables(t *testing.T) {
 	db := migrated.(*sqliteStore).db
 
 	assert.Equal(t, currentSchemaVersion, userVersion(t, db))
-	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, db))
+	assert.Equal(t, []string{"baselines", "regress_results", "store_meta"}, tableNames(t, db))
 	assert.Equal(t, []string{"kept"}, baselineNames(t, db))
 }
 
@@ -921,7 +1126,7 @@ func TestOpenMigratesExactV4ToV5DroppingGraphTables(t *testing.T) {
 	db := migrated.(*sqliteStore).db
 
 	assert.Equal(t, currentSchemaVersion, userVersion(t, db))
-	assert.Equal(t, []string{"baselines", "regress_results"}, tableNames(t, db))
+	assert.Equal(t, []string{"baselines", "regress_results", "store_meta"}, tableNames(t, db))
 	assert.Equal(t, []string{"kept"}, baselineNames(t, db))
 }
 

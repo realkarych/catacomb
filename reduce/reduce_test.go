@@ -927,6 +927,61 @@ func TestToolCallStampsEndAndDuration(t *testing.T) {
 	assert.Equal(t, int64(2000), *n.DurationMS)
 }
 
+func TestStampIgnoresZeroEventTime(t *testing.T) {
+	use := ob("assistant_tool_use", "toolu_z1", time.Time{})
+	use.Attrs = map[string]any{"name": "Bash"}
+	use.Seq = 7
+
+	g := NewGraph()
+	g.Apply(use)
+
+	n := g.Nodes[model.ToolCallID(execID, "toolu_z1")]
+	require.NotNil(t, n)
+	assert.Nil(t, n.TStart)
+	assert.Nil(t, n.TEnd)
+	assert.Nil(t, n.DurationMS)
+	assert.Len(t, n.Sources, 1)
+	assert.Equal(t, uint64(7), n.Rev)
+}
+
+func TestStampEndIgnoresZeroEventTime(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
+	use := ob("assistant_tool_use", "toolu_z2", t0)
+	use.Attrs = map[string]any{"name": "Bash"}
+	res := ob("tool_result", "toolu_z2", time.Time{})
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, res})
+
+	n := g.Nodes[model.ToolCallID(execID, "toolu_z2")]
+	require.NotNil(t, n)
+	require.NotNil(t, n.TStart)
+	assert.Equal(t, t0, *n.TStart)
+	assert.Nil(t, n.TEnd)
+	assert.Nil(t, n.DurationMS)
+}
+
+func TestStampZeroThenRealEventTime(t *testing.T) {
+	t1 := time.Date(2026, 6, 20, 10, 0, 5, 0, time.UTC)
+	use := ob("assistant_tool_use", "toolu_z3", time.Time{})
+	use.Attrs = map[string]any{"name": "Bash"}
+	res := ob("tool_result", "toolu_z3", t1)
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+
+	g := NewGraph()
+	g.ApplyAll([]model.Observation{use, res})
+
+	n := g.Nodes[model.ToolCallID(execID, "toolu_z3")]
+	require.NotNil(t, n)
+	require.NotNil(t, n.TStart)
+	assert.Equal(t, t1, *n.TStart)
+	require.NotNil(t, n.TEnd)
+	assert.Equal(t, t1, *n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(0), *n.DurationMS)
+}
+
 func TestDurationStampOrderIndependent(t *testing.T) {
 	t0 := time.Date(2026, 6, 20, 10, 0, 1, 0, time.UTC)
 	t1 := t0.Add(3 * time.Second)
@@ -1086,8 +1141,68 @@ func TestAssistantTurnCostUnavailableLeavesNil(t *testing.T) {
 
 	n := g.Nodes[model.AssistantTurnID(execID, "mc3")]
 	assert.Nil(t, n.CostUSD)
+	assert.Equal(t, "unpriced", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnUnpriceableZeroTokensNotFlagged(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{}, false
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc4"
+	o.Attrs = map[string]any{"model": "unknown"}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc4")]
+	assert.Nil(t, n.CostUSD)
 	_, has := n.Attrs["cost_source"]
 	assert.False(t, has)
+}
+
+func TestAssistantTurnUnpriceableCacheTokensFlagged(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		return PriceResult{}, false
+	})
+	o := ob("assistant_turn", "", time.Unix(0, 0).UTC())
+	o.Correlation.MessageID = "mc8"
+	o.Attrs = map[string]any{"model": "unknown", "cache_read_in": int64(100)}
+
+	g := NewGraphWithPricer(p)
+	g.Apply(o)
+
+	n := g.Nodes[model.AssistantTurnID(execID, "mc8")]
+	assert.Nil(t, n.CostUSD)
+	assert.Equal(t, "unpriced", n.Attrs["cost_source"])
+}
+
+func TestAssistantTurnPricedThenUnpriceableKeepsEstimated(t *testing.T) {
+	p := PricerFunc(func(in PriceInputs) (PriceResult, bool) {
+		if in.ModelID != "model-x" {
+			return PriceResult{}, false
+		}
+		return PriceResult{USD: 1.5, Source: "estimated"}, true
+	})
+	t0 := time.Unix(0, 0).UTC()
+	priced := ob("assistant_turn", "", t0)
+	priced.Correlation.MessageID = "mc9"
+	priced.Attrs = map[string]any{"model": "model-x", "tokens_in": int64(1000)}
+	unpriceable := ob("assistant_turn", "", t0.Add(time.Second))
+	unpriceable.Correlation.MessageID = "mc9"
+	unpriceable.Attrs = map[string]any{"model": "unknown", "tokens_in": int64(1000)}
+
+	g := NewGraphWithPricer(p)
+	g.ApplyAll([]model.Observation{priced, unpriceable})
+	rg := NewGraphWithPricer(p)
+	rg.ApplyAll([]model.Observation{unpriceable, priced})
+
+	for _, gr := range []*Graph{g, rg} {
+		n := gr.Nodes[model.AssistantTurnID(execID, "mc9")]
+		require.NotNil(t, n.CostUSD)
+		assert.InDelta(t, 1.5, *n.CostUSD, 1e-9)
+		assert.Equal(t, "estimated", n.Attrs["cost_source"])
+	}
 }
 
 func TestNewGraphNoPricerNoCost(t *testing.T) {

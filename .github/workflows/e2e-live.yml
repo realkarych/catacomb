@@ -1,7 +1,8 @@
 # E2E Live Gate — runs the PV-6b calibration methodology against the real
 # `claude -p` CLI in CI (see docs/reviews/2026-07-08-pv6b-live-calibration.md and
 # e2e/run.sh). It is deliberately NOT part of the per-PR CI: it spends real API
-# budget (~$1 per run — 45 live bench cells; the checkpoint task runs on sonnet) and needs
+# budget (~$1.7 per run — 60 live bench cells; checkpoint + SQL tasks on sonnet; see
+# e2e/run.sh's header for the authoritative cost/scope figures) and needs
 # an Anthropic auth secret: either `ANTHROPIC_API_KEY` (API billing) or
 # `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
 # `claude setup-token`). When both are set the API key takes precedence (API billing).

@@ -36,6 +36,22 @@ def load_expected_names(path: str) -> List[str]:
     )
 
 
+def expected_carries_field(path: str, field: str) -> bool:
+    """Report whether every expected-tools entry is an object carrying *field*.
+
+    Returns False for name arrays, object arrays missing *field* on any entry,
+    and empty lists — i.e. whenever the file is effectively names-only for the
+    purposes of matching on *field*.
+    """
+    with open(path, encoding="utf-8") as fh:
+        data: Any = json.load(fh)
+
+    items = data.get("tools") if isinstance(data, dict) else data
+    if not isinstance(items, list) or not items:
+        return False
+    return all(isinstance(item, dict) and field in item for item in items)
+
+
 def _parse_list(items: Any) -> List[str]:
     """Parse a list of names or objects into a list of tool name strings."""
     if not isinstance(items, list):

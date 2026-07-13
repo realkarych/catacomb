@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-from catacomb_deepeval.expected import ExpectedLoadError, load_expected_names
+from catacomb_deepeval.expected import ExpectedLoadError, expected_carries_field, load_expected_names
 
 _TESTDATA = pathlib.Path(__file__).parent / "testdata"
 
@@ -55,3 +55,37 @@ def test_load_string_in_object_array_raises():
         fname = f.name
     with pytest.raises(ExpectedLoadError):
         load_expected_names(fname)
+
+
+def _write_json(data) -> str:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(data, f)
+        return f.name
+
+
+def test_carries_field_name_array_is_names_only():
+    assert expected_carries_field(str(_TESTDATA / "expected_names.json"), "input_parameters") is False
+
+
+def test_carries_field_object_array_without_field_is_names_only():
+    assert expected_carries_field(str(_TESTDATA / "expected_objects.json"), "output") is False
+
+
+def test_carries_field_all_entries_carry_field():
+    fname = _write_json([{"name": "Bash", "input_parameters": {"command": "ls"}}])
+    assert expected_carries_field(fname, "input_parameters") is True
+
+
+def test_carries_field_mixed_entries_is_names_only():
+    fname = _write_json([{"name": "Bash", "input_parameters": {"command": "ls"}}, {"name": "Read"}])
+    assert expected_carries_field(fname, "input_parameters") is False
+
+
+def test_carries_field_envelope_form():
+    fname = _write_json({"tools": [{"name": "Bash", "output": "total 8"}]})
+    assert expected_carries_field(fname, "output") is True
+
+
+def test_carries_field_empty_list_is_names_only():
+    fname = _write_json([])
+    assert expected_carries_field(fname, "input_parameters") is False

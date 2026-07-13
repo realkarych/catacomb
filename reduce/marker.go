@@ -257,9 +257,11 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 	}
 	if tEnd != nil {
 		n.TEnd = tEnd
-		ms := n.TEnd.Sub(*n.TStart).Milliseconds()
-		if ms >= 0 {
-			n.DurationMS = &ms
+		if !tStart.IsZero() && !tEnd.IsZero() {
+			ms := n.TEnd.Sub(*n.TStart).Milliseconds()
+			if ms >= 0 {
+				n.DurationMS = &ms
+			}
 		}
 	}
 

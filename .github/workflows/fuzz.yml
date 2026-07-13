@@ -1,0 +1,48 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Saturdays 06:00 UTC — long-running, deliberately NOT a required check.
+    - cron: "0 6 * * 6"
+
+permissions: {}
+
+jobs:
+  fuzz:
+    name: go fuzz (all targets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Locate Go fuzz corpus directory
+        id: fuzzcache
+        run: echo "dir=$(go env GOCACHE)/fuzz" >> "$GITHUB_OUTPUT"
+      - name: Restore fuzz corpus
+        # actions/cache never overwrites an existing key, so each run saves under a
+        # fresh run_id-suffixed key and restores the most recent prefix match —
+        # the corpus accumulates across runs.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.fuzzcache.outputs.dir }}
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+      - name: Fuzz every Fuzz* target
+        run: make fuzz FUZZTIME=5m
+      - name: Print failing inputs
+        if: failure()
+        run: |
+          git ls-files --others --exclude-standard -- '*/testdata/fuzz/*' | while IFS= read -r f; do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done

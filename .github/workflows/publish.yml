@@ -13,8 +13,80 @@ on:
 permissions: {}
 
 jobs:
-  goreleaser:
+  verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Extract tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            echo "TAG=$INPUT_TAG" >>"$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_REF#refs/tags/}" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert tag descends from master
+        env:
+          TAG: ${{ steps.tag.outputs.TAG }}
+        run: |
+          SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          echo "release commit: $SHA"
+          if ! git merge-base --is-ancestor "$SHA" origin/master; then
+            echo "::error::tag ${TAG} (${SHA}) is not an ancestor of origin/master; refusing to release"
+            exit 1
+          fi
+
+      - name: Assert required checks succeeded
+        env:
+          TAG: ${{ steps.tag.outputs.TAG }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          required=(
+            "Coverage gate"
+            "Tests (ubuntu-latest)"
+            "Tests (macos-latest)"
+            "Tests (windows-latest)"
+            "Hermetic E2E"
+            "golangci-lint"
+            "gosec"
+            "govulncheck"
+            "gitleaks"
+            "CodeQL"
+          )
+          runs=$(gh api --paginate "repos/${REPO}/commits/${SHA}/check-runs" \
+            -q '.check_runs[] | "\(.name)\t\(.conclusion)"')
+          failed=0
+          for name in "${required[@]}"; do
+            if printf '%s\n' "$runs" | grep -Fxq "${name}"$'\t'"success"; then
+              echo "ok: ${name}"
+            else
+              conclusion=$(printf '%s\n' "$runs" \
+                | awk -F'\t' -v n="$name" '$1 == n { print $2; exit }')
+              echo "::error::required check '${name}' did not succeed on ${SHA} (conclusion: ${conclusion:-missing})"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+  goreleaser:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
     permissions:
       contents: write
       packages: write
@@ -87,6 +159,8 @@ jobs:
   update-apt:
     needs: goreleaser
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
     permissions:
       contents: read
 

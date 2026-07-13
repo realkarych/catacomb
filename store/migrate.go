@@ -18,6 +18,14 @@ const schemaBaselines = `CREATE TABLE IF NOT EXISTS baselines (name TEXT PRIMARY
 
 const schemaRegressResults = `CREATE TABLE IF NOT EXISTS regress_results (baseline TEXT NOT NULL, seq INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (baseline, seq));`
 
+const schemaStoreMeta = `CREATE TABLE IF NOT EXISTS store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`
+
+const (
+	markPendingVacuum   = `INSERT INTO store_meta(key, value) VALUES('pending_vacuum','1') ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+	countPendingVacuum  = `SELECT count(*) FROM store_meta WHERE key = 'pending_vacuum'`
+	deletePendingVacuum = `DELETE FROM store_meta WHERE key = 'pending_vacuum'`
+)
+
 var (
 	ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
 	ErrSchemaTooNew          = errors.New("store: on-disk schema is newer than this catacomb binary; upgrade catacomb")
@@ -219,6 +227,10 @@ func applyMigration(db *sql.DB, m migration) (map[string]int, error) {
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("store.applyMigration v%d->v%d apply: %w: %w", m.from, m.to, ErrSchemaMigrationFailed, err)
 	}
+	if err := stampPendingVacuum(tx, changed); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("store.applyMigration v%d->v%d: %w: %w", m.from, m.to, ErrSchemaMigrationFailed, err)
+	}
 	if err := setSchemaVersion(tx, m.to); err != nil {
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("store.applyMigration v%d->v%d stamp: %w: %w", m.from, m.to, ErrSchemaMigrationFailed, err)
@@ -237,10 +249,10 @@ func schemaVersionGuard(db *sql.DB, current int) (int, error) {
 	return version, nil
 }
 
-func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logger) (map[string]int, error) {
+func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logger) error {
 	pending := pendingMigrations(version, migrations)
 	if len(pending) == 0 {
-		return nil, nil
+		return nil
 	}
 	target := pending[len(pending)-1].to
 	logger.Info("store: schema migration start", "from", version, "to", target)
@@ -249,7 +261,7 @@ func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logge
 	for _, m := range pending {
 		counts, err := applyMigration(db, m)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for table, n := range counts {
 			changed[table] += n
@@ -259,7 +271,7 @@ func migrate(db *sql.DB, version int, migrations []migration, logger *slog.Logge
 		"from", version, "to", target,
 		"changed_rows", changed,
 		"duration_ms", time.Since(started).Milliseconds())
-	return changed, nil
+	return nil
 }
 
 func pendingMigrations(version int, migrations []migration) []migration {
@@ -282,11 +294,61 @@ func shouldVacuumAfterMigration(changed map[string]int) bool {
 	return false
 }
 
-func vacuumAfterScrub(conn migrationConn, logger *slog.Logger) {
+func stampPendingVacuum(conn migrationConn, changed map[string]int) error {
+	if !shouldVacuumAfterMigration(changed) {
+		return nil
+	}
+	if _, err := conn.Exec(schemaStoreMeta); err != nil {
+		return fmt.Errorf("store.stampPendingVacuum table: %w", err)
+	}
+	if _, err := conn.Exec(markPendingVacuum); err != nil {
+		return fmt.Errorf("store.stampPendingVacuum mark: %w", err)
+	}
+	return nil
+}
+
+type vacuumConn interface {
+	migrationConn
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func pendingVacuum(conn vacuumConn) (bool, error) {
+	var n int
+	if err := conn.QueryRow(countPendingVacuum).Scan(&n); err != nil {
+		return false, fmt.Errorf("store.pendingVacuum: %w", err)
+	}
+	return n > 0, nil
+}
+
+func finishPendingVacuum(conn vacuumConn, logger *slog.Logger) error {
+	if _, err := conn.Exec(schemaStoreMeta); err != nil {
+		return fmt.Errorf("store.finishPendingVacuum table: %w", err)
+	}
+	pending, err := pendingVacuum(conn)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
+	if !vacuumAfterScrub(conn, logger) {
+		return nil
+	}
+	if _, err := conn.Exec(deletePendingVacuum); err != nil {
+		return fmt.Errorf("store.finishPendingVacuum clear: %w", err)
+	}
+	return nil
+}
+
+func vacuumAfterScrub(conn migrationConn, logger *slog.Logger) bool {
+	ok := true
 	if _, err := conn.Exec("VACUUM"); err != nil {
 		logger.Warn("store: post-migration vacuum failed; pre-scrub row images may linger in free pages", "err", err)
+		ok = false
 	}
 	if _, err := conn.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		logger.Warn("store: post-migration wal checkpoint failed; pre-scrub row images may linger in the wal", "err", err)
+		ok = false
 	}
+	return ok
 }

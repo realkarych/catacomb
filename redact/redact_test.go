@@ -691,6 +691,100 @@ func TestRedact_LeadingJSONValue_TrailingText(t *testing.T) {
 	})
 }
 
+func TestRedact_TailAfterClosingDelimiter(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"number then closing brace", "0}" + secret},
+		{"object then extra brace", `{"a":1}}` + secret},
+		{"array then extra bracket", "[1]]" + secret},
+		{"bool then closing brace", "true}" + secret},
+		{"number then brace and space", "0} " + secret},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := redact.Redact([]byte(tc.input))
+			assert.True(t, result.Redacted, "tail after closing delimiter must be scanned, input %q", tc.input)
+			assert.False(t, containsSecret(result.Data, secret), "secret survived in %q -> %q", tc.input, result.Data)
+			assert.Contains(t, findingReasons(result.Findings), "aws-key")
+		})
+	}
+	t.Run("control number then space still redacts", func(t *testing.T) {
+		result := redact.Redact([]byte("0 " + secret))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, secret))
+	})
+	t.Run("trailing whitespace only is not a tail", func(t *testing.T) {
+		input := []byte("{\"a\":1}\n")
+		result := redact.Redact(input)
+		assert.False(t, result.Redacted)
+		assert.Empty(t, result.Findings)
+		assert.Equal(t, string(input), string(result.Data))
+	})
+	t.Run("no tail non-secret JSON byte-identical", func(t *testing.T) {
+		input := []byte(`{"a":1}`)
+		result := redact.Redact(input)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, string(input), string(result.Data))
+	})
+	t.Run("non-JSON whitespace tail is preserved as tail", func(t *testing.T) {
+		input := []byte("{\"password\":\"hunter2\"}\u00a0")
+		result := redact.Redact(input)
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, "hunter2"))
+		assert.True(t, strings.HasSuffix(string(result.Data), "\u00a0"), "non-JSON whitespace tail must survive, got %q", result.Data)
+	})
+}
+
+func TestRedact_SecretInObjectKey(t *testing.T) {
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	t.Run("top-level key", func(t *testing.T) {
+		result := redact.Redact([]byte(`{"` + secret + `":1}`))
+		assert.True(t, result.Redacted, "secret in object key must be redacted")
+		assert.False(t, containsSecret(result.Data, secret), "key secret survived: %q", result.Data)
+		assert.Contains(t, findingReasons(result.Findings), "aws-key")
+		assert.Contains(t, string(result.Data), `"‹redacted:aws-key›":1`)
+	})
+	t.Run("key nested under sensitive key", func(t *testing.T) {
+		result := redact.Redact([]byte(`{"password":{"` + secret + `":1}}`))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, secret), "nested key secret survived: %q", result.Data)
+		assert.Contains(t, findingReasons(result.Findings), "aws-key")
+	})
+	t.Run("secret embedded in larger key preserves surrounding text", func(t *testing.T) {
+		result := redact.Redact([]byte(`{"note ` + secret + ` suffix":1}`))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, secret))
+		assert.Contains(t, string(result.Data), `"note ‹redacted:aws-key› suffix":1`)
+	})
+	t.Run("findings never contain the key secret", func(t *testing.T) {
+		result := redact.Redact([]byte(`{"` + secret + `":1}`))
+		for _, f := range result.Findings {
+			assert.NotContains(t, f.Path, secret)
+		}
+	})
+	t.Run("non-secret keys pass through unchanged alongside redaction", func(t *testing.T) {
+		result := redact.Redact([]byte(`{"plain_key":"ok","note":"` + secret + `","nested":{"city":"NYC"}}`))
+		assert.True(t, result.Redacted)
+		assert.Contains(t, string(result.Data), `"plain_key":"ok"`)
+		assert.Contains(t, string(result.Data), `"city":"NYC"`)
+		assert.Contains(t, findingPaths(result.Findings), "note")
+	})
+	t.Run("colliding secret keys are deterministic", func(t *testing.T) {
+		input := []byte(`{"AKIAAAAAAAAAAAAAAAAA":1,"AKIABBBBBBBBBBBBBBBB":2}`)
+		r1 := redact.Redact(input)
+		assert.True(t, r1.Redacted)
+		assert.Equal(t, `{"‹redacted:aws-key›":2}`, string(r1.Data))
+		for i := 0; i < 16; i++ {
+			ri := redact.Redact(input)
+			assert.Equal(t, r1.Data, ri.Data)
+			assert.Equal(t, r1.Findings, ri.Findings)
+		}
+	})
+}
+
 func TestRedact_MalformedJSON_GracefulFallback(t *testing.T) {
 	input := []byte(`{"key": "value", "broken":}`)
 	result := redact.Redact(input)

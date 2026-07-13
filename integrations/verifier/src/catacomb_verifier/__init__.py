@@ -104,6 +104,7 @@ def emit(
         if value is None:
             raise ValueError("emit(key=...) requires a numeric value=")
         _validate_value(value)
+        assert key is not None
         _validate_key(key)
         line = {"key": key, "value": value}
     if run_id is not None:
