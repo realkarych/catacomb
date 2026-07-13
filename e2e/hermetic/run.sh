@@ -17,7 +17,11 @@
 #   6 A-vs-A control (exit 0) -> 7 operational-failure visibility (broken verifier) +
 #   restore -> 8 --scores override -> 9 SP2 reliability/paired shape (re-reads the
 #   step-5 report JSON) -> 10 SP3 env stamps (re-reads the bench-time meta.json) ->
-#   11 SP3 pareto (re-records the step-5/6 comparisons into a fresh store).
+#   11 SP3 pareto (re-records the step-5/6 comparisons into a fresh store) ->
+#   12 SP4 audit (duration-pinned copy of the runs dir: dormancy at full defaults,
+#   then a planted outlier; both exits must match) -> 13 SP4 pack (deterministic
+#   stride bundle over the untouched runs dir) -> 14 SP4 scores round-trip (external
+#   audit.clean score -> annotation finding).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -26,7 +30,14 @@
 # JSON from disk. Steps 10/11 are SP3: step 10 re-reads meta.json exactly as bench
 # wrote it (offline verify rewrites verify.json and scores.jsonl, never meta.json), and
 # step 11 re-runs the step-5/6 comparisons with --record against a fresh store and
-# asserts the pareto view over that history.
+# asserts the pareto view over that history. Steps 12-14 are SP4: step 12 works on a
+# COPY of the runs dir whose meta.json marker windows are pinned to one fixed value —
+# wall-clock duration is the single audited axis bench cannot make deterministic (the
+# first cell pays a ~10x warm-up premium, a legitimate far-out duration flag) — so the
+# copy is value-identical on all five audited axes and the dormancy raw-key check runs
+# at FULL defaults; the planted comparison then re-runs on the same copy plus one
+# fabricated cell, and its exit must equal the clean one (audit never gates). Steps
+# 13/14 read only the untouched runs dir (plant and pinning live in the copy alone).
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -434,6 +445,182 @@ if errs:
 print("pareto: 3 points, every point carries both axes (accuracy + cost_usd)")
 PY
 record "$rc" "pareto lists baseline + 2 records, both axes on every point"
+
+echo "== 12. SP4 audit: dormant on A-vs-A, planted outlier flagged without gating =="
+# The audit screens per-cell duration_ms/cost_usd/tokens_in/tokens_out/turns against
+# the group median. Four of those are byte-determined by the fixed transcript template
+# (cost/tokens sums 0.0, turns 5); wall-clock duration is not — the first bench cell
+# pays a ~10x warm-up premium, a legitimate far-out flag at the default audit band. So
+# this step works on a copy of the runs dir with every meta.json marker window pinned
+# to the template's own mark window (4000 ms): evidence value-identical on ALL five
+# audited axes, letting both comparisons below run at FULL default thresholds. The
+# clean A-vs-A over that copy must carry no "audit" key at all (raw-key dormancy).
+runs_plant="$work/runs-plant"
+cp -R "$runs" "$runs_plant"
+python3 - "$runs_plant" <<'PY'
+import glob, json, os, sys
+
+for path in glob.glob(os.path.join(sys.argv[1], "*", "meta.json")):
+    meta = json.load(open(path))
+    meta["marker_start"] = "2026-06-20T10:00:03Z"
+    meta["marker_end"] = "2026-06-20T10:00:07Z"
+    json.dump(meta, open(path, "w"))
+PY
+run_json 0 "$work/regress-dormant.json" \
+	"A-vs-A on duration-pinned evidence at full defaults (exit 0)" -- \
+	catacomb regress --runs-dir "$runs_plant" \
+	--baseline label:basket=hermetic-sql,variant=baseline \
+	--candidate label:basket=hermetic-sql,variant=baseline2 --json
+rc=0
+python3 -c 'import json,sys; sys.exit(0 if "audit" not in json.load(open(sys.argv[1])) else 1)' "$work/regress-dormant.json" || rc=$?
+record "$rc" "A-vs-A report JSON carries no audit key (dormancy)"
+# Planted outlier: the same copy gains one fabricated baseline2 cell built from the
+# same transcript template, with usage injected into every assistant turn (5 x 1200 =
+# 6000 tokens_out; every real cell sums 0). The plant's model is renamed to one the
+# pricer cannot price, so cost_usd stays 0.0 like the group and tokens_out is the only
+# axis that moves; meta is the pinned baseline2-r1 meta (duration 4000 ms like all),
+# and turns stay 5 (same template). The gate compares group medians (5 zeros + 1 plant
+# -> median 0), so this comparison must keep the clean run's exit 0 above: audit is
+# non-gating end-to-end.
+plant="bench-hermetic-sql-sql-baseline2-r6"
+plant_dir="$runs_plant/$plant"
+mkdir "$plant_dir"
+plant_sid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+sed -e "s/__SESSION_ID__/$plant_sid/g" \
+	-e 's|"model":"claude-opus-4-8","content":|"model":"hermetic-audit-plant","usage":{"output_tokens":1200},"content":|g' \
+	"$work/transcript.jsonl.tmpl" >"$plant_dir/session.jsonl"
+python3 - "$runs_plant/bench-hermetic-sql-sql-baseline2-r1/meta.json" "$plant_dir/meta.json" "$plant" "$plant_sid" <<'PY'
+import json, sys
+
+meta = json.load(open(sys.argv[1]))
+meta["run_id"] = sys.argv[3]
+meta["session_id"] = sys.argv[4]
+meta["rep"] = 6
+meta["labels"]["rep"] = "6"
+json.dump(meta, open(sys.argv[2], "w"))
+PY
+printf '{"key":"verifier.pass","value":1,"run_id":"%s"}\n' "$plant" >"$plant_dir/scores.jsonl"
+run_json 0 "$work/regress-plant.json" \
+	"planted-outlier comparison keeps the clean exit (audit never gates)" -- \
+	catacomb regress --runs-dir "$runs_plant" \
+	--baseline label:basket=hermetic-sql,variant=baseline \
+	--candidate label:basket=hermetic-sql,variant=baseline2 --json
+rc=0
+python3 - "$work/regress-plant.json" "$plant" <<'PY' || rc=$?
+import json, sys
+
+audit = json.load(open(sys.argv[1])).get("audit")
+want = {"run_id": sys.argv[2], "task": "sql", "metric": "tokens_out",
+        "value": 6000, "median": 0, "band": 0}
+errs = []
+if audit is None:
+    errs.append("audit block missing despite the planted outlier")
+elif "baseline" in audit:
+    errs.append(f"baseline flags present: {audit['baseline']!r}")
+elif audit.get("candidate") != [want]:
+    errs.append(f"candidate flags {audit.get('candidate')!r} want [{want!r}]")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"audit: candidate {sys.argv[2]} tokens_out 6000 vs median 0 (band 0), no other flag")
+PY
+record "$rc" "audit names exactly the planted run and tokens_out (value 6000, median 0)"
+
+echo "== 13. SP4 pack: deterministic stride bundle over the sql basket =="
+# Packs the UNTOUCHED runs dir (the plant lives only in the step-12 copy): 15 runs
+# sorted by run id, default --sample 3 -> stride indices floor(i*15/3) = 0, 5, 10.
+# The expected id list is recomputed from the rule over the evidence dir listing, so
+# a sampling change breaks this assertion, not just the manifest shape.
+pack_out="$work/pack"
+run_json 0 "$work/pack.out" \
+	"pack the sql basket (default sample of 3)" -- \
+	catacomb pack label:basket=hermetic-sql --runs-dir "$runs" --out "$pack_out"
+rc=0
+grep -Fqx "packed 3 of 15 runs into $pack_out" "$work/pack.out" || rc=1
+record "$rc" "pack stdout reports packed 3 of 15 runs"
+rc=0
+python3 - "$pack_out/pack.json" "$runs" <<'PY' || rc=$?
+import json, os, sys
+
+m = json.load(open(sys.argv[1]))
+ids = sorted(os.listdir(sys.argv[2]))
+want = [ids[i * len(ids) // 3] for i in range(3)]
+errs = []
+if len(ids) != 15:
+    errs.append(f"runs dir holds {len(ids)} runs, want 15")
+for field, wantv in (("selector", "label:basket=hermetic-sql"), ("runs_dir", sys.argv[2]),
+                     ("sample_rule", "runid-stride"), ("requested", 3), ("runs", want)):
+    if m.get(field) != wantv:
+        errs.append(f"{field}={m.get(field)!r} want {wantv!r}")
+created = m.get("created_at")
+if not isinstance(created, str) or "T" not in created or not created.endswith("Z"):
+    errs.append(f"created_at not a UTC RFC3339 stamp: {created!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"pack.json: runid-stride sample {want} out of {len(ids)} runs")
+PY
+record "$rc" "pack.json manifest fields + exact stride-sampled run list"
+rc=0
+python3 - "$pack_out" <<'PY' || rc=$?
+import json, os, sys
+
+out = sys.argv[1]
+errs = []
+for rid in json.load(open(os.path.join(out, "pack.json")))["runs"]:
+    for name in ("meta.json", "session.jsonl"):
+        path = os.path.join(out, rid, name)
+        if not os.path.isfile(path):
+            errs.append(f"missing {path}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("bundle: meta.json + session.jsonl present for every sampled run")
+PY
+record "$rc" "bundle carries meta.json + session.jsonl per sampled run"
+rc=0
+[ -s "$pack_out/INSTRUCTIONS.md" ] || rc=1
+record "$rc" "INSTRUCTIONS.md present in the bundle"
+
+echo "== 14. SP4 round-trip: external audit.clean score surfaces as a finding =="
+# Closes the pack loop through the built binary: a hand-written scores line — the
+# exact dialect INSTRUCTIONS.md asks an external auditor to return — lands on a packed
+# run (baseline r1, index 0 of the step-13 sample) via --scores, and --annotation
+# gates it. Only one baseline run carries the key, so the deterministic outcome is the
+# annotation-absent-in-candidate insufficient finding; exit stays 0 (nothing gates).
+printf '{"key":"audit.clean","value":1,"run_id":"%s"}\n' "$base1" >"$work/audit-clean.scores"
+run_json 0 "$work/regress-audit.json" \
+	"A-vs-A with the returned audit.clean score (exit 0)" -- \
+	catacomb regress --runs-dir "$runs" \
+	--baseline label:basket=hermetic-sql,variant=baseline \
+	--candidate label:basket=hermetic-sql,variant=baseline2 \
+	--metric-rel-delta 0.5 --scores "$work/audit-clean.scores" \
+	--annotation audit.clean:higher-better --json
+rc=0
+python3 - "$work/regress-audit.json" <<'PY' || rc=$?
+import json, sys
+
+hits = [
+    f for f in json.load(open(sys.argv[1])).get("findings", [])
+    if f.get("metric") == "ann:audit.clean"
+]
+errs = []
+if len(hits) != 1:
+    errs.append(f"want exactly 1 ann:audit.clean finding, got {len(hits)}")
+for f in hits:
+    got = (f.get("scope"), f.get("verdict"), f.get("detail"))
+    if got != ("total", "insufficient", "annotation absent in candidate"):
+        errs.append(f"scope/verdict/detail {got!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("round-trip: ann:audit.clean total finding (insufficient, absent in candidate)")
+PY
+record "$rc" "returned score surfaces as the ann:audit.clean annotation finding"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

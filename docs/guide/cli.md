@@ -365,6 +365,8 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--paired-min-tasks` | 5 | Minimum matched tasks before the paired sign test can gate (must be > 0) |
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
+| `--audit-iqr-factor` | 3.0 | IQR band factor for [per-cell outlier audit](#per-cell-outlier-audit) flags (must be > 0) |
+| `--audit-rel-delta` | 0.5 | Relative delta floor for per-cell outlier audit flags (must be > 0) |
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
 | `--z` | 1.645 | One-sided Wilson z for the rate gates (`1.645` = 95% one-sided); higher z requires stronger evidence to flag (flags less) |
 | `--fail-on-notable` | false | Count `notable` findings toward the gate (exit `1`) |
@@ -448,6 +450,44 @@ that happens to average well. The block is **informational only — it never gat
 same binary data already gates through the `ann:verifier.pass` rate axis
 ([run-level scores](#run-level-scores)), and double-gating one signal would only
 inflate false positives.
+
+### Per-cell outlier audit
+
+The gate compares group medians, so a single anomalous cell — a run that spends wildly
+more tokens or turns than its group — which is how gaming, retry loops, and runaway
+tool use look from the outside — can hide inside a clean verdict. Every comparison therefore also
+screens the individual cells (one cell = one run) of both groups. For each group and
+each of `duration_ms`, `cost_usd`, `tokens_in`, `tokens_out`, and `turns` (the run's
+assistant-turn count), a cell value `v` is flagged against the group median `m` when
+
+```text
+|v − m| > max(audit-rel-delta × |m|, audit-iqr-factor × IQR)
+```
+
+with the group's `IQR = P75 − P25`. The defaults are deliberately less twitchy than the
+gate's own noise band: `--audit-iqr-factor` 3.0 (Tukey's far-out fences, vs the gate's
+1.5) and `--audit-rel-delta` 0.5 — a cell must sit at least 50% away from the group
+median even when the IQR collapses to 0, which keeps near-identical groups quiet.
+Groups with fewer than 3 cells produce no flags (a median and IQR of 1–2 points is
+noise). Both flags must be > 0 (operational error, exit `2`).
+
+Flags land in the report as an `audit` block — in `--json`, `baseline`/`candidate`
+arrays of `{run_id, task, metric, value, median, band}` sorted by run id — and in the
+human report as one epilogue line per flag:
+
+```text
+audit: candidate run r07 (task sql) tokens_out 1932 vs group median 243 (band 121.5)
+```
+
+The block is **structurally non-gating**: it is computed after the findings, feeds no
+verdict, and never affects the exit code. A flagged cell is an invitation to read that
+run's evidence — [`pack`](#pack) bundles it for review — not a regression. When no flag
+fires the block is omitted entirely. Treat `cost_usd` and `duration_ms` flags with
+care: under prompt caching, real per-run cost spreads up to ~5× between byte-identical
+runs ([PV-6b](../reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
+inherits runner load — `tokens_out` and `turns` are the trustworthy anomaly axes. In
+particular, the first run of a bench batch often pays a cold-start premium and can flag
+on `duration_ms` routinely — expected, not an anomaly.
 
 ## Baseline version stamps
 
@@ -779,6 +819,78 @@ materialized graph as JSONL — `{"kind":"node"…}`, `{"kind":"edge"…}`, and
 ```sh
 catacomb export ~/.catacomb/runs/bench-checkout-add-item-candidate-r1 --out run.jsonl
 catacomb export ~/.claude/projects/my-project/<session>.jsonl --to jsonl
+```
+
+---
+
+## pack
+
+Export a deterministic sample of evidence runs as a bundle for external audit.
+
+```sh
+catacomb pack <selector> --runs-dir <dir> --out <dir> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--runs-dir` | (empty) | Evidence dir to resolve the selector from (required) |
+| `--out` | (empty) | Bundle output dir; must not already exist (required) |
+| `--sample` | 3 | Number of runs to sample by run-id stride (must be > 0) |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path for `name:` selectors |
+
+The selector is the same `label:`/`name:` grammar as [`regress`](#regress), resolved
+against the same evidence dirs (a `name:` baseline reads its pinned run IDs from
+`--db`).
+
+Sampling is deterministic — no RNG: the selected runs are sorted by run ID and
+`--sample N` takes the evenly spaced indices `floor(i × len / N)` for `i = 0..N−1`
+(fewer than `N` runs means all of them). The stride covers the range —
+first/middle/last rather than clustering on the head — and two invocations over the
+same evidence always pick the same cells, so a pack is reproducible from the run list
+alone.
+
+Each sampled run's evidence dir is copied **verbatim** into `<out>/<run_id>/`:
+`session.jsonl` and `subagents/` transcripts, `meta.json`, `scores.jsonl`,
+`verify.json`, and captured `artifacts/` where present. Evidence content is
+secret-redacted at write time
+([ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md)), so the bundle
+inherits the redaction guarantee with no second pass — with the same caveats as
+evidence at rest: `verify.json` error text and binary artifacts pass through
+unredacted (see the [fidelity notes](workflows.md#what-capture-does-to-artifacts)),
+so review them before shipping a pack to an external service. Alongside the run dirs:
+
+- `pack.json` — the manifest: `selector`, `runs_dir`, `sample_rule` (the literal
+  `"runid-stride"`; a future rule change must change the string), `requested` (the
+  `--sample` value), `runs` (the sampled IDs), and `created_at`.
+- `INSTRUCTIONS.md` — a fixed template for the external inspector: what the bundle
+  contains, what to look for (shortcuts, gaming, tool misuse, fabricated results), and
+  the exact scores-JSONL contract for returning findings.
+
+The return loop is the existing scores boundary — nothing new to integrate. The
+inspector (a human, or an LLM driven outside catacomb — the judge prompt and spend are
+the user's business) writes one JSONL line per run-level finding:
+
+```json
+{"key":"audit.clean","value":1,"run_id":"<run id>"}
+```
+
+and the findings gate like any other [run-level score](#run-level-scores):
+
+```sh
+catacomb regress --scores findings.jsonl --annotation audit.clean:higher-better ...
+```
+
+(`:lower-better` when a higher value is worse). See
+[Auditing cells](workflows.md#auditing-cells) for the full loop.
+
+Exit codes: `0` success (stdout reports `packed N of M runs into <out>`), `2`
+operational error — a missing `--runs-dir` or `--out`, `--sample` below 1, an invalid
+selector, an empty selection, or an `--out` dir that already exists (packs are
+immutable snapshots, never merged into).
+
+```sh
+catacomb pack label:basket=sql,variant=candidate --runs-dir runs --out audit-pack
+catacomb pack name:golden --runs-dir runs --out audit-pack --sample 5
 ```
 
 ---

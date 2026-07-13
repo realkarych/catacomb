@@ -148,9 +148,12 @@ type PackManifest struct {
   Records store the full `Report`, so `audit` appears in new records only when flags fired;
   old records unmarshal unchanged (additive omitempty; `Record.V` stays 1; store schema
   stays 5). `trends` output is untouched (it reads findings and named blocks explicitly).
-- A-vs-A on deterministic evidence fires nothing (identical values ⇒ deviations 0); the
-  `AuditRelDelta` floor keeps near-identical groups quiet. Audit never affects exit codes
-  by construction.
+- A-vs-A fires nothing on the four deterministic axes (cost, tokens in/out, turns —
+  identical values ⇒ deviations 0), and the `AuditRelDelta` floor keeps near-identical
+  groups quiet; live wall-clock warm-up (a first cell paying a cold-start premium) can
+  legitimately flag `duration_ms` — that is the screen disclosing, not misfiring. The
+  hermetic E2E asserts dormancy on a duration-pinned copy for this reason. Audit never
+  affects exit codes by construction.
 - `pack` is read-only over evidence and additive on disk; no store DDL, no schema bumps,
   no new deps (stdlib file copy).
 - Evaluation-agnostic boundary (ADR-0022): flags read the same deterministic observables

@@ -20,7 +20,7 @@ func TestRootCommandSetIsExact(t *testing.T) {
 	names := rootCommandNames()
 	want := []string{
 		"bench", "verify", "regress", "baseline", "trends", "diff",
-		"subgraph", "export", "replay", "mcp", "version",
+		"subgraph", "export", "pack", "replay", "mcp", "version",
 	}
 	require.Len(t, names, len(want))
 	for _, name := range want {
