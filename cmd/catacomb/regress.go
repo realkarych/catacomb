@@ -80,6 +80,8 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().Float64Var(&f.thresholds.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
 	cmd.Flags().Float64Var(&f.thresholds.PairedAlpha, "paired-alpha", def.PairedAlpha, "paired sign-test significance level for per-task median deltas (0,1)")
 	cmd.Flags().IntVar(&f.thresholds.PairedMinTasks, "paired-min-tasks", def.PairedMinTasks, "minimum matched tasks before the paired sign test gates")
+	cmd.Flags().Float64Var(&f.thresholds.AuditIQRFactor, "audit-iqr-factor", def.AuditIQRFactor, "per-cell audit IQR band factor for outlier flags")
+	cmd.Flags().Float64Var(&f.thresholds.AuditRelDelta, "audit-rel-delta", def.AuditRelDelta, "per-cell audit relative delta floor for outlier flags")
 	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
 }
 
@@ -98,6 +100,12 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	}
 	if f.thresholds.PairedMinTasks < 1 {
 		return operational(fmt.Errorf("regress: --paired-min-tasks must be > 0, got %d", f.thresholds.PairedMinTasks))
+	}
+	if f.thresholds.AuditIQRFactor <= 0 {
+		return operational(fmt.Errorf("regress: --audit-iqr-factor must be > 0, got %g", f.thresholds.AuditIQRFactor))
+	}
+	if f.thresholds.AuditRelDelta <= 0 {
+		return operational(fmt.Errorf("regress: --audit-rel-delta must be > 0, got %g", f.thresholds.AuditRelDelta))
 	}
 	if f.runsDir == "" {
 		return operational(errRegressNoRunsDir)
@@ -175,9 +183,11 @@ func regressReport(out, errOut io.Writer, f regressFlags, specs []regress.Annota
 	baseAgg := aggregate.Aggregate(baseGroup, opts)
 	candAgg := aggregate.Aggregate(candGroup, opts)
 	rep := regress.Compare(regress.Input{
-		Baseline:    baseAgg,
-		Candidate:   candAgg,
-		Annotations: specs,
+		Baseline:       baseAgg,
+		Candidate:      candAgg,
+		Annotations:    specs,
+		BaselineCells:  aggregate.Cells(baseGroup),
+		CandidateCells: aggregate.Cells(candGroup),
 	}, f.thresholds)
 	warnUnfiredAnnotations(errOut, specs, baseAgg, candAgg)
 	if f.asJSON {

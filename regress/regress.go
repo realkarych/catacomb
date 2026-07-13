@@ -32,9 +32,11 @@ type Record struct {
 }
 
 type Input struct {
-	Baseline    aggregate.Report
-	Candidate   aggregate.Report
-	Annotations []AnnotationSpec
+	Baseline       aggregate.Report
+	Candidate      aggregate.Report
+	Annotations    []AnnotationSpec
+	BaselineCells  []aggregate.Cell
+	CandidateCells []aggregate.Cell
 }
 
 type Coverage struct {
@@ -54,6 +56,7 @@ type Report struct {
 	OverallVerdict Verdict      `json:"overall_verdict"`
 	Sensitivity    *Sensitivity `json:"sensitivity,omitempty"`
 	Reliability    *Reliability `json:"reliability,omitempty"`
+	Audit          *Audit       `json:"audit,omitempty"`
 }
 
 var scopeOrder = map[string]int{"total": 0, "paired": 1, "phase": 2, "step": 3}
@@ -87,6 +90,7 @@ func Compare(in Input, th Thresholds) Report {
 	rep.Insufficient = countVerdict(findings, VerdictInsufficient)
 	rep.OverallVerdict = overallVerdict(findings, rep.Regressions, rep.Notables, rep.Insufficient, th.FailOnNotable)
 	rep.Reliability = computeReliability(b, c)
+	rep.Audit = computeAudit(in.BaselineCells, in.CandidateCells, th)
 	return rep
 }
 

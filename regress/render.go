@@ -42,6 +42,23 @@ func RenderHuman(r Report, w io.Writer) {
 		_, _ = fmt.Fprintln(w, formatReliability("baseline", r.Reliability.Baseline))
 		_, _ = fmt.Fprintln(w, formatReliability("candidate", r.Reliability.Candidate))
 	}
+	if r.Audit != nil {
+		for _, f := range r.Audit.Baseline {
+			_, _ = fmt.Fprintln(w, formatCellFlag("baseline", f))
+		}
+		for _, f := range r.Audit.Candidate {
+			_, _ = fmt.Fprintln(w, formatCellFlag("candidate", f))
+		}
+	}
+}
+
+func formatCellFlag(group string, f CellFlag) string {
+	task := ""
+	if f.Task != "" {
+		task = fmt.Sprintf(" (task %s)", f.Task)
+	}
+	return fmt.Sprintf("audit: %s run %s%s %s %g vs group median %g (band %g)",
+		group, f.RunID, task, f.Metric, f.Value, f.Median, f.Band)
 }
 
 func formatReliability(group string, gr GroupReliability) string {

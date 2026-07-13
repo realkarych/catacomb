@@ -19,6 +19,8 @@ type Thresholds struct {
 	AnnotationRateDelta float64
 	PairedAlpha         float64
 	PairedMinTasks      int
+	AuditIQRFactor      float64
+	AuditRelDelta       float64
 }
 
 func DefaultThresholds() Thresholds {
@@ -33,6 +35,8 @@ func DefaultThresholds() Thresholds {
 		AnnotationRateDelta: 0.1,
 		PairedAlpha:         0.05,
 		PairedMinTasks:      5,
+		AuditIQRFactor:      3.0,
+		AuditRelDelta:       0.5,
 	}
 }
 

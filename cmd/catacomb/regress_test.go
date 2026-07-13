@@ -93,6 +93,8 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		{"annotation-rate-delta", "0.15", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AnnotationRateDelta, 'g', -1, 64) }},
 		{"paired-alpha", "0.02", func(th regress.Thresholds) string { return strconv.FormatFloat(th.PairedAlpha, 'g', -1, 64) }},
 		{"paired-min-tasks", "7", func(th regress.Thresholds) string { return strconv.Itoa(th.PairedMinTasks) }},
+		{"audit-iqr-factor", "4.5", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AuditIQRFactor, 'g', -1, 64) }},
+		{"audit-rel-delta", "0.7", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AuditRelDelta, 'g', -1, 64) }},
 	}
 	for _, tc := range cases {
 		var f regressFlags
@@ -168,6 +170,54 @@ func TestRegressPairedMinTasksRejectsNonPositive(t *testing.T) {
 	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--paired-min-tasks", "0"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "--paired-min-tasks must be > 0")
+}
+
+func TestRegressAuditIQRFactorRejectsNonPositive(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--audit-iqr-factor", "0"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--audit-iqr-factor must be > 0")
+}
+
+func TestRegressAuditRelDeltaRejectsNonPositive(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--audit-rel-delta", "-1"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--audit-rel-delta must be > 0")
+}
+
+func TestRegressAuditBlockEndToEnd(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 3; i++ {
+		writeTokenEvidenceRun(t, root, fmt.Sprintf("base-%d", i), "base", 10)
+		writeTokenEvidenceRun(t, root, fmt.Sprintf("cand-%d", i), "cand", 10)
+	}
+	writeTokenEvidenceRun(t, root, "cand-3", "cand", 1000)
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--json"}, &out, &errBuf)
+	assert.Equal(t, 0, code, out.String()+errBuf.String())
+	var rep regress.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	require.NotNil(t, rep.Audit)
+	assert.Empty(t, rep.Audit.Baseline)
+	require.NotEmpty(t, rep.Audit.Candidate)
+	metrics := make([]string, 0, len(rep.Audit.Candidate))
+	for _, fl := range rep.Audit.Candidate {
+		assert.Equal(t, "cand-3", fl.RunID)
+		metrics = append(metrics, fl.Metric)
+	}
+	assert.Contains(t, metrics, "tokens_in")
+}
+
+func TestRegressJSONOmitsAuditAvsA(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=base", "--json"}, &out, &errBuf)
+	assert.Equal(t, 0, code, errBuf.String())
+	assert.NotContains(t, out.String(), `"audit"`)
 }
 
 func TestRegressStrictInsufficientExitOne(t *testing.T) {
