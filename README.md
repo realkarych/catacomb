@@ -293,6 +293,8 @@ The verifier reads the captured artifacts and emits one pass/fail line — two c
 with the shipped [Python SDK](integrations/verifier):
 
 ```python
+import os
+
 from catacomb_verifier import Cell, emit, compare_tables
 
 cell = Cell.from_env()
