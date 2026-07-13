@@ -276,3 +276,13 @@ func TestBenchNoOfflineFlag(t *testing.T) {
 	require.NotNil(t, rd)
 	assert.True(t, strings.HasSuffix(rd.DefValue, filepath.Join(".catacomb", "runs")) || rd.DefValue == "")
 }
+
+func TestBenchWorkspaceFlagsRegistered(t *testing.T) {
+	cmd := newBenchCmd()
+	wd := cmd.Flags().Lookup("workspaces-dir")
+	require.NotNil(t, wd)
+	assert.Empty(t, wd.DefValue)
+	kw := cmd.Flags().Lookup("keep-workspaces")
+	require.NotNil(t, kw)
+	assert.Equal(t, "false", kw.DefValue)
+}

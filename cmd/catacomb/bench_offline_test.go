@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -348,7 +349,7 @@ func TestBenchEnvStamps(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := benchEnvStamps(tt.runs, "sess")
+			env := benchEnvStamps(tt.runs, "sess", nil)
 			require.NotNil(t, env)
 			assert.Equal(t, Version, env.CatacombVersion)
 			assert.Equal(t, runtime.GOOS, env.Resources.OS)
@@ -599,7 +600,7 @@ func TestCaptureArtifactsOfflineCaptureError(t *testing.T) {
 	entry := &bench.ManifestEntry{}
 	cell := offlineCell("r", bench.Task{ID: "t", Dir: work, Artifacts: []string{"f.txt"}}, bench.Variant{ID: "base"})
 	var errb bytes.Buffer
-	captureArtifactsOffline(&errb, cell, dir, entry)
+	captureArtifactsOffline(&errb, cell, dir, work, entry)
 	assert.Contains(t, entry.Note, "artifacts:")
 	assert.Contains(t, errb.String(), "bench r: artifacts:")
 }
@@ -611,7 +612,7 @@ func TestCaptureArtifactsOfflineStampError(t *testing.T) {
 	entry := &bench.ManifestEntry{}
 	cell := offlineCell("r", bench.Task{ID: "t", Dir: work, Artifacts: []string{"f.txt"}}, bench.Variant{ID: "base"})
 	var errb bytes.Buffer
-	captureArtifactsOffline(&errb, cell, dir, entry)
+	captureArtifactsOffline(&errb, cell, dir, work, entry)
 	assert.Contains(t, entry.Note, "artifacts stamp:")
 	assert.Contains(t, errb.String(), "bench r: artifacts stamp:")
 }
@@ -632,6 +633,168 @@ func TestVerifierPassed(t *testing.T) {
 	bad := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(bad, "scores.jsonl"), 0o700))
 	assert.False(t, verifierPassed(bad, "r"))
+}
+
+func stubBenchExecRouted(t *testing.T, childCmd string, exits map[string]int, env ...string) *execCapture {
+	t.Helper()
+	t.Setenv("GO_HELPER_BENCH", "1")
+	t.Setenv("GO_HELPER_WS", "1")
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
+	cap := &execCapture{}
+	orig := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, _ ...string) *exec.Cmd {
+		var c *exec.Cmd
+		if name == childCmd {
+			c = exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperBenchChild")
+		} else {
+			c = exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperWorkspaceExit", "--", strconv.Itoa(exits[name]))
+		}
+		cap.names = append(cap.names, name)
+		cap.cmds = append(cap.cmds, c)
+		return c
+	}
+	t.Cleanup(func() { execCommandContext = orig })
+	return cap
+}
+
+func TestBenchWorkspaceCellOrderingAndWorkdirThreading(t *testing.T) {
+	projects, runs, base := t.TempDir(), t.TempDir(), t.TempDir()
+	cap := stubBenchExecRouted(t, "sess-a", nil,
+		"HELPER_SESSION=sess-a", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cell := offlineCell("bench-b-t1-v-r1",
+		bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}, Teardown: []string{"td-cmd"}}},
+		bench.Variant{ID: "v", Setup: []string{"setup-cmd"}})
+	o := offlineOpts{projectsDir: projects, runsDir: runs, pricer: newPricer(), workspace: workspaceOpts{baseDir: base}}
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil, o)
+	require.False(t, failed)
+	require.Equal(t, []string{"ws-cmd", "setup-cmd", "sess-a", "td-cmd"}, cap.names)
+	wsDir := cap.cmds[0].Dir
+	require.Equal(t, base, filepath.Dir(wsDir))
+	require.Equal(t, wsDir, cap.cmds[1].Dir)
+	require.Equal(t, wsDir, cap.cmds[2].Dir)
+	require.Equal(t, wsDir, cap.cmds[3].Dir)
+	require.NoDirExists(t, wsDir)
+	require.NotEmpty(t, entry.EvidenceDir)
+	for _, kv := range cap.cmds[2].Env {
+		require.False(t, strings.HasPrefix(kv, "CATACOMB_PATCH="))
+	}
+}
+
+func TestBenchWorkspaceStampsInMeta(t *testing.T) {
+	projects, runs, base := t.TempDir(), t.TempDir(), t.TempDir()
+	stubBenchExecRouted(t, "sess-a", nil,
+		"HELPER_SESSION=sess-a", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	ws := &bench.Workspace{Cmd: []string{"ws-cmd"}, Rev: "r42", PatchSHA256: "ab34"}
+	cell := offlineCell("bench-b-t1-v-r1", bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: ws}, bench.Variant{ID: "v"})
+	o := offlineOpts{projectsDir: projects, runsDir: runs, pricer: newPricer(), workspace: workspaceOpts{baseDir: base}}
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil, o)
+	require.False(t, failed)
+	got, err := evidence.ScanRuns(runs)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Meta.Env)
+	require.NotNil(t, got[0].Meta.Env.Workspace)
+	require.Equal(t, "r42", got[0].Meta.Env.Workspace.Rev)
+	require.Equal(t, "ab34", got[0].Meta.Env.Workspace.PatchSHA256)
+	require.NotEmpty(t, entry.EvidenceDir)
+}
+
+func TestBenchWorkspaceFailureNoteAndNoEvidence(t *testing.T) {
+	projects, runs, base := t.TempDir(), t.TempDir(), t.TempDir()
+	cap := stubBenchExecRouted(t, "sess-a", map[string]int{"ws-cmd": 3},
+		"HELPER_SESSION=sess-a", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cell := offlineCell("bench-b-t1-v-r1",
+		bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}, Teardown: []string{"td-cmd"}}},
+		bench.Variant{ID: "v"})
+	o := offlineOpts{projectsDir: projects, runsDir: runs, pricer: newPricer(), workspace: workspaceOpts{baseDir: base}}
+	entry, failed, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil, o)
+	require.True(t, failed)
+	require.False(t, verified)
+	require.Equal(t, 3, entry.ExitCode)
+	require.Contains(t, entry.Note, "workspace failed")
+	require.Empty(t, entry.EvidenceDir)
+	require.Equal(t, []string{"ws-cmd", "td-cmd"}, cap.names)
+	require.False(t, entry.FinishedAt.IsZero())
+}
+
+func TestBenchWorkspaceSetupCancelledNote(t *testing.T) {
+	base := t.TempDir()
+	stubBenchExecRouted(t, "sess-a", nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	cell := offlineCell("bench-b-t1-v-r1",
+		bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}}},
+		bench.Variant{ID: "v"})
+	o := offlineOpts{projectsDir: t.TempDir(), runsDir: t.TempDir(), pricer: newPricer(), workspace: workspaceOpts{baseDir: base}}
+	entry, failed, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil, o)
+	require.True(t, failed)
+	require.False(t, verified)
+	require.Equal(t, "workspace failed; cancelled", entry.Note)
+	require.Empty(t, entry.EvidenceDir)
+}
+
+func TestBenchWorkspaceTeardownFailureNoteMerged(t *testing.T) {
+	projects, runs, base := t.TempDir(), t.TempDir(), t.TempDir()
+	stubBenchExecRouted(t, "sess-a", map[string]int{"td-cmd": 5},
+		"HELPER_SESSION=sess-a", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cell := offlineCell("bench-b-t1-v-r1",
+		bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}, Teardown: []string{"td-cmd"}}},
+		bench.Variant{ID: "v"})
+	o := offlineOpts{projectsDir: projects, runsDir: runs, pricer: newPricer(), workspace: workspaceOpts{baseDir: base}}
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil, o)
+	require.False(t, failed)
+	require.Contains(t, entry.Note, "workspace teardown")
+	require.NotEmpty(t, entry.EvidenceDir)
+}
+
+func TestBenchWorkspaceKeepFlag(t *testing.T) {
+	projects, runs, base := t.TempDir(), t.TempDir(), t.TempDir()
+	cap := stubBenchExecRouted(t, "sess-a", nil,
+		"HELPER_SESSION=sess-a", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cell := offlineCell("bench-b-t1-v-r1", bench.Task{ID: "t1", Cmd: []string{"sess-a"}, Workspace: &bench.Workspace{Cmd: []string{"ws-cmd"}}}, bench.Variant{ID: "v"})
+	o := offlineOpts{projectsDir: projects, runsDir: runs, pricer: newPricer(), workspace: workspaceOpts{baseDir: base, keep: true}}
+	var errb bytes.Buffer
+	_, failed, _ := runBenchCellOffline(t.Context(), io.Discard, &errb, cell, "h", nil, o)
+	require.False(t, failed)
+	require.DirExists(t, cap.cmds[0].Dir)
+	require.Contains(t, errb.String(), "workspace kept: "+cap.cmds[0].Dir)
+}
+
+func TestBenchWorkspaceDormancy(t *testing.T) {
+	projects, runs := t.TempDir(), t.TempDir()
+	cap := stubBenchExecRouted(t, "sess-a", nil,
+		"HELPER_SESSION=sess-a", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cell := offlineCell("bench-b-t1-v-r1", bench.Task{ID: "t1", Cmd: []string{"sess-a"}}, bench.Variant{ID: "v"})
+	o := offlineOpts{projectsDir: projects, runsDir: runs, pricer: newPricer()}
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil, o)
+	require.False(t, failed)
+	require.Equal(t, []string{"sess-a"}, cap.names)
+	got, err := evidence.ScanRuns(runs)
+	require.NoError(t, err)
+	require.Nil(t, got[0].Meta.Env.Workspace)
+	require.NotEmpty(t, entry.EvidenceDir)
+}
+
+func TestBenchWorkspaceFailFastAtRunLevel(t *testing.T) {
+	projects, runs, base := t.TempDir(), t.TempDir(), t.TempDir()
+	stubBenchExecRouted(t, "sess-ff", map[string]int{"ws-cmd": 7},
+		"HELPER_SESSION=sess-ff", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	basket := writeBasket(t, "basket: bws\nreps: 2\ntasks:\n  - id: t1\n    cmd: [\"sess-ff\"]\n    workspace:\n      cmd: [\"ws-cmd\"]\nvariants:\n  - id: base\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	err := runBench(t.Context(), io.Discard, io.Discard, basket, benchFlags{
+		projectsDir: projects, runsDir: runs, manifest: manifest,
+		failFast: true, workspacesDir: base,
+	})
+	require.ErrorIs(t, err, errBenchFailFast)
+	entries, merr := bench.Manifest{Path: manifest}.Completed()
+	require.NoError(t, merr)
+	require.Len(t, entries, 1)
+	entry := entries["bench-bws-t1-base-r1"]
+	require.Contains(t, entry.Note, "workspace failed")
+	require.Equal(t, 7, entry.ExitCode)
 }
 
 func TestVerifyStatsAndSummary(t *testing.T) {
