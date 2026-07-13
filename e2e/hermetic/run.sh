@@ -26,6 +26,7 @@
 #   ties-pass boundary) -> 16 SP5 judge panel (three-judge fixture -> byte-exact
 #   mean/vote streams; the vote stream gates through regress --scores).
 #   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/rm -> 19 mcp stdio.
+#   Last, 20 SP-W workspace isolation (its own basket + runs dirs, nothing earlier touched).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -53,6 +54,12 @@
 # across two runs), step 18 does a baseline list/rm roundtrip on the step-11 trends
 # store (so it must run after 11 and after the SP4/SP5 steps that read baselines), and
 # step 19 drives the `catacomb mcp` stdio JSON-RPC server with a fixed 3-request script.
+# Step 20 is SP-W and mutates none of the earlier evidence: a separate 3-rep workspace
+# basket benched into fresh runs dirs proves per-cell dir isolation (the agent exits 7
+# on a reused dir, 8 on a leaked CATACOMB_PATCH), the patch handover (captured artifact
+# == patch bytes; rev + sha256 stamped at env.workspace, absent on the sql cells per
+# step 10), teardown after every cell, --keep-workspaces, and a seeded workspace-cmd
+# failure under --fail-fast (manifest note + exit code, teardown still firing).
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -138,6 +145,18 @@ sqlite3 "$work/e2e.db" <"$here/seed.sql"
 mkdir -p "$work/cellwork" "$work/projects" "$runs"
 cp "$here/agent.sh" "$work/cellwork/agent.sh"
 chmod +x "$work/cellwork/agent.sh"
+# SP-W fixtures (step 20): the ws basket renders next to fix.patch (patch paths
+# resolve against the basket file's dir); agent_ws.sh stays at $work root so the
+# workspace cmd can copy it into each fresh cell dir; setup/teardown logs
+# accumulate under wslog/ across cells. The fail twin swaps the workspace cmd —
+# the only line carrying CATACOMB_PATCH — for a guaranteed exit 3, keeping
+# teardown, so step 20 can assert teardown still runs after a failed setup.
+sed "s|__WORK__|$work|g" "$here/ws-basket.yaml.tmpl" >"$work/ws-basket.yaml"
+sed 's|cmd: \[.*CATACOMB_PATCH.*\]|cmd: ["sh", "-c", "exit 3"]|' \
+	"$work/ws-basket.yaml" >"$work/ws-basket-fail.yaml"
+cp "$here/fix.patch" "$here/verify_ws.py" "$here/agent_ws.sh" "$work/"
+chmod +x "$work/agent_ws.sh"
+mkdir -p "$work/wslog"
 export HERMETIC_DB="$work/e2e.db"
 export HERMETIC_PROJECTS="$work/projects"
 export HERMETIC_TDIR="$work"
@@ -345,7 +364,9 @@ echo "== 10. SP3 env stamps in meta.json (bench-time provenance) =="
 # agent.sh seds ONE generated uuid into both the transcript's sessionId and the
 # stream-json session_id, and every assistant turn in transcript.jsonl.tmpl carries
 # model "claude-opus-4-8" — so model_id MUST be present with that value; the template
-# has no top-level "version" field, so claude_code_version MUST be absent.
+# has no top-level "version" field, so claude_code_version MUST be absent. The sql
+# task has no workspace block either, so the SP-W stamp must be absent too (the
+# step-20 positive's negative: env carries no "workspace" key at all).
 rc=0
 python3 - "$base1_dir" <<'PY' || rc=$?
 import json, sys
@@ -377,13 +398,15 @@ if env.get("model_id") != "claude-opus-4-8":
     errs.append(f"model_id={env.get('model_id')!r} want 'claude-opus-4-8' (fixture assistant turns)")
 if "claude_code_version" in env:
     errs.append(f"claude_code_version present ({env['claude_code_version']!r}) but the fixture transcript has no version field")
+if "workspace" in env:
+    errs.append(f"workspace stamp present ({env['workspace']!r}) but the sql task has no workspace block")
 if errs:
     for x in errs:
         print("  -", x, file=sys.stderr)
     sys.exit(1)
-print("env: model_id=claude-opus-4-8 (fixture model), claude_code_version absent")
+print("env: model_id=claude-opus-4-8 (fixture model), claude_code_version + workspace absent")
 PY
-record "$rc" "meta.json env: model_id pinned to the fixture model, claude_code_version absent"
+record "$rc" "meta.json env: model_id pinned to the fixture model, claude_code_version + workspace absent"
 
 echo "== 11. SP3 pareto: record history, read the accuracy-vs-cost table =="
 # A fresh store pins the baseline variant, then the step-6 A-vs-A control and the step-5
@@ -954,6 +977,90 @@ if errs:
 print("mcp: tools/call mark acked 'marked start impl' with isError false")
 PY
 record "$rc" "mcp tools/call mark acks (marked start impl, isError false)"
+
+echo "== 20. SP-W workspace isolation: fresh dirs, patch handover, stamps, teardown =="
+# A separate 3-rep basket (ws-basket.yaml) proves the workspace lifecycle without
+# touching the sql evidence. The workspace cmd copies the agent into the fresh
+# cell dir and materializes the patch handed over via CATACOMB_PATCH (visible to
+# the workspace cmd ONLY) as applied.txt; the agent exits 7 if `marker` already
+# exists in its cwd and 8 if CATACOMB_PATCH leaked into its env — with a fresh
+# dir per cell neither guard ever trips (against shared-dir behavior rep 2 would
+# die with 7), so the manifest must hold exactly three exit-0 cells. Teardown
+# appends one line per cell to wslog/teardown.log (fresh context after every
+# cell), and default cleanup leaves the --workspaces-dir base empty.
+wsruns="$work/wsruns"
+wsroot="$work/wsroot"
+mkdir -p "$wsroot"
+run_expect 0 "ws bench (3 reps, fresh dir each)" -- \
+	catacomb bench "$work/ws-basket.yaml" --projects-dir "$work/projects" \
+	--runs-dir "$wsruns" --manifest "$work/ws.manifest.jsonl" --workspaces-dir "$wsroot"
+rc=0
+[ "$(grep -c '"exit_code":0' "$work/ws.manifest.jsonl")" -eq 3 ] || rc=1
+! grep -qE '"exit_code":[78]' "$work/ws.manifest.jsonl" || rc=1
+record "$rc" "isolation guards never tripped (3 exit-0 cells; no reused dir, no leaked patch var)"
+rc=0
+python3 -c 'import json,sys; e=json.loads(open(sys.argv[1]).readline()); sys.exit(0 if e["key"]=="verifier.pass" and e["value"]==1 else 1)' \
+	"$wsruns/bench-hermetic-ws-ws-only-r1/scores.jsonl" || rc=$?
+record "$rc" "verify_ws scored the handover through the SDK (verifier.pass 1 on r1)"
+rc=0
+[ "$(grep -c torn "$work/wslog/teardown.log")" -eq 3 ] || rc=1
+record "$rc" "teardown ran per cell (3 lines)"
+rc=0
+[ -z "$(ls -A "$wsroot")" ] || rc=1
+record "$rc" "workspace dirs removed after teardown"
+wsmeta="$wsruns/bench-hermetic-ws-ws-only-r1/meta.json"
+wantsha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$work/fix.patch")"
+rc=0
+python3 - "$wsmeta" "$wantsha" <<'PY' || rc=$?
+import json, sys
+
+ws = (json.load(open(sys.argv[1])).get("env") or {}).get("workspace") or {}
+errs = []
+if ws.get("rev") != "seed-r1":
+    errs.append(f"rev={ws.get('rev')!r} want 'seed-r1'")
+if ws.get("patch_sha256") != sys.argv[2]:
+    errs.append(f"patch_sha256={ws.get('patch_sha256')!r} want {sys.argv[2]}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"workspace stamp: rev=seed-r1, patch_sha256={sys.argv[2][:12]}... (fix.patch bytes)")
+PY
+record "$rc" "meta.json stamps workspace rev + patch sha256"
+rc=0
+cmp -s "$wsruns/bench-hermetic-ws-ws-only-r1/artifacts/applied.txt" "$work/fix.patch" || rc=1
+record "$rc" "patch handover: captured applied.txt == fix.patch bytes"
+run_expect 0 "ws bench --keep-workspaces" -- \
+	catacomb bench "$work/ws-basket.yaml" --projects-dir "$work/projects" \
+	--runs-dir "$work/wsruns2" --manifest "$work/ws2.manifest.jsonl" \
+	--workspaces-dir "$wsroot" --keep-workspaces
+rc=0
+[ -n "$(ls -A "$wsroot")" ] || rc=1
+[ "$(grep -c torn "$work/wslog/teardown.log")" -eq 6 ] || rc=1
+record "$rc" "--keep-workspaces keeps dirs, teardown still ran (6 lines)"
+# Seeded workspace failure: the fail twin's workspace cmd is `exit 3`, so under
+# --fail-fast the process must exit 1 with the fail-fast error on stderr, the
+# sole manifest entry must record the workspace exit code with the "workspace
+# failed" note, and cleanup must still run: teardown fires a 7th torn line and
+# the workspace dir is removed even though the cmd never succeeded.
+wsrootfail="$work/wsroot-fail"
+mkdir -p "$wsrootfail"
+run_json 1 "$work/ws-fail.out" \
+	"workspace cmd failure gates under --fail-fast (exit 1)" -- \
+	catacomb bench "$work/ws-basket-fail.yaml" --projects-dir "$work/projects" \
+	--runs-dir "$work/wsruns3" --manifest "$work/ws3.manifest.jsonl" \
+	--workspaces-dir "$wsrootfail" --fail-fast
+rc=0
+grep -q 'fail-fast' "$work/ws-fail.out.stderr" || rc=1
+record "$rc" "fail-fast error names the flag on stderr"
+rc=0
+grep -q '"exit_code":3' "$work/ws3.manifest.jsonl" || rc=1
+grep -q '"note":"workspace failed"' "$work/ws3.manifest.jsonl" || rc=1
+record "$rc" "manifest records the workspace exit code + 'workspace failed' note"
+rc=0
+[ "$(grep -c torn "$work/wslog/teardown.log")" -eq 7 ] || rc=1
+[ -z "$(ls -A "$wsrootfail")" ] || rc=1
+record "$rc" "teardown + removal still run when the workspace cmd fails"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

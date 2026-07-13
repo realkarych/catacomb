@@ -54,6 +54,8 @@ catacomb bench <basket.yaml> [flags]
 | `--dry-run` | false | Print the cell expansion table and exit without executing |
 | `--projects-dir` | `~/.claude/projects` | Claude projects directory holding session transcripts |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory for bench runs |
+| `--workspaces-dir` | OS temp dir | Base directory for per-cell workspace dirs (see [Workspace isolation](#workspace-isolation)) |
+| `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
 
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
 combination, and cells run sequentially:
@@ -152,7 +154,7 @@ the manifest or revert the basket. If the manifest already has entries and you p
 neither `--resume` nor a fresh `--manifest`, `bench` refuses (exit `2`) rather than
 silently appending a second run's cells.
 
-`setup` commands run before **every** cell, in the task's working directory, as **plain
+`setup` commands run before **every** cell, in the cell's working directory, as **plain
 `exec`**: each line is split on whitespace and run directly, with **no shell** — pipes,
 redirects, `&&`, quoting, variable expansion, and globbing are not interpreted. Wrap a
 script if you need shell features. Setup inherits **only the parent process
@@ -179,6 +181,87 @@ catacomb bench checkout.yaml
 catacomb bench checkout.yaml --dry-run
 catacomb bench checkout.yaml --resume --fail-fast
 ```
+
+### Workspace isolation
+
+A task may declare a `workspace:` block — a user-supplied command that materializes a
+**fresh working directory for every cell**, so repetitions never contaminate each other
+(rep 2 reading rep 1's leftover files or git history is contamination, not skill). The
+canonical use is benchmarking against a pinned revision, optionally with a patch
+overlaid:
+
+```yaml
+tasks:
+  - id: etl-fix
+    workspace:
+      cmd: ["arc", "mount", "-r", "r123456", "."]
+      rev: "r123456"
+      teardown: ["arc", "unmount", "."]
+    cmd: ["claude", "-p", "...", "--output-format", "stream-json"]
+    verify: { cmd: ["python3", "verify_tables.py"] }
+
+variants:
+  - id: trunk
+  - id: patched
+    workspace:
+      cmd: ["sh", "apply.sh"]
+      patch: fix.patch
+      rev: "r123456+fix"
+      teardown: ["arc", "unmount", "."]
+```
+
+`workspace.cmd` is required within the block and runs as **plain `exec`** (argv, no
+shell) — like `verify.cmd`, not the whitespace-split `setup:` lines. `patch`, `rev`,
+and `teardown` are optional. A variant may declare its own `workspace:`, which replaces
+the task's **wholesale** — no field merging (`env` maps merge; `workspace` replaces) —
+so an override that only changes the patch restates `cmd`. `rev` is an opaque string
+stamped into evidence; catacomb never interprets it and never runs VCS or diff
+semantics of its own — checkout and patch application belong entirely to the
+user-supplied command.
+
+For each cell whose effective workspace is declared, the runner creates a fresh
+directory named after the cell's run-id under `--workspaces-dir` (default: the OS temp
+dir) and runs `workspace.cmd` in it. That directory then becomes the cell's working
+directory for everything that follows: the variant's `setup:` commands, the agent
+child, artifact capture (`artifacts:` globs resolve against it), and the inline
+verifier (its cwd and `CATACOMB_WORKDIR` in bench mode). `dir` and `workspace` are
+mutually exclusive — the two roots would compete — so a task declaring both is rejected
+at load, as is a basket pairing a variant `workspace` with any task that declares
+`dir`. Materialization shares the task's `timeout:`: the workspace command, setup, and
+the child all draw on one deadline.
+
+An optional `patch:` names a file resolved relative to the basket file's directory
+(absolute paths pass through). At load the file must be readable — its sha256 is
+computed once, and an unreadable patch rejects the basket (exit `2`) before any cell
+runs. The absolute path is handed to `workspace.cmd` as `CATACOMB_PATCH`, and **only**
+to `workspace.cmd` — the agent and the verifier never see the variable (a verifier that
+cares reads `rev` and `patch_sha256` from `meta.json`). Beyond `CATACOMB_PATCH`,
+`workspace.cmd` inherits only the parent process environment; task and variant `env:`
+maps stay agent-scoped, as with `setup:`.
+
+`teardown` (optional argv) runs in the workspace directory after the cell
+**unconditionally** — after success, failure, or timeout — on a fresh context with a
+1-minute deadline of its own, because the cell's deadline may already be expired and a
+leaked mount must not depend on the cell surviving. The directory is then removed,
+unless `--keep-workspaces`: teardown still runs, and the kept path is printed to stderr
+(`workspace kept: <path>`). A failing teardown or removal appends a note to the cell's
+manifest entry and warns to stderr, but never flips a verdict.
+
+A failing `workspace.cmd` — non-zero exit, spawn error, or deadline expiry — is an
+**operational cell failure**: the manifest records the exit code and the note
+`workspace failed`, no evidence is written, and teardown and cleanup still run.
+`--fail-fast` treats it like any other failing cell.
+
+Workspace cells stamp `meta.json`'s `env` block with a `workspace` object carrying the
+declared `rev` and the patch bytes' `patch_sha256`. Like the other env stamps these are
+descriptive provenance only — they never gate and join nothing. Cells without an
+effective workspace carry no `workspace` stamp and run byte-identically to a basket
+written before this block existed.
+
+Because workspace directories are ephemeral, offline [`verify`](#verify) is unchanged:
+it still runs with cwd = the evidence dir and `CATACOMB_WORKDIR` empty. A workspace
+task's verifier must therefore read from captured evidence — declare `artifacts:` globs
+for whatever the verifier needs to see again offline.
 
 ---
 
