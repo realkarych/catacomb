@@ -76,6 +76,9 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, basketPath string, 
 		return operational(err)
 	}
 	cells := basket.Cells()
+	if len(basket.Variants) == 1 {
+		fmt.Fprintln(stderr, "note: basket has 1 variant; bench records evidence, but regress needs >= 2 variants to gate")
+	}
 	if f.dryRun {
 		printDryRun(stdout, cells)
 		return nil

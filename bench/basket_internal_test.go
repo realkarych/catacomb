@@ -121,3 +121,14 @@ func TestValidateErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestParseTimeoutHint(t *testing.T) {
+	_, err := parseTimeout("30")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `use a duration with units`)
+	assert.ErrorIs(t, err, ErrTimeout)
+
+	_, err = parseTimeout("-5s")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "negative")
+}

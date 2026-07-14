@@ -89,8 +89,11 @@ func parseTimeout(s string) (time.Duration, error) {
 		return 0, nil
 	}
 	d, err := time.ParseDuration(s)
-	if err != nil || d < 0 {
-		return 0, fmt.Errorf("%w: %q", ErrTimeout, s)
+	if err != nil {
+		return 0, fmt.Errorf(`%w: %q (use a duration with units, e.g. "30s")`, ErrTimeout, s)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%w: %q must not be negative", ErrTimeout, s)
 	}
 	return d, nil
 }

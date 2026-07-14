@@ -230,6 +230,14 @@ func TestRunBenchDryRunPrintsTable(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr))
 }
 
+func TestRunBenchSingleVariantAdvisory(t *testing.T) {
+	basket := writeBasket(t, "basket: bsolo\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"claude\"]\nvariants:\n  - id: v1\n")
+	var out, errBuf bytes.Buffer
+	require.NoError(t, runBench(t.Context(), &out, &errBuf, basket, benchFlags{dryRun: true}))
+	assert.Contains(t, errBuf.String(), "1 variant")
+	assert.Contains(t, errBuf.String(), "regress needs")
+}
+
 func TestRunBenchBadBasketIsOperational(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"bench", filepath.Join(t.TempDir(), "missing.yaml")}, &out, &errBuf)
