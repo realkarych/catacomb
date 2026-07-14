@@ -26,24 +26,24 @@ var (
 )
 
 var (
-	ErrEmptyBasketName = errors.New("bench: basket name is empty")
-	ErrBasketNameLen   = errors.New("bench: basket name exceeds 256 bytes")
-	ErrReps            = errors.New("bench: reps must be >= 1")
-	ErrNoTasks         = errors.New("bench: at least one task is required")
-	ErrNoVariants      = errors.New("bench: at least one variant is required")
-	ErrEmptyID         = errors.New("bench: id is empty")
-	ErrIDLen           = errors.New("bench: id exceeds 256 bytes")
-	ErrCharset         = errors.New("bench: value has characters outside [A-Za-z0-9._-]")
-	ErrDuplicateID     = errors.New("bench: duplicate id")
-	ErrEmptyCmd        = errors.New("bench: task cmd is empty")
-	ErrRunIDCollision  = errors.New("bench: run-id collision")
-	ErrCheckpoint      = errors.New("bench: invalid checkpoint")
-	ErrTimeout         = errors.New("bench: invalid timeout")
-	ErrVerifyCmd       = errors.New("bench: verify cmd is empty")
-	ErrArtifactGlob    = errors.New("bench: invalid artifact glob")
-	ErrWorkspaceCmd    = errors.New("bench: workspace cmd is empty")
-	ErrWorkspaceDir    = errors.New("bench: dir and workspace are mutually exclusive")
-	ErrWorkspacePatch  = errors.New("bench: workspace patch unreadable")
+	ErrEmptyBasketName = errors.New("basket name is empty")
+	ErrBasketNameLen   = errors.New("basket name exceeds 256 bytes")
+	ErrReps            = errors.New("reps must be >= 1")
+	ErrNoTasks         = errors.New("at least one task is required")
+	ErrNoVariants      = errors.New("at least one variant is required")
+	ErrEmptyID         = errors.New("id is empty")
+	ErrIDLen           = errors.New("id exceeds 256 bytes")
+	ErrCharset         = errors.New("value has characters outside [A-Za-z0-9._-]")
+	ErrDuplicateID     = errors.New("duplicate id")
+	ErrEmptyCmd        = errors.New("task cmd is empty")
+	ErrRunIDCollision  = errors.New("run-id collision")
+	ErrCheckpoint      = errors.New("invalid checkpoint")
+	ErrTimeout         = errors.New("invalid timeout")
+	ErrVerifyCmd       = errors.New("verify cmd is empty")
+	ErrArtifactGlob    = errors.New("invalid artifact glob")
+	ErrWorkspaceCmd    = errors.New("workspace cmd is empty")
+	ErrWorkspaceDir    = errors.New("dir and workspace are mutually exclusive")
+	ErrWorkspacePatch  = errors.New("workspace patch unreadable")
 )
 
 type Task struct {
@@ -148,7 +148,7 @@ func decodeBasket(path string) (Basket, string, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&b); err != nil {
-		return Basket{}, "", fmt.Errorf("bench.Load: %w", err)
+		return Basket{}, "", fmt.Errorf("bench.Load: %w", humanizeDecodeErr(err))
 	}
 	if err := validate(b); err != nil {
 		return Basket{}, "", err
@@ -156,6 +156,39 @@ func decodeBasket(path string) (Basket, string, error) {
 	resolveExecPaths(&b, filepath.Dir(path))
 	sum := sha256.Sum256(data)
 	return b, hex.EncodeToString(sum[:]), nil
+}
+
+var yamlKindHuman = map[string]string{
+	"!!str": "a single value", "!!int": "a number", "!!seq": "a list",
+	"!!map": "a mapping", "!!bool": "a true/false value", "!!float": "a number",
+}
+
+var goTypeHuman = map[string]string{
+	"[]string": "a list of strings", "int": "a whole number",
+	"string": "a single value", "map[string]string": "a mapping of strings",
+	"[]bench.Task": "a list of tasks", "[]bench.Variant": "a list of variants",
+}
+
+var decodeTypeRe = regexp.MustCompile(`cannot unmarshal (\S+)(?: .+?)? into (\S+)`)
+
+func humanizeDecodeErr(err error) error {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return err
+	}
+	lines := make([]string, 0, len(te.Errors))
+	for _, m := range te.Errors {
+		lines = append(lines, decodeTypeRe.ReplaceAllStringFunc(m, func(s string) string {
+			g := decodeTypeRe.FindStringSubmatch(s)
+			got, ok1 := yamlKindHuman[g[1]]
+			want, ok2 := goTypeHuman[g[2]]
+			if !ok1 || !ok2 {
+				return s
+			}
+			return "expected " + want + ", but got " + got
+		}))
+	}
+	return errors.New(strings.Join(lines, "; "))
 }
 
 func resolveExecPaths(b *Basket, baseDir string) {

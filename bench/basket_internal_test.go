@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func validBasket() Basket {
@@ -54,6 +55,17 @@ func TestResolvePatchAbsError(t *testing.T) {
 	err := resolvePatch(&Workspace{Patch: "fix.patch"}, "base")
 	require.ErrorIs(t, err, ErrWorkspacePatch)
 	assert.ErrorContains(t, err, "boom")
+}
+
+func TestHumanizeDecodeErrNonTypeError(t *testing.T) {
+	sentinel := errors.New("plain")
+	assert.Same(t, sentinel, humanizeDecodeErr(sentinel))
+}
+
+func TestHumanizeDecodeErrUnmappedPassthrough(t *testing.T) {
+	te := &yaml.TypeError{Errors: []string{"line 1: cannot unmarshal !!str into widget"}}
+	got := humanizeDecodeErr(te)
+	assert.Equal(t, "line 1: cannot unmarshal !!str into widget", got.Error())
 }
 
 func TestValidateErrors(t *testing.T) {

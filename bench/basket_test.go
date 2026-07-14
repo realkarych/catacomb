@@ -659,3 +659,39 @@ variants:
 	require.NoError(t, err)
 	assert.Len(t, b.Cells(), 4)
 }
+
+func TestLoadTypeErrorIsHuman(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: "echo hi"
+variants:
+  - id: v1
+`), 0o600))
+	_, _, err := bench.Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected a list of strings")
+	assert.NotContains(t, err.Error(), "!!str")
+}
+
+func TestLoadValidationErrorNotDoubled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+basket: b
+reps: 0
+tasks:
+  - id: t1
+    cmd: ["echo"]
+variants:
+  - id: v1
+`), 0o600))
+	_, _, err := bench.Load(path)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "bench: ")
+	assert.ErrorIs(t, err, bench.ErrReps)
+}
