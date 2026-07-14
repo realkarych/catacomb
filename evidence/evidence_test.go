@@ -246,3 +246,23 @@ func TestWriteSrcReadError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "run-x")
 	require.Error(t, evidence.Write(dir, sampleMeta("run-x", "base"), []evidence.SourceFile{{Src: srcDir, Rel: "session.jsonl"}}))
 }
+
+func TestEnvStampsWorkspaceSerialization(t *testing.T) {
+	with := evidence.EnvStamps{
+		CatacombVersion: "v",
+		Workspace:       &evidence.WorkspaceStamp{Rev: "r42", PatchSHA256: "ab34"},
+	}
+	data, err := json.Marshal(with)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"workspace":{"rev":"r42","patch_sha256":"ab34"}`)
+
+	without := evidence.EnvStamps{CatacombVersion: "v"}
+	data, err = json.Marshal(without)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "workspace")
+
+	partial := evidence.EnvStamps{Workspace: &evidence.WorkspaceStamp{Rev: "r42"}}
+	data, err = json.Marshal(partial)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"workspace":{"rev":"r42"}`)
+}

@@ -41,6 +41,9 @@ var (
 	ErrTimeout         = errors.New("bench: invalid timeout")
 	ErrVerifyCmd       = errors.New("bench: verify cmd is empty")
 	ErrArtifactGlob    = errors.New("bench: invalid artifact glob")
+	ErrWorkspaceCmd    = errors.New("bench: workspace cmd is empty")
+	ErrWorkspaceDir    = errors.New("bench: dir and workspace are mutually exclusive")
+	ErrWorkspacePatch  = errors.New("bench: workspace patch unreadable")
 )
 
 type Task struct {
@@ -52,6 +55,16 @@ type Task struct {
 	Timeout     string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Artifacts   []string          `yaml:"artifacts,omitempty" json:"artifacts,omitempty"`
 	Verify      *Verify           `yaml:"verify,omitempty" json:"verify,omitempty"`
+	Workspace   *Workspace        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+}
+
+type Workspace struct {
+	Cmd         []string `yaml:"cmd" json:"cmd"`
+	Patch       string   `yaml:"patch,omitempty" json:"patch,omitempty"`
+	Rev         string   `yaml:"rev,omitempty" json:"rev,omitempty"`
+	Teardown    []string `yaml:"teardown,omitempty" json:"teardown,omitempty"`
+	PatchAbs    string   `yaml:"-" json:"-"`
+	PatchSHA256 string   `yaml:"-" json:"-"`
 }
 
 func (t Task) TimeoutDuration() (time.Duration, error) {
@@ -83,9 +96,10 @@ func parseTimeout(s string) (time.Duration, error) {
 }
 
 type Variant struct {
-	ID    string            `yaml:"id" json:"id"`
-	Env   map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Setup []string          `yaml:"setup,omitempty" json:"setup,omitempty"`
+	ID        string            `yaml:"id" json:"id"`
+	Env       map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Setup     []string          `yaml:"setup,omitempty" json:"setup,omitempty"`
+	Workspace *Workspace        `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 }
 
 type Basket struct {
@@ -103,6 +117,13 @@ type Cell struct {
 	Labels  map[string]string
 }
 
+func (c Cell) EffectiveWorkspace() *Workspace {
+	if c.Variant.Workspace != nil {
+		return c.Variant.Workspace
+	}
+	return c.Task.Workspace
+}
+
 func Load(path string) (Basket, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -117,8 +138,49 @@ func Load(path string) (Basket, string, error) {
 	if err := validate(b); err != nil {
 		return Basket{}, "", err
 	}
+	if err := resolvePatches(&b, filepath.Dir(path)); err != nil {
+		return Basket{}, "", err
+	}
 	sum := sha256.Sum256(data)
 	return b, hex.EncodeToString(sum[:]), nil
+}
+
+func resolvePatches(b *Basket, baseDir string) error {
+	for i := range b.Tasks {
+		if err := resolvePatch(b.Tasks[i].Workspace, baseDir); err != nil {
+			return fmt.Errorf("bench.Load: task[%d].workspace.patch: %w", i, err)
+		}
+	}
+	for i := range b.Variants {
+		if err := resolvePatch(b.Variants[i].Workspace, baseDir); err != nil {
+			return fmt.Errorf("bench.Load: variant[%d].workspace.patch: %w", i, err)
+		}
+	}
+	return nil
+}
+
+var absFn = filepath.Abs
+
+func resolvePatch(w *Workspace, baseDir string) error {
+	if w == nil || w.Patch == "" {
+		return nil
+	}
+	joined := w.Patch
+	if !filepath.IsAbs(joined) {
+		joined = filepath.Join(baseDir, joined)
+	}
+	abs, err := absFn(joined)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrWorkspacePatch, err)
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrWorkspacePatch, err)
+	}
+	sum := sha256.Sum256(data)
+	w.PatchAbs = abs
+	w.PatchSHA256 = hex.EncodeToString(sum[:])
+	return nil
 }
 
 func validate(b Basket) error {
@@ -144,6 +206,9 @@ func validate(b Basket) error {
 		return err
 	}
 	if err := validateVariants(b.Variants); err != nil {
+		return err
+	}
+	if err := validateWorkspaceDirExclusion(b); err != nil {
 		return err
 	}
 	return validateRunIDs(b)
@@ -191,6 +256,12 @@ func validateTasks(tasks []Task) error {
 		}
 		if err := validateArtifacts(i, t); err != nil {
 			return err
+		}
+		if t.Workspace != nil && len(t.Workspace.Cmd) == 0 {
+			return fmt.Errorf("bench.Load: task[%d].workspace.cmd: %w", i, ErrWorkspaceCmd)
+		}
+		if t.Workspace != nil && t.Dir != "" {
+			return fmt.Errorf("bench.Load: task[%d]: %w", i, ErrWorkspaceDir)
 		}
 	}
 	return nil
@@ -256,6 +327,26 @@ func validateVariants(variants []Variant) error {
 	for i, v := range variants {
 		if err := checkID("variant", i, v.ID, seen); err != nil {
 			return err
+		}
+		if v.Workspace != nil && len(v.Workspace.Cmd) == 0 {
+			return fmt.Errorf("bench.Load: variant[%d].workspace.cmd: %w", i, ErrWorkspaceCmd)
+		}
+	}
+	return nil
+}
+
+func validateWorkspaceDirExclusion(b Basket) error {
+	for _, v := range b.Variants {
+		if v.Workspace == nil {
+			continue
+		}
+		for _, t := range b.Tasks {
+			if t.Dir != "" {
+				return fmt.Errorf(
+					"bench.Load: task %q has dir but variant %q has workspace: %w",
+					t.ID, v.ID, ErrWorkspaceDir,
+				)
+			}
 		}
 	}
 	return nil

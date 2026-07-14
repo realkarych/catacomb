@@ -26,10 +26,12 @@
 #   CLAUDE_CODE_OAUTH_TOKEN   Claude Pro/Max subscription auth for `claude -p`, an
 #                       alternative to ANTHROPIC_API_KEY (generate: `claude setup-token`).
 #
-# The bench cells resolve `./presence.sh` / `./answer.sh` / `./sql-live.sh`, the
-# `./verify_sql.py` verify hook, and `mcp.json` relative to the e2e directory, so this
-# driver cd's into its own directory before invoking bench (the baskets declare
-# `dir: .`). All other paths are absolute, so the cd does not affect them.
+# The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json` relative to
+# the e2e directory, so this driver cd's into its own directory before invoking bench
+# (the presence and continuous baskets declare `dir: .`). The SQL basket instead runs
+# each cell in a fresh per-cell workspace whose setup cmd copies `./sql-live.sh` and
+# `./verify_sql.py` from E2E_DIR (exported below). All other paths are absolute, so
+# the cd does not affect them.
 set -euo pipefail
 
 e2e_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -79,18 +81,22 @@ db="$work/e2e.db"
 mkdir -p "$runs1" "$runs2" "$runs3"
 
 # The SQL basket's agent reads a seeded database and its verifier reads the golden; both
-# live here in the work dir, OUTSIDE the cells' `dir: .` workdir (e2e/) — the documented
+# live here in the work dir, OUTSIDE every cell's per-cell workspace — the documented
 # anti-gaming layout. The driver hands them to bench as ambient env: the wrapper reads
-# SQL_DB, the verify hook reads GOLDEN.
+# SQL_DB, the verify hook reads GOLDEN. E2E_DIR anchors the basket's workspace.cmd
+# (which inherits this driver's environment through catacomb): it copies sql-live.sh
+# and verify_sql.py from here into each cell's fresh workspace.
 sqldb="$work/sql.db"
 sqlgolden="$work/sql-golden.csv"
 sqlite3 "$sqldb" <"$e2e_dir/sql-seed.sql" || fatal "cannot seed the SQL basket database"
 cp -f "$e2e_dir/sql-golden.csv" "$sqlgolden" || fatal "cannot stage the SQL basket golden"
 export SQL_DB="$sqldb"
 export GOLDEN="$sqlgolden"
+export E2E_DIR="$e2e_dir"
 
-# The SQL cells run in e2e/ (dir: .) and can only run sqlite3, so out/ is created by the
-# wrapper; clean the whole tree on exit so a live run leaves the source dir pristine.
+# Pre-workspace runs created out/ here in e2e/ (the SQL cells then shared `dir: .`);
+# cells now write out/ inside their own temp workspace, so nothing should land here.
+# The trap cleanup stays as defensive hygiene against leftovers from older runs.
 sqlout="$e2e_dir/out"
 
 # shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below

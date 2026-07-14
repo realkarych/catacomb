@@ -9,19 +9,23 @@
 #   - see degraded — the all-orders total instead of paid-only — fail verification
 #     (~0/5 pass) and trip the gate on `ann:verifier.pass` (the seeded regression).
 #
-# `dir: .` — same cwd contract as basket-presence.yaml: run.sh cd's into e2e so
-# `./sql-live.sh` and the verify cmd `./verify_sql.py` resolve here. Two env vars are
-# supplied by the driver (e2e/run.sh), not this file, because both point into the
-# driver's per-run work dir: SQL_DB (the seeded database the agent reads) and GOLDEN
-# (the expected table the verifier reads). Keeping the golden in the driver's work dir
-# rather than this workdir is the documented anti-gaming layout — the verifier's ground
-# truth lives outside the directory the agent runs in.
+# `workspace` — every cell runs in a fresh per-cell temp dir; the setup cmd copies the
+# wrapper and the verify hook in from E2E_DIR (the e2e/ source dir, exported by the
+# driver, e2e/run.sh), so `./sql-live.sh` and the verify cmd `./verify_sql.py` resolve
+# inside the cell's own workspace and out/result.csv cannot survive from one cell to
+# the next (under the old shared `dir: .` contract it lingered in e2e/ from rep to
+# rep). Two env vars are supplied by the driver, not this file, because both point into
+# the driver's per-run work dir: SQL_DB (the seeded database the agent reads) and
+# GOLDEN (the expected table the verifier reads). Keeping the golden in the driver's
+# work dir rather than the cell's workspace is the documented anti-gaming layout — the
+# verifier's ground truth lives outside the directory the agent runs in.
 basket: e2e-sql
 reps: 5
 tasks:
   - id: sql
     cmd: ["./sql-live.sh"]
-    dir: .
+    workspace:
+      cmd: ["sh", "-c", "cp \"$E2E_DIR\"/sql-live.sh \"$E2E_DIR\"/verify_sql.py ."]
     timeout: 120s
     artifacts: ["out/result.csv"]
     verify:
