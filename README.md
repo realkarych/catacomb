@@ -397,8 +397,8 @@ Reading order:
 4. [CLI reference](docs/guide/cli.md) — every command, flag, and exit code
 5. [Configuration](docs/guide/configuration.md) · [Ingestion](docs/guide/ingestion.md) · [Privacy & operations](docs/guide/privacy-and-operations.md)
 
-Design depth: [design spec](docs/specs/2026-06-20-catacomb-design.md) ·
-[ADRs](docs/adr/) · [implementation plans](docs/plans/) ·
+Design depth: [design spec](docs/internal/specs/2026-06-20-catacomb-design.md) ·
+[ADRs](docs/adr/) · [implementation plans](docs/internal/plans/) ·
 [release process](docs/RELEASING.md) · [contributor & agent guide](AGENTS.md).
 
 ```sh

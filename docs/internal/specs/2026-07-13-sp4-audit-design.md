@@ -3,9 +3,9 @@
 - **Date:** 2026-07-13
 - **Status:** approved design (ADR-0027 SP4; decisions adjudicated there and in the
   [gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md) §4.4; execution pre-approved)
-- **Related:** [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md),
-  [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) (deterministic observables),
-  [ADR-0024](../adr/0024-secrets-at-rest-write-path-redaction.md) (evidence redaction),
+- **Related:** [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md),
+  [ADR-0022](../../adr/0022-regression-detection-over-repeated-runs.md) (deterministic observables),
+  [ADR-0024](../../adr/0024-secrets-at-rest-write-path-redaction.md) (evidence redaction),
   SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md)
   (scores round-trip), PV-6b [live calibration](../reviews/2026-07-08-pv6b-live-calibration.md)
   (cost/duration noise under prompt caching)

@@ -4,7 +4,7 @@
 - **Status:** approved design (ADR-0027 SP5; decisions adjudicated there and in the
   [gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md) §2.4/§4.5; execution
   pre-approved)
-- **Related:** [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md),
+- **Related:** [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md),
   SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md)
   (scores dialect + provenance), `integrations/verifier` (sibling package conventions),
   `integrations/deepeval` (console-script precedent)

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-02
 - **Deciders:** @realkarych
-- **Related:** ADR-0002, ADR-0017, ADR-0019; spec §17; review `docs/reviews/2026-07-02-post-p0-cto-design-review.md` §4.3, amended by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
+- **Related:** ADR-0002, ADR-0017, ADR-0019; spec §17; review `docs/internal/reviews/2026-07-02-post-p0-cto-design-review.md` §4.3, amended by [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md)
 
 ## Context
 

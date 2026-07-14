@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-12
 - **Deciders:** @realkarych
-- **Related:** [2026-07-12 gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md); ADR-0016, ADR-0022, ADR-0023, ADR-0026; SP1 design spec [2026-07-12-sp1-verifier-contract-design.md](../specs/2026-07-12-sp1-verifier-contract-design.md)
+- **Related:** [2026-07-12 gap review](../internal/reviews/2026-07-12-eval-best-practices-gap-review.md); ADR-0016, ADR-0022, ADR-0023, ADR-0026; SP1 design spec [2026-07-12-sp1-verifier-contract-design.md](../internal/specs/2026-07-12-sp1-verifier-contract-design.md)
 
 ## Context
 

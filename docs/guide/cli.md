@@ -570,7 +570,7 @@ verdict, and never affects the exit code. A flagged cell is an invitation to rea
 run's evidence — [`pack`](#pack) bundles it for review — not a regression. When no flag
 fires the block is omitted entirely. Treat `cost_usd` and `duration_ms` flags with
 care: under prompt caching, real per-run cost spreads up to ~5× between byte-identical
-runs ([PV-6b](../reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
+runs (measured 2026-07-08, [PV-6b](../internal/reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
 inherits runner load — `tokens_out` and `turns` are the trustworthy anomaly axes. In
 particular, the first run of a bench batch often pays a cold-start premium and can flag
 on `duration_ms` routinely — expected, not an anomaly.

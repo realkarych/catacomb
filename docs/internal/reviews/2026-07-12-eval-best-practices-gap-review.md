@@ -74,7 +74,7 @@ The guard rail across all five: every item enters as an extension of an existing
 
 ## 5. Decision and sequencing
 
-Recorded as [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md): five sub-projects, SP1 (verifier contract) → SP2 (pass^k + paired) → SP3 (env stamps + Pareto) → SP4 (audit) → SP5 (judge utilities), each its own spec → plan → subagent-driven implementation → E2E acceptance. SP1 design: [2026-07-12-sp1-verifier-contract-design.md](../specs/2026-07-12-sp1-verifier-contract-design.md). The deferred corpus work (gap 2.3) is intentionally out of this wave: task authoring is organizational, not code, and the contract must exist first.
+Recorded as [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md): five sub-projects, SP1 (verifier contract) → SP2 (pass^k + paired) → SP3 (env stamps + Pareto) → SP4 (audit) → SP5 (judge utilities), each its own spec → plan → subagent-driven implementation → E2E acceptance. SP1 design: [2026-07-12-sp1-verifier-contract-design.md](../specs/2026-07-12-sp1-verifier-contract-design.md). The deferred corpus work (gap 2.3) is intentionally out of this wave: task authoring is organizational, not code, and the contract must exist first.
 
 ## 6. Primary sources
 

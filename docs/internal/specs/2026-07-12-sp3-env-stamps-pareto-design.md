@@ -3,9 +3,9 @@
 - **Date:** 2026-07-12
 - **Status:** approved design (ADR-0027 SP3; decisions adjudicated there and in the
   [gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md) §4.3; execution pre-approved)
-- **Related:** [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md),
-  [ADR-0017](../adr/0017-data-format-versioning-and-migration.md) (stamp discipline),
-  [ADR-0026 §6](../adr/0026-form-factor-pivot-offline-eval-gate.md) (version stamps),
+- **Related:** [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md),
+  [ADR-0017](../../adr/0017-data-format-versioning-and-migration.md) (stamp discipline),
+  [ADR-0026 §6](../../adr/0026-form-factor-pivot-offline-eval-gate.md) (version stamps),
   SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md),
   SP2 spec [2026-07-12-sp2-reliability-metrics-design.md](2026-07-12-sp2-reliability-metrics-design.md)
 
