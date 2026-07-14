@@ -16,7 +16,7 @@
 </p>
 
 <p align="center"><b>Catacomb is an offline eval gate</b>: a local CLI that runs your Claude Code<br>
-  tasks repeatedly and gates regressions in CI — no daemon, no service, no network.</p>
+  tasks repeatedly and gates regressions in CI.</p>
 
 <!-- Badges -->
 <p align="center">
@@ -51,6 +51,42 @@ loop is plain local files.
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
 - **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
+
+<hr>
+
+## <p align=center>🧭 Where catacomb fits</p>
+
+Catacomb overlaps with familiar eval tooling but occupies a different niche — reach for
+it when the thing you're guarding is a *Claude Code agent* and the artifact you need is
+a CI verdict:
+
+- **promptfoo / DeepEval** evaluate prompts and RAG outputs against assertions. Catacomb scores whole *agent sessions* from real Claude Code transcripts — the action graph, not just the final string.
+- **LangSmith / Braintrust** are hosted platforms with dashboards and accounts. Catacomb is plain local files and an exit code — no daemon, no service, no network.
+- **Inspect** is a research framework for building evals. Catacomb is a purpose-built regression *gate*: repeated runs, small-sample statistics, and a CI exit code, specialized for Claude Code agents.
+
+<hr>
+
+## <p align=center>🎯 What you get</p>
+
+You change a prompt; catacomb runs both versions and turns the difference into a CI
+verdict. Here a chain-of-thought tweak made the agent slower and more expensive, so the
+candidate metrics cross their noise bands and the gate returns non-zero:
+
+```text
+$ catacomb regress --runs-dir runs \
+    --baseline label:basket=demo,variant=main \
+    --candidate label:basket=demo,variant=candidate
+baseline runs 5  candidate runs 5
+coverage steps 1.00  phases 1.00  steps_trusted true  overall regression
+VERDICT     SCOPE  METRIC       BASELINE  CANDIDATE  BAND
+regression  total  cost_usd     0.00      0.01       [0.00, 0.00]
+regression  total  duration_ms  5059.00   7165.00    [3755.50, 6362.50]
+regression  total  tokens_out   147.00    465.00     [91.50, 202.50]
+$ echo $?
+1
+```
+
+<p align="center"><sub>A real <code>catacomb regress</code> verdict from the <a href="#-tutorial">tutorial</a> below (trimmed) — the candidate got slower and more expensive, so CI fails (exit 1).</sub></p>
 
 <hr>
 
