@@ -494,6 +494,80 @@ variants:
 	require.Equal(t, want, vw.PatchSHA256)
 }
 
+func TestLoadOfflineSkipsPatchResolution(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: ["true"], patch: nope.patch}
+variants:
+  - id: v1
+  - id: v2
+    workspace: {cmd: ["true"], patch: nope.patch}
+`
+	path := filepath.Join(dir, "basket.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+
+	_, _, err := bench.Load(path)
+	require.ErrorIs(t, err, bench.ErrWorkspacePatch)
+
+	b, hash, err := bench.LoadOffline(path)
+	require.NoError(t, err)
+	assert.NotEmpty(t, hash)
+	assert.Equal(t, "nope.patch", b.Tasks[0].Workspace.Patch)
+	assert.Empty(t, b.Tasks[0].Workspace.PatchAbs)
+	assert.Empty(t, b.Tasks[0].Workspace.PatchSHA256)
+	assert.Empty(t, b.Variants[1].Workspace.PatchAbs)
+	assert.Empty(t, b.Variants[1].Workspace.PatchSHA256)
+}
+
+func TestLoadOfflineHashMatchesLoad(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fix.patch"), []byte("patch-bytes\n"), 0o600))
+	yaml := `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    workspace: {cmd: ["true"], patch: fix.patch}
+variants:
+  - id: v1
+`
+	path := filepath.Join(dir, "basket.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+
+	_, wantHash, err := bench.Load(path)
+	require.NoError(t, err)
+	b, gotHash, err := bench.LoadOffline(path)
+	require.NoError(t, err)
+	assert.Equal(t, wantHash, gotHash)
+	assert.Empty(t, b.Tasks[0].Workspace.PatchAbs)
+	assert.Empty(t, b.Tasks[0].Workspace.PatchSHA256)
+}
+
+func TestLoadOfflineStillValidates(t *testing.T) {
+	yaml := `
+basket: b
+reps: 1
+tasks:
+  - id: t1
+    cmd: ["echo"]
+    dir: /tmp
+    workspace: {cmd: ["true"]}
+variants:
+  - id: v1
+`
+	path := filepath.Join(t.TempDir(), "basket.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+
+	_, _, err := bench.LoadOffline(path)
+	require.ErrorIs(t, err, bench.ErrWorkspaceDir)
+}
+
 func TestLoadWorkspacePatchAbsIsAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "fix.patch"), []byte("patch-bytes\n"), 0o600))

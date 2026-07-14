@@ -45,7 +45,7 @@ func runVerify(ctx context.Context, stdout, stderr io.Writer, basketPath string,
 	if f.runsDir == "" {
 		return operational(errVerifyNoRunsDir)
 	}
-	basket, hash, err := bench.Load(basketPath)
+	basket, hash, err := bench.LoadOffline(basketPath)
 	if err != nil {
 		return operational(err)
 	}

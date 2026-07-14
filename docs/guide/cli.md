@@ -152,7 +152,10 @@ list, `cost_usd`, `evidence_dir`, basket hash, finish time, and an optional `not
 since the recorded run (its content hash no longer matches) resume errors out — delete
 the manifest or revert the basket. If the manifest already has entries and you pass
 neither `--resume` nor a fresh `--manifest`, `bench` refuses (exit `2`) rather than
-silently appending a second run's cells.
+silently appending a second run's cells. The hash pins the basket bytes only, **not**
+the bytes of a referenced `workspace.patch`: editing the patch between a run and its
+resume passes the guard and yields one manifest whose cells carry different
+`env.workspace.patch_sha256` stamps — the stamps make the drift detectable per cell.
 
 `setup` commands run before **every** cell, in the cell's working directory, as **plain
 `exec`**: each line is split on whitespace and run directly, with **no shell** — pipes,

@@ -259,7 +259,9 @@ func TestEnvStampsWorkspaceSerialization(t *testing.T) {
 	without := evidence.EnvStamps{CatacombVersion: "v"}
 	data, err = json.Marshal(without)
 	require.NoError(t, err)
-	require.NotContains(t, string(data), "workspace")
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(data, &m))
+	require.NotContains(t, m, "workspace")
 
 	partial := evidence.EnvStamps{Workspace: &evidence.WorkspaceStamp{Rev: "r42"}}
 	data, err = json.Marshal(partial)
