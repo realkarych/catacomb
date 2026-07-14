@@ -28,11 +28,13 @@ Branch: `feat/zero-touch-release`. File-disjoint from all other PRs; runs in par
 ### Task 1.1: `go install` version fallback
 
 **Files:**
+
 - Modify: `cmd/catacomb/version.go`
 - Modify: `cmd/catacomb/run.go:13-14`
 - Test: `cmd/catacomb/version_test.go`
 
 **Interfaces:**
+
 - Produces: `versionFromBuild(current string, read func() (*debug.BuildInfo, bool)) string` — returns `current` unchanged unless it equals `"dev"`, in which case it returns `read()`'s `Main.Version` when that is non-empty and not `"(devel)"`, else `"dev"`.
 
 - [ ] **Step 1: Write the failing test** — add to `cmd/catacomb/version_test.go`:
@@ -120,9 +122,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 1.2: `verify-channels` job in publish.yml
 
 **Files:**
+
 - Modify: `.github/workflows/publish.yml` (append a job after `update-apt`)
 
 **Interfaces:**
+
 - Consumes: `goreleaser` job output `tag`.
 
 - [ ] **Step 1: Add the job** at the end of `.github/workflows/publish.yml`:
@@ -192,6 +196,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 1.3: `channels-watch.yml` scheduled watchdog
 
 **Files:**
+
 - Create: `.github/workflows/channels-watch.yml`
 
 - [ ] **Step 1: Create the workflow**:
@@ -274,6 +279,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 1.4: Document zero-touch release + the environment change
 
 **Files:**
+
 - Modify: `docs/RELEASING.md`
 
 - [ ] **Step 1: Rewrite the "Cutting a release" section** of `docs/RELEASING.md` to describe the zero-touch flow. Add, verbatim:
@@ -308,6 +314,7 @@ gh api -X PUT repos/realkarych/catacomb/environments/release \
 {"reviewers":[],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
 JSON
 ```
+
 ```
 
 - [ ] **Step 2: Commit**
@@ -330,10 +337,12 @@ Branch: `feat/basket-path-contract`. **Depends on PR-3 for `docs/guide/cli.md` a
 ### Task 2.1: Resolve exec paths against the basket directory
 
 **Files:**
+
 - Modify: `bench/basket.go` (add resolution funcs; call from `decodeBasket`, basket.go:142-158)
 - Test: `bench/basket_internal_test.go`
 
 **Interfaces:**
+
 - Produces: `resolveExecPaths(b *Basket, baseDir string)` — mutates `b`: sets `Task.Dir` to `filepath.Join(baseDir, dir)` when `dir` is non-empty and relative; rewrites each `./`/`../`-prefixed element of every `Task.Cmd` and `Task.Verify.Cmd` to `filepath.Join(baseDir, elem)`. Bare words and absolute paths unchanged.
 - Consumes: called inside `decodeBasket` with `baseDir = filepath.Dir(path)`, after `validate` succeeds, so both `Load` and `LoadOffline` apply it.
 
@@ -434,9 +443,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2.2: Prove offline verify finds a basket-relative script from any cwd
 
 **Files:**
+
 - Test: `cmd/catacomb/verify_test.go` (or `verifycell_test.go` — match where offline verify is already tested)
 
 **Interfaces:**
+
 - Consumes: `resolveExecPaths` behavior from Task 2.1 (offline verify re-parses via `bench.LoadOffline`, which now resolves).
 
 - [ ] **Step 1: Write the failing test** — an end-to-end offline-verify test where the verifier script lives next to the basket, `verify.cmd` is `["python3", "./verify.py"]` (or a shell stub), the evidence dir is elsewhere, and `catacomb verify` runs with `os.Chdir` set to an unrelated temp dir. Assert the verify record's exit code is success (script was found and ran). Model it on the existing offline-verify test in the package; build the basket + script in `t.TempDir()`, write evidence via the existing helper, then invoke the verify command.
@@ -457,10 +468,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2.3: Human-readable YAML type errors + de-doubled prefix
 
 **Files:**
+
 - Modify: `bench/basket.go` (sentinels basket.go:28-47; decode wrap basket.go:151)
 - Test: `bench/basket_test.go`
 
 **Interfaces:**
+
 - Produces: `humanizeDecodeErr(err error) error` — rewrites `*yaml.TypeError` messages, mapping `cannot unmarshal !!X into Y` to `expected <Y-human>, but got <X-human>`, preserving the `line N:` prefix; returns non-TypeError errors unchanged.
 
 - [ ] **Step 1: Write the failing tests** — add to `bench/basket_test.go`:
@@ -506,9 +519,9 @@ variants:
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `go test ./bench/ -run 'TestLoadTypeErrorIsHuman|TestLoadValidationErrorNotDoubled'`
-Expected: FAIL (message still contains `!!str` / `bench: `).
+Expected: FAIL (message still contains `!!str` / `bench:`).
 
-- [ ] **Step 3: Implement.** (a) Strip the `bench: ` prefix from every sentinel in basket.go:28-47, e.g. `ErrReps = errors.New("reps must be >= 1")`, `ErrTimeout = errors.New("invalid timeout")`, `ErrEmptyBasketName = errors.New("basket name is empty")`, and so on for all sentinels. (b) Add the humanizer and apply it at the decode wrap (basket.go:151):
+- [ ] **Step 3: Implement.** (a) Strip the `bench:` prefix from every sentinel in basket.go:28-47, e.g. `ErrReps = errors.New("reps must be >= 1")`, `ErrTimeout = errors.New("invalid timeout")`, `ErrEmptyBasketName = errors.New("basket name is empty")`, and so on for all sentinels. (b) Add the humanizer and apply it at the decode wrap (basket.go:151):
 
 ```go
 	if err := dec.Decode(&b); err != nil {
@@ -552,7 +565,7 @@ func humanizeDecodeErr(err error) error {
 
 Add imports `"errors"`, `"regexp"` if absent.
 
-- [ ] **Step 4: Run the full bench suite** and fix any sentinel-string assertions that expected the old `bench: ` text (use `ErrorIs` / field-substring, which still pass).
+- [ ] **Step 4: Run the full bench suite** and fix any sentinel-string assertions that expected the old `bench:` text (use `ErrorIs` / field-substring, which still pass).
 
 Run: `go test ./...`
 Expected: PASS.
@@ -572,11 +585,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2.4: Timeout unit hint + single-variant advisory
 
 **Files:**
+
 - Modify: `bench/basket.go` (`parseTimeout`, basket.go:87-96)
 - Modify: `cmd/catacomb/bench.go` (`runBench`, after load / before dry-run branch, bench.go:79-82)
 - Test: `bench/basket_internal_test.go`, `cmd/catacomb/bench_test.go`
 
 **Interfaces:**
+
 - Consumes: `runBench` already has the cobra `cmd` in scope; use `cmd.ErrOrStderr()` for the advisory.
 
 - [ ] **Step 1: Write the failing timeout test** — add to `bench/basket_internal_test.go`:
@@ -657,10 +672,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2.5: Deduplicate the transcript-version warning
 
 **Files:**
+
 - Modify: `cmd/catacomb/offline.go` (`warnVersion`, offline.go:62-67; package var near offline.go:21)
 - Test: `cmd/catacomb/offline_test.go`
 
 **Interfaces:**
+
 - Produces: `warnVersion` emits at most one line per distinct observed version; `resetDriftWarnings()` clears the seen-set (test-only — a CLI process runs a single command, so the seen-set naturally starts empty and dedupes across that command's baseline+candidate groups; no production reset needed, so `run.go` is untouched and PR-1/PR-2 stay file-disjoint).
 
 - [ ] **Step 1: Write the failing test** — add to `cmd/catacomb/offline_test.go`:
@@ -726,6 +743,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2.6: ADR-0029 for the path contract
 
 **Files:**
+
 - Create: `docs/adr/0029-basket-relative-path-resolution.md`
 - Modify: `docs/adr/README.md` (index table)
 
@@ -749,6 +767,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2.7: `docs/guide/basket.md` — single source of truth (rebases on PR-3)
 
 **Files:**
+
 - Create: `docs/guide/basket.md`
 - Modify: `docs/guide/cli.md` (shrink the `#bench` schema prose to a pointer)
 - Modify: `docs/guide/configuration.md` (one-line pointer at the top)
@@ -787,6 +806,7 @@ Branch: `chore/docs-internal-split`. Pure docs; merge first so PR-2 rebases its 
 ### Task 3.1 (4.1): Move internal docs under `docs/internal/`
 
 **Files:**
+
 - Move: `docs/superpowers/`, `docs/plans/`, `docs/specs/`, `docs/reviews/` → `docs/internal/{…}`
 
 - [ ] **Step 1: Move with history preserved**
@@ -827,6 +847,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3.2 (4.2): `docs/README.md` landing index + drop the stub
 
 **Files:**
+
 - Create: `docs/README.md`
 - Delete: `docs/guide/getting-started.md`
 - Modify: `docs/guide/README.md` (remove the getting-started pointer line)
@@ -851,7 +872,7 @@ it is not needed to use catacomb.
 
 - [ ] **Step 2: Confirm the stub has no inbound links**
 
-Run: `grep -rn 'getting-started' --include='*.md' . `
+Run: `grep -rn 'getting-started' --include='*.md' .`
 Expected: only `docs/guide/README.md` (the pointer line) and possibly the stub itself.
 
 - [ ] **Step 3: Delete the stub and remove the pointer**
@@ -874,6 +895,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3.3 (4.3): `docs/guide/troubleshooting.md`
 
 **Files:**
+
 - Create: `docs/guide/troubleshooting.md`
 - Modify: `docs/guide/privacy-and-operations.md` (replace the inline table with a pointer)
 - Modify: `docs/guide/README.md` (add troubleshooting to the reading order)
@@ -909,6 +931,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3.4 (4.4): Single-source the `CATACOMB_*` contract and the bench→verify→regress example
 
 **Files:**
+
 - Modify: `docs/guide/cli.md`, `docs/guide/workflows.md`, `integrations/verifier/README.md`
 
 - [ ] **Step 1: Keep the canonical `CATACOMB_*` table** in `workflows.md` (its contextual home). In `cli.md` and `integrations/verifier/README.md`, replace their copies with a one-line summary plus a link: "Verifiers receive the `CATACOMB_*` environment contract; see [workflows.md](../guide/workflows.md#verifying-task-outcomes) (adjust the relative path per file)."
@@ -929,6 +952,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3.5 (4.5): Add ADR-0028 to the index
 
 **Files:**
+
 - Modify: `docs/adr/README.md`
 
 - [ ] **Step 1: Add the row** after the 0027 line:
@@ -949,6 +973,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3.6 (4.6): Advisory link-check CI job
 
 **Files:**
+
 - Create: `.github/workflows/docs-links.yml`
 
 - [ ] **Step 1: Create the workflow** (offline relative-link + anchor check; advisory, not required):
@@ -1004,6 +1029,7 @@ Branch: `docs/readme-first-touch`. Depends on PR-1 (version badge / channel note
 ### Task 4.1: Hero, badges, maturity, requirement
 
 **Files:**
+
 - Modify: `README.md:1-55`
 
 - [ ] **Step 1: Tagline axes** — extend the centered tagline (README.md:10-15) to name the regression axes, e.g. append a line: "See whether **cost, latency, or correctness** regressed — from statistics over real transcripts, not vibes." Keep the existing hook line.
@@ -1035,6 +1061,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 4.2: Verdict visual + "why not" comparison
 
 **Files:**
+
 - Create: `docs/assets/regress-verdict-light.svg`, `docs/assets/regress-verdict-dark.svg`
 - Modify: `README.md` (before the tutorial section; new comparison subsection after Features)
 
@@ -1056,6 +1083,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 4.3: Install clarity + tutorial cleanup + links
 
 **Files:**
+
 - Modify: `README.md` (Installation, Tutorial, How it works, Methodology, Documentation sections)
 
 - [ ] **Step 1: Per-channel version note** in Installation: "`go install` serves the tagged source immediately; brew, apt, and docker converge within minutes of a release — run `brew update` if you see an older version." Move the old-formula migration note up beside the brew block. Mark docker "for CI and `version`; the tutorial needs `claude` and `~/.claude/projects` mounted."
@@ -1086,6 +1114,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 4.4: Canonical package descriptions
 
 **Files:**
+
 - Modify: `.goreleaser.yaml` (nfpm `description`, homebrew_casks `description`)
 
 - [ ] **Step 1: Set both descriptions** to the canonical category "Offline eval gate for Claude Code agents" (`.goreleaser.yaml:65,76`). Confirm they match the README's category sentence wording.
