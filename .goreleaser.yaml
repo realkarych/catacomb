@@ -62,7 +62,7 @@ nfpms:
     file_name_template: "{{ .ConventionalFileName }}"
     bindir: /usr/bin
     maintainer: "Andrey Karchevsky <kaarych@gmail.com>"
-    description: "Offline eval gate for Claude Code agentic pipelines"
+    description: "Offline eval gate for Claude Code agents"
     license: Apache-2.0
     homepage: "https://github.com/realkarych/catacomb"
 
@@ -73,7 +73,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/realkarych/catacomb"
-    description: "Offline eval gate for Claude Code agentic pipelines"
+    description: "Offline eval gate for Claude Code agents"
     binaries:
       - catacomb
     hooks:
