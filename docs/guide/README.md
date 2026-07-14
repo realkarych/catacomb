@@ -15,5 +15,3 @@ Reading order:
 5. [Ingestion](ingestion.md) — how transcripts become graphs
 6. [Privacy and operations](privacy-and-operations.md) — redaction, evidence dirs,
    and troubleshooting
-
-([Getting started](getting-started.md) is kept as a pointer for old links.)
