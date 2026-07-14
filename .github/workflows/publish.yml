@@ -213,3 +213,45 @@ jobs:
           git add .
           git commit -m "APT release ${TAG}" || echo "no changes"
           git push origin HEAD:gh-pages
+
+  verify-channels:
+    needs: [goreleaser, update-apt]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      TAG: ${{ needs.goreleaser.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Assert release assets present
+        run: |
+          assets=$(gh release view "$TAG" -R realkarych/catacomb --json assets -q '.assets[].name')
+          echo "$assets"
+          printf '%s\n' "$assets" | grep -Fq "checksums.txt" || { echo "::error::missing checksums.txt"; exit 1; }
+          printf '%s\n' "$assets" | grep -Eq 'catacomb_linux_amd64\.tar\.gz' || { echo "::error::missing linux archive"; exit 1; }
+          printf '%s\n' "$assets" | grep -Eq 'checksums\.txt\.sigstore\.json' || { echo "::error::missing sigstore bundle"; exit 1; }
+
+      - name: Assert Homebrew cask matches tag
+        run: |
+          ver="${TAG#v}"
+          got=""
+          for i in $(seq 1 10); do
+            got=$(gh api repos/realkarych/homebrew-tap/contents/Casks/catacomb.rb \
+              -q '.content' | base64 -d | sed -n 's/^  version "\(.*\)"/\1/p')
+            [ "$got" = "$ver" ] && { echo "cask ok: $got"; break; }
+            echo "cask has $got, want $ver (retry $i)"; sleep 15
+          done
+          [ "$got" = "$ver" ] || { echo "::error::cask version $got != $ver"; exit 1; }
+
+      - name: Assert GHCR latest == tag digest
+        run: |
+          dt=$(gh api "/users/realkarych/packages/container/catacomb/versions" \
+            -q "[.[] | select(.metadata.container.tags[]? == \"$TAG\")][0].name")
+          dl=$(gh api "/users/realkarych/packages/container/catacomb/versions" \
+            -q "[.[] | select(.metadata.container.tags[]? == \"latest\")][0].name")
+          echo "tag digest=$dt latest digest=$dl"
+          [ -n "$dt" ] && [ "$dt" = "$dl" ] || { echo "::error::ghcr latest ($dl) != $TAG ($dt)"; exit 1; }
