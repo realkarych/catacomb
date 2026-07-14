@@ -294,17 +294,11 @@ variant, resolved by the run's recorded `variant` label; a run whose recorded va
 no longer in the basket is reported as a per-cell error and does not abort the rest.
 
 Each matched cell runs the task's `verify.cmd` as a **plain `exec`** (argv, no shell) with
-its working directory set to the cell's evidence dir and the verifier contract on its
-environment:
-
-| Variable | Value |
-| --- | --- |
-| `CATACOMB_EVIDENCE_DIR` | the cell's evidence dir (redacted transcripts, `meta.json`, captured `artifacts/`) |
-| `CATACOMB_WORKDIR` | **empty** offline — there is no hot workdir, so a re-verifiable verifier reads only from evidence |
-| `CATACOMB_RUN_ID`, `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP` | the cell's coordinates from `meta.json` |
-| `CATACOMB_AGENT_EXIT_CODE` | the agent child's recorded exit code |
-
-The task and variant `env:` maps and the verifier's own `verify.env` are layered on top.
+its working directory set to the cell's evidence dir and the same `CATACOMB_*` verifier
+contract `bench` sets — see [The verifier contract](workflows.md#the-verifier-contract) for
+the full table. Offline there is no hot workdir, so `CATACOMB_WORKDIR` is **empty** and a
+re-verifiable verifier reads only from evidence. The task and variant `env:` maps and the
+verifier's own `verify.env` are layered on top.
 The verifier's stdout is scores JSONL (the [run-level scores](#run-level-scores) dialect)
 and is rewritten to `<evidence>/scores.jsonl`; stderr passes through to the operator. A
 verification record — `cmd`, a sha256 of cmd+env, exit code, duration, timestamp, and
@@ -328,14 +322,9 @@ unreadable `--runs-dir`, or a selector that matched no runs).
 `verify` slots between [`bench`](#bench) and [`regress`](#regress): record once, iterate on
 the verifiers offline, then gate. `regress --runs-dir` auto-loads each cell's rewritten
 `scores.jsonl` and gates on `verifier.pass` by default (see
-[Run-level scores](#run-level-scores)).
-
-```sh
-catacomb bench basket.yaml --runs-dir runs    # agents + inline verification
-catacomb verify basket.yaml --runs-dir runs   # iterate on verifiers, zero agent cost
-catacomb regress --runs-dir runs \
-  --baseline label:basket=checkout,variant=a --candidate label:basket=checkout,variant=b
-```
+[Run-level scores](#run-level-scores)). See
+[The bench → verify → regress cycle](workflows.md#the-bench--verify--regress-cycle) in the
+workflows guide for the worked loop.
 
 ---
 
