@@ -10,18 +10,25 @@
 <p align="center">
   Regression testing for
   <a href="https://www.anthropic.com/claude-code">Claude Code</a> agents.<br>
-  Change a prompt, a skill, or an MCP tool — then let statistics,<br>
-  not vibes, tell you whether your agent got worse.
+  Change a prompt, a skill, or an MCP tool — then see whether<br>
+  <b>cost, latency, or correctness</b> regressed, from statistics<br>
+  over real transcripts, not vibes.
 </p>
+
+<p align="center"><b>Catacomb is an offline eval gate</b>: a local CLI that runs your Claude Code<br>
+  tasks repeatedly and gates regressions in CI — no daemon, no service, no network.</p>
 
 <!-- Badges -->
 <p align="center">
   <a href="https://github.com/realkarych/catacomb/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/realkarych/catacomb/actions/workflows/ci.yml/badge.svg"></a>&nbsp;<!--
+  --><a href="https://github.com/realkarych/catacomb/releases"><img alt="release" src="https://img.shields.io/github/v/release/realkarych/catacomb"></a>&nbsp;<!--
   --><a href="https://app.codecov.io/gh/realkarych/catacomb"><img alt="coverage" src="https://codecov.io/gh/realkarych/catacomb/branch/master/graph/badge.svg"></a>&nbsp;<!--
   --><a href="https://go.dev"><img alt="go version" src="https://img.shields.io/github/go-mod/go-version/realkarych/catacomb"></a>&nbsp;<!--
   --><a href="https://github.com/realkarych/catacomb/blob/master/LICENSE"><img alt="license Apache-2.0" src="https://img.shields.io/github/license/realkarych/catacomb"></a>&nbsp;<!--
   --><img alt="platforms" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-blue">
 </p>
+
+<p align="center"><sub>Pre-1.0: minor releases may carry breaking changes, always with migration notes — see the <a href="docs/VERSIONING.md">versioning policy</a>.</sub></p>
 
 <hr>
 
@@ -33,6 +40,8 @@ the old setup and the new one, recording each run locally as secret-redacted evi
 `catacomb regress` compares the two groups and maps the verdict to an exit code, so CI
 blocks the regression before it merges. No daemon, no service, no network — the whole
 loop is plain local files.
+
+> **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts.
 
 ## <p align=center>✨ Features</p>
 
