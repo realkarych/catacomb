@@ -15,3 +15,4 @@ Reading order:
 5. [Ingestion](ingestion.md) — how transcripts become graphs
 6. [Privacy and operations](privacy-and-operations.md) — redaction, evidence dirs,
    and troubleshooting
+7. [Troubleshooting](troubleshooting.md) — symptoms and fixes for common errors
