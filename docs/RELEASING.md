@@ -23,12 +23,33 @@ push).
 ## Cutting a release
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-Pushing a `v*.*.*` tag triggers `publish.yml`. You can also run it manually from
-the Actions tab (`workflow_dispatch`) with a `tag` input.
+Pushing a `v*.*.*` tag runs `publish.yml` end to end with no manual step:
+`verify` refuses the tag unless its commit is an ancestor of `master` and
+carries green required checks, then goreleaser publishes every channel, and
+`verify-channels` asserts the tap cask, GHCR `:latest` digest, and release
+assets all match the tag. A weekly `channels-watch.yml` re-checks the cask
+against the latest release and files a `release-desync` issue on drift.
+
+To re-run a publish for an existing tag (e.g. after a transient failure),
+dispatch `publish.yml` from the Actions tab with the `tag` input — re-pushing
+the tag won't re-trigger it.
+
+The `release` environment is scoped to `v*.*.*` tag refs and holds the
+channel secrets; it has **no** required reviewers, because the automatic
+`verify` gate already refuses unqualified tags. Configure the ref policy once:
+
+```sh
+gh api -X PUT repos/realkarych/catacomb/environments/release \
+  --input - <<'JSON'
+{"reviewers":[],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+JSON
+gh api -X POST repos/realkarych/catacomb/environments/release/deployment-branch-policies \
+  -f 'name=v*.*.*' -f 'type=tag'
+```
 
 ## One-time setup
 
