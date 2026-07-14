@@ -27,7 +27,7 @@ func TestLoadHappyPath(t *testing.T) {
 
 	assert.Equal(t, "add-item", b.Tasks[0].ID)
 	assert.Equal(t, []string{"make", "add"}, b.Tasks[0].Cmd)
-	assert.Equal(t, "services/cart", b.Tasks[0].Dir)
+	assert.Equal(t, filepath.Join("testdata", "services/cart"), b.Tasks[0].Dir)
 	assert.Equal(t, map[string]string{"MODE": "fast"}, b.Tasks[0].Env)
 	assert.Equal(t, "remove-item", b.Tasks[1].ID)
 	assert.Empty(t, b.Tasks[1].Dir)

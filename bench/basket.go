@@ -153,8 +153,30 @@ func decodeBasket(path string) (Basket, string, error) {
 	if err := validate(b); err != nil {
 		return Basket{}, "", err
 	}
+	resolveExecPaths(&b, filepath.Dir(path))
 	sum := sha256.Sum256(data)
 	return b, hex.EncodeToString(sum[:]), nil
+}
+
+func resolveExecPaths(b *Basket, baseDir string) {
+	for i := range b.Tasks {
+		t := &b.Tasks[i]
+		if t.Dir != "" && !filepath.IsAbs(t.Dir) {
+			t.Dir = filepath.Join(baseDir, t.Dir)
+		}
+		resolveArgvRel(t.Cmd, baseDir)
+		if t.Verify != nil {
+			resolveArgvRel(t.Verify.Cmd, baseDir)
+		}
+	}
+}
+
+func resolveArgvRel(argv []string, baseDir string) {
+	for i, a := range argv {
+		if strings.HasPrefix(a, "./") || strings.HasPrefix(a, "../") {
+			argv[i] = filepath.Join(baseDir, a)
+		}
+	}
 }
 
 func resolvePatches(b *Basket, baseDir string) error {
