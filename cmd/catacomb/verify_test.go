@@ -107,6 +107,20 @@ func TestRunVerifyOfflineSpecEnv(t *testing.T) {
 	assert.Equal(t, "fv", got["CATACOMB_FROMVARIANT"])
 }
 
+func TestRunVerifyWorkspacePatchFileAbsent(t *testing.T) {
+	stubVerify(t)
+	basketPath := writeBasket(t, "basket: wsbk\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"agent\"]\n    workspace:\n      cmd: [\"materialize\"]\n      patch: gone.patch\n    verify:\n      cmd: [\"verify\"]\nvariants:\n  - id: base\n")
+	_, hash, err := bench.LoadOffline(basketPath)
+	require.NoError(t, err)
+	runs := t.TempDir()
+	writeVerifyEvidenceBasket(t, runs, "bench-wsbk-t1-base-r1", "wsbk", "t1", "base", hash, 0)
+
+	var out, errb bytes.Buffer
+	require.NoError(t, runVerify(t.Context(), &out, &errb, basketPath, verifyFlags{runsDir: runs}))
+	assert.Contains(t, out.String(), "verify bench-wsbk-t1-base-r1: ok")
+	assert.Empty(t, errb.String())
+}
+
 func TestRunVerifyFailingVerifier(t *testing.T) {
 	stubVerify(t)
 	basketPath, hash := verifyBasket(t)

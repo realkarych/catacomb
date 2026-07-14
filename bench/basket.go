@@ -125,6 +125,21 @@ func (c Cell) EffectiveWorkspace() *Workspace {
 }
 
 func Load(path string) (Basket, string, error) {
+	b, hash, err := decodeBasket(path)
+	if err != nil {
+		return Basket{}, "", err
+	}
+	if err := resolvePatches(&b, filepath.Dir(path)); err != nil {
+		return Basket{}, "", err
+	}
+	return b, hash, nil
+}
+
+func LoadOffline(path string) (Basket, string, error) {
+	return decodeBasket(path)
+}
+
+func decodeBasket(path string) (Basket, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Basket{}, "", fmt.Errorf("bench.Load: %w", err)
@@ -136,9 +151,6 @@ func Load(path string) (Basket, string, error) {
 		return Basket{}, "", fmt.Errorf("bench.Load: %w", err)
 	}
 	if err := validate(b); err != nil {
-		return Basket{}, "", err
-	}
-	if err := resolvePatches(&b, filepath.Dir(path)); err != nil {
 		return Basket{}, "", err
 	}
 	sum := sha256.Sum256(data)

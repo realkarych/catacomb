@@ -26,7 +26,8 @@
 #   ties-pass boundary) -> 16 SP5 judge panel (three-judge fixture -> byte-exact
 #   mean/vote streams; the vote stream gates through regress --scores).
 #   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/rm -> 19 mcp stdio.
-#   Last, 20 SP-W workspace isolation (its own basket + runs dirs, nothing earlier touched).
+#   Last, 20 SP-W workspace isolation + patch-free offline verify (its own basket +
+#   runs dirs, nothing earlier touched).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -59,7 +60,10 @@
 # on a reused dir, 8 on a leaked CATACOMB_PATCH), the patch handover (captured artifact
 # == patch bytes; rev + sha256 stamped at env.workspace, absent on the sql cells per
 # step 10), teardown after every cell, --keep-workspaces, and a seeded workspace-cmd
-# failure under --fail-fast (manifest note + exit code, teardown still firing).
+# failure under --fail-fast (manifest note + exit code, teardown still firing). The
+# step closes with an offline `catacomb verify` over the ws runs dir with fix.patch
+# moved away — offline loading never resolves workspace.patch — asserting step-4-style
+# idempotency (scores byte-identical, verify.json mode offline) before restoring it.
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -1061,6 +1065,30 @@ rc=0
 [ "$(grep -c torn "$work/wslog/teardown.log")" -eq 7 ] || rc=1
 [ -z "$(ls -A "$wsrootfail")" ] || rc=1
 record "$rc" "teardown + removal still run when the workspace cmd fails"
+# Patch-free offline verify (last: the --keep-workspaces and seeded-failure benches
+# above still load fix.patch). Offline verification replays verifiers over captured
+# evidence and never touches the patch, so `catacomb verify` loads the basket without
+# resolving workspace.patch — with fix.patch moved away the pass must still succeed,
+# leave every ws scores.jsonl byte-identical (step-4-style idempotency), and flip
+# verify.json to mode offline. The patch is restored afterward for cleanliness.
+wssnap="$work/ws-snap"
+mkdir -p "$wssnap"
+for d in "$wsruns"/*/; do
+	cp "$d/scores.jsonl" "$wssnap/$(basename "$d").scores"
+done
+mv "$work/fix.patch" "$work/fix.patch.gone"
+run_expect 0 "offline verify over ws runs with the patch file gone" -- \
+	catacomb verify "$work/ws-basket.yaml" --runs-dir "$wsruns"
+rc=0
+for d in "$wsruns"/*/; do
+	cmp -s "$d/scores.jsonl" "$wssnap/$(basename "$d").scores" || rc=1
+done
+record "$rc" "patch-free offline verify leaves every ws scores.jsonl byte-identical"
+rc=0
+python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]+"/verify.json"))["mode"]=="offline" else 1)' \
+	"$wsruns/bench-hermetic-ws-ws-only-r1" || rc=$?
+record "$rc" "ws verify.json mode flips to offline after the patch-free re-verify"
+mv "$work/fix.patch.gone" "$work/fix.patch"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then
