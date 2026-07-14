@@ -1,0 +1,26 @@
+name: Docs links
+
+on:
+  pull_request:
+    paths: ['**/*.md']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Check relative links and anchors
+        uses: lycheeverse/lychee-action@a8c4c7cb88f0c7386610c35eb25108e448569cb0 # v2.7.0
+        with:
+          args: >-
+            --offline --include-fragments --no-progress
+            --exclude 'basket\.md'
+            'README.md' 'docs/*.md' 'docs/guide/**/*.md' 'docs/adr/**/*.md'
+          fail: true
