@@ -104,6 +104,7 @@ func TestReplayWarnsOnUnknownRecords(t *testing.T) {
 }
 
 func TestReplayWarnsOnNewerVersion(t *testing.T) {
+	resetDriftWarnings()
 	buf := captureDriftOut(t)
 	versioned := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), "9.9.9")
 	root := newRootCmd()

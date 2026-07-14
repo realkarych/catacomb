@@ -20,6 +20,10 @@ import (
 
 var driftOut io.Writer = os.Stderr
 
+var driftSeen = map[string]struct{}{}
+
+func resetDriftWarnings() { driftSeen = map[string]struct{}{} }
+
 func parseTranscripts(main string, subs []string, executionID string) ([]model.Observation, error) {
 	var all []model.Observation
 	var counts drift.Counts
@@ -63,6 +67,10 @@ func warnVersion(observed string) {
 	if !drift.NewerThanTested(observed) {
 		return
 	}
+	if _, ok := driftSeen[observed]; ok {
+		return
+	}
+	driftSeen[observed] = struct{}{}
 	fmt.Fprintf(driftOut, "warning: transcript Claude Code version %s is newer than tested %s\n", observed, drift.TestedClaudeCodeVersion)
 }
 
