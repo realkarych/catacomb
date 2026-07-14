@@ -58,25 +58,8 @@ catacomb bench <basket.yaml> [flags]
 | `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
 
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
-combination, and cells run sequentially:
-
-```yaml
-basket: checkout
-reps: 5
-tasks:
-  - id: add-item
-    cmd: ["claude", "-p", "add an item to the cart", "--output-format", "stream-json"]
-    dir: services/cart          # optional working directory
-    env: { MODE: fast }         # optional per-task env
-    checkpoints: [plan, tests.pass]   # optional declared phases to verify
-    timeout: 30s                # optional per-task deadline (Go duration; unset = no limit)
-variants:
-  - id: baseline
-    env: { MODEL: opus }        # optional per-variant env (wins over task env)
-  - id: candidate
-    env: { MODEL: sonnet }
-    setup: ["git checkout feature"]   # optional pre-cell commands
-```
+combination, and cells run sequentially. The full basket file schema — every field, its
+type, and validation rules — is documented in [basket.md](basket.md).
 
 Each cell runs under run-id `bench-<basket>-<task>-<variant>-r<rep>` and carries the
 labels `basket`, `task`, `variant`, and `rep`, so `baseline` and `regress` selectors

@@ -21,6 +21,5 @@ jobs:
         with:
           args: >-
             --offline --include-fragments --no-progress
-            --exclude 'basket\.md'
             'README.md' 'docs/*.md' 'docs/guide/**/*.md' 'docs/adr/**/*.md'
           fail: true
