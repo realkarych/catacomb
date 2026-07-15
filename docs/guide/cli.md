@@ -19,6 +19,7 @@ The command set:
 | [`diff`](#diff) | Diff two session transcripts by `step_key` |
 | [`subgraph`](#subgraph) | Extract the execution subgraph of a checkpoint phase |
 | [`export`](#export) | Export a transcript or evidence dir as a JSONL graph snapshot |
+| [`pack`](#pack) | Export a deterministic sample of evidence runs as a bundle for external audit |
 | [`replay`](#replay) | Build a graph from one transcript and print a summary |
 | [`mcp`](#mcp) | Run the stdio MCP server exposing the `mark` checkpoint tool |
 | [`version`](#version) | Print the version |
@@ -187,7 +188,8 @@ tasks:
       rev: "r123456"
       teardown: ["arc", "unmount", "."]
     cmd: ["claude", "-p", "...", "--output-format", "stream-json"]
-    verify: { cmd: ["python3", "verify_tables.py"] }
+    artifacts: ["out/result.csv"]
+    verify: { cmd: ["python3", "./verify_tables.py"] }
 
 variants:
   - id: trunk
