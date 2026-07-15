@@ -83,12 +83,12 @@ func importTranscripts(f importFlags) (transcriptSet, string, error) {
 		return ts, f.sessionID, nil
 	}
 	if _, err := os.Stat(f.transcript); err != nil {
-		return transcriptSet{}, "", fmt.Errorf("import: transcript: %w", err)
+		return transcriptSet{}, "", fmt.Errorf("transcript: %w", err)
 	}
 	sid := strings.TrimSuffix(filepath.Base(f.transcript), ".jsonl")
 	subs, err := filepath.Glob(filepath.Join(filepath.Dir(f.transcript), sid, "subagents", "agent-*.jsonl"))
 	if err != nil {
-		return transcriptSet{}, "", fmt.Errorf("import: subagents: %w", err)
+		return transcriptSet{}, "", fmt.Errorf("subagents: %w", err)
 	}
 	sort.Strings(subs)
 	return transcriptSet{Main: f.transcript, Subagents: subs}, sid, nil

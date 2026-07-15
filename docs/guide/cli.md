@@ -356,11 +356,19 @@ Two input modes select the transcript, and **exactly one is required**:
   `~/.claude/projects/<encoded-cwd>/` is the session you just ran.
 
 `import` writes `<runs-dir>/<run-id>/` — `session.jsonl`, `subagents/agent-*.jsonl` when
-present, and a `meta.json` — secret-redacted and **identical in shape to a bench cell's
-evidence dir**, so every downstream command reads it unchanged. The default run-id is
+present, and a `meta.json` — secret-redacted and shaped like a bench cell's evidence dir.
+It carries the same redacted transcripts and `meta.json` a bench cell does, so the
+transcript-driven downstream commands read it unchanged; the one thing it does **not**
+carry is a captured `artifacts/` directory. The default run-id is
 `import-<basket>-<task>-<variant>-r<rep>` (the `bench-` prefix a bench cell carries becomes
 `import-`), overridable with `--run-id`. On success it prints one line,
 `import <run-id>: <dir>`.
+
+`import` captures **no `artifacts/`**: it runs no task `cmd`, so there is no live workdir
+to copy files from. A `verify:` that reads a captured artifact — `cell.artifact("out/result.csv")`,
+say — therefore cannot score an imported cell; it errors with no verdict. A verifier meant
+to run over imports should read the transcript and the rest of the evidence dir, not
+`artifacts/`.
 
 The `task:<id>` marker window is synthesized from the transcript's first and last record
 timestamps, giving `regress` the same stable phase axis a bench cell carries. Any

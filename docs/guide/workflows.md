@@ -344,7 +344,7 @@ catacomb import checkout.yaml --task work-task --variant candidate \
   --transcript "$(ls -t ~/.claude/projects/<encoded-cwd>/*.jsonl | head -1)"
 ```
 
-See [import](cli.md#import) for the full flag table, the null-`cost_usd` note, and exit
+See [import](cli.md#import) for the full flag table, the omitted-`cost_usd` note, and exit
 codes.
 
 ## Verifying task outcomes
