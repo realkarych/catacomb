@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Shared assertion bookkeeping for the hermetic production scenarios. Sourced by
+# the dispatcher (run.sh) and each scenarios/*.sh. Mirrors the pass/failrec/
+# record/run_json helpers in e2e/hermetic/run.sh so scenario code reads the same.
+PROD_FAILURES=()
+pass() { printf '  PASS  %s\n' "$1"; }
+failrec() { printf '  FAIL  %s\n' "$1"; PROD_FAILURES+=("$1"); }
+record() { if [ "$1" -eq 0 ]; then pass "$2"; else failrec "$2"; fi; }
+run_json() { # <want> <out> <label> -- cmd...
+  local want="$1" out="$2" label="$3"; shift 3; [ "${1:-}" = "--" ] && shift
+  local rc=0; "$@" >"$out" 2>"$out.stderr" || rc=$?
+  if [ "$rc" -eq "$want" ]; then pass "$label (exit $rc)"
+  else failrec "$label (exit $rc, want $want; out: $out)"; sed 's/^/        stderr: /' "$out.stderr" >&2 || true; fi
+}
+prod_report() {
+  if [ "${#PROD_FAILURES[@]}" -eq 0 ]; then printf '\nprod: all scenarios passed\n'; return 0; fi
+  printf '\nprod: %d failure(s):\n' "${#PROD_FAILURES[@]}"; printf '  - %s\n' "${PROD_FAILURES[@]}"; return 1
+}
