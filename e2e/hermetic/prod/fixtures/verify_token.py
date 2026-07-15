@@ -1,4 +1,3 @@
-import os
 from catacomb_verifier import Cell, emit
 
 cell = Cell.from_env()

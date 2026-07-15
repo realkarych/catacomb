@@ -723,7 +723,7 @@ rep = json.load(open(sys.argv[1]))
 hits = [
     f for f in rep.get("findings", [])
     if f.get("scope") == "step" and f.get("metric") == "presence"
-    and f.get("verdict") == "notable"
+    and f.get("verdict") in ("regression", "notable")
     and "task" in str(f.get("name", "")).lower()
 ]
 if not hits:
@@ -786,7 +786,7 @@ rep = json.load(open(sys.argv[1]))
 hits = [
     f for f in rep.get("findings", [])
     if f.get("scope") == "step" and f.get("metric") == "presence"
-    and f.get("verdict") == "notable"
+    and f.get("verdict") in ("regression", "notable")
     and "skill" in str(f.get("name", "")).lower()
 ]
 if not hits:
@@ -857,7 +857,7 @@ ver = [
 step = [
     f for f in findings
     if f.get("scope") == "step" and f.get("metric") == "presence"
-    and f.get("verdict") == "notable"
+    and f.get("verdict") in ("regression", "notable")
     and "e2ekit" in str(f.get("name", "")).lower()
 ]
 errs = []
