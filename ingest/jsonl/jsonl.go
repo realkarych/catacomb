@@ -22,6 +22,7 @@ type line struct {
 	ParentToolUseID string          `json:"parent_tool_use_id"`
 	IsSidechain     bool            `json:"isSidechain"`
 	AgentID         string          `json:"agentId"`
+	SubagentType    string          `json:"subagent_type"`
 	Message         json.RawMessage `json:"message"`
 	Version         string          `json:"version"`
 	Cwd             string          `json:"cwd"`
@@ -135,10 +136,14 @@ func decodeLine(raw []byte) (line, []partial, drift.Counts, error) {
 		dc = dc.Merge(unknownBlockCounts(blocks, knownAssistantBlock))
 	}
 	if ln.IsSidechain || ln.AgentID != "" {
-		parts = append(parts, partial{
+		stop := partial{
 			kind:        "subagent_stop",
 			correlation: model.Correlation{AgentID: ln.AgentID, ParentToolUseID: ln.ParentToolUseID, SessionID: ln.SessionID},
-		})
+		}
+		if ln.SubagentType != "" {
+			stop.attrs = map[string]any{"subagent_type": ln.SubagentType}
+		}
+		parts = append(parts, stop)
 	}
 	if ln.Version != "" || ln.Cwd != "" {
 		for i := range parts {

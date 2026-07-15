@@ -244,6 +244,25 @@ func TestParseEmitsSubagentForSidechain(t *testing.T) {
 	assert.Equal(t, "toolu_parent", sa[0].Correlation.ParentToolUseID)
 }
 
+func TestParseSubagentStopCarriesSubagentType(t *testing.T) {
+	obs, err := parseReader(strings.NewReader(
+		`{"type":"assistant","sessionId":"s1","agentId":"agent_7","isSidechain":true,"subagent_type":"general-purpose","timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	sa := byKind(obs, "subagent_stop")
+	require.Len(t, sa, 1)
+	assert.Equal(t, "general-purpose", sa[0].Attrs["subagent_type"])
+}
+
+func TestParseSubagentStopWithoutSubagentTypeHasNoAttr(t *testing.T) {
+	obs, err := parseReader(strings.NewReader(
+		`{"type":"assistant","sessionId":"s1","agentId":"agent_7","isSidechain":true,"timestamp":"2026-06-22T10:00:00Z","message":{"role":"assistant","id":"m1","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")
+	require.NoError(t, err)
+	sa := byKind(obs, "subagent_stop")
+	require.Len(t, sa, 1)
+	_, ok := sa[0].Attrs["subagent_type"]
+	assert.False(t, ok)
+}
+
 func TestParseNoSidechainNoSubagent(t *testing.T) {
 	obs, err := parseReader(strings.NewReader(
 		`{"type":"assistant","message":{"role":"assistant","id":"m","content":[{"type":"text","text":"hi"}]}}`+"\n"), "e")

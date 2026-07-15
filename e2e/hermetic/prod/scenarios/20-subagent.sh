@@ -38,6 +38,8 @@ run_json 0 "$w/replay-deg.out" "replay degraded session -> export jsonl snapshot
   catacomb replay "$w/runs/bench-prod-subagent-subagent-degraded-r1/session.jsonl" --export-jsonl "$deg_snap"
 rc=0; grep -q '"type":"subagent"' "$base_snap" || rc=1
 record "$rc" "baseline graph snapshot contains a \"type\":\"subagent\" node"
+rc=0; grep -q '"type":"subagent"[^}]*"subagent_type":"general-purpose"' "$base_snap" || rc=1
+record "$rc" "baseline subagent node carries subagent_type=general-purpose"
 rc=0; if grep -q '"type":"subagent"' "$deg_snap"; then rc=1; fi
 record "$rc" "degraded graph snapshot contains no \"type\":\"subagent\" node"
 rc=0; grep -q '"name":"Agent"' "$base_snap" || rc=1
