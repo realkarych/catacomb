@@ -28,6 +28,18 @@ if not hits:
 print("step-scope notable finding present (mcp__e2ekit__record node dropped)")
 PY
 record "$rc" "regress attributes a STEP-scope notable finding to the dropped mcp node"
+
+echo "== prod.10 mcp: mcp_call graph node present in baseline, absent in degraded =="
+base_snap="$w/baseline.snap.jsonl"; deg_snap="$w/degraded.snap.jsonl"
+run_json 0 "$w/replay-base.out" "replay baseline session -> export jsonl snapshot" -- \
+  catacomb replay "$w/runs/bench-prod-mcp-mcp-baseline-r1/session.jsonl" --export-jsonl "$base_snap"
+run_json 0 "$w/replay-deg.out" "replay degraded session -> export jsonl snapshot" -- \
+  catacomb replay "$w/runs/bench-prod-mcp-mcp-degraded-r1/session.jsonl" --export-jsonl "$deg_snap"
+rc=0; grep -q '"type":"mcp_call"' "$base_snap" || rc=1
+record "$rc" "baseline graph snapshot contains a \"type\":\"mcp_call\" node"
+rc=0; if grep -q '"type":"mcp_call"' "$deg_snap"; then rc=1; fi
+record "$rc" "degraded graph snapshot contains no \"type\":\"mcp_call\" node"
+
 run_json 0 "$w/ava.json" "A-vs-A must NOT gate" -- \
   catacomb regress --runs-dir "$w/runs" \
   --baseline label:basket=prod-mcp,variant=baseline \

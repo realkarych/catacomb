@@ -40,6 +40,8 @@ rc=0; grep -q '"type":"subagent"' "$base_snap" || rc=1
 record "$rc" "baseline graph snapshot contains a \"type\":\"subagent\" node"
 rc=0; if grep -q '"type":"subagent"' "$deg_snap"; then rc=1; fi
 record "$rc" "degraded graph snapshot contains no \"type\":\"subagent\" node"
+rc=0; grep -q '"name":"Agent"' "$base_snap" || rc=1
+record "$rc" "baseline graph names the delegating tool Agent (not Task)"
 
 echo "== prod.20 subagent: A-vs-A must NOT gate =="
 run_json 0 "$w/ava.json" "A-vs-A must NOT gate" -- \
