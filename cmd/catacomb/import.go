@@ -8,11 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/realkarych/catacomb/bench"
+	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/model"
 )
 
 var errImportInput = errors.New("import: exactly one of --session-id or --transcript is required")
@@ -90,6 +94,79 @@ func importTranscripts(f importFlags) (transcriptSet, string, error) {
 	return transcriptSet{Main: f.transcript, Subagents: subs}, sid, nil
 }
 
-func importEvidence(_ context.Context, _, _ io.Writer, _ bench.Basket, _ string, _ bench.Task, _ importFlags) error {
+func importEvidence(_ context.Context, stdout, stderr io.Writer, basket bench.Basket, hash string, task bench.Task, f importFlags) error {
+	ts, sessionID, err := importTranscripts(f)
+	if err != nil {
+		return operational(fmt.Errorf("import: %w", err))
+	}
+	execID := newExecutionID()
+	obs, err := parseTranscripts(ts.Main, ts.Subagents, execID)
+	if err != nil {
+		return operational(fmt.Errorf("import: %w", err))
+	}
+	start, end, ok := transcriptTimeBounds(obs)
+	if !ok {
+		return operational(fmt.Errorf("import: transcript %s has no timestamped records", ts.Main))
+	}
+	boundary := boundaryObservations(sessionID, "task:"+task.ID, start, end)
+	g := graphFromObservations(obs, execID, newPricer(), boundary)
+	marks := graphMarkerNames(g)
+	warnMissingCheckpoints(stderr, task, marks, importRunID(f, basket.Name))
+	env := benchEnvStamps(g.RunsSnapshot(), sessionID, nil)
+	runID := importRunID(f, basket.Name)
+	meta := importMeta(runID, task.ID, f.variant, f.rep, sessionID, hash, importLabels(f, basket.Name), start, end, env)
+	dir := filepath.Join(f.runsDir, runID)
+	if err := evidence.Write(dir, meta, offlineFiles(ts)); err != nil {
+		return operational(fmt.Errorf("import: evidence write: %w", err))
+	}
+	fmt.Fprintf(stdout, "import %s: %s\n", runID, dir)
 	return nil
+}
+
+func warnMissingCheckpoints(stderr io.Writer, task bench.Task, marks map[string]struct{}, runID string) {
+	var missing []string
+	for _, name := range task.Checkpoints {
+		if _, ok := marks[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(stderr, "import %s: missing checkpoints: %s\n", runID, strings.Join(missing, ", "))
+	}
+}
+
+func importRunID(f importFlags, basketName string) string {
+	if f.runID != "" {
+		return f.runID
+	}
+	return fmt.Sprintf("import-%s-%s-%s-r%d", basketName, f.task, f.variant, f.rep)
+}
+
+func importLabels(f importFlags, basketName string) map[string]string {
+	cell := map[string]string{
+		"basket":  basketName,
+		"task":    f.task,
+		"variant": f.variant,
+		"rep":     strconv.Itoa(f.rep),
+	}
+	return model.MergeLabels(model.ParseLabels(f.labels), cell)
+}
+
+func importMeta(runID, task, variant string, rep int, sessionID, hash string, labels map[string]string, start, end time.Time, env *evidence.EnvStamps) evidence.Meta {
+	return evidence.Meta{
+		RunID:       runID,
+		Task:        task,
+		Variant:     variant,
+		Rep:         rep,
+		SessionID:   sessionID,
+		Labels:      labels,
+		ExitCode:    0,
+		CostUSD:     nil,
+		BasketHash:  hash,
+		MarkerName:  "task:" + task,
+		MarkerStart: start.UTC(),
+		MarkerEnd:   end.UTC(),
+		FinishedAt:  nowFn().UTC(),
+		Env:         env,
+	}
 }
