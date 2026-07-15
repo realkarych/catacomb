@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 )
 
 func run(args []string, stdout, stderr io.Writer) int {
+	Version = versionFromBuild(Version, debug.ReadBuildInfo)
 	root := newRootCmd()
 	root.SetArgs(args)
 	root.SetOut(stdout)

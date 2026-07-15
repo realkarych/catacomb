@@ -1,0 +1,55 @@
+name: Channels watch
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Compare channels to latest release
+        id: check
+        run: |
+          tag=$(gh release view -R "$REPO" --json tagName -q .tagName)
+          ver="${tag#v}"
+          problems=""
+          cask=$(gh api repos/realkarych/homebrew-tap/contents/Casks/catacomb.rb \
+            -q '.content' | base64 -d | sed -n 's/^  version "\(.*\)"/\1/p')
+          [ "$cask" = "$ver" ] || problems="${problems}- Homebrew cask is \`${cask}\`, latest release is \`${ver}\`\n"
+          if [ -n "$problems" ]; then
+            {
+              echo "desync=true"
+              echo "body<<EOF"
+              echo "Channel drift detected for latest release \`${tag}\`:"
+              printf '%b' "$problems"
+              echo "EOF"
+            } >>"$GITHUB_OUTPUT"
+          else
+            echo "desync=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update tracking issue
+        if: steps.check.outputs.desync == 'true'
+        env:
+          BODY: ${{ steps.check.outputs.body }}
+        run: |
+          title="Release channel desync"
+          num=$(gh issue list -R "$REPO" --label release-desync --state open \
+            --search "$title in:title" --json number -q '.[0].number')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" -R "$REPO" --body "$BODY"
+          else
+            gh label create release-desync -R "$REPO" --color b60205 --force || true
+            gh issue create -R "$REPO" --label release-desync --title "$title" --body "$BODY"
+          fi
