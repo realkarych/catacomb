@@ -152,6 +152,7 @@ func TestMaxObservedVersion(t *testing.T) {
 }
 
 func TestWarnVersionFiresAndStaysSilent(t *testing.T) {
+	resetDriftWarnings()
 	buf := captureDriftOut(t)
 	warnVersion("9.9.9")
 	out := buf.String()
@@ -166,7 +167,21 @@ func TestWarnVersionFiresAndStaysSilent(t *testing.T) {
 	assert.Empty(t, buf.String())
 }
 
+func TestWarnVersionDedupes(t *testing.T) {
+	resetDriftWarnings()
+	var buf bytes.Buffer
+	old := driftOut
+	driftOut = &buf
+	defer func() { driftOut = old }()
+
+	high := "999.0.0"
+	warnVersion(high)
+	warnVersion(high)
+	assert.Equal(t, 1, strings.Count(buf.String(), "newer than tested"))
+}
+
 func TestParseTranscriptsWarnsOnNewerVersion(t *testing.T) {
+	resetDriftWarnings()
 	buf := captureDriftOut(t)
 	path := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), "9.9.9")
 	_, err := parseTranscripts(path, nil, "exec-v")
@@ -184,6 +199,7 @@ func TestParseTranscriptsNoVersionWarnAtCeiling(t *testing.T) {
 }
 
 func TestParseTranscriptsWarnsDriftAndVersionTogether(t *testing.T) {
+	resetDriftWarnings()
 	buf := captureDriftOut(t)
 	drifty := writeDriftyCopy(t, filepath.Join("testdata", "session.jsonl"))
 	path := writeVersionedCopy(t, drifty, "9.9.9")

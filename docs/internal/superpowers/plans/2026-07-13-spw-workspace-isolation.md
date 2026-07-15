@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `bench` materializes a fresh working directory per cell from a user-supplied command (optional patch handover, optional teardown, deterministic cleanup, descriptive stamps), per [ADR-0028](../../adr/0028-per-cell-workspace-isolation.md) and the [SP-W design spec](../../specs/2026-07-13-spw-workspace-isolation-design.md).
+**Goal:** `bench` materializes a fresh working directory per cell from a user-supplied command (optional patch handover, optional teardown, deterministic cleanup, descriptive stamps), per [ADR-0028](../../../adr/0028-per-cell-workspace-isolation.md) and the [SP-W design spec](../../specs/2026-07-13-spw-workspace-isolation-design.md).
 
 **Architecture:** A `workspace` block on tasks (wholesale per-variant override) is validated and patch-hashed at basket load (`bench/`); a new lifecycle pair in `cmd/catacomb/workspace.go` (`setupWorkspace`/`cleanupWorkspace`) brackets the existing cell body, which is re-rooted on a `workdir` variable; env stamps gain a descriptive `workspace` block (`evidence/`). Cells without a workspace are byte-identical to today.
 

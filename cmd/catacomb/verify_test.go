@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,43 @@ func TestRunVerifyHappyPathTwoDirs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, "offline", rec.Mode)
+	assert.Empty(t, rec.Error)
+}
+
+func TestOfflineVerifyResolvesBasketRelativeScriptFromAnyCwd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("verifier is a #!/bin/sh script; not executable on Windows")
+	}
+	base := t.TempDir()
+	script := filepath.Join(base, "verify.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho '{\"key\":\"verifier.pass\",\"value\":1}'\n"), 0o755))
+	basketPath := filepath.Join(base, "basket.yaml")
+	require.NoError(t, os.WriteFile(basketPath, []byte(
+		"basket: bk\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"agent\"]\n    verify:\n      cmd: [\"./verify.sh\"]\nvariants:\n  - id: base\n"), 0o600))
+	_, hash, err := bench.LoadOffline(basketPath)
+	require.NoError(t, err)
+
+	runs := t.TempDir()
+	dir := writeVerifyEvidence(t, runs, "bench-bk-t1-base-r1", "t1", "base", hash, 0)
+
+	t.Chdir(t.TempDir())
+
+	var out, errb bytes.Buffer
+	require.NoError(t, runVerify(t.Context(), &out, &errb, basketPath, verifyFlags{runsDir: runs}))
+	assert.Contains(t, out.String(), "verify bench-bk-t1-base-r1: ok")
+	assert.Empty(t, errb.String())
+
+	entries, err := loadEvidenceScores(dir, "bench-bk-t1-base-r1")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "verifier.pass", entries[0].Key)
+	assert.InDelta(t, 1.0, entries[0].Value, 1e-9)
+
+	rec, ok, err := evidence.ReadVerify(dir)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "offline", rec.Mode)
+	assert.Equal(t, 0, rec.ExitCode)
 	assert.Empty(t, rec.Error)
 }
 

@@ -144,15 +144,4 @@ on any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`,
 
 ### Troubleshooting
 
-| Symptom | Action |
-| --- | --- |
-| Manifest note says `no session id observed` | The cell's `cmd` must emit stream-json: run `claude` with `--output-format stream-json` |
-| Manifest note says `transcripts not found` | Check `--projects-dir` points at the Claude projects dir that owns the session; bench retries for ~3 s after the child exits |
-| `selector matched no runs` | Inspect `<runs-dir>/*/meta.json` labels; check `--runs-dir` and the `label:` terms (all terms are ANDed) |
-| `no catacomb store found` | Create the store with a write-path command: `catacomb baseline set` |
-| `store schema is older than this binary` | Run a write-path command (`catacomb baseline set`) to migrate it |
-| `on-disk schema is newer than this catacomb binary` | Upgrade catacomb |
-| `SQLITE_BUSY` on `regress --record` | Serialize the recorders or give each CI shard its own `--db` file |
-| `cell <run-id>: missing checkpoints: …` warnings | The agent never called `mcp__catacomb__mark` for those phases — check the `--mcp-config` wiring and the CLAUDE.md marking convention |
-| `warning: N unrecognized transcript record(s)` | Transcript format drift — see [Format drift](#format-drift) |
-| `warning: transcript Claude Code version … is newer than tested …` | Claude Code outran this binary's tested version ceiling — upgrade catacomb; see [Format drift](#format-drift) |
+See [Troubleshooting](troubleshooting.md) for a table of common symptoms and fixes.

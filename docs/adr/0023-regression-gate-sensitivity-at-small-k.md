@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-02
 - **Deciders:** @realkarych
-- **Related:** ADR-0022 §4; review `docs/reviews/2026-07-02-post-p0-cto-design-review.md` §4.1
+- **Related:** ADR-0022 §4; review `docs/internal/reviews/2026-07-02-post-p0-cto-design-review.md` §4.1
 - **Amends:** ADR-0022 — the rate-comparison statistics and the gate's escalation surface.
 
 ## Context

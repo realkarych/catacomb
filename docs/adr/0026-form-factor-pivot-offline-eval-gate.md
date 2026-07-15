@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-06
 - **Deciders:** @realkarych
-- **Related:** [2026-07-05 CTO review](../reviews/2026-07-05-competitive-cto-review.md), ADR-0001, ADR-0016, ADR-0017, ADR-0022, ADR-0023; supersession table in Consequences
+- **Related:** [2026-07-05 CTO review](../internal/reviews/2026-07-05-competitive-cto-review.md), ADR-0001, ADR-0016, ADR-0017, ADR-0022, ADR-0023; supersession table in Consequences
 
 ## Context
 

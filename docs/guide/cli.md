@@ -58,25 +58,8 @@ catacomb bench <basket.yaml> [flags]
 | `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
 
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
-combination, and cells run sequentially:
-
-```yaml
-basket: checkout
-reps: 5
-tasks:
-  - id: add-item
-    cmd: ["claude", "-p", "add an item to the cart", "--output-format", "stream-json"]
-    dir: services/cart          # optional working directory
-    env: { MODE: fast }         # optional per-task env
-    checkpoints: [plan, tests.pass]   # optional declared phases to verify
-    timeout: 30s                # optional per-task deadline (Go duration; unset = no limit)
-variants:
-  - id: baseline
-    env: { MODEL: opus }        # optional per-variant env (wins over task env)
-  - id: candidate
-    env: { MODEL: sonnet }
-    setup: ["git checkout feature"]   # optional pre-cell commands
-```
+combination, and cells run sequentially. The full basket file schema — every field, its
+type, and validation rules — is documented in [basket.md](basket.md).
 
 Each cell runs under run-id `bench-<basket>-<task>-<variant>-r<rep>` and carries the
 labels `basket`, `task`, `variant`, and `rep`, so `baseline` and `regress` selectors
@@ -294,17 +277,11 @@ variant, resolved by the run's recorded `variant` label; a run whose recorded va
 no longer in the basket is reported as a per-cell error and does not abort the rest.
 
 Each matched cell runs the task's `verify.cmd` as a **plain `exec`** (argv, no shell) with
-its working directory set to the cell's evidence dir and the verifier contract on its
-environment:
-
-| Variable | Value |
-| --- | --- |
-| `CATACOMB_EVIDENCE_DIR` | the cell's evidence dir (redacted transcripts, `meta.json`, captured `artifacts/`) |
-| `CATACOMB_WORKDIR` | **empty** offline — there is no hot workdir, so a re-verifiable verifier reads only from evidence |
-| `CATACOMB_RUN_ID`, `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP` | the cell's coordinates from `meta.json` |
-| `CATACOMB_AGENT_EXIT_CODE` | the agent child's recorded exit code |
-
-The task and variant `env:` maps and the verifier's own `verify.env` are layered on top.
+its working directory set to the cell's evidence dir and the same `CATACOMB_*` verifier
+contract `bench` sets — see [The verifier contract](workflows.md#the-verifier-contract) for
+the full table. Offline there is no hot workdir, so `CATACOMB_WORKDIR` is **empty** and a
+re-verifiable verifier reads only from evidence. The task and variant `env:` maps and the
+verifier's own `verify.env` are layered on top.
 The verifier's stdout is scores JSONL (the [run-level scores](#run-level-scores) dialect)
 and is rewritten to `<evidence>/scores.jsonl`; stderr passes through to the operator. A
 verification record — `cmd`, a sha256 of cmd+env, exit code, duration, timestamp, and
@@ -328,14 +305,9 @@ unreadable `--runs-dir`, or a selector that matched no runs).
 `verify` slots between [`bench`](#bench) and [`regress`](#regress): record once, iterate on
 the verifiers offline, then gate. `regress --runs-dir` auto-loads each cell's rewritten
 `scores.jsonl` and gates on `verifier.pass` by default (see
-[Run-level scores](#run-level-scores)).
-
-```sh
-catacomb bench basket.yaml --runs-dir runs    # agents + inline verification
-catacomb verify basket.yaml --runs-dir runs   # iterate on verifiers, zero agent cost
-catacomb regress --runs-dir runs \
-  --baseline label:basket=checkout,variant=a --candidate label:basket=checkout,variant=b
-```
+[Run-level scores](#run-level-scores)). See
+[The bench → verify → regress cycle](workflows.md#the-bench--verify--regress-cycle) in the
+workflows guide for the worked loop.
 
 ---
 
@@ -570,7 +542,7 @@ verdict, and never affects the exit code. A flagged cell is an invitation to rea
 run's evidence — [`pack`](#pack) bundles it for review — not a regression. When no flag
 fires the block is omitted entirely. Treat `cost_usd` and `duration_ms` flags with
 care: under prompt caching, real per-run cost spreads up to ~5× between byte-identical
-runs ([PV-6b](../reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
+runs (measured 2026-07-08, [PV-6b](../internal/reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
 inherits runner load — `tokens_out` and `turns` are the trustworthy anomaly axes. In
 particular, the first run of a bench batch often pays a cold-start premium and can flag
 on `duration_ms` routinely — expected, not an anomaly.

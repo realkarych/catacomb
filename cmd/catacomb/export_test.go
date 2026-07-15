@@ -233,6 +233,7 @@ func TestExportUnknownSinkIsOperational(t *testing.T) {
 }
 
 func TestExportWarnsOnNewerVersion(t *testing.T) {
+	resetDriftWarnings()
 	buf := captureDriftOut(t)
 	versioned := writeVersionedCopy(t, filepath.Join("testdata", "session.jsonl"), "9.9.9")
 	root := newRootCmd()

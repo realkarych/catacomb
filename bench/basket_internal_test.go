@@ -2,11 +2,13 @@ package bench
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func validBasket() Basket {
@@ -22,6 +24,31 @@ func TestValidateHappy(t *testing.T) {
 	require.NoError(t, validate(validBasket()))
 }
 
+func TestResolveExecPaths(t *testing.T) {
+	absDir := filepath.Join(t.TempDir(), "abs")
+	b := Basket{
+		Tasks: []Task{{
+			ID:     "t1",
+			Cmd:    []string{"./agent.sh"},
+			Dir:    "work",
+			Verify: &Verify{Cmd: []string{"python3", "./verify.py", "--x"}},
+		}, {
+			ID:  "t2",
+			Cmd: []string{"echo", "hi"},
+			Dir: absDir,
+		}},
+	}
+	resolveExecPaths(&b, "/base")
+
+	assert.Equal(t, []string{"./agent.sh"}, b.Tasks[0].Cmd)
+	assert.Equal(t, filepath.Join("/base", "work"), b.Tasks[0].Dir)
+	assert.Equal(t, "python3", b.Tasks[0].Verify.Cmd[0])
+	assert.Equal(t, filepath.Join("/base", "verify.py"), b.Tasks[0].Verify.Cmd[1])
+	assert.Equal(t, "--x", b.Tasks[0].Verify.Cmd[2])
+	assert.Equal(t, []string{"echo", "hi"}, b.Tasks[1].Cmd)
+	assert.Equal(t, absDir, b.Tasks[1].Dir)
+}
+
 func TestResolvePatchAbsError(t *testing.T) {
 	orig := absFn
 	absFn = func(string) (string, error) { return "", errors.New("boom") }
@@ -29,6 +56,17 @@ func TestResolvePatchAbsError(t *testing.T) {
 	err := resolvePatch(&Workspace{Patch: "fix.patch"}, "base")
 	require.ErrorIs(t, err, ErrWorkspacePatch)
 	assert.ErrorContains(t, err, "boom")
+}
+
+func TestHumanizeDecodeErrNonTypeError(t *testing.T) {
+	sentinel := errors.New("plain")
+	assert.Same(t, sentinel, humanizeDecodeErr(sentinel))
+}
+
+func TestHumanizeDecodeErrUnmappedPassthrough(t *testing.T) {
+	te := &yaml.TypeError{Errors: []string{"line 1: cannot unmarshal !!str into widget"}}
+	got := humanizeDecodeErr(te)
+	assert.Equal(t, "line 1: cannot unmarshal !!str into widget", got.Error())
 }
 
 func TestValidateErrors(t *testing.T) {
@@ -83,4 +121,15 @@ func TestValidateErrors(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.field)
 		})
 	}
+}
+
+func TestParseTimeoutHint(t *testing.T) {
+	_, err := parseTimeout("30")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `use a duration with units`)
+	assert.ErrorIs(t, err, ErrTimeout)
+
+	_, err = parseTimeout("-5s")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "negative")
 }

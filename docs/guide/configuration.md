@@ -1,5 +1,8 @@
 # Configuration
 
+Looking for the basket file schema (tasks, variants, verify, …)? See
+[basket.md](basket.md). This page covers CLI flags, environment variables, and defaults.
+
 Catacomb has no config file and no daemon to configure. Every setting is a command-line
 flag with a sensible default; the only environment variables are the two `bench` uses to
 tag runs.

@@ -430,7 +430,7 @@ judge, its prompt, and its budget stay outside, the same boundary as
 
    Trust `tokens_out` and `turns` flags most. Cost and duration are noisy by nature —
    under prompt caching, real per-run cost spreads up to ~5× between byte-identical runs
-   ([PV-6b](../reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
+   (measured 2026-07-08, [PV-6b](../internal/reviews/2026-07-08-pv6b-live-calibration.md)), and wall-clock duration
    inherits runner load — so read those flags as "look here", not as evidence by
    themselves.
 
@@ -490,7 +490,7 @@ catacomb, the same boundary as the [audit loop](#auditing-cells) above.
 
    The canon's bar is lower than it looks: **~40 labeled transcripts suffice** to expose
    a judge that cannot be trusted ([gap
-   review](../reviews/2026-07-12-eval-best-practices-gap-review.md) §2.4). Duplicate
+   review](../internal/reviews/2026-07-12-eval-best-practices-gap-review.md) §2.4, 2026-07-12). Duplicate
    labels for one coordinate are rejected outright — a gold set must be unambiguous.
 
 2. **Measure agreement.** Point the calculator at the labels and the judge's scores
@@ -638,7 +638,7 @@ and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 
 The offline gate is itself validated end-to-end against the real `claude -p` CLI by the
 [E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
-CI-portable rerun of the [PV-6b calibration](../reviews/2026-07-08-pv6b-live-calibration.md)
+CI-portable rerun of the [PV-6b calibration](../internal/reviews/2026-07-08-pv6b-live-calibration.md)
 methodology. It runs three live baskets and asserts the gate's behavior on the real
 evidence: the A-vs-A controls must raise no presence or verifier false positives at default
 sensitivity (their continuous metrics are asserted at a widened band, since sequential

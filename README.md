@@ -10,18 +10,25 @@
 <p align="center">
   Regression testing for
   <a href="https://www.anthropic.com/claude-code">Claude Code</a> agents.<br>
-  Change a prompt, a skill, or an MCP tool — then let statistics,<br>
-  not vibes, tell you whether your agent got worse.
+  Change a prompt, a skill, or an MCP tool — then see whether<br>
+  <b>cost, latency, or correctness</b> regressed, from statistics<br>
+  over real transcripts, not vibes.
 </p>
+
+<p align="center"><b>Catacomb is an offline eval gate</b>: a local CLI that runs your Claude Code<br>
+  tasks repeatedly and gates regressions in CI.</p>
 
 <!-- Badges -->
 <p align="center">
   <a href="https://github.com/realkarych/catacomb/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/realkarych/catacomb/actions/workflows/ci.yml/badge.svg"></a>&nbsp;<!--
+  --><a href="https://github.com/realkarych/catacomb/releases"><img alt="release" src="https://img.shields.io/github/v/release/realkarych/catacomb"></a>&nbsp;<!--
   --><a href="https://app.codecov.io/gh/realkarych/catacomb"><img alt="coverage" src="https://codecov.io/gh/realkarych/catacomb/branch/master/graph/badge.svg"></a>&nbsp;<!--
   --><a href="https://go.dev"><img alt="go version" src="https://img.shields.io/github/go-mod/go-version/realkarych/catacomb"></a>&nbsp;<!--
   --><a href="https://github.com/realkarych/catacomb/blob/master/LICENSE"><img alt="license Apache-2.0" src="https://img.shields.io/github/license/realkarych/catacomb"></a>&nbsp;<!--
   --><img alt="platforms" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-blue">
 </p>
+
+<p align="center"><sub>Pre-1.0: minor releases may carry breaking changes, always with migration notes — see the <a href="docs/VERSIONING.md">versioning policy</a>.</sub></p>
 
 <hr>
 
@@ -34,6 +41,8 @@ the old setup and the new one, recording each run locally as secret-redacted evi
 blocks the regression before it merges. No daemon, no service, no network — the whole
 loop is plain local files.
 
+> **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts.
+
 ## <p align=center>✨ Features</p>
 
 - **A gate, not a vibe check.** Repeated runs per variant, compared with statistics built for small samples ([why this matters](#-methodology)); the verdict maps to the exit code your CI already understands.
@@ -42,6 +51,42 @@ loop is plain local files.
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
 - **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
+
+<hr>
+
+## <p align=center>🧭 Where catacomb fits</p>
+
+Catacomb overlaps with familiar eval tooling but occupies a different niche — reach for
+it when the thing you're guarding is a *Claude Code agent* and the artifact you need is
+a CI verdict:
+
+- **promptfoo / DeepEval** evaluate prompts and RAG outputs against assertions. Catacomb scores whole *agent sessions* from real Claude Code transcripts — the action graph, not just the final string.
+- **LangSmith / Braintrust** are hosted platforms with dashboards and accounts. Catacomb is plain local files and an exit code — no daemon, no service, no network.
+- **Inspect** is a research framework for building evals. Catacomb is a purpose-built regression *gate*: repeated runs, small-sample statistics, and a CI exit code, specialized for Claude Code agents.
+
+<hr>
+
+## <p align=center>🎯 What you get</p>
+
+You change a prompt; catacomb runs both versions and turns the difference into a CI
+verdict. Here a chain-of-thought tweak made the agent slower and more expensive, so the
+candidate metrics cross their noise bands and the gate returns non-zero:
+
+```text
+$ catacomb regress --runs-dir runs \
+    --baseline label:basket=demo,variant=main \
+    --candidate label:basket=demo,variant=candidate
+baseline runs 5  candidate runs 5
+coverage steps 1.00  phases 1.00  steps_trusted true  overall regression
+VERDICT     SCOPE  METRIC       BASELINE  CANDIDATE  BAND
+regression  total  cost_usd     0.00      0.01       [0.00, 0.00]
+regression  total  duration_ms  5059.00   7165.00    [3755.50, 6362.50]
+regression  total  tokens_out   147.00    465.00     [91.50, 202.50]
+$ echo $?
+1
+```
+
+<p align="center"><sub>A real <code>catacomb regress</code> verdict from the <a href="#-tutorial">tutorial</a> below (rows and columns abbreviated; the full report is in the tutorial) — the candidate got slower and more expensive, so CI fails (exit 1).</sub></p>
 
 <hr>
 
@@ -61,6 +106,10 @@ brew trust realkarych/tap      # newer Homebrew requires trusting third-party ta
 brew install --cask catacomb
 ```
 
+> **Which channel serves what.** `go install` serves the tagged source the moment a
+> release lands; brew, apt, and docker converge within minutes. If `catacomb version`
+> looks old right after `brew install`, run `brew update` and reinstall.
+
 <details>
 <summary><b>Docker</b></summary>
 
@@ -69,6 +118,9 @@ brew install --cask catacomb
 ```sh
 docker run --rm ghcr.io/realkarych/catacomb:latest version
 ```
+
+The image is for CI and `catacomb version`; running the tutorial in docker also needs
+`claude` and your `~/.claude/projects` mounted in.
 
 </details>
 
@@ -173,6 +225,9 @@ chmod +x agent.sh
 
 ### 2. Run it
 
+`catacomb bench` calls the Anthropic API through Claude Code and spends real money — a
+few cents on haiku for this demo.
+
 ```sh
 catacomb bench demo.yaml --runs-dir runs
 ```
@@ -210,7 +265,54 @@ catacomb regress --runs-dir runs \
 
 (If your Claude Code is newer than the versions catacomb has been tested against, a
 few harmless `warning: transcript … newer than tested …` lines may precede the
-table.)
+table — the [tested-version watchlist](docs/guide/ingestion.md) tracks which builds
+are known-good.)
+
+The run-total block is the headline — each metric compared against its own noise
+band (the `BAND` column):
+
+```text
+baseline runs 5  candidate runs 5
+coverage steps 1.00  phases 1.00  steps_trusted true  overall regression
+VERDICT       SCOPE   KEY                               NAME         METRIC       BASELINE  CANDIDATE  BAND                DETAIL
+regression    total   -                                 -            cost_usd     0.00      0.01       [0.00, 0.00]        -
+regression    total   -                                 -            duration_ms  5059.00   7165.00    [3755.50, 6362.50]  -
+ok            total   -                                 -            error_rate   0.00      0.00       [0.00, 0.35]        -
+ok            total   -                                 -            nodes        4.00      4.00       [3.00, 5.00]        -
+ok            total   -                                 -            tokens_in    10.00     10.00      [7.50, 12.50]       -
+regression    total   -                                 -            tokens_out   147.00    465.00     [91.50, 202.50]     -
+```
+
+The chain-of-thought instruction made every run roughly 3× chattier (median
+`tokens_out` 147 → 465) and about 40% slower (median duration 5.1 s → 7.2 s), and
+even at haiku pennies the cost crossed its noise band — the overall verdict is
+`regression` and the exit code is `1`. That exit code is the gate:
+
+```sh
+catacomb regress --runs-dir runs \
+  --baseline label:basket=demo,variant=main \
+  --candidate label:basket=demo,variant=candidate \
+  && echo "safe to merge"
+# 0 = ok · 1 = regression · 2 = operational error
+```
+
+Two runs of an agent are two samples from a distribution — a single side-by-side diff
+cannot tell a real regression from sampling noise, which is why every comparison here
+is group-vs-group ([methodology](#-methodology)).
+
+**Reading the rest of the report.** Below the run-total headline, the same command
+prints two finer axes and an audit trail:
+
+- **`paired`** rows run an exact per-task sign test, which needs at least five tasks.
+  This demo has one, so they come back `insufficient`, and the `sensitivity:` line
+  notes the paired gate cannot fire at this support — the run-total metrics are what
+  fired the gate.
+- **`phase`** rows compare declared checkpoint windows (here the single `task:answer`
+  phase), pinning a regression to where in the run it happened.
+- **`audit:`** lines flag an individual run whose metric sits outside the group band —
+  provenance for a number, not a separate verdict.
+
+Here is the complete report those three notes describe:
 
 ```text
 baseline runs 5  candidate runs 5
@@ -232,25 +334,6 @@ regression    phase   eb1d7eb24fc38d7838cf7b81664c90e6  task:answer  duration_ms
 regression    phase   eb1d7eb24fc38d7838cf7b81664c90e6  task:answer  tokens_out   147.00    465.00     [91.50, 202.50]     -
 audit: baseline run bench-demo-answer-main-r1 (task answer) cost_usd 0.010954549999999999 vs group median 0.0033167 (band 0.00165835)
 ```
-
-The chain-of-thought instruction made every run roughly 3× chattier (median
-`tokens_out` 147 → 465) and about 40% slower (median duration 5.1 s → 7.2 s), and
-even at haiku pennies the cost crossed its noise band — the overall verdict is
-`regression` and the exit code is `1`. The `sensitivity:` line refers only to the
-paired per-task axis, which needs five tasks where this demo has one — the run-total
-metrics are what fired the gate. That exit code is the gate:
-
-```sh
-catacomb regress --runs-dir runs \
-  --baseline label:basket=demo,variant=main \
-  --candidate label:basket=demo,variant=candidate \
-  && echo "safe to merge"
-# 0 = ok · 1 = regression · 2 = operational error
-```
-
-Two runs of an agent are two samples from a distribution — a single side-by-side diff
-cannot tell a real regression from sampling noise, which is why every comparison here
-is group-vs-group ([methodology](#-methodology)).
 
 ### 4. Upgrade it
 
@@ -389,16 +472,16 @@ reports, never transcripts or payloads.
 
 ## <p align=center>📚 Documentation & Development</p>
 
-Reading order:
+Full docs live under **[docs/](docs/README.md)**. Suggested reading order:
 
-1. This README — install, tutorial, the mental model
+1. This README — install, [tutorial](#-tutorial), the mental model
 2. [Concepts](docs/guide/concepts.md) — the action graph, step keys, phases
 3. [Workflows](docs/guide/workflows.md) — recipes: baselines, trends, verifiers, external scores, diff, export
 4. [CLI reference](docs/guide/cli.md) — every command, flag, and exit code
 5. [Configuration](docs/guide/configuration.md) · [Ingestion](docs/guide/ingestion.md) · [Privacy & operations](docs/guide/privacy-and-operations.md)
 
-Design depth: [design spec](docs/specs/2026-06-20-catacomb-design.md) ·
-[ADRs](docs/adr/) · [implementation plans](docs/plans/) ·
+Reference: [guide index](docs/guide/README.md) · [basket schema](docs/guide/basket.md) ·
+[troubleshooting](docs/guide/troubleshooting.md) · [ADR log](docs/adr/README.md) ·
 [release process](docs/RELEASING.md) · [contributor & agent guide](AGENTS.md).
 
 ```sh

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-13
 - **Deciders:** @realkarych
-- **Related:** [ADR-0027](0027-verification-layer-and-reliability-metrics.md) (deferred per-trial isolation), [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md) (constitution), [ADR-0022](0022-regression-detection-over-repeated-runs.md) (deterministic observables), SP-W design spec [2026-07-13-spw-workspace-isolation-design.md](../specs/2026-07-13-spw-workspace-isolation-design.md)
+- **Related:** [ADR-0027](0027-verification-layer-and-reliability-metrics.md) (deferred per-trial isolation), [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md) (constitution), [ADR-0022](0022-regression-detection-over-repeated-runs.md) (deterministic observables), SP-W design spec [2026-07-13-spw-workspace-isolation-design.md](../internal/specs/2026-07-13-spw-workspace-isolation-design.md)
 
 ## Context
 

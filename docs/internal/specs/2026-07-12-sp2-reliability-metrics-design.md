@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-12
 - **Status:** approved design (ADR-0027 SP2; decisions adjudicated there and in the [gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md) §2.2/§4.2; execution pre-approved)
-- **Related:** [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md), [ADR-0023](../adr/0023-regression-gate-sensitivity-at-small-k.md), SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md), PV-6a [gate-power calibration](../reviews/2026-07-08-gate-power-calibration.md)
+- **Related:** [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md), [ADR-0023](../../adr/0023-regression-gate-sensitivity-at-small-k.md), SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md), PV-6a [gate-power calibration](../reviews/2026-07-08-gate-power-calibration.md)
 
 SP1 gave the gate a task-success axis (`verifier.pass` per cell). SP2 adds the two reliability instruments the canon prescribes on top of it: **pass^k** (τ-bench's all-k-trials-succeed estimator — the metric that separates a demo from a shippable agent) and a **paired sign test** over per-task medians (the closed-form answer to PV-6a's honest limit: the continuous band is k-invariant and blind below +25% at any k). Both are deterministic, dependency-free, and RNG-free.
 

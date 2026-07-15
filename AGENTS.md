@@ -2,12 +2,12 @@
 
 Offline eval gate for Claude Code agentic pipelines. A single CLI runs prompt baskets (`bench`), records each cell's transcripts as secret-redacted evidence dirs, reduces transcript JSONL into one canonical action graph (`reduce`), derives cross-run step and phase keys (`stepkey`/`phasekey`), aggregates repeated runs (`aggregate`), and gates regressions statistically (`regress`) against baselines stored in embedded SQLite (`store`: baselines + recorded history only). A stdlib-only stdio MCP server (`mcp`) ships the in-run `mark` checkpoint tool. No daemon, no network: the pipeline is `bench → transcript JSONL → reduce → step/phase keys → aggregate → regress`.
 
-- Design spec → [`docs/specs/2026-06-20-catacomb-design.md`](docs/specs/2026-06-20-catacomb-design.md)
+- Design spec → [`docs/internal/specs/2026-06-20-catacomb-design.md`](docs/internal/specs/2026-06-20-catacomb-design.md)
 - Architecture decisions → [`docs/adr/`](docs/adr/)
-- Implementation plans → [`docs/plans/`](docs/plans/)
+- Implementation plans → [`docs/internal/plans/`](docs/internal/plans/)
 - Versioning policy → [`docs/VERSIONING.md`](docs/VERSIONING.md) (SemVer; what counts as the compatibility surface, when minors/majors, 1.0 criteria)
 
-**Status:** pivoted per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb is the offline eval gate; observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores), PV-3 (viewer deletion), PV-4 (daemon/ingest/exporter/gRPC deletion, store slim, DeepEval retarget, guide repositioning), PV-5 (residual cleanup: dead `repro` OTLP fields, store schema v5, offline Claude Code version watchlist), and PV-6 (gate-power calibration — deterministic characterization + live `claude -p` validation, zero false positives on A-vs-A controls) have all landed. **The ADR-0026 pivot is complete.** Sequence and evidence live in the [pivot roadmap](docs/superpowers/plans/2026-07-06-pivot-roadmap.md) and `docs/reviews/2026-07-08-*`.
+**Status:** pivoted per [ADR-0026](docs/adr/0026-form-factor-pivot-offline-eval-gate.md) (2026-07-06) — catacomb is the offline eval gate; observability is delegated to a vendor substrate. PV-1/PV-2 (offline gate, baselines, stamps, scores), PV-3 (viewer deletion), PV-4 (daemon/ingest/exporter/gRPC deletion, store slim, DeepEval retarget, guide repositioning), PV-5 (residual cleanup: dead `repro` OTLP fields, store schema v5, offline Claude Code version watchlist), and PV-6 (gate-power calibration — deterministic characterization + live `claude -p` validation, zero false positives on A-vs-A controls) have all landed. **The ADR-0026 pivot is complete.** Sequence and evidence live in the [pivot roadmap](docs/internal/superpowers/plans/2026-07-06-pivot-roadmap.md) and `docs/internal/reviews/2026-07-08-*`.
 
 ## Principles
 

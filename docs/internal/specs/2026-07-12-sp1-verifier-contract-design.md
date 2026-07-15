@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-12
 - **Status:** approved design (brainstormed section-by-section, user-validated)
-- **Related:** [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md) (decision + non-goals), [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) (annotations contract), [ADR-0023](../adr/0023-regression-gate-sensitivity-at-small-k.md) (rate gate), [gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md)
+- **Related:** [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md) (decision + non-goals), [ADR-0022](../../adr/0022-regression-detection-over-repeated-runs.md) (annotations contract), [ADR-0023](../../adr/0023-regression-gate-sensitivity-at-small-k.md) (rate gate), [gap review](../reviews/2026-07-12-eval-best-practices-gap-review.md)
 
 Catacomb gains a task-success axis: baskets declare an executable verifier per task; bench (and an offline `verify` verb) run it against each cell's evidence; its verdict enters the model as run-level annotations and is gated by the existing statistics. Semantics stay in the user's subprocess — the core neither judges nor interprets, it executes and aggregates.
 

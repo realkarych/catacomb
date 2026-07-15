@@ -1,6 +1,6 @@
 # Pivot roadmap: offline eval gate over vendor observability (ADR-0026)
 
-Executes [ADR-0026](../../adr/0026-form-factor-pivot-offline-eval-gate.md). Evidence base: [2026-07-05 CTO review](../../reviews/2026-07-05-competitive-cto-review.md).
+Executes [ADR-0026](../../../adr/0026-form-factor-pivot-offline-eval-gate.md). Evidence base: [2026-07-05 CTO review](../../reviews/2026-07-05-competitive-cto-review.md).
 
 Execution rules (every PV): own worktree, TDD, 100% coverage, subagent-driven task execution with review between tasks, review cycle + green CI before squash-merge. Deletion waves (PV-3 onward) start only after the ADR-0026 docs PR is merged.
 

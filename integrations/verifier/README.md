@@ -11,20 +11,15 @@ library (`csv`, `dataclasses`, `json`, `math`, `os`, `sys`).
 
 ## The exec contract
 
-`bench` invokes the verifier command in the cell's working directory with these
-environment variables set:
+`bench` invokes the verifier command in the cell's working directory with the
+`CATACOMB_*` environment that carries the cell context; see
+[The verifier contract](../../docs/guide/workflows.md#the-verifier-contract) for
+the full table and semantics.
 
-| Variable | Meaning |
-| --- | --- |
-| `CATACOMB_EVIDENCE_DIR` | the cell's evidence dir (transcripts, `meta.json`, `artifacts/`) |
-| `CATACOMB_WORKDIR` | the cell's live working directory (bench mode only; empty offline) |
-| `CATACOMB_RUN_ID` | the cell's run id |
-| `CATACOMB_BASKET`, `CATACOMB_TASK`, `CATACOMB_VARIANT`, `CATACOMB_REP` | cell coordinates |
-| `CATACOMB_AGENT_EXIT_CODE` | the agent child's exit code |
-
-`Cell.from_env()` parses these. `CATACOMB_EVIDENCE_DIR` and `CATACOMB_RUN_ID`
-are required; a missing one exits 2 (an operational failure of the verifier, not
-a task failure). The rest default to `""` (an empty `workdir` means offline) or 0.
+`Cell.from_env()` parses that environment. `CATACOMB_EVIDENCE_DIR` and
+`CATACOMB_RUN_ID` are required; a missing one exits 2 (an operational failure of
+the verifier, not a task failure). The rest default to `""` (an empty `workdir`
+means offline) or 0.
 
 ## Reading artifacts
 

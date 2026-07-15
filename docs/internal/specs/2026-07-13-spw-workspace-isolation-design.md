@@ -1,8 +1,8 @@
 # SP-W — Per-cell workspace isolation: design
 
 - **Date:** 2026-07-13
-- **Status:** approved design ([ADR-0028](../adr/0028-per-cell-workspace-isolation.md); schema placement, patch boundary, lifecycle, and stamp shape adjudicated with the owner 2026-07-13)
-- **Related:** [ADR-0027](../adr/0027-verification-layer-and-reliability-metrics.md) §2.3 deferral, SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md) (exec boundary, verifier contract), SP3 spec [2026-07-12-sp3-env-stamps-pareto-design.md](2026-07-12-sp3-env-stamps-pareto-design.md) (descriptive stamps)
+- **Status:** approved design ([ADR-0028](../../adr/0028-per-cell-workspace-isolation.md); schema placement, patch boundary, lifecycle, and stamp shape adjudicated with the owner 2026-07-13)
+- **Related:** [ADR-0027](../../adr/0027-verification-layer-and-reliability-metrics.md) §2.3 deferral, SP1 spec [2026-07-12-sp1-verifier-contract-design.md](2026-07-12-sp1-verifier-contract-design.md) (exec boundary, verifier contract), SP3 spec [2026-07-12-sp3-env-stamps-pareto-design.md](2026-07-12-sp3-env-stamps-pareto-design.md) (descriptive stamps)
 
 SP-W makes `bench` materialize a **fresh working directory for every cell** from a user-supplied command, with an optional patch file handed over by absolute path, an optional teardown hook, deterministic cleanup, and descriptive identity stamps. It closes the per-trial contamination defect (Anthropic canon: agents reading prior trials' git history) and expresses the Arcadia benchmarking scenario — pinned revision plus optional patch overlay — without a line of VCS semantics in core.
 

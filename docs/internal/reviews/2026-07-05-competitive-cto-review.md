@@ -94,4 +94,4 @@ Key sources: `github.com/Arize-ai/arize-claude-code-plugin`; `langfuse.com/integ
 
 ## 8. Outcome
 
-This review led to the form-factor decision recorded in [ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md): narrow catacomb to the offline eval gate; delegate observability to a vendor substrate (Phoenix recommended); keep transcripts as the gate's source of truth.
+This review led to the form-factor decision recorded in [ADR-0026](../../adr/0026-form-factor-pivot-offline-eval-gate.md): narrow catacomb to the offline eval gate; delegate observability to a vendor substrate (Phoenix recommended); keep transcripts as the gate's source of truth.
