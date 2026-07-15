@@ -6,9 +6,10 @@
 #   - every A-vs-A control must NOT gate (zero false positives), and
 #   - a seeded checkpoint-presence regression, a seeded continuous (tokens_out)
 #     regression, a seeded verifier-contract regression (a wrong SQL result fails
-#     verification), a seeded subagent-delegation regression (baseline delegates,
-#     degraded does not — gated on subagent-node presence separation, robust to
-#     child-agent jitter), a seeded skill-delegation regression (a dropped Skill step
+#     verification), a seeded subagent-delegation regression (baseline delegates via the
+#     Agent tool, degraded runs inline — gated on Agent tool-call presence separation,
+#     since `claude -p` headless does not emit subagent sidechain), a seeded
+#     skill-delegation regression (a dropped Skill step
 #     node), AND a
 #     seeded live-MCP regression (a dropped MCP record-tool step node together with a
 #     failed record-tool verifier — the one basket where BOTH signals gate)
@@ -696,50 +697,58 @@ record "$rc" "sql A-vs-A reports zero regressions"
 
 echo "== m. bench e2e-subagent basket (15 live claude -p cells) — Task delegation =="
 # baseline/baseline2 delegate the seeded SQL task to a subagent (the Task tool);
-# degraded runs sqlite3 inline. bench captures the whole session, incl. the subagent's
-# isSidechain lines, so reduce synthesizes the subagent graph node + the Task step node.
-# Same default projects-dir as the SQL basket: live `claude -p` writes transcripts under
-# ~/.claude/projects, so bench must read from there too (no --projects-dir override).
+# degraded runs sqlite3 inline. `claude -p` headless does NOT write the subagent's
+# isSidechain lines into session.jsonl, so reduce cannot synthesize a "type":"subagent"
+# node from a bench transcript; the observable delegation signal is the Agent tool_use,
+# which reduces to a "name":"Agent" tool_call node. (The full subagent-node/subagent_type
+# reduction needs sidechain and is covered in the hermetic + import scenarios, which run on
+# INTERACTIVE sessions.) Same default projects-dir as the SQL basket: live `claude -p`
+# writes transcripts under ~/.claude/projects, so bench reads from there too (no
+# --projects-dir override).
 run_expect 0 "bench e2e-subagent basket" -- \
 	catacomb bench basket-subagent.yaml --runs-dir "$runs4" --manifest "$manifest4"
 
 echo "== n. subagent delegation separation (seeded regression): baseline delegates in a majority, degraded near-never =="
 # Delegating to a real subagent is inherently nondeterministic: the child agent's internal
-# tool sequence jitters run-to-run (spurious step-presence notables between identical batches,
-# proven by an earlier --fail-on-notable A-vs-A that flaked) and its latency can time a cell
-# out. Step-presence gating is therefore unreliable here (unlike the deterministic hermetic
-# lane). The robust signal is structural: did reduce synthesize a "type":"subagent" node at
-# all? baseline is instructed to delegate (node present in a majority of the runs that produced
-# a transcript), degraded to run inline (node near-absent). We gate on that separation --
+# tool sequence jitters run-to-run and its latency can time a cell out. And `claude -p`
+# headless does NOT emit subagent sidechain lines into session.jsonl, so reduce cannot
+# synthesize a "type":"subagent" node from a bench transcript at all -- the ONLY observable
+# delegation signal in a bench transcript is the Agent tool_use, which reduces to a
+# "name":"Agent" tool_call node. The robust signal is therefore that Agent tool-call: baseline
+# is instructed to delegate (Agent call present in a majority of the runs that produced a
+# transcript), degraded to run inline (Agent call near-absent). We gate on that separation --
 # tolerant of timeouts (they only shrink the denominator) and an occasional stray delegation.
-# verifier.pass stays a co-signal (both variants produce the correct CSV). The deterministic
-# subagent reduce path (node + subagent_type + phase keys) is fully covered in the hermetic
-# lane; this live gate proves real delegation is detected and drops under the seeded instruction.
-count_subagent_nodes() { # <variant> -> "hits total"
+# The full subagent-node/subagent_type reduction path (which needs sidechain) is validated
+# deterministically in the hermetic lane and the import scenario, which run on INTERACTIVE
+# sessions that DO carry sidechain; this live gate proves real delegation (the Agent tool-call)
+# is detected and drops under the seeded instruction.
+count_agent_calls() { # <variant> -> "hits total"
 	local variant="$1" hits=0 total=0 d snap
 	for d in "$runs4"/bench-e2e-subagent-subagent-"$variant"-r*; do
 		[ -f "$d/session.jsonl" ] || continue
-		snap="$work/subagent-count-$(basename "$d").jsonl"
+		snap="$work/agent-call-count-$(basename "$d").jsonl"
 		catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
 		total=$((total + 1))
-		if grep -q '"type":"subagent"' "$snap"; then hits=$((hits + 1)); fi
+		if grep -q '"name":"Agent"' "$snap"; then hits=$((hits + 1)); fi
 	done
 	printf '%s %s' "$hits" "$total"
 }
-read -r sub_base_hits sub_base_total <<<"$(count_subagent_nodes baseline)"
-read -r sub_deg_hits sub_deg_total <<<"$(count_subagent_nodes degraded)"
-read -r sub_base2_hits sub_base2_total <<<"$(count_subagent_nodes baseline2)"
+read -r agent_base_hits agent_base_total <<<"$(count_agent_calls baseline)"
+read -r agent_deg_hits agent_deg_total <<<"$(count_agent_calls degraded)"
+read -r agent_base2_hits agent_base2_total <<<"$(count_agent_calls baseline2)"
 rc=0
-{ [ "$sub_base_hits" -ge 3 ] && [ "$sub_deg_hits" -le 1 ]; } || rc=1
-record "$rc" "subagent delegation separation: baseline nodes $sub_base_hits/$sub_base_total (>=3) vs degraded $sub_deg_hits/$sub_deg_total (<=1)"
+{ [ "$agent_base_hits" -ge 3 ] && [ "$agent_deg_hits" -le 1 ]; } || rc=1
+record "$rc" "subagent delegation: Agent tool-call present in a majority of baseline runs, near-absent in degraded (baseline $agent_base_hits/$agent_base_total >=3 vs degraded $agent_deg_hits/$agent_deg_total <=1)"
 
 echo "== o. subagent A-vs-A control (baseline vs baseline2) must NOT gate =="
-# baseline and baseline2 both delegate, so presence and the annotation axis are equal. Only
-# the continuous metrics can drift on live API latency/cost/token jitter, so the continuous
-# band is WIDENED (same rationale as steps c/f/l). --fail-on-notable is deliberately OMITTED:
-# subagent-internal tool jitter produces spurious step-presence notables between identical
-# batches (the reason step n gates structurally on node presence, not on notables), so this
-# control widens only the continuous band and asserts zero regressions.
+# baseline and baseline2 both delegate via the Agent tool, so presence and the annotation axis
+# are equal. Only the continuous metrics can drift on live API latency/cost/token jitter, so the
+# continuous band is WIDENED (same rationale as steps c/f/l). --fail-on-notable is deliberately
+# OMITTED: subagent-internal tool jitter produces spurious step-presence notables between
+# identical batches (the reason step n gates structurally on the Agent tool-call, not on
+# notables — recall `claude -p` headless emits no subagent sidechain, so the observable
+# delegation signal is the Agent tool-call), so this control widens only the continuous band and
+# asserts zero regressions.
 run_json 0 "$artifacts/regress-subagent-AvA.json" \
 	"subagent A-vs-A must NOT gate (continuous band widened)" -- \
 	catacomb regress --runs-dir "$runs4" \
@@ -751,13 +760,14 @@ python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["re
 record "$rc" "subagent A-vs-A reports zero regressions"
 
 echo "== o2. subagent A-vs-A delegation specificity: baseline2 also delegates in a majority (no spurious separation) =="
-# The seeded gate (step n) fires on baseline-vs-degraded node-presence separation. Its
-# specificity control is that two IDENTICAL delegating variants show NO separation: baseline2
-# must also delegate in a majority, so the separation step n detects is a real degraded-
-# instruction effect, not batch-to-batch noise. Reuses the counts from step n.
+# The seeded gate (step n) fires on baseline-vs-degraded Agent tool-call presence separation
+# (`claude -p` headless emits no subagent sidechain, so the Agent tool-call is the observable
+# delegation signal). Its specificity control is that two IDENTICAL delegating variants show NO
+# separation: baseline2 must also delegate in a majority, so the separation step n detects is a
+# real degraded-instruction effect, not batch-to-batch noise. Reuses the counts from step n.
 rc=0
-[ "$sub_base2_hits" -ge 3 ] || rc=1
-record "$rc" "subagent A-vs-A: baseline2 also delegates in a majority ($sub_base2_hits/$sub_base2_total >=3), no spurious separation"
+[ "$agent_base2_hits" -ge 3 ] || rc=1
+record "$rc" "subagent A-vs-A: baseline2 also delegates in a majority ($agent_base2_hits/$agent_base2_total >=3), no spurious separation"
 
 echo "== p. bench e2e-skill basket (15 live claude -p cells) — Skill delegation =="
 # baseline/baseline2 invoke the real project-scoped e2e-emit skill (the Skill tool ->
