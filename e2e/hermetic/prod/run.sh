@@ -5,12 +5,14 @@
 # non-zero if any scenario recorded a failure. Zero API spend — every scenario
 # drives fixture transcripts through the offline pipeline.
 #
-# Each scenario runs in a subshell — `( . "$s"; prod_report )` — so it still inherits
-# the sourced helpers and exported vars but an unguarded hard failure (set -e abort)
-# in one scenario cannot abort the dispatcher and skip the rest. PROD_FAILURES is
-# per-subshell, so each subshell calls prod_report itself (its non-zero exit on a
-# recorded failure is captured into prod_fail), and the dispatcher exits non-zero if
-# any scenario failed.
+# Each scenario runs in a subshell so it still inherits the sourced helpers and
+# exported vars but an unguarded hard failure (set -e abort) in one scenario cannot
+# abort the dispatcher and skip the rest. PROD_FAILURES is per-subshell: a subshell
+# that recorded failures calls prod_report (which prints that scenario's failure list
+# and returns non-zero, captured into prod_fail); a subshell that passed exits 0
+# silently. The single aggregate summary line prints once here in the parent — on
+# success after the loop, on failure via a non-zero exit — so "prod: all scenarios
+# passed" is emitted exactly once, without weakening the per-scenario gate.
 set -euo pipefail
 PROD="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$PROD/../../.." && pwd)"
@@ -23,6 +25,7 @@ shopt -s nullglob
 prod_fail=0
 for s in "$PROD"/scenarios/*.sh; do
   # shellcheck source=/dev/null
-  ( . "$s"; prod_report ) || prod_fail=1
+  ( . "$s"; [ "${#PROD_FAILURES[@]}" -eq 0 ] || prod_report ) || prod_fail=1
 done
-[ "$prod_fail" -eq 0 ] || exit 1
+if [ "$prod_fail" -ne 0 ]; then exit 1; fi
+printf '\nprod: all scenarios passed\n'
