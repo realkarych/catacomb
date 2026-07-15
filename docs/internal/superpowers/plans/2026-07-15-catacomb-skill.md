@@ -625,6 +625,7 @@ Expected: PASS (exit 0).
 - [ ] **Step 2: Dispatch + anchor integrity**
 
 Run:
+
 ```bash
 for f in setup ci-gate read-report accuracy import troubleshoot concepts; do
   test -f "skills/catacomb/references/$f.md" && echo "file ok $f" || echo "FILE MISSING $f"
@@ -634,6 +635,7 @@ for a in basket-cell-evidence phases-and-checkpoints verdicts-and-noise-bands co
   grep -rqi "#$a" skills/catacomb/references/ || echo "ANCHOR UNLINKED $a"
 done
 ```
+
 Expected: `file ok` for all seven; no `MISSING`/`UNLINKED` lines.
 
 - [ ] **Step 3: Trigger check via writing-skills**
