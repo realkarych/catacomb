@@ -16,8 +16,8 @@
 #
 # See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$3 of real API spend (105 bench cells; checkpoint + SQL + subagent + skill +
-# MCP tasks on sonnet, the subagent one also spawning a child agent).
+# Cost: ~$3–7 of real API spend (105 bench cells: presence/continuous/sql +
+# subagent/skill/mcp production baskets on sonnet; subagent cells spawn children).
 #
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
