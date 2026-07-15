@@ -86,7 +86,7 @@ $ echo $?
 1
 ```
 
-<p align="center"><sub>A real <code>catacomb regress</code> verdict from the <a href="#-tutorial">tutorial</a> below (trimmed) — the candidate got slower and more expensive, so CI fails (exit 1).</sub></p>
+<p align="center"><sub>A real <code>catacomb regress</code> verdict from the <a href="#-tutorial">tutorial</a> below (rows and columns abbreviated; the full report is in the tutorial) — the candidate got slower and more expensive, so CI fails (exit 1).</sub></p>
 
 <hr>
 
