@@ -101,7 +101,11 @@ richest signal:
   code already encodes the overall verdict.
 
 `--record` appends each comparison to the `name:golden` baseline's history, accumulating
-the series that `trends` replays later — see [accuracy.md](accuracy.md).
+the series that `trends` replays later — see [accuracy.md](accuracy.md). On an ephemeral CI
+runner those appended rows live only in that run's `catacomb.db` and are discarded when the
+job ends unless you persist the DB back (commit it, or add `catacomb.db` to the uploaded
+artifact), so durable `trends` history is something you build in a persistent store rather
+than the PR gate.
 
 ## The gate
 

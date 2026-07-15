@@ -145,8 +145,7 @@ catacomb trends demo-main --db demo.db
 
 For the accuracy-vs-cost trade-off, `catacomb trends <name> --pareto` turns each
 recorded comparison into a point — accuracy from `verifier.pass`, cost from
-`cost_usd` — and leads the table with the Pareto frontier (the candidates no other
-row beats).
+`cost_usd` — and the Pareto frontier (the candidates no other row beats) reads top-down.
 
 **Re-pin after an accepted regression.** When you have reviewed a `regression` and
 accept the new numbers, re-run `baseline set` with the same name to re-pin the
