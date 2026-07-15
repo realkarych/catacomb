@@ -1,0 +1,30 @@
+# Live skill basket: does invoking a real project-scoped skill reduce to a Skill step
+# node, and does the skill still produce the verifiable artifact? 1 task x 3 variants x
+# 5 reps = 15 live cells. The workspace stages the e2e-emit skill dir into the cell's
+# .claude/skills/ (so --setting-sources project discovers it) and copies the wrapper +
+# verifier in from E2E_DIR — same anti-gaming layout as basket-sql/basket-subagent, so
+# out/result.csv cannot survive from one cell to the next. baseline/baseline2 invoke the
+# skill (Skill step node present, verifier.pass ~5/5); degraded writes the SAME token
+# inline with Write (no Skill node — seeded STEP regression), so it still verifies ~5/5
+# and the dropped Skill step is the sole regression signal.
+basket: e2e-skill
+reps: 5
+tasks:
+  - id: skill
+    cmd: ["./skill.sh"]
+    workspace:
+      cmd: ["sh", "-c", "mkdir -p .claude/skills && cp -R \"$E2E_DIR\"/skills/e2e-emit .claude/skills/ && cp \"$E2E_DIR\"/skill.sh \"$E2E_DIR\"/verify_emit.py ."]
+    timeout: 180s
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_emit.py"]
+      timeout: 30s
+    env:
+      CHILD_MODEL: claude-sonnet-5
+variants:
+  - id: baseline
+    env: { SKILL_INSTRUCTION: "Use the e2e-emit skill to produce the output file out/result.csv. Invoke the skill; do not write the file yourself." }
+  - id: degraded
+    env: { SKILL_INSTRUCTION: "Do NOT use any skill. Write exactly the text CATACOMB-SKILL-OK to out/result.csv yourself using the Write tool." }
+  - id: baseline2
+    env: { SKILL_INSTRUCTION: "Use the e2e-emit skill to produce the output file out/result.csv. Invoke the skill; do not write the file yourself." }
