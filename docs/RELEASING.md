@@ -36,7 +36,9 @@ against the latest release and files a `release-desync` issue on drift.
 
 To re-run a publish for an existing tag (e.g. after a transient failure),
 dispatch `publish.yml` from the Actions tab with the `tag` input — re-pushing
-the tag won't re-trigger it.
+the tag won't re-trigger it. In the "Use workflow from" dropdown you must select
+the tag ref itself (e.g. `v0.2.0`), not the `master` branch, or the `release`
+environment's tag-only deployment policy will block the goreleaser job.
 
 The `release` environment is scoped to `v*.*.*` tag refs and holds the
 channel secrets; it has **no** required reviewers, because the automatic

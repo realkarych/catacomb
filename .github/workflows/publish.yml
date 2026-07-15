@@ -231,7 +231,7 @@ jobs:
         run: |
           assets=$(gh release view "$TAG" -R realkarych/catacomb --json assets -q '.assets[].name')
           echo "$assets"
-          printf '%s\n' "$assets" | grep -Fq "checksums.txt" || { echo "::error::missing checksums.txt"; exit 1; }
+          printf '%s\n' "$assets" | grep -Fxq "checksums.txt" || { echo "::error::missing checksums.txt"; exit 1; }
           printf '%s\n' "$assets" | grep -Eq 'catacomb_linux_amd64\.tar\.gz' || { echo "::error::missing linux archive"; exit 1; }
           printf '%s\n' "$assets" | grep -Eq 'checksums\.txt\.sigstore\.json' || { echo "::error::missing sigstore bundle"; exit 1; }
 
@@ -249,9 +249,13 @@ jobs:
 
       - name: Assert GHCR latest == tag digest
         run: |
-          dt=$(gh api "/users/realkarych/packages/container/catacomb/versions" \
-            -q "[.[] | select(.metadata.container.tags[]? == \"$TAG\")][0].name")
-          dl=$(gh api "/users/realkarych/packages/container/catacomb/versions" \
-            -q "[.[] | select(.metadata.container.tags[]? == \"latest\")][0].name")
-          echo "tag digest=$dt latest digest=$dl"
+          dt=""; dl=""
+          for i in $(seq 1 10); do
+            dt=$(gh api "/users/realkarych/packages/container/catacomb/versions" \
+              -q "[.[] | select(.metadata.container.tags[]? == \"$TAG\")][0].name" 2>/dev/null || true)
+            dl=$(gh api "/users/realkarych/packages/container/catacomb/versions" \
+              -q "[.[] | select(.metadata.container.tags[]? == \"latest\")][0].name" 2>/dev/null || true)
+            [ -n "$dt" ] && [ "$dt" = "$dl" ] && { echo "ghcr ok: $dt"; break; }
+            echo "ghcr tag=$dt latest=$dl (retry $i)"; sleep 15
+          done
           [ -n "$dt" ] && [ "$dt" = "$dl" ] || { echo "::error::ghcr latest ($dl) != $TAG ($dt)"; exit 1; }
