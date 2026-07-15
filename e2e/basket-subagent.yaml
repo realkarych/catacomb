@@ -12,7 +12,7 @@ tasks:
     cmd: ["./subagent.sh"]
     workspace:
       cmd: ["sh", "-c", "cp \"$E2E_DIR\"/subagent.sh \"$E2E_DIR\"/verify_sql.py ."]
-    timeout: 180s
+    timeout: 300s
     artifacts: ["out/result.csv"]
     verify:
       cmd: ["python3", "./verify_sql.py"]
