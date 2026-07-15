@@ -1,10 +1,14 @@
 # Live subagent basket: does delegating the SQL task to a subagent (Task tool)
 # reduce to a subagent node + Task step node, and does the delegated work still
-# verify? 1 task x 3 variants x 5 reps = 15 live cells. baseline/baseline2 delegate
-# (subagent node present, verifier.pass ~5/5); degraded does it inline (no Task
-# node — seeded STEP regression). Same anti-gaming layout as basket-sql.yaml: the
-# workspace copies the wrapper + verifier in from E2E_DIR; SQL_DB and GOLDEN come
-# from the driver env; the golden lives outside the cell workspace.
+# verify? 1 task x 3 variants x 5 reps = 15 live cells. Delegation is FORCED
+# structurally per variant via SUBAGENT_TOOLS (the wrapper's --allowedTools), not
+# left to the model: baseline/baseline2 get ONLY "Task" (no Bash) so the main
+# agent physically cannot run sqlite3 itself and MUST spawn a subagent (subagent
+# node present every run, verifier.pass ~5/5); degraded gets "Bash(sqlite3:*)"
+# (no Task) so it is forced inline (no subagent node — seeded STEP regression).
+# Same anti-gaming layout as basket-sql.yaml: the workspace copies the wrapper +
+# verifier in from E2E_DIR; SQL_DB and GOLDEN come from the driver env; the golden
+# lives outside the cell workspace.
 basket: e2e-subagent
 reps: 5
 tasks:
@@ -21,8 +25,14 @@ tasks:
       CHILD_MODEL: claude-sonnet-5
 variants:
   - id: baseline
-    env: { SUBAGENT_INSTRUCTION: "Use a subagent (the Task tool) to run the query; have the subagent do the sqlite3 work." }
+    env:
+      SUBAGENT_TOOLS: "Task"
+      SUBAGENT_INSTRUCTION: "You have ONLY the Task tool. You cannot run commands yourself. Spawn a subagent (call the Task tool with subagent_type general-purpose) and have it run the sqlite3 query and write out/result.csv."
   - id: degraded
-    env: { SUBAGENT_INSTRUCTION: "Do NOT use a subagent. Run the sqlite3 query yourself, directly." }
+    env:
+      SUBAGENT_TOOLS: "Bash(sqlite3:*)"
+      SUBAGENT_INSTRUCTION: "Run the sqlite3 query yourself, directly. Do not delegate."
   - id: baseline2
-    env: { SUBAGENT_INSTRUCTION: "Use a subagent (the Task tool) to run the query; have the subagent do the sqlite3 work." }
+    env:
+      SUBAGENT_TOOLS: "Task"
+      SUBAGENT_INSTRUCTION: "You have ONLY the Task tool. You cannot run commands yourself. Spawn a subagent (call the Task tool with subagent_type general-purpose) and have it run the sqlite3 query and write out/result.csv."
