@@ -3,9 +3,8 @@
 ## Reporting a vulnerability
 
 Please do **not** open a public issue for security vulnerabilities. Report privately
-via GitHub's [private vulnerability reporting](https://github.com/realkarych/catacomb/security/advisories/new)
-or directly to the maintainer on Telegram: [`@karych`](https://t.me/karych). You will
-get an acknowledgement within a few days.
+via GitHub's [private vulnerability reporting](https://github.com/realkarych/catacomb/security/advisories/new).
+You will get an acknowledgement within a few days.
 
 ## Supported versions
 
