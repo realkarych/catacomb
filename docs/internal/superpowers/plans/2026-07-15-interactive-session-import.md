@@ -25,10 +25,12 @@
 Foundation for computing the marker window from parsed timestamps without a second parse. Bench behavior must not change.
 
 **Files:**
+
 - Modify: `cmd/catacomb/offline.go` (refactor `loadGraphOffline` at lines 117-141; add two functions)
 - Test: `cmd/catacomb/offline_test.go` (add tests)
 
 **Interfaces:**
+
 - Produces: `graphFromObservations(obs []model.Observation, executionID string, pricer reduce.Pricer, extra []model.Observation) *reduce.Graph`
 - Produces: `transcriptTimeBounds(obs []model.Observation) (start, end time.Time, ok bool)` — min/max of non-zero `EventTime`; `ok=false` when no observation carries a non-zero `EventTime`.
 - Produces (unchanged public behavior): `loadGraphOffline(main string, subs []string, executionID string, pricer reduce.Pricer, extra []model.Observation) (*reduce.Graph, error)` now delegates to `parseTranscripts` + `graphFromObservations`.
@@ -151,11 +153,13 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 2: `import` command scaffold — flags, basket load, task/variant selection, input validation
 
 **Files:**
+
 - Create: `cmd/catacomb/import.go`
 - Modify: `cmd/catacomb/root.go:36` (register `newImportCmd()` beside `newPackCmd()`)
 - Test: `cmd/catacomb/import_test.go`
 
 **Interfaces:**
+
 - Consumes: `bench.LoadOffline` (`bench/basket.go:141`), `indexTasks`/`indexVariants` (`verify.go:144,152`), `operational` (existing), `benchDefaultDir` (`bench.go:64`).
 - Produces: `newImportCmd() *cobra.Command`; `type importFlags struct{ task, variant, sessionID, transcript, rep, runID, projectsDir, runsDir, labels string }` (rep is `int`); `runImport(ctx context.Context, stdout, stderr io.Writer, basketPath string, f importFlags) error`.
 
@@ -350,10 +354,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 3: Transcript resolution for `--session-id` and `--transcript`
 
 **Files:**
+
 - Modify: `cmd/catacomb/import.go` (add `importTranscripts`)
 - Test: `cmd/catacomb/import_test.go`
 
 **Interfaces:**
+
 - Consumes: `resolveTranscripts` (`transcripts.go:23`), `transcriptSet` (`transcripts.go:18`), `filepath.Glob`, `sort.Strings`.
 - Produces: `importTranscripts(f importFlags) (transcriptSet, string, error)` — returns the resolved transcript set and the effective session id. For `--session-id`, uses `resolveTranscripts`. For `--transcript`, main = path (must exist), session id = base name minus `.jsonl`, subagents globbed from `<dir>/<sid>/subagents/agent-*.jsonl`.
 
@@ -458,10 +464,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Replaces the Task 2 stub with the real `importEvidence`.
 
 **Files:**
+
 - Modify: `cmd/catacomb/import.go` (replace stub `importEvidence`; add `importMeta`, `importLabels`, `importRunID`)
 - Test: `cmd/catacomb/import_test.go`
 
 **Interfaces:**
+
 - Consumes: `parseTranscripts`, `transcriptTimeBounds` (Task 1), `boundaryObservations`, `graphFromObservations` (Task 1), `graphMarkerNames`, `benchEnvStamps` (`bench.go:386`), `offlineFiles` (`bench.go:406`), `newPricer` (`storeread.go:34`), `newExecutionID` (`replay.go:43`), `evidence.Write`/`evidence.Meta`, `model.ParseLabels`/`model.MergeLabels`, `nowFn` (`baseline.go:21`).
 - Produces: `importEvidence(...)` writes `<runs-dir>/<run-id>/{session.jsonl, subagents/…, meta.json}` and returns nil on success; `importRunID(f, basketName) string`; `importLabels(f, basketName) map[string]string`; `importMeta(runID, task, variant string, rep int, sessionID, hash string, labels map[string]string, start, end time.Time, env *evidence.EnvStamps) evidence.Meta`.
 
@@ -659,9 +667,11 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Proves the imported evidence dir is indistinguishable from a bench cell across the downstream pipeline.
 
 **Files:**
+
 - Test: `cmd/catacomb/import_integration_test.go` (create)
 
 **Interfaces:**
+
 - Consumes: `runImport`, `runVerify` (`verify.go:44`), `runRegress` (the regress entry — confirm exact signature by reading `regress.go`; call it the same way `regress_test.go` does), the `session_marked.jsonl` fixture (carries a `mark` marker).
 
 - [ ] **Step 1: Write the failing test**
@@ -744,13 +754,14 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Correct every place `claude -p` reads as the only way to feed the gate, and document `import`.
 
 **Files:**
+
 - Modify: `docs/guide/cli.md`, `docs/guide/basket.md`, `docs/guide/troubleshooting.md`, `docs/guide/workflows.md`, `AGENTS.md`, `README.md`
 
 - [ ] **Step 1: `docs/guide/cli.md`**
   - Add a row to the command table: `| [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |`.
   - Add `import` to the "commands that parse transcripts" advisory line alongside `bench, regress, diff, subgraph, export, replay`.
   - Add a `## import` section after `## verify`: the flag table from the spec, the two input modes (`--session-id` vs `--transcript`), the run-id scheme, the note that the task `cmd` is ignored, that `CostUSD` is null while the token-derived `cost_usd` metric still works, and the recommended `--session-id $(uuidgen)` workflow. Cross-link `verify` and `regress`.
-  - In the `## bench` section, change the parenthetical implying stream-json is universal to scope it to bench-driven cells, and add: "For a session run by hand (interactive TUI), record it with [`import`](#import) instead."
+  - In the `## bench` section, change the parenthetical implying stream-json is universal to scope it to bench-driven cells, and add: "For a session run by hand (interactive TUI), record it with `import` instead."
 
 - [ ] **Step 2: `docs/guide/basket.md`**
   - By the `cmd` field description (line ~40) and the `claude -p` examples (lines ~177, ~184), add a note: "`cmd` drives `bench` only; `catacomb import` ingests a session you ran yourself and ignores `cmd`."
@@ -783,6 +794,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 7: ADR-0030 + index (parallelizable — disjoint from Task 6)
 
 **Files:**
+
 - Create: `docs/adr/0030-interactive-session-import.md`
 - Modify: `docs/adr/README.md` (index the new ADR)
 
@@ -810,6 +822,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Add an import leg to the hermetic E2E so CI exercises the full cycle with zero agent spawn.
 
 **Files:**
+
 - Read first: `e2e/hermetic/run.sh`, `e2e/run.sh`, `e2e/basket-sql.yaml` (understand how the hermetic run builds the binary, stages a fake projects-dir, and asserts).
 - Modify: `e2e/hermetic/run.sh` (add an import-path assertion block) and any basket/fixture it needs.
 
@@ -836,6 +849,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Self-Review
 
 **Spec coverage:**
+
 - Command surface + flags → Task 2. ✓
 - Basket-anchored, `cmd` ignored → Task 2 (`LoadOffline`, selection). ✓
 - `--session-id` + `--transcript` → Task 3. ✓

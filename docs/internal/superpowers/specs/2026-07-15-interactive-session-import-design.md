@@ -216,6 +216,7 @@ newest file under `~/.claude/projects/<encoded-cwd>/`).
 ## Testing (TDD, 100% coverage)
 
 Unit:
+
 - Flag validation: required task/variant, session-id⊕transcript exclusivity,
   rep/run-id defaulting, label merge precedence.
 - `--session-id` resolution: found, not-found, ambiguous.
@@ -230,6 +231,7 @@ Unit:
   green); helper covered from both callers.
 
 Integration / E2E:
+
 - `import → verify → regress` over a small fixture transcript (no `claude -p`
   anywhere): an A-vs-B pair of imported sessions produces a `regress` verdict.
 - Add an interactive-path leg to the hermetic E2E asserting the full cycle with a
