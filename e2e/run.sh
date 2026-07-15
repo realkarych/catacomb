@@ -710,8 +710,13 @@ echo "== n. subagent seeded regression (baseline vs degraded) — dropped Task n
 # --coverage-floor, so regress downgrades the step-presence regression to `notable` (the
 # same applyDowngrade path as the echo step d2 case). --fail-on-notable is therefore
 # REQUIRED to gate it (exit 1); a notable-only report otherwise exits 0.
+# The decisive finding is matched by its detail (a step present across baseline reps that
+# drops to `-> 0/5` in degraded), NOT by node name: the live subagent-dispatch tool reduces
+# to a node named `Agent` (not `Task`), and the aggregate presence-drop finding carries a
+# null name. The clean A-vs-A control below (identical variants, zero regressions) is what
+# keeps this attribution non-vacuous.
 run_json 1 "$artifacts/regress-subagent-degraded.json" \
-	"subagent seeded regression (baseline vs degraded, dropped Task node)" -- \
+	"subagent seeded regression (baseline vs degraded, dropped delegation node)" -- \
 	catacomb regress --runs-dir "$runs4" \
 	--baseline label:basket=e2e-subagent,variant=baseline \
 	--candidate label:basket=e2e-subagent,variant=degraded --fail-on-notable --json
@@ -724,17 +729,17 @@ hits = [
     f for f in rep.get("findings", [])
     if f.get("scope") == "step" and f.get("metric") == "presence"
     and f.get("verdict") in ("regression", "notable")
-    and "task" in str(f.get("name", "")).lower()
+    and "-> 0/5" in str(f.get("detail", ""))
 ]
 if not hits:
-    print("no step-scope Task presence notable finding; findings were:", file=sys.stderr)
+    print("no step-scope presence-drop (-> 0/5) notable finding; findings were:", file=sys.stderr)
     for f in rep.get("findings", []):
         print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
     sys.exit(1)
 h = hits[0]
 print(f"decisive finding: step {h.get('name')!r} presence notable ({h.get('detail', '')})")
 PY
-record "$rc" "subagent degraded gate attributed to a dropped Task step-scope presence notable"
+record "$rc" "subagent degraded gate attributed to a dropped delegation step-scope presence notable"
 
 echo "== o. subagent A-vs-A control (baseline vs baseline2) must NOT gate =="
 # baseline and baseline2 both delegate, so both carry the Task step node and both verify
@@ -773,8 +778,12 @@ echo "== q. skill seeded regression (baseline vs degraded) — dropped Skill nod
 # --coverage-floor, so regress downgrades the step-presence regression to `notable` (the
 # same applyDowngrade path as the echo step d2 / subagent step n cases). --fail-on-notable
 # is therefore REQUIRED to gate it (exit 1); a notable-only report otherwise exits 0.
+# Matched by detail (a step present across baseline reps dropping to `-> 0/5` in degraded),
+# NOT by node name — for parity with the subagent case, where the live reduced name differs
+# from the fixture (`Agent`) and the decisive aggregate finding carries a null name. The
+# clean A-vs-A control below keeps this attribution non-vacuous.
 run_json 1 "$artifacts/regress-skill-degraded.json" \
-	"skill seeded regression (baseline vs degraded, dropped Skill node)" -- \
+	"skill seeded regression (baseline vs degraded, dropped skill node)" -- \
 	catacomb regress --runs-dir "$runs5" \
 	--baseline label:basket=e2e-skill,variant=baseline \
 	--candidate label:basket=e2e-skill,variant=degraded --fail-on-notable --json
@@ -787,17 +796,17 @@ hits = [
     f for f in rep.get("findings", [])
     if f.get("scope") == "step" and f.get("metric") == "presence"
     and f.get("verdict") in ("regression", "notable")
-    and "skill" in str(f.get("name", "")).lower()
+    and "-> 0/5" in str(f.get("detail", ""))
 ]
 if not hits:
-    print("no step-scope Skill presence notable finding; findings were:", file=sys.stderr)
+    print("no step-scope presence-drop (-> 0/5) notable finding; findings were:", file=sys.stderr)
     for f in rep.get("findings", []):
         print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
     sys.exit(1)
 h = hits[0]
 print(f"decisive finding: step {h.get('name')!r} presence notable ({h.get('detail', '')})")
 PY
-record "$rc" "skill degraded gate attributed to a dropped Skill step-scope presence notable"
+record "$rc" "skill degraded gate attributed to a dropped skill step-scope presence notable"
 
 echo "== r. skill A-vs-A control (baseline vs baseline2) must NOT gate =="
 # baseline and baseline2 both invoke the skill, so both carry the Skill step node and both
