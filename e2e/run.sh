@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # E2E live gate — the PV-6b calibration methodology as a self-asserting driver.
 #
-# Runs three heterogeneous live `claude -p` baskets through `catacomb bench` and
+# Runs four heterogeneous live `claude -p` baskets through `catacomb bench` and
 # then exercises the full offline pipeline against the real evidence:
 #   - every A-vs-A control must NOT gate (zero false positives), and
 #   - a seeded checkpoint-presence regression, a seeded continuous (tokens_out)
-#     regression, AND a seeded verifier-contract regression (a wrong SQL result
-#     fails verification) MUST each gate, attributed to the swapped instruction.
+#     regression, a seeded verifier-contract regression (a wrong SQL result fails
+#     verification), AND a seeded subagent-delegation regression (a dropped Task
+#     step node) MUST each gate, attributed to the swapped instruction.
 # It also smoke-tests baseline pin/record/trends, diff/subgraph/export, and the
 # external-scores path — all on the live evidence.
 #
 # See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$1.7 of real API spend (60 bench cells; checkpoint + SQL tasks on sonnet).
+# Cost: ~$2 of real API spend (75 bench cells; checkpoint + SQL + subagent tasks on
+# sonnet, the last also spawning a child agent).
 #
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
@@ -28,10 +30,10 @@
 #
 # The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json` relative to
 # the e2e directory, so this driver cd's into its own directory before invoking bench
-# (the presence and continuous baskets declare `dir: .`). The SQL basket instead runs
-# each cell in a fresh per-cell workspace whose setup cmd copies `./sql-live.sh` and
-# `./verify_sql.py` from E2E_DIR (exported below). All other paths are absolute, so
-# the cd does not affect them.
+# (the presence and continuous baskets declare `dir: .`). The SQL and subagent baskets
+# instead run each cell in a fresh per-cell workspace whose setup cmd copies their
+# wrapper (`./sql-live.sh` / `./subagent.sh`) and `./verify_sql.py` from E2E_DIR
+# (exported below). All other paths are absolute, so the cd does not affect them.
 set -euo pipefail
 
 e2e_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -74,11 +76,13 @@ work="$(mktemp -d)"
 runs1="$work/runs-presence"
 runs2="$work/runs-continuous"
 runs3="$work/runs-sql"
+runs4="$work/runs-subagent"
 manifest1="$work/manifest-presence.jsonl"
 manifest2="$work/manifest-continuous.jsonl"
 manifest3="$work/manifest-sql.jsonl"
+manifest4="$work/manifest-subagent.jsonl"
 db="$work/e2e.db"
-mkdir -p "$runs1" "$runs2" "$runs3"
+mkdir -p "$runs1" "$runs2" "$runs3" "$runs4"
 
 # The SQL basket's agent reads a seeded database and its verifier reads the golden; both
 # live here in the work dir, OUTSIDE every cell's per-cell workspace — the documented
@@ -104,6 +108,7 @@ copy_artifacts() {
 	cp -f "$manifest1" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest2" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest3" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest4" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
@@ -675,12 +680,74 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-sql-AvA.json" || rc=$?
 record "$rc" "sql A-vs-A reports zero regressions"
 
-echo "== m. cost report =="
-python3 - "$manifest1" "$manifest2" "$manifest3" "$artifacts/cost.txt" <<'PY'
+echo "== m. bench e2e-subagent basket (15 live claude -p cells) — Task delegation =="
+# baseline/baseline2 delegate the seeded SQL task to a subagent (the Task tool);
+# degraded runs sqlite3 inline. bench captures the whole session, incl. the subagent's
+# isSidechain lines, so reduce synthesizes the subagent graph node + the Task step node.
+# Same default projects-dir as the SQL basket: live `claude -p` writes transcripts under
+# ~/.claude/projects, so bench must read from there too (no --projects-dir override).
+run_expect 0 "bench e2e-subagent basket" -- \
+	catacomb bench basket-subagent.yaml --runs-dir "$runs4" --manifest "$manifest4"
+
+echo "== n. subagent seeded regression (baseline vs degraded) — dropped Task node must gate =="
+# Both baseline and degraded produce the CORRECT CSV (degraded just runs sqlite3 inline),
+# so verifier.pass stays green on both — the verifier is a co-signal that the delegated
+# work is still correct, NOT the regression axis here. The only seeded regression is the
+# missing Task step node: baseline delegates (Task step present ~5/5), degraded does not
+# (0/5). A Task step in baseline and none in degraded drops step alignment coverage below
+# --coverage-floor, so regress downgrades the step-presence regression to `notable` (the
+# same applyDowngrade path as the echo step d2 case). --fail-on-notable is therefore
+# REQUIRED to gate it (exit 1); a notable-only report otherwise exits 0.
+run_json 1 "$artifacts/regress-subagent-degraded.json" \
+	"subagent seeded regression (baseline vs degraded, dropped Task node)" -- \
+	catacomb regress --runs-dir "$runs4" \
+	--baseline label:basket=e2e-subagent,variant=baseline \
+	--candidate label:basket=e2e-subagent,variant=degraded --fail-on-notable --json
+rc=0
+python3 - "$artifacts/regress-subagent-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") == "notable"
+    and "task" in str(f.get("name", "")).lower()
+]
+if not hits:
+    print("no step-scope Task presence notable finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: step {h.get('name')!r} presence notable ({h.get('detail', '')})")
+PY
+record "$rc" "subagent degraded gate attributed to a dropped Task step-scope presence notable"
+
+echo "== o. subagent A-vs-A control (baseline vs baseline2) must NOT gate =="
+# baseline and baseline2 both delegate, so both carry the Task step node and both verify
+# (~5/5) — presence and the annotation axis are equal. Only the continuous metrics can
+# drift on live API latency/cost/token jitter, so the continuous band is WIDENED (same
+# rationale as steps c/f/l). Unlike the seeded gate above, --fail-on-notable is deliberately
+# OMITTED here: real API duration outliers between identical batches would false-gate as
+# notables (the SQL/presence A-vs-A controls omit it for the same reason), so this control
+# widens only the continuous band and asserts zero regressions.
+run_json 0 "$artifacts/regress-subagent-AvA.json" \
+	"subagent A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs4" \
+	--baseline label:basket=e2e-subagent,variant=baseline \
+	--candidate label:basket=e2e-subagent,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-subagent-AvA.json" || rc=$?
+record "$rc" "subagent A-vs-A reports zero regressions"
+
+echo "== p. cost report =="
+python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$artifacts/cost.txt" <<'PY'
 import json, sys
 
 total = 0.0
-for p in sys.argv[1:4]:
+for p in sys.argv[1:5]:
     try:
         for line in open(p):
             line = line.strip()
@@ -691,7 +758,7 @@ for p in sys.argv[1:4]:
                 total += c
     except FileNotFoundError:
         pass
-open(sys.argv[4], "w").write(f"total live spend: ${total:.2f}\n")
+open(sys.argv[5], "w").write(f"total live spend: ${total:.2f}\n")
 print(f"total live spend: ${total:.2f}")
 PY
 
