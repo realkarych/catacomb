@@ -17,7 +17,31 @@
 - **The e2e MCP server mirrors `mcp/server.go` byte-for-byte on the wire:** newline-delimited JSON-RPC 2.0 over stdio; `initialize` echoes the client `protocolVersion` (default `2025-06-18`) and returns `capabilities:{tools:{}}` + `serverInfo:{name,version}`; `tools/list` returns `{tools:[…]}`; `tools/call` returns `{content:[{type:"text",text}],isError}`; requests with no `id` (notifications) are ignored.
 - **Transcript JSONL field names are exact** (`ingest/jsonl/jsonl.go`): top-level `type`,`uuid`,`sessionId`,`timestamp`,`parent_tool_use_id`,`isSidechain`,`agentId`,`message`,`version`,`cwd`; a subagent turn sets `isSidechain:true` and `agentId`; a tool_use block is `{"type":"tool_use","id","name","input"}`; skill invocation is `name:"Skill"`,`input:{"skill":"e2e-emit"}`; generic MCP is `name:"mcp__e2ekit__record"`.
 - **Hermetic fixture mechanism** (copy `e2e/hermetic/agent.sh`): the cell `cmd` writes the rendered transcript to `$HERMETIC_PROJECTS/hermetic/$sid.jsonl` and prints two stream-json lines (`system`+`result`) to stdout; bench captures the transcript from `--projects-dir`.
-- **Plan/spec references:** design spec `docs/internal/superpowers/specs/2026-07-15-e2e-production-scenarios-design.md`.
+- **Plan/spec references:** design spec `docs/internal/superpowers/specs/2026-07-15-e2e-production-scenarios-design.md`; spike findings `docs/internal/superpowers/plans/2026-07-15-e2e-production-scenarios-spike.md`.
+
+## CONFIRMED CLI SURFACE (Task 0 spike — BINDING; overrides any illustrative code below)
+
+These were verified offline against the built binary. Where a task's example code
+below disagrees with this block, **this block wins** — the examples predate the spike.
+
+1. **Step-node presence gate.** Dropping a `Task`/`Skill`/`mcp__e2ekit__record`
+   tool step node yields a finding `{"scope":"step","name":"<Task|Skill|mcp__e2ekit__record>","metric":"presence","verdict":"notable","detail":"present 5/5 -> 0/5; step alignment coverage 0.00 below floor 0.70"}`.
+   The verdict is **`notable`, not `regression`**, and plain `regress` returns **exit 0**.
+   To make the seeded regression gate, add **`--fail-on-notable`** to the degraded
+   comparison → exit 1. Assert the finding with `verdict == "notable"` and
+   `metric == "presence"` (NOT `verdict == "regression"`). Run the A-vs-A control
+   with `--fail-on-notable --metric-rel-delta 0.5` and assert **exit 0**.
+2. **Structural node check.** There is **no `catacomb replay --json`**. Use
+   `catacomb replay <transcript> --export-jsonl <snap.jsonl>` then grep the snapshot:
+   node lines are `{"kind":"node",...,"type":"subagent"|"skill"|"tool_call"|...}`.
+   `grep -q '"type":"subagent"'` / `'"type":"skill"'` on the exported snapshot.
+   The transcript path is `<run-dir>/session.jsonl`.
+3. **Phase (checkpoint) gate.** There is **no `--checkpoint` flag**. Declare
+   `checkpoints: [<name>]` on the task; a dropped marker then yields
+   `{"scope":"phase","name":"<name>","metric":"presence","verdict":"regression"}`
+   which gates at exit 1 under plain `regress` (assert `verdict == "regression"`).
+4. **Verifier idiom** (copy `e2e/verify_sql.py` exactly): `from catacomb_verifier import Cell, emit`; `cell = Cell.from_env()`; read `cell.artifact("out/result.csv")`; `emit(passed=<bool>, tool="<id>", tool_version="1")` writes the `verifier.pass` annotation. Do NOT call `emit("verifier.pass", 1)` — that signature is wrong.
+5. **`ann:verifier.pass` gate.** A verifier.pass drop (5/5 → 0/5) yields a finding with `metric == "ann:verifier.pass"` and `verdict == "regression"`; gates under plain `regress` (the annotation-rate path, `--annotation-rate-delta` default 0.1).
 
 ---
 
