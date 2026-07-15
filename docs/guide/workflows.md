@@ -23,7 +23,7 @@ reps: 5
 tasks:
   - id: work-task
     cmd: ["claude", "-p", "work the checkout task", "--output-format", "stream-json"]
-    checkpoints: [plan, tests.pass]   # phases you expect the agent to mark
+    checkpoints: [plan, tests.pass]   # agent must be wired to call mcp__catacomb__mark — see Placing markers
 variants:
   - id: main
   - id: candidate

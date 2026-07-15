@@ -32,14 +32,17 @@
 
 <hr>
 
-You spent weeks tuning your agent — prompts, skills, MCP tools, CLAUDE.md. Now every
-change to that setup is a gamble: agents are nondeterministic, so one good run after a
-prompt tweak proves nothing, and one bad run proves nothing either. Catacomb settles
-the question with statistics. `catacomb bench` runs the same tasks repeatedly under
-the old setup and the new one, recording each run locally as secret-redacted evidence;
-`catacomb regress` compares the two groups and maps the verdict to an exit code, so CI
-blocks the regression before it merges. No daemon, no service, no network — the whole
-loop is plain local files.
+You spent weeks tuning your agent — prompts, skills, MCP tools, CLAUDE.md — and now
+every change is a gamble: one good run after a prompt tweak proves nothing, and one
+bad run proves nothing either. Catacomb settles the question with statistics.
+`catacomb bench` runs the same tasks repeatedly under the old setup and the new one,
+recording each run locally as secret-redacted evidence; `catacomb regress` compares the
+two groups and maps the verdict to an exit code, so CI blocks the regression before it
+merges. No daemon, no service, no network — the whole loop is plain local files.
+
+It fits any Claude Code agent whose behavior you need to keep stable — coding agents,
+data/ETL pipelines (SQL, transforms), research and tool-use loops — anywhere a
+nondeterministic session needs a CI verdict instead of a vibe check.
 
 > **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts.
 
@@ -93,8 +96,10 @@ $ echo $?
 ## <p align=center>🧰 Requirements</p>
 
 [Claude Code](https://www.anthropic.com/claude-code) installed and `claude` on your
-PATH. Catacomb itself is a single static binary — no runtime, no dependencies, no
-config file.
+PATH, and **signed in** — a Claude subscription, or `ANTHROPIC_API_KEY` set for API
+billing. `catacomb bench` spends real money through Claude Code, so verify it works
+first with `claude -p hello`. Catacomb itself is a single static binary — no runtime,
+no dependencies, no config file.
 
 <hr>
 
@@ -106,9 +111,12 @@ brew trust realkarych/tap      # newer Homebrew requires trusting third-party ta
 brew install --cask catacomb
 ```
 
-> **Which channel serves what.** `go install` serves the tagged source the moment a
-> release lands; brew, apt, and docker converge within minutes. If `catacomb version`
-> looks old right after `brew install`, run `brew update` and reinstall.
+> **Which channel serves what.** `go install …@latest` (Go ≥ 1.26) installs the tagged
+> release the moment it lands and is the surest way to get exactly the version these
+> docs describe; brew, apt, and docker converge within minutes. Always confirm with
+> `catacomb version` after installing — if it looks old right after `brew install`, run
+> `brew update` and reinstall. A build with no `bench`/`regress` command is a stale
+> pre-pivot install; see the migration note below.
 
 <details>
 <summary><b>Docker</b></summary>
@@ -167,7 +175,8 @@ before first run.
 </details>
 
 > Upgrading from Homebrew: `brew upgrade --cask catacomb`. Migrating from the old
-> formula: `brew uninstall catacomb && brew install --cask catacomb`.
+> formula (a pre-pivot build whose command set differs — no `bench`/`regress`):
+> `brew uninstall catacomb && brew install --cask catacomb`.
 
 <hr>
 
@@ -176,6 +185,10 @@ before first run.
 Ten minutes, two small files, one caught regression. The scenario: someone on your
 team wants to add a chain-of-thought instruction to a shared prompt, and you want CI
 to tell you what that does to the agent's behavior — before it merges.
+
+> First, confirm your install is current: `catacomb version` should print **v0.2.0 or
+> newer** — this tutorial uses the latest commands and flags. A build missing `bench` or
+> `regress` entirely is a stale pre-pivot install (see the migration note above).
 
 ### 1. Create it
 
@@ -384,6 +397,8 @@ tasks:
 
 The verifier reads the captured artifacts and emits one pass/fail line — two calls
 with the shipped [Python SDK](integrations/verifier):
+
+> Install the SDK (PyPI publish pending): `pip install "catacomb-verifier @ git+https://github.com/realkarych/catacomb#subdirectory=integrations/verifier"`
 
 ```python
 import os

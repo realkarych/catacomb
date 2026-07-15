@@ -9,5 +9,7 @@ into the guide.
 - **[Troubleshooting](guide/troubleshooting.md)** — symptoms and fixes.
 - **[Architecture decisions](adr/README.md)** — the ADR log.
 
-`internal/` holds development material (plans, specs, reviews, agent tooling);
-it is not needed to use catacomb.
+`internal/` holds **historical** development material — plans, specs, reviews, and
+agent tooling accumulated while catacomb was built, including designs for a superseded
+daemon architecture (see [ADR-0026](adr/0026-form-factor-pivot-offline-eval-gate.md)).
+None of it is needed to use catacomb; read it only for project archaeology.
