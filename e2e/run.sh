@@ -741,6 +741,32 @@ print(f"decisive finding: step {h.get('name')!r} presence notable ({h.get('detai
 PY
 record "$rc" "subagent degraded gate attributed to a dropped delegation step-scope presence notable"
 
+echo "== n2. subagent node synthesis: subagent graph node present in >=1 baseline run, absent in ALL degraded runs =="
+# The `-> 0/5` matcher in step n proves *a* step dropped and the gate fired, but NOT that
+# catacomb attributed the drop to the delegation itself: the live subagent-dispatch tool
+# reduces to a node named `Agent` and the decisive aggregate presence finding carries a
+# null name, so the matcher is name-agnostic. This is the live equivalent of the hermetic
+# node-type proof (hermetic/prod/scenarios/20-subagent.sh): replay each run's session to a
+# JSONL graph snapshot and assert the synthesized "type":"subagent" node appears in >=1
+# baseline run and in NO degraded run. Live delegation is not always 5/5, so the baseline
+# side is asserted as "at least one" for robustness; the degraded side stays strict (none).
+rc=0
+subagent_base_hits=0
+for d in "$runs4"/bench-e2e-subagent-subagent-baseline-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/subagent-node-$(basename "$d").jsonl"
+	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if grep -q '"type":"subagent"' "$snap"; then subagent_base_hits=$((subagent_base_hits + 1)); fi
+done
+[ "$subagent_base_hits" -ge 1 ] || rc=1
+for d in "$runs4"/bench-e2e-subagent-subagent-degraded-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/subagent-node-$(basename "$d").jsonl"
+	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if grep -q '"type":"subagent"' "$snap"; then rc=1; fi
+done
+record "$rc" "subagent node present in >=1 baseline run and absent in all degraded runs"
+
 echo "== o. subagent A-vs-A control (baseline vs baseline2) must NOT gate =="
 # baseline and baseline2 both delegate, so both carry the Task step node and both verify
 # (~5/5) — presence and the annotation axis are equal. Only the continuous metrics can
@@ -758,6 +784,39 @@ run_json 0 "$artifacts/regress-subagent-AvA.json" \
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-subagent-AvA.json" || rc=$?
 record "$rc" "subagent A-vs-A reports zero regressions"
+
+echo "== o2. subagent A-vs-A specificity under the firing config (--fail-on-notable) =="
+# Step o's control OMITS --fail-on-notable, so it never exercises the notable axis the
+# seeded gate (step n) actually rides on — a spurious step-presence notable between the two
+# identical baseline batches would slip past it. This second control runs the SAME
+# --fail-on-notable the gate fires under (with the widened continuous band $ava_metric_band
+# absorbing live API latency/cost/token jitter) over baseline vs baseline2 and asserts it
+# does NOT gate — exit 0 AND zero step-scope presence notables — so the gate's specificity
+# is tested in the exact config it fires in, not only in a laxer one.
+run_json 0 "$artifacts/regress-subagent-AvA-notable.json" \
+	"subagent A-vs-A under --fail-on-notable must NOT gate" -- \
+	catacomb regress --runs-dir "$runs4" \
+	--baseline label:basket=e2e-subagent,variant=baseline \
+	--candidate label:basket=e2e-subagent,variant=baseline2 \
+	--fail-on-notable --metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 - "$artifacts/regress-subagent-AvA-notable.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+bad = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") in ("regression", "notable")
+]
+if bad:
+    print("spurious step-scope presence notable(s) between identical variants:", file=sys.stderr)
+    for f in bad:
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print("no step-scope presence notable under --fail-on-notable (identical variants)")
+PY
+record "$rc" "subagent A-vs-A produces no spurious step-presence notable under --fail-on-notable"
 
 echo "== p. bench e2e-skill basket (15 live claude -p cells) — Skill delegation =="
 # baseline/baseline2 invoke the real project-scoped e2e-emit skill (the Skill tool ->
@@ -808,6 +867,31 @@ print(f"decisive finding: step {h.get('name')!r} presence notable ({h.get('detai
 PY
 record "$rc" "skill degraded gate attributed to a dropped skill step-scope presence notable"
 
+echo "== q2. skill node synthesis: skill graph node present in >=1 baseline run, absent in ALL degraded runs =="
+# As with the subagent case (step n2), the `-> 0/5` matcher in step q proves a step dropped
+# and the gate fired, but not that catacomb attributed the drop to the skill node itself
+# (the decisive aggregate presence finding carries a null name). This is the live equivalent
+# of the hermetic node-type proof (hermetic/prod/scenarios/30-skill.sh): replay each run's
+# session to a JSONL graph snapshot and assert the synthesized "type":"skill" node appears
+# in >=1 baseline run and in NO degraded run. Live invocation is not always 5/5, so the
+# baseline side is asserted as "at least one"; the degraded side stays strict (none).
+rc=0
+skill_base_hits=0
+for d in "$runs5"/bench-e2e-skill-skill-baseline-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/skill-node-$(basename "$d").jsonl"
+	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if grep -q '"type":"skill"' "$snap"; then skill_base_hits=$((skill_base_hits + 1)); fi
+done
+[ "$skill_base_hits" -ge 1 ] || rc=1
+for d in "$runs5"/bench-e2e-skill-skill-degraded-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/skill-node-$(basename "$d").jsonl"
+	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if grep -q '"type":"skill"' "$snap"; then rc=1; fi
+done
+record "$rc" "skill node present in >=1 baseline run and absent in all degraded runs"
+
 echo "== r. skill A-vs-A control (baseline vs baseline2) must NOT gate =="
 # baseline and baseline2 both invoke the skill, so both carry the Skill step node and both
 # verify (~5/5) — presence and the annotation axis are equal. Only the continuous metrics
@@ -825,6 +909,37 @@ run_json 0 "$artifacts/regress-skill-AvA.json" \
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-skill-AvA.json" || rc=$?
 record "$rc" "skill A-vs-A reports zero regressions"
+
+echo "== r2. skill A-vs-A specificity under the firing config (--fail-on-notable) =="
+# Mirrors step o2 for the skill basket: step r's control OMITS --fail-on-notable and so
+# never exercises the notable axis the seeded gate (step q) rides on. This second control
+# runs the SAME --fail-on-notable (with the widened continuous band $ava_metric_band
+# absorbing live API jitter) over baseline vs baseline2 and asserts it does NOT gate —
+# exit 0 AND zero step-scope presence notables — testing specificity in the firing config.
+run_json 0 "$artifacts/regress-skill-AvA-notable.json" \
+	"skill A-vs-A under --fail-on-notable must NOT gate" -- \
+	catacomb regress --runs-dir "$runs5" \
+	--baseline label:basket=e2e-skill,variant=baseline \
+	--candidate label:basket=e2e-skill,variant=baseline2 \
+	--fail-on-notable --metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 - "$artifacts/regress-skill-AvA-notable.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+bad = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") in ("regression", "notable")
+]
+if bad:
+    print("spurious step-scope presence notable(s) between identical variants:", file=sys.stderr)
+    for f in bad:
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print("no step-scope presence notable under --fail-on-notable (identical variants)")
+PY
+record "$rc" "skill A-vs-A produces no spurious step-presence notable under --fail-on-notable"
 
 echo "== s. bench e2e-mcp basket (15 live claude -p cells) — live MCP handshake =="
 # baseline/baseline2 call the record tool over a real stdio MCP server (mcp__e2ekit__record
@@ -903,6 +1018,38 @@ run_json 0 "$artifacts/regress-mcp-AvA.json" \
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-mcp-AvA.json" || rc=$?
 record "$rc" "mcp A-vs-A reports zero regressions"
+
+echo "== u2. mcp A-vs-A specificity under the firing config (--fail-on-notable) =="
+# Mirrors steps o2/r2 for the MCP basket: step u's control OMITS --fail-on-notable and so
+# never exercises the notable axis the seeded gate (step t) rides on for its dropped
+# mcp__e2ekit__record step node. This second control runs the SAME --fail-on-notable (with
+# the widened continuous band $ava_metric_band absorbing live API jitter) over baseline vs
+# baseline2 and asserts it does NOT gate — exit 0 AND zero step-scope presence notables —
+# so a spurious step-presence notable between identical variants would be caught here.
+run_json 0 "$artifacts/regress-mcp-AvA-notable.json" \
+	"mcp A-vs-A under --fail-on-notable must NOT gate" -- \
+	catacomb regress --runs-dir "$runs6" \
+	--baseline label:basket=e2e-mcp,variant=baseline \
+	--candidate label:basket=e2e-mcp,variant=baseline2 \
+	--fail-on-notable --metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 - "$artifacts/regress-mcp-AvA-notable.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+bad = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") in ("regression", "notable")
+]
+if bad:
+    print("spurious step-scope presence notable(s) between identical variants:", file=sys.stderr)
+    for f in bad:
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print("no step-scope presence notable under --fail-on-notable (identical variants)")
+PY
+record "$rc" "mcp A-vs-A produces no spurious step-presence notable under --fail-on-notable"
 
 echo "== v. cost report =="
 python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$artifacts/cost.txt" <<'PY'
