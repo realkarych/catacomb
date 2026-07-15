@@ -15,9 +15,6 @@
   over real transcripts, not vibes.
 </p>
 
-<p align="center"><b>Catacomb is an offline eval gate</b>: a local CLI that runs your Claude Code<br>
-  tasks repeatedly and gates regressions in CI.</p>
-
 <!-- Badges -->
 <p align="center">
   <a href="https://github.com/realkarych/catacomb/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/realkarych/catacomb/actions/workflows/ci.yml/badge.svg"></a>&nbsp;<!--
@@ -27,8 +24,6 @@
   --><a href="https://github.com/realkarych/catacomb/blob/master/LICENSE"><img alt="license Apache-2.0" src="https://img.shields.io/github/license/realkarych/catacomb"></a>&nbsp;<!--
   --><img alt="platforms" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-blue">
 </p>
-
-<p align="center"><sub>Pre-1.0: minor releases may carry breaking changes, always with migration notes — see the <a href="docs/VERSIONING.md">versioning policy</a>.</sub></p>
 
 <hr>
 
