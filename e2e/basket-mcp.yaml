@@ -1,0 +1,28 @@
+# Live MCP basket: a real stdio MCP server (e2e/mcp-e2ekit/server.py) handshakes
+# with `claude -p`. 1 task x 3 variants x 5 reps = 15 live cells. The workspace
+# stages the server and renders its absolute path into a per-cell mcp.json;
+# baseline/baseline2 call the record tool (mcp__e2ekit__record node present; the
+# server writes out/result.csv, verifier.pass ~5/5); degraded uses no tool (no MCP
+# node — seeded STEP regression). E2EKIT_OUT points the server at the cell's
+# out/result.csv so the artifact is verifiable.
+basket: e2e-mcp
+reps: 5
+tasks:
+  - id: mcp
+    cmd: ["./mcp-record.sh"]
+    workspace:
+      cmd: ["sh", "-c", "cp -R \"$E2E_DIR\"/mcp-e2ekit . && cp \"$E2E_DIR\"/mcp-record.sh \"$E2E_DIR\"/verify_emit.py . && sed \"s|__E2EKIT__|$PWD/mcp-e2ekit|g\" mcp-e2ekit/mcp.json > mcp.json"]
+    timeout: 180s
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_emit.py"]
+      timeout: 30s
+    env:
+      CHILD_MODEL: claude-sonnet-5
+variants:
+  - id: baseline
+    env: { MCP_INSTRUCTION: "Call the mcp__e2ekit__record tool with value set to exactly CATACOMB-SKILL-OK. Use only that tool, then reply done." }
+  - id: degraded
+    env: { MCP_INSTRUCTION: "Do not use any tools. Just reply done." }
+  - id: baseline2
+    env: { MCP_INSTRUCTION: "Call the mcp__e2ekit__record tool with value set to exactly CATACOMB-SKILL-OK. Use only that tool, then reply done." }
