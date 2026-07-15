@@ -9,6 +9,15 @@ This directory is outside the Go 100%-coverage gate and the no-comments rule;
 both apply only to Go packages. The package depends on nothing but the standard
 library (`csv`, `dataclasses`, `json`, `math`, `os`, `sys`).
 
+## Install
+
+```bash
+pip install "catacomb-verifier @ git+https://github.com/realkarych/catacomb#subdirectory=integrations/verifier"
+```
+
+Publishing to PyPI is planned; until then install from the repository subdirectory as
+above, or `pip install -e integrations/verifier` from a clone.
+
 ## The exec contract
 
 `bench` invokes the verifier command in the cell's working directory with the
