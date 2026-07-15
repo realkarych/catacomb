@@ -186,8 +186,9 @@ Ten minutes, two small files, one caught regression. The scenario: someone on yo
 team wants to add a chain-of-thought instruction to a shared prompt, and you want CI
 to tell you what that does to the agent's behavior — before it merges.
 
-> First, confirm your install has the eval-gate commands: `catacomb version` should
-> print **v0.2.0 or newer** — older, pre-pivot builds do not have `bench` or `regress`.
+> First, confirm your install is current: `catacomb version` should print **v0.2.0 or
+> newer** — this tutorial uses the latest commands and flags. A build missing `bench` or
+> `regress` entirely is a stale pre-pivot install (see the migration note above).
 
 ### 1. Create it
 
