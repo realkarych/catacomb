@@ -11,8 +11,8 @@ The command set:
 | Command | Purpose |
 | --- | --- |
 | [`bench`](#bench) | Run a benchmark basket and record redacted evidence per cell |
-| [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |
 | [`verify`](#verify) | Re-run a basket's verifiers offline over recorded evidence dirs |
+| [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |
 | [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`) |
 | [`regress`](#regress) | Compare a candidate run group against a baseline and gate |
 | [`trends`](#trends) | Replay a baseline's recorded regression history |
@@ -369,8 +369,9 @@ a `checkpoints:` name the task declares but the transcript never marked is **war
 stderr** (`import <run-id>: missing checkpoints: <names>`) and never gates — visibility
 only, exactly as under `bench`.
 
-`meta.json`'s `cost_usd` field is **null** for an import: an interactive transcript carries
-no terminal `total_cost_usd` for `import` to read. The token-derived `cost_usd` *metric*
+`meta.json`'s `cost_usd` field is **omitted** for an import: an interactive transcript carries
+no terminal `total_cost_usd` for `import` to read, so the field is left unset and its key never
+appears in the file. The token-derived `cost_usd` *metric*
 still works — it is priced from the transcript's token counts through the built-in pricing
 table — so cost gating in [`regress`](#regress) stays comparable between imported and
 bench-recorded runs.
