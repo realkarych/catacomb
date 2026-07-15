@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Scenario 50 — import-path subagent: the bench (headless `claude -p`) path can never
-# emit sidechain lines, so the bench scenarios (20) synthesize the "subagent" node from
-# a bench-shaped transcript. This scenario proves the OTHER entry point: a realistic
-# INTERACTIVE Claude Code session — which DOES carry top-level isSidechain/agentId/
-# parent_tool_use_id/subagent_type on every sidechain line — is ingested by
+# Scenario 50 — import-path subagent: proves the `import` ENTRY POINT ingests a subagent
+# sub-transcript into a "type":"subagent" node + subagent_type. Both bench and import reduce
+# a session's subagent sub-transcripts into the subagent node (bench snapshots each subagent's
+# turns into subagents/agent-*.jsonl alongside session.jsonl; the bench scenarios (20) exercise
+# that path); this scenario exercises the import code path specifically. A realistic INTERACTIVE
+# Claude Code session — which carries top-level isSidechain/agentId/parent_tool_use_id/
+# subagent_type on every sidechain line — is ingested by
 # `catacomb import --transcript <session.jsonl>` (no agent spawn) into a bench-cell
 # evidence dir, then `catacomb replay --export-jsonl` reduces it. The snapshot must
 # contain the full "type":"subagent" graph node AND carry subagent_type=general-purpose
@@ -34,7 +36,7 @@ run_json 0 "$w/replay.out" "replay imported session -> export jsonl snapshot" --
   catacomb replay "$rundir/session.jsonl" --export-jsonl "$snap"
 
 rc=0; grep -q '"type":"subagent"' "$snap" || rc=1
-record "$rc" "imported graph snapshot contains a \"type\":\"subagent\" node (bench path cannot)"
+record "$rc" "imported graph snapshot contains a \"type\":\"subagent\" node (import entry point)"
 rc=0; grep -q '"type":"subagent"[^}]*"subagent_type":"general-purpose"' "$snap" || rc=1
 record "$rc" "imported subagent node carries subagent_type=general-purpose (P0 fix on import path)"
 rc=0; grep -q '"name":"Agent"' "$snap" || rc=1
