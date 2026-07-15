@@ -200,7 +200,6 @@ func resolveExecPaths(b *Basket, baseDir string) {
 		if t.Dir != "" && !filepath.IsAbs(t.Dir) {
 			t.Dir = filepath.Join(baseDir, t.Dir)
 		}
-		resolveArgvRel(t.Cmd, baseDir)
 		if t.Verify != nil {
 			resolveArgvRel(t.Verify.Cmd, baseDir)
 		}

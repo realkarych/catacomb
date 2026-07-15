@@ -25,6 +25,7 @@ func TestValidateHappy(t *testing.T) {
 }
 
 func TestResolveExecPaths(t *testing.T) {
+	absDir := filepath.Join(t.TempDir(), "abs")
 	b := Basket{
 		Tasks: []Task{{
 			ID:     "t1",
@@ -34,18 +35,18 @@ func TestResolveExecPaths(t *testing.T) {
 		}, {
 			ID:  "t2",
 			Cmd: []string{"echo", "hi"},
-			Dir: "/abs",
+			Dir: absDir,
 		}},
 	}
 	resolveExecPaths(&b, "/base")
 
-	assert.Equal(t, filepath.Join("/base", "agent.sh"), b.Tasks[0].Cmd[0])
+	assert.Equal(t, []string{"./agent.sh"}, b.Tasks[0].Cmd)
 	assert.Equal(t, filepath.Join("/base", "work"), b.Tasks[0].Dir)
 	assert.Equal(t, "python3", b.Tasks[0].Verify.Cmd[0])
 	assert.Equal(t, filepath.Join("/base", "verify.py"), b.Tasks[0].Verify.Cmd[1])
 	assert.Equal(t, "--x", b.Tasks[0].Verify.Cmd[2])
 	assert.Equal(t, []string{"echo", "hi"}, b.Tasks[1].Cmd)
-	assert.Equal(t, "/abs", b.Tasks[1].Dir)
+	assert.Equal(t, absDir, b.Tasks[1].Dir)
 }
 
 func TestResolvePatchAbsError(t *testing.T) {

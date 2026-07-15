@@ -37,7 +37,7 @@ Each entry of `tasks` is a `Task`: the agent command and how to run and check it
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | yes | — | Unique within `tasks`. Charset `^[A-Za-z0-9._-]+$`, at most 256 bytes. |
-| `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell). `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element resolves against the basket directory (see [Path resolution](#path-resolution)). The command must emit stream-json so the runner can read the session id. |
+| `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell) with the cell's working directory as its cwd. `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element is left as-is and resolves against that working directory at exec time (stage the script under `dir`). The command must emit stream-json so the runner can read the session id. |
 | `dir` | string | no | the process working directory (where you run `catacomb`) | Working directory for the cell. A relative value resolves against the basket file's directory. Mutually exclusive with `workspace`. |
 | `env` | map string→string | no | — | Extra environment for the agent child. A variant's `env` wins per key. |
 | `checkpoints` | list of strings | no | — | Phase names the agent is expected to mark itself. Charset `^[A-Za-z0-9._:-]+$` (colon allowed here), at most 256 bytes, unique within the task; may not equal the reserved `task:<id>` marker. |
@@ -90,21 +90,23 @@ When a cell has both a task and a variant workspace, the variant's replaces the 
 
 ## Path resolution
 
-> A relative path in a basket resolves against the directory containing the basket file,
-> never the process's current directory. `dir` is always resolved; every `./`- or
-> `../`-prefixed element of `cmd` and `verify.cmd` is resolved; bare words (`python3`)
-> and absolute paths are left untouched.
+> A `dir` and the `./`- or `../`-prefixed elements of `verify.cmd` resolve against the
+> directory containing the basket file, never the process's current directory. `dir` is
+> always resolved; bare words (`python3`) and absolute paths are left untouched.
 
-For example, in `["python3", "./verify.py"]` the bare word `python3` is left alone and
-found on `PATH`, while `./verify.py` resolves against the basket file's directory. This
-is what makes inline `catacomb bench` and offline `catacomb verify` agree on the same
-basket regardless of the directory you launch them from. See
-[ADR-0029](../adr/0029-basket-relative-path-resolution.md).
+For example, in a verifier `["python3", "./verify.py"]` the bare word `python3` is left
+alone and found on `PATH`, while `./verify.py` resolves against the basket file's
+directory. This is what makes inline `catacomb bench` and offline `catacomb verify` agree
+on the same verifier regardless of the directory you launch them from — offline verify
+re-runs the verifier from the evidence directory, so a relative path needs a stable
+anchor. See [ADR-0029](../adr/0029-basket-relative-path-resolution.md).
 
-Scope: only `dir`, `cmd`, and `verify.cmd` change resolution base this way. `artifacts`
-globs resolve against the cell's working directory (and must stay local), and a relative
-`workspace.patch` resolves against the basket file through its own loader step — these
-keep their own semantics.
+Scope: only `dir` and `verify.cmd` change resolution base this way. The agent `cmd` does
+**not** — it runs relative to the cell's working directory at exec time (stage a
+`./agent.sh` under `dir`), keeping ordinary shell semantics. `artifacts` globs resolve
+against the working directory (and must stay local), and a relative `workspace.patch`
+resolves against the basket file through its own loader step — these keep their own
+semantics.
 
 An **omitted** `dir` is different: the cell then runs in the process working directory —
 your shell's cwd when you invoke `catacomb` — which also governs where `artifacts` globs
