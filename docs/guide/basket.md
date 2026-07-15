@@ -40,7 +40,7 @@ Each entry of `tasks` is a `Task`: the agent command and how to run and check it
 | `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell) with the cell's working directory as its cwd. `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element is left as-is and resolves against that working directory at exec time (stage the script under `dir`). The command must emit stream-json so the runner can read the session id. |
 | `dir` | string | no | the process working directory (where you run `catacomb`) | Working directory for the cell. A relative value resolves against the basket file's directory. Mutually exclusive with `workspace`. |
 | `env` | map string→string | no | — | Extra environment for the agent child. A variant's `env` wins per key. |
-| `checkpoints` | list of strings | no | — | Phase names the agent is expected to mark itself. Charset `^[A-Za-z0-9._:-]+$` (colon allowed here), at most 256 bytes, unique within the task; may not equal the reserved `task:<id>` marker. |
+| `checkpoints` | list of strings | no | — | Phase names the agent is expected to mark itself. Charset `^[A-Za-z0-9._:-]+$` (colon allowed here), at most 256 bytes, unique within the task; may not equal the reserved `task:<id>` marker. Declaring a checkpoint does not make the agent emit it — wire the marker tool (`--mcp-config` pointing at the catacomb `mcp` server, plus a CLAUDE.md instruction to call `mcp__catacomb__mark`); see [Placing markers](workflows.md#placing-markers). |
 | `timeout` | string (Go duration) | no | no limit | Per-cell deadline, e.g. `30s` or `5m`. Must carry a unit and must not be negative. Covers the workspace command, `setup`, and the child together. |
 | `artifacts` | list of glob strings | no | — | Files to capture, globbed relative to the working directory. Each must be local — no `..` escape. |
 | `verify` | mapping | no | — | Offline [verifier](#verify) for the task. |
@@ -61,13 +61,15 @@ replayed with [`catacomb verify`](cli.md#verify) at zero agent cost.
 ## Variant
 
 Each entry of `variants` is a `Variant`: an axis that differs across the matrix, usually
-the model or a config flag carried in `env`.
+the model or a config flag carried in `env`. An `env` value only changes a run if your
+`cmd` — or a wrapper script it execs — actually reads it; a bare `claude` argv does not
+interpolate environment variables.
 
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | yes | — | Unique within `variants`. Same charset and length rules as a task `id`. |
 | `env` | map string→string | no | — | Per-variant environment — the axis that differs. Merged over each task's `env`, winning per key. |
-| `setup` | list of strings | no | — | Commands run before the agent in every cell, whitespace-split and run with **no shell**. Must be idempotent, since they re-run before each cell. |
+| `setup` | list of strings | no | — | Commands run before the agent in every cell, whitespace-split and run with **no shell**. Must be idempotent, since they re-run before each cell. Runs with only the parent process environment — task and variant `env:` are **not** visible to `setup`, and there is no shell, so no variable expansion, pipes, or globbing. |
 | `workspace` | mapping | no | — | Per-cell [workspace](#workspace). A variant workspace replaces the task's **wholesale** — no field merge. |
 
 ## Workspace
@@ -164,9 +166,9 @@ verifier needs to read again.
 
 ## A complete example
 
-A minimal basket that loads — two tasks, two variants, and a verifier. The verifier
-script `verify_cart.py` sits next to this file and is referenced as `./verify_cart.py`,
-so it resolves the same way inline and offline:
+A minimal basket that loads — two tasks, two variants, a wrapper script the agent runs,
+and a verifier. The verifier script `verify_cart.py` sits next to this file and is
+referenced as `./verify_cart.py`, so it resolves the same way inline and offline:
 
 ```yaml
 basket: checkout
@@ -174,14 +176,15 @@ reps: 5
 
 tasks:
   - id: add-item
-    cmd: ["claude", "-p", "add an item to the cart", "--output-format", "stream-json"]
-    checkpoints: [plan, tests.pass]
+    cmd: ["./run.sh"]
+    env: { PROMPT: "add an item to the cart" }
     timeout: 5m
     verify:
       cmd: ["python3", "./verify_cart.py"]
       timeout: 30s
   - id: remove-item
-    cmd: ["claude", "-p", "remove an item from the cart", "--output-format", "stream-json"]
+    cmd: ["./run.sh"]
+    env: { PROMPT: "remove an item from the cart" }
     timeout: 5m
     verify:
       cmd: ["python3", "./verify_cart.py"]
@@ -191,6 +194,20 @@ variants:
     env: { MODEL: opus }
   - id: candidate
     env: { MODEL: sonnet }
+```
+
+Each cell runs `run.sh`, the agent under test, which reads the task's `PROMPT` and the
+variant's `MODEL` from the merged environment and passes them to `claude`. This is what
+makes the model axis genuinely vary: a bare `claude` argv does not interpolate
+environment variables, so both variants would otherwise run an identical model. An agent
+`cmd` resolves against the cell's working directory (not the basket file), so stage
+`run.sh` next to the basket and run `catacomb bench` from that directory:
+
+```sh
+#!/usr/bin/env bash
+# run.sh — the agent under test; reads the task's $PROMPT and the variant's $MODEL.
+set -euo pipefail
+exec claude -p "$PROMPT" --model "$MODEL" --output-format stream-json
 ```
 
 This expands to `2 tasks × 2 variants × 5 reps = 20` cells. Run it with
