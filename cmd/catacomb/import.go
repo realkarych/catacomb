@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -65,6 +68,26 @@ func runImport(ctx context.Context, stdout, stderr io.Writer, basketPath string,
 		return operational(fmt.Errorf("import: variant %q not in basket", f.variant))
 	}
 	return importEvidence(ctx, stdout, stderr, basket, hash, task, f)
+}
+
+func importTranscripts(f importFlags) (transcriptSet, string, error) {
+	if f.sessionID != "" {
+		ts, err := resolveTranscripts(f.projectsDir, f.sessionID)
+		if err != nil {
+			return transcriptSet{}, "", err
+		}
+		return ts, f.sessionID, nil
+	}
+	if _, err := os.Stat(f.transcript); err != nil {
+		return transcriptSet{}, "", fmt.Errorf("import: transcript: %w", err)
+	}
+	sid := strings.TrimSuffix(filepath.Base(f.transcript), ".jsonl")
+	subs, err := filepath.Glob(filepath.Join(filepath.Dir(f.transcript), sid, "subagents", "agent-*.jsonl"))
+	if err != nil {
+		return transcriptSet{}, "", fmt.Errorf("import: subagents: %w", err)
+	}
+	sort.Strings(subs)
+	return transcriptSet{Main: f.transcript, Subagents: subs}, sid, nil
 }
 
 func importEvidence(_ context.Context, _, _ io.Writer, _ bench.Basket, _ string, _ bench.Task, _ importFlags) error {

@@ -90,3 +90,53 @@ func TestImportCommandReachesStub(t *testing.T) {
 	}, &stdout, &stderr)
 	require.Equal(t, 0, code, stderr.String())
 }
+
+func stageTranscript(t *testing.T, projects, sid string) {
+	t.Helper()
+	dst := filepath.Join(projects, "proj", sid+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+	data, err := os.ReadFile("testdata/session.jsonl")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, data, 0o600))
+}
+
+func TestImportTranscriptsBySessionID(t *testing.T) {
+	projects := t.TempDir()
+	stageTranscript(t, projects, "sess-123")
+	ts, sid, err := importTranscripts(importFlags{sessionID: "sess-123", projectsDir: projects})
+	require.NoError(t, err)
+	assert.Equal(t, "sess-123", sid)
+	assert.Contains(t, ts.Main, "sess-123.jsonl")
+}
+
+func TestImportTranscriptsBySessionIDNotFound(t *testing.T) {
+	projects := t.TempDir()
+	_, _, err := importTranscripts(importFlags{sessionID: "missing", projectsDir: projects})
+	require.Error(t, err)
+}
+
+func TestImportTranscriptsByPath(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "sess-abc.jsonl")
+	data, err := os.ReadFile("testdata/session.jsonl")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(main, data, 0o600))
+	ts, sid, err := importTranscripts(importFlags{transcript: main})
+	require.NoError(t, err)
+	assert.Equal(t, "sess-abc", sid)
+	assert.Equal(t, main, ts.Main)
+}
+
+func TestImportTranscriptsByPathMissing(t *testing.T) {
+	_, _, err := importTranscripts(importFlags{transcript: filepath.Join(t.TempDir(), "nope.jsonl")})
+	require.Error(t, err)
+}
+
+func TestImportTranscriptsByPathBadSubagentGlob(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "bad[.jsonl")
+	require.NoError(t, os.WriteFile(main, []byte("{}\n"), 0o600))
+	_, _, err := importTranscripts(importFlags{transcript: main})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "subagents")
+}
