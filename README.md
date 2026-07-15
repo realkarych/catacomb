@@ -49,6 +49,7 @@ nondeterministic session needs a CI verdict instead of a vibe check.
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
 - **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
+- **Drive it from your agent.** A bundled [Claude Code skill](skills/catacomb/SKILL.md) teaches your agent to scaffold a basket, wire the CI gate, and read a `regress` verdict for you — just ask it to set up catacomb.
 
 <hr>
 
@@ -496,8 +497,9 @@ Full docs live under **[docs/](docs/README.md)**. Suggested reading order:
 5. [Configuration](docs/guide/configuration.md) · [Ingestion](docs/guide/ingestion.md) · [Privacy & operations](docs/guide/privacy-and-operations.md)
 
 Reference: [guide index](docs/guide/README.md) · [basket schema](docs/guide/basket.md) ·
-[troubleshooting](docs/guide/troubleshooting.md) · [ADR log](docs/adr/README.md) ·
-[release process](docs/RELEASING.md) · [contributor & agent guide](AGENTS.md).
+[troubleshooting](docs/guide/troubleshooting.md) · [Claude Code skill](skills/catacomb/SKILL.md) ·
+[ADR log](docs/adr/README.md) · [release process](docs/RELEASING.md) ·
+[contributor & agent guide](AGENTS.md).
 
 ```sh
 make build   # build bin/catacomb
