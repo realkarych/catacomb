@@ -762,7 +762,7 @@ done
 for d in "$runs4"/bench-e2e-subagent-subagent-degraded-r*; do
 	[ -f "$d/session.jsonl" ] || continue
 	snap="$work/subagent-node-$(basename "$d").jsonl"
-	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if ! catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1; then rc=1; continue; fi
 	if grep -q '"type":"subagent"' "$snap"; then rc=1; fi
 done
 record "$rc" "subagent node present in >=1 baseline run and absent in all degraded runs"
@@ -887,7 +887,7 @@ done
 for d in "$runs5"/bench-e2e-skill-skill-degraded-r*; do
 	[ -f "$d/session.jsonl" ] || continue
 	snap="$work/skill-node-$(basename "$d").jsonl"
-	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if ! catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1; then rc=1; continue; fi
 	if grep -q '"type":"skill"' "$snap"; then rc=1; fi
 done
 record "$rc" "skill node present in >=1 baseline run and absent in all degraded runs"
