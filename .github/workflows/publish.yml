@@ -258,4 +258,7 @@ jobs:
             [ -n "$dt" ] && [ "$dt" = "$dl" ] && { echo "ghcr ok: $dt"; break; }
             echo "ghcr tag=$dt latest=$dl (retry $i)"; sleep 15
           done
-          [ -n "$dt" ] && [ "$dt" = "$dl" ] || { echo "::error::ghcr latest ($dl) != $TAG ($dt)"; exit 1; }
+          if [ -z "$dt" ] || [ "$dt" != "$dl" ]; then
+            echo "::error::ghcr latest ($dl) != $TAG ($dt)"
+            exit 1
+          fi
