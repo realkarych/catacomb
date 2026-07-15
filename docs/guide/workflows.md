@@ -296,6 +296,57 @@ comparison.
   task `checkpoints:` and wire `mcp__catacomb__mark` so there is always a stable, noise-robust
   comparison axis; see [Checkpoints and phase-scoped diff](#checkpoints-and-phase-scoped-diff).
 
+## Importing a hand-run interactive session
+
+`bench` drives the agent for you, but sometimes you run the agent **by hand** — a session
+in the interactive Claude Code TUI, where you type the prompts and watch it work. That
+session's transcript is just as real as a bench cell's, and
+[`catacomb import`](cli.md#import) ingests it into the same evidence shape, so
+[`verify`](cli.md#verify) and [`regress`](cli.md#regress) treat it exactly like a
+bench-recorded cell. It is a second entry point to the same gate, one cell at a time.
+
+The one thing to arrange up front is the **session id**, so `import` can find the
+transcript afterward. Pin it before you start:
+
+```sh
+SID=$(uuidgen)
+claude --session-id "$SID" --mcp-config catacomb-mcp.json
+```
+
+Then do the task by hand. To keep the checkpoint axis, call the `mcp__catacomb__mark` tool
+at each phase boundary during the session (the [MCP marker tool](#placing-markers) works
+the same whether an agent or you invoke it) — the marks ride the transcript and `import`
+honors them. When you are done, ingest the finished session against the basket that
+declares the task's `verify:`, `checkpoints:`, and labels:
+
+```sh
+catacomb import checkout.yaml --task work-task --variant candidate --session-id "$SID"
+catacomb verify checkout.yaml --runs-dir ~/.catacomb/runs
+catacomb regress --runs-dir ~/.catacomb/runs \
+  --baseline label:basket=checkout,variant=main \
+  --candidate label:basket=checkout,variant=candidate
+```
+
+`import` writes a redacted `~/.catacomb/runs/<run-id>/` evidence dir (default run-id
+`import-<basket>-<task>-<variant>-r<rep>`), synthesizing the `task:<id>` marker window from
+the transcript's first and last timestamps. The task `cmd` is ignored — you ran the agent
+yourself — and `verify` stays a separate step, so the imported cell flows through the same
+`bench → verify → regress` cycle. Repeat the import with different `--rep` values (or
+`--run-id`s) to build a group `regress` can gate.
+
+**If you did not pin the id**, fall back to `--transcript` and point it at the newest
+transcript under your project's Claude projects dir — Claude Code writes each session to
+`~/.claude/projects/<encoded-cwd>/<session>.jsonl`, encoding the working directory into the
+folder name:
+
+```sh
+catacomb import checkout.yaml --task work-task --variant candidate \
+  --transcript "$(ls -t ~/.claude/projects/<encoded-cwd>/*.jsonl | head -1)"
+```
+
+See [import](cli.md#import) for the full flag table, the null-`cost_usd` note, and exit
+codes.
+
 ## Verifying task outcomes
 
 `regress` compares deterministic observables — status, presence, duration, cost, tokens — but
