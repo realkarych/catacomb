@@ -1,0 +1,13 @@
+basket: prod-skill
+reps: 5
+tasks:
+  - id: skill
+    cmd: ["__PROD__/fixtures/emit.sh"]
+    dir: __WORK__/cellwork
+variants:
+  - id: baseline
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/skill.jsonl.tmpl" }
+  - id: degraded
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/skill-degraded.jsonl.tmpl" }
+  - id: baseline2
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/skill.jsonl.tmpl" }

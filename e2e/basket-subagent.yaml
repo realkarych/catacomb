@@ -1,0 +1,40 @@
+# Live subagent basket: does delegating the SQL task to a subagent show up as an
+# observable delegation signal in a bench transcript? `claude -p` headless does NOT
+# write the subagent's isSidechain lines into session.jsonl, so reduce cannot synthesize
+# a "type":"subagent" node from a bench run — the only observable delegation signal is the
+# Agent tool_use, which reduces to a "name":"Agent" tool_call node. 1 task x 3 variants x 5
+# reps = 15 live cells. Delegation is FORCED structurally per variant via SUBAGENT_TOOLS
+# (the wrapper's --allowedTools), not left to the model: baseline/baseline2 get ONLY "Task"
+# (no Bash) so the main agent physically cannot run sqlite3 itself and MUST spawn a subagent
+# (Agent tool-call present every run); degraded gets "Bash(sqlite3:*)" (no Task) so it is
+# forced inline (no Agent tool-call — seeded delegation regression).
+#
+# The gate is that catacomb detects the delegation (the Agent tool-call) in baseline and not
+# in degraded. SQL correctness is NOT asserted here: with --allowedTools "Task" only, the
+# spawned subagent has no tools and cannot write out/result.csv, so there is no artifact to
+# verify — the SQL verifier contract is the separate sql basket. The full subagent-node/
+# subagent_type reduction (which needs sidechain) is covered by the hermetic + import
+# scenarios, which run on INTERACTIVE sessions that carry sidechain.
+basket: e2e-subagent
+reps: 5
+tasks:
+  - id: subagent
+    cmd: ["./subagent.sh"]
+    workspace:
+      cmd: ["sh", "-c", "cp \"$E2E_DIR\"/subagent.sh ."]
+    timeout: 300s
+    env:
+      CHILD_MODEL: claude-sonnet-5
+variants:
+  - id: baseline
+    env:
+      SUBAGENT_TOOLS: "Task"
+      SUBAGENT_INSTRUCTION: "You have ONLY the Task tool. You cannot run commands yourself. Spawn a subagent (call the Task tool with subagent_type general-purpose) and have it run the sqlite3 query and write out/result.csv."
+  - id: degraded
+    env:
+      SUBAGENT_TOOLS: "Bash(sqlite3:*)"
+      SUBAGENT_INSTRUCTION: "Run the sqlite3 query yourself, directly. Do not delegate."
+  - id: baseline2
+    env:
+      SUBAGENT_TOOLS: "Task"
+      SUBAGENT_INSTRUCTION: "You have ONLY the Task tool. You cannot run commands yourself. Spawn a subagent (call the Task tool with subagent_type general-purpose) and have it run the sqlite3 query and write out/result.csv."

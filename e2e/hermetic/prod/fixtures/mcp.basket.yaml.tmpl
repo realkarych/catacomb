@@ -1,0 +1,13 @@
+basket: prod-mcp
+reps: 5
+tasks:
+  - id: mcp
+    cmd: ["__PROD__/fixtures/emit.sh"]
+    dir: __WORK__/cellwork
+variants:
+  - id: baseline
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/mcp.jsonl.tmpl" }
+  - id: degraded
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/mcp-degraded.jsonl.tmpl" }
+  - id: baseline2
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/mcp.jsonl.tmpl" }

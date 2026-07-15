@@ -1,0 +1,18 @@
+basket: prod-composite
+reps: 5
+tasks:
+  - id: composite
+    cmd: ["__PROD__/fixtures/emit.sh"]
+    dir: __WORK__/cellwork
+    checkpoints: [work]
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "__PROD__/fixtures/verify_token.py"]
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/composite.jsonl.tmpl", EMIT_CSV: "CATACOMB-OK" }
+  - id: degraded
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/composite-degraded.jsonl.tmpl", EMIT_CSV: "WRONG" }
+  - id: baseline2
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/composite.jsonl.tmpl", EMIT_CSV: "CATACOMB-OK" }

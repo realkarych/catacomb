@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # E2E live gate — the PV-6b calibration methodology as a self-asserting driver.
 #
-# Runs three heterogeneous live `claude -p` baskets through `catacomb bench` and
+# Runs six heterogeneous live `claude -p` baskets through `catacomb bench` and
 # then exercises the full offline pipeline against the real evidence:
 #   - every A-vs-A control must NOT gate (zero false positives), and
 #   - a seeded checkpoint-presence regression, a seeded continuous (tokens_out)
-#     regression, AND a seeded verifier-contract regression (a wrong SQL result
-#     fails verification) MUST each gate, attributed to the swapped instruction.
+#     regression, a seeded verifier-contract regression (a wrong SQL result fails
+#     verification), a seeded subagent-delegation regression (baseline delegates via the
+#     Agent tool, degraded runs inline — gated on Agent tool-call presence separation,
+#     since `claude -p` headless does not emit subagent sidechain), a seeded
+#     skill-delegation regression (a dropped Skill step
+#     node), AND a
+#     seeded live-MCP regression (a dropped MCP record-tool step node together with a
+#     failed record-tool verifier — the one basket where BOTH signals gate)
+#     MUST each gate, attributed to the swapped instruction.
 # It also smoke-tests baseline pin/record/trends, diff/subgraph/export, and the
 # external-scores path — all on the live evidence.
 #
 # See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$1.7 of real API spend (60 bench cells; checkpoint + SQL tasks on sonnet).
+# Cost: ~$3–7 of real API spend (105 bench cells: presence/continuous/sql +
+# subagent/skill/mcp production baskets on sonnet; subagent cells spawn children).
 #
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
@@ -28,10 +36,13 @@
 #
 # The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json` relative to
 # the e2e directory, so this driver cd's into its own directory before invoking bench
-# (the presence and continuous baskets declare `dir: .`). The SQL basket instead runs
-# each cell in a fresh per-cell workspace whose setup cmd copies `./sql-live.sh` and
-# `./verify_sql.py` from E2E_DIR (exported below). All other paths are absolute, so
-# the cd does not affect them.
+# (the presence and continuous baskets declare `dir: .`). The SQL, subagent, skill, and
+# MCP baskets instead run each cell in a fresh per-cell workspace whose setup cmd copies
+# their wrapper (`./sql-live.sh` / `./subagent.sh` / `./skill.sh` / `./mcp-record.sh`) and
+# verifier (`./verify_sql.py` / `./verify_emit.py`) from E2E_DIR (exported below); the
+# skill workspace also stages the e2e-emit skill dir into the cell's `.claude/skills/`, and
+# the MCP workspace stages the mcp-e2ekit server dir and renders its absolute path into a
+# per-cell mcp.json. All other paths are absolute, so the cd does not affect them.
 set -euo pipefail
 
 e2e_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -74,11 +85,17 @@ work="$(mktemp -d)"
 runs1="$work/runs-presence"
 runs2="$work/runs-continuous"
 runs3="$work/runs-sql"
+runs4="$work/runs-subagent"
+runs5="$work/runs-skill"
+runs6="$work/runs-mcp"
 manifest1="$work/manifest-presence.jsonl"
 manifest2="$work/manifest-continuous.jsonl"
 manifest3="$work/manifest-sql.jsonl"
+manifest4="$work/manifest-subagent.jsonl"
+manifest5="$work/manifest-skill.jsonl"
+manifest6="$work/manifest-mcp.jsonl"
 db="$work/e2e.db"
-mkdir -p "$runs1" "$runs2" "$runs3"
+mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6"
 
 # The SQL basket's agent reads a seeded database and its verifier reads the golden; both
 # live here in the work dir, OUTSIDE every cell's per-cell workspace — the documented
@@ -104,6 +121,9 @@ copy_artifacts() {
 	cp -f "$manifest1" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest2" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest3" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest4" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest5" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest6" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
@@ -675,12 +695,256 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-sql-AvA.json" || rc=$?
 record "$rc" "sql A-vs-A reports zero regressions"
 
-echo "== m. cost report =="
-python3 - "$manifest1" "$manifest2" "$manifest3" "$artifacts/cost.txt" <<'PY'
+echo "== m. bench e2e-subagent basket (15 live claude -p cells) — Task delegation =="
+# baseline/baseline2 delegate the seeded SQL task to a subagent (the Task tool);
+# degraded runs sqlite3 inline. `claude -p` headless does NOT write the subagent's
+# isSidechain lines into session.jsonl, so reduce cannot synthesize a "type":"subagent"
+# node from a bench transcript; the observable delegation signal is the Agent tool_use,
+# which reduces to a "name":"Agent" tool_call node. (The full subagent-node/subagent_type
+# reduction needs sidechain and is covered in the hermetic + import scenarios, which run on
+# INTERACTIVE sessions.) Same default projects-dir as the SQL basket: live `claude -p`
+# writes transcripts under ~/.claude/projects, so bench reads from there too (no
+# --projects-dir override).
+run_expect 0 "bench e2e-subagent basket" -- \
+	catacomb bench basket-subagent.yaml --runs-dir "$runs4" --manifest "$manifest4"
+
+echo "== n. subagent delegation separation (seeded regression): baseline delegates in a majority, degraded near-never =="
+# Delegating to a real subagent is inherently nondeterministic: the child agent's internal
+# tool sequence jitters run-to-run and its latency can time a cell out. And `claude -p`
+# headless does NOT emit subagent sidechain lines into session.jsonl, so reduce cannot
+# synthesize a "type":"subagent" node from a bench transcript at all -- the ONLY observable
+# delegation signal in a bench transcript is the Agent tool_use, which reduces to a
+# "name":"Agent" tool_call node. The robust signal is therefore that Agent tool-call: baseline
+# is instructed to delegate (Agent call present in a majority of the runs that produced a
+# transcript), degraded to run inline (Agent call near-absent). We gate on that separation --
+# tolerant of timeouts (they only shrink the denominator) and an occasional stray delegation.
+# The full subagent-node/subagent_type reduction path (which needs sidechain) is validated
+# deterministically in the hermetic lane and the import scenario, which run on INTERACTIVE
+# sessions that DO carry sidechain; this live gate proves real delegation (the Agent tool-call)
+# is detected and drops under the seeded instruction.
+count_agent_calls() { # <variant> -> "hits total"
+	local variant="$1" hits=0 total=0 d snap
+	for d in "$runs4"/bench-e2e-subagent-subagent-"$variant"-r*; do
+		[ -f "$d/session.jsonl" ] || continue
+		snap="$work/agent-call-count-$(basename "$d").jsonl"
+		catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+		total=$((total + 1))
+		if grep -q '"name":"Agent"' "$snap"; then hits=$((hits + 1)); fi
+	done
+	printf '%s %s' "$hits" "$total"
+}
+read -r agent_base_hits agent_base_total <<<"$(count_agent_calls baseline)"
+read -r agent_deg_hits agent_deg_total <<<"$(count_agent_calls degraded)"
+read -r agent_base2_hits agent_base2_total <<<"$(count_agent_calls baseline2)"
+rc=0
+{ [ "$agent_base_hits" -ge 3 ] && [ "$agent_deg_hits" -le 1 ]; } || rc=1
+record "$rc" "subagent delegation: Agent tool-call present in a majority of baseline runs, near-absent in degraded (baseline $agent_base_hits/$agent_base_total >=3 vs degraded $agent_deg_hits/$agent_deg_total <=1)"
+
+echo "== o. subagent A-vs-A control (baseline vs baseline2) must NOT gate =="
+# baseline and baseline2 both delegate via the Agent tool, so presence and the annotation axis
+# are equal. Only the continuous metrics can drift on live API latency/cost/token jitter, so the
+# continuous band is WIDENED (same rationale as steps c/f/l). --fail-on-notable is deliberately
+# OMITTED: subagent-internal tool jitter produces spurious step-presence notables between
+# identical batches (the reason step n gates structurally on the Agent tool-call, not on
+# notables — recall `claude -p` headless emits no subagent sidechain, so the observable
+# delegation signal is the Agent tool-call), so this control widens only the continuous band and
+# asserts zero regressions.
+run_json 0 "$artifacts/regress-subagent-AvA.json" \
+	"subagent A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs4" \
+	--baseline label:basket=e2e-subagent,variant=baseline \
+	--candidate label:basket=e2e-subagent,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-subagent-AvA.json" || rc=$?
+record "$rc" "subagent A-vs-A reports zero regressions"
+
+echo "== o2. subagent A-vs-A delegation specificity: baseline2 also delegates in a majority (no spurious separation) =="
+# The seeded gate (step n) fires on baseline-vs-degraded Agent tool-call presence separation
+# (`claude -p` headless emits no subagent sidechain, so the Agent tool-call is the observable
+# delegation signal). Its specificity control is that two IDENTICAL delegating variants show NO
+# separation: baseline2 must also delegate in a majority, so the separation step n detects is a
+# real degraded-instruction effect, not batch-to-batch noise. Reuses the counts from step n.
+rc=0
+[ "$agent_base2_hits" -ge 3 ] || rc=1
+record "$rc" "subagent A-vs-A: baseline2 also delegates in a majority ($agent_base2_hits/$agent_base2_total >=3), no spurious separation"
+
+echo "== p. bench e2e-skill basket (15 live claude -p cells) — Skill delegation =="
+# baseline/baseline2 invoke the real project-scoped e2e-emit skill (the Skill tool ->
+# a Skill step node; the skill writes the CATACOMB-SKILL-OK token to out/result.csv);
+# degraded writes the SAME token inline with Write. The workspace stages the skill dir
+# into each cell's .claude/skills/ so --setting-sources project discovers it. Same default
+# projects-dir as the SQL/subagent baskets: live `claude -p` writes transcripts under
+# ~/.claude/projects, so bench reads from there too (no --projects-dir override).
+run_expect 0 "bench e2e-skill basket" -- \
+	catacomb bench basket-skill.yaml --runs-dir "$runs5" --manifest "$manifest5"
+
+echo "== q. skill seeded regression (baseline vs degraded) — dropped Skill node must gate =="
+# Both baseline and degraded write the CORRECT token (degraded just uses Write inline),
+# so verifier.pass stays green on both — the verifier is a co-signal that the artifact is
+# still correct, NOT the regression axis here. The only seeded regression is the missing
+# Skill step node: baseline invokes the skill (Skill step present ~5/5), degraded does not
+# (0/5). A Skill step in baseline and none in degraded drops step alignment coverage below
+# --coverage-floor, so regress downgrades the step-presence regression to `notable` (the
+# same applyDowngrade path as the echo step d2 / subagent step n cases). --fail-on-notable
+# is therefore REQUIRED to gate it (exit 1); a notable-only report otherwise exits 0.
+# Matched by detail (a step present across baseline reps dropping to `-> 0/5` in degraded),
+# NOT by node name — for parity with the subagent case, where the live reduced name differs
+# from the fixture (`Agent`) and the decisive aggregate finding carries a null name. The
+# clean A-vs-A control below keeps this attribution non-vacuous.
+run_json 1 "$artifacts/regress-skill-degraded.json" \
+	"skill seeded regression (baseline vs degraded, dropped skill node)" -- \
+	catacomb regress --runs-dir "$runs5" \
+	--baseline label:basket=e2e-skill,variant=baseline \
+	--candidate label:basket=e2e-skill,variant=degraded --fail-on-notable --json
+rc=0
+python3 - "$artifacts/regress-skill-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") in ("regression", "notable")
+    and "-> 0/5" in str(f.get("detail", ""))
+]
+if not hits:
+    print("no step-scope presence-drop (-> 0/5) notable finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: step {h.get('name')!r} presence notable ({h.get('detail', '')})")
+PY
+record "$rc" "skill degraded gate attributed to a dropped skill step-scope presence notable"
+
+echo "== q2. skill node synthesis: skill graph node present in >=1 baseline run, absent in ALL degraded runs =="
+# As with the subagent case (step n2), the `-> 0/5` matcher in step q proves a step dropped
+# and the gate fired, but not that catacomb attributed the drop to the skill node itself
+# (the decisive aggregate presence finding carries a null name). This is the live equivalent
+# of the hermetic node-type proof (hermetic/prod/scenarios/30-skill.sh): replay each run's
+# session to a JSONL graph snapshot and assert the synthesized "type":"skill" node appears
+# in >=1 baseline run and in NO degraded run. Live invocation is not always 5/5, so the
+# baseline side is asserted as "at least one"; the degraded side stays strict (none).
+rc=0
+skill_base_hits=0
+for d in "$runs5"/bench-e2e-skill-skill-baseline-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/skill-node-$(basename "$d").jsonl"
+	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if grep -q '"type":"skill"' "$snap"; then skill_base_hits=$((skill_base_hits + 1)); fi
+done
+[ "$skill_base_hits" -ge 1 ] || rc=1
+for d in "$runs5"/bench-e2e-skill-skill-degraded-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/skill-node-$(basename "$d").jsonl"
+	if ! catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1; then rc=1; continue; fi
+	if grep -q '"type":"skill"' "$snap"; then rc=1; fi
+done
+record "$rc" "skill node present in >=1 baseline run and absent in all degraded runs"
+
+echo "== r. skill A-vs-A control (baseline vs baseline2) must NOT gate =="
+# baseline and baseline2 both invoke the skill, so both carry the Skill step node and both
+# verify (~5/5) — presence and the annotation axis are equal. Only the continuous metrics
+# can drift on live API latency/cost/token jitter, so the continuous band is WIDENED (same
+# rationale as steps c/f/l/o). Unlike the seeded gate above, --fail-on-notable is deliberately
+# OMITTED here: real API duration outliers between identical batches would false-gate as
+# notables (the other A-vs-A controls omit it for the same reason), so this control widens
+# only the continuous band and asserts zero regressions.
+run_json 0 "$artifacts/regress-skill-AvA.json" \
+	"skill A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs5" \
+	--baseline label:basket=e2e-skill,variant=baseline \
+	--candidate label:basket=e2e-skill,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-skill-AvA.json" || rc=$?
+record "$rc" "skill A-vs-A reports zero regressions"
+
+echo "== s. bench e2e-mcp basket (15 live claude -p cells) — live MCP handshake =="
+# baseline/baseline2 call the record tool over a real stdio MCP server (mcp__e2ekit__record
+# -> a general MCP step node; the server persists CATACOMB-SKILL-OK to the cell's
+# out/result.csv via the absolute E2EKIT_OUT, which verify_emit.py scores into
+# verifier.pass ~5/5); degraded uses no tool, so it drops BOTH the MCP step node AND the
+# artifact — the one basket where both the presence and the verifier axes gate. Same default
+# projects-dir as the SQL/subagent/skill baskets: live `claude -p` writes transcripts under
+# ~/.claude/projects, so bench reads from there too (no --projects-dir override).
+run_expect 0 "bench e2e-mcp basket" -- \
+	catacomb bench basket-mcp.yaml --runs-dir "$runs6" --manifest "$manifest6"
+
+echo "== t. mcp seeded regression (baseline vs degraded) — dropped MCP node + failed verifier must gate =="
+# Unlike the subagent/skill baskets (where degraded still produces the correct artifact and
+# only the step node drops), the MCP degraded cell uses NO tool, so it neither records the
+# value nor writes out/result.csv. TWO seeded regressions therefore fire together:
+#   (1) ann:verifier.pass drops ~5/5 -> 0/5 — a `regression` verdict that gates by DEFAULT
+#       (the primary signal), and
+#   (2) the mcp__e2ekit__record step node is present in baseline and absent in degraded;
+#       that drops step alignment coverage below --coverage-floor, so regress downgrades the
+#       step-presence regression to `notable` (the same applyDowngrade path as the echo/
+#       subagent/skill step cases). --fail-on-notable is passed so the notable also gates,
+#       and both findings are asserted below.
+run_json 1 "$artifacts/regress-mcp-degraded.json" \
+	"mcp seeded regression (baseline vs degraded, dropped MCP node + failed verifier)" -- \
+	catacomb regress --runs-dir "$runs6" \
+	--baseline label:basket=e2e-mcp,variant=baseline \
+	--candidate label:basket=e2e-mcp,variant=degraded --fail-on-notable --json
+rc=0
+python3 - "$artifacts/regress-mcp-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+findings = rep.get("findings", [])
+ver = [
+    f for f in findings
+    if f.get("metric") == "ann:verifier.pass" and f.get("verdict") == "regression"
+]
+step = [
+    f for f in findings
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") in ("regression", "notable")
+    and "e2ekit" in str(f.get("name", "")).lower()
+]
+errs = []
+if not ver:
+    errs.append("no ann:verifier.pass regression finding (the primary DEFAULT-gating signal)")
+if not step:
+    errs.append("no step-scope mcp__e2ekit__record presence notable finding (the dropped MCP node)")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    print("findings were:", file=sys.stderr)
+    for f in findings:
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print(f"decisive findings: ann:verifier.pass {ver[0].get('detail', '')} (regression) + "
+      f"step {step[0].get('name')!r} presence notable ({step[0].get('detail', '')})")
+PY
+record "$rc" "mcp degraded gate: BOTH ann:verifier.pass regression AND dropped mcp__e2ekit__record step notable"
+
+echo "== u. mcp A-vs-A control (baseline vs baseline2) must NOT gate =="
+# baseline and baseline2 both call the record tool, so both carry the mcp__e2ekit__record
+# step node and both verify (~5/5) — presence and the annotation axis are equal. Only the
+# continuous metrics can drift on live API latency/cost/token jitter, so the continuous band
+# is WIDENED (same rationale as steps c/f/l/o/r). Unlike the seeded gate above,
+# --fail-on-notable is deliberately OMITTED here: real API duration outliers between identical
+# batches would false-gate as notables (the other A-vs-A controls omit it for the same
+# reason), so this control widens only the continuous band and asserts zero regressions.
+run_json 0 "$artifacts/regress-mcp-AvA.json" \
+	"mcp A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs6" \
+	--baseline label:basket=e2e-mcp,variant=baseline \
+	--candidate label:basket=e2e-mcp,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-mcp-AvA.json" || rc=$?
+record "$rc" "mcp A-vs-A reports zero regressions"
+
+echo "== v. cost report =="
+python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$artifacts/cost.txt" <<'PY'
 import json, sys
 
 total = 0.0
-for p in sys.argv[1:4]:
+for p in sys.argv[1:7]:
     try:
         for line in open(p):
             line = line.strip()
@@ -691,7 +955,7 @@ for p in sys.argv[1:4]:
                 total += c
     except FileNotFoundError:
         pass
-open(sys.argv[4], "w").write(f"total live spend: ${total:.2f}\n")
+open(sys.argv[7], "w").write(f"total live spend: ${total:.2f}\n")
 print(f"total live spend: ${total:.2f}")
 PY
 

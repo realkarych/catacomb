@@ -1170,6 +1170,11 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("overall_verdict") and r.get("regressions")==0 else 1)' "$work/regress-import.json" || rc=$?
 record "$rc" "regress over imported cells yields an overall verdict with zero regressions"
 
+echo "== 22. production scenarios (subagent/skill/mcp) =="
+prod_rc=0
+WORK="$work/prod" bash "$here/prod/run.sh" || prod_rc=$?
+record "$prod_rc" "hermetic production scenarios (prod/run.sh) all pass"
+
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then
 	echo "HERMETIC E2E: PASS — all assertions held (workspace: $work)"
