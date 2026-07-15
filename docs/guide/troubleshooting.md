@@ -6,8 +6,8 @@ behind most of these.
 
 | Symptom | Action |
 | --- | --- |
-| Manifest note says `no session id observed` | The cell's `cmd` must emit stream-json: run `claude` with `--output-format stream-json` |
-| Manifest note says `transcripts not found` | Check `--projects-dir` points at the Claude projects dir that owns the session; bench retries for ~3 s after the child exits |
+| Manifest note says `no session id observed` | The cell's `cmd` must emit stream-json: run `claude` with `--output-format stream-json`. For a hand-run interactive session, use [`catacomb import`](cli.md#import) — it does not need stream-json on stdout |
+| Manifest note says `transcripts not found` | Check `--projects-dir` points at the Claude projects dir that owns the session; bench retries for ~3 s after the child exits. For a hand-run interactive session, use [`catacomb import`](cli.md#import) with `--session-id` or `--transcript` |
 | `selector matched no runs` | Inspect `<runs-dir>/*/meta.json` labels; check `--runs-dir` and the `label:` terms (all terms are ANDed) |
 | `no catacomb store found` | Create the store with a write-path command: `catacomb baseline set` |
 | `store schema is older than this binary` | Run a write-path command (`catacomb baseline set`) to migrate it |

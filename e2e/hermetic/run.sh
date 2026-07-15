@@ -26,8 +26,10 @@
 #   ties-pass boundary) -> 16 SP5 judge panel (three-judge fixture -> byte-exact
 #   mean/vote streams; the vote stream gates through regress --scores).
 #   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/rm -> 19 mcp stdio.
-#   Last, 20 SP-W workspace isolation + patch-free offline verify (its own basket +
-#   runs dirs, nothing earlier touched).
+#   Then 20 SP-W workspace isolation + patch-free offline verify (its own basket +
+#   runs dirs, nothing earlier touched). Last, 21 import path: a step-2 session
+#   ingested into a fresh evidence dir and driven through offline verify + regress
+#   with zero agent spawn.
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -64,6 +66,15 @@
 # step closes with an offline `catacomb verify` over the ws runs dir with fix.patch
 # moved away — offline loading never resolves workspace.patch — asserting step-4-style
 # idempotency (scores byte-identical, verify.json mode offline) before restoring it.
+# Step 21 is the import path and mutates none of the earlier evidence: two step-2
+# bench sessions (still under projects/hermetic, keyed by the session_id each
+# meta.json recorded) are ingested by `catacomb import` into a fresh runs dir with
+# no agent spawn, then driven through offline verify + regress. Because import runs
+# no task cmd it captures no artifacts, so the sql verifier cannot re-verify
+# imported evidence; verify_import.py is the artifact-free twin that reads the
+# ingested session.jsonl from the evidence dir (the import contract: a verifier
+# sees the transcript, not a live workdir), and basket-import.yaml is the sql basket
+# with only that verify cmd swapped, so labels match the sql cells.
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -1089,6 +1100,75 @@ python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]+"/verify.j
 	"$wsruns/bench-hermetic-ws-ws-only-r1" || rc=$?
 record "$rc" "ws verify.json mode flips to offline after the patch-free re-verify"
 mv "$work/fix.patch.gone" "$work/fix.patch"
+
+echo "== 21. import path: ingest a recorded session -> offline verify -> regress (no agent spawn) =="
+# `catacomb import` ingests an already-finished transcript into a bench-cell-shaped
+# evidence dir so verify/regress run over it unchanged with zero agent spawn. It
+# reuses the step-2 bench transcripts (still under projects/hermetic, keyed by the
+# session_id bench recorded in each meta.json) — nothing is re-run, no claude is
+# invoked — and writes into a FRESH runs dir, disturbing no earlier evidence. import
+# runs no task cmd so it captures no artifacts; the sql verifier reads out/result.csv
+# and therefore cannot re-verify imported evidence, so basket-import.yaml swaps only
+# the verify cmd (name/tasks/variants unchanged, so labels match the sql cells) for
+# verify_import.py, the artifact-free twin that reads the ingested session.jsonl
+# straight from the evidence dir. Two hermetic sessions are imported under variants
+# baseline/degraded (rep 1 each); both derive from the same fixed transcript template
+# so every audited axis is byte-identical across the pair, and regress produces a
+# verdict while gating nothing (exit 0, zero regressions).
+importruns="$work/importruns"
+cp "$here/verify_import.py" "$work/"
+sed 's|verify_sql.py|verify_import.py|' "$work/basket.yaml" >"$work/basket-import.yaml"
+imp_sid_baseline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["session_id"])' "$base1_dir/meta.json")"
+imp_sid_degraded="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["session_id"])' "$runs/bench-hermetic-sql-sql-degraded-r1/meta.json")"
+run_expect 0 "import baseline session into fresh evidence" -- \
+	catacomb import "$work/basket-import.yaml" --task sql --variant baseline \
+	--session-id "$imp_sid_baseline" --projects-dir "$work/projects" --runs-dir "$importruns"
+run_expect 0 "import degraded session into fresh evidence" -- \
+	catacomb import "$work/basket-import.yaml" --task sql --variant degraded \
+	--session-id "$imp_sid_degraded" --projects-dir "$work/projects" --runs-dir "$importruns"
+rc=0
+for v in baseline degraded; do
+	d="$importruns/import-hermetic-sql-sql-$v-r1"
+	if [ ! -f "$d/meta.json" ] || [ ! -f "$d/session.jsonl" ]; then rc=1; fi
+done
+record "$rc" "import wrote a bench-cell evidence dir (meta.json + session.jsonl) per variant"
+run_expect 0 "catacomb verify over imported evidence (offline, no agent)" -- \
+	catacomb verify "$work/basket-import.yaml" --runs-dir "$importruns"
+imp_base="$importruns/import-hermetic-sql-sql-baseline-r1"
+rc=0
+python3 - "$imp_base" <<'PY' || rc=$?
+import json, os, sys
+
+d = sys.argv[1]
+errs = []
+try:
+    if "verifier.pass" not in open(os.path.join(d, "scores.jsonl")).read():
+        errs.append("scores.jsonl lacks verifier.pass")
+except OSError as e:
+    errs.append(f"scores.jsonl unreadable: {e}")
+try:
+    v = json.load(open(os.path.join(d, "verify.json")))
+    if v.get("mode") != "offline":
+        errs.append(f"verify.json mode={v.get('mode')!r} want 'offline'")
+    if v.get("error"):
+        errs.append(f"verify.json error non-empty: {v.get('error')!r}")
+except OSError as e:
+    errs.append(f"verify.json unreadable: {e}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("imported evidence re-verified: scores(verifier.pass), verify.json mode=offline, no error")
+PY
+record "$rc" "offline verify over imported evidence: verifier.pass scored, verify.json mode=offline no error"
+run_json 0 "$work/regress-import.json" \
+	"regress over imported evidence produces a verdict (exit 0)" -- \
+	catacomb regress --runs-dir "$importruns" \
+	--baseline label:basket=hermetic-sql,variant=baseline \
+	--candidate label:basket=hermetic-sql,variant=degraded --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("overall_verdict") and r.get("regressions")==0 else 1)' "$work/regress-import.json" || rc=$?
+record "$rc" "regress over imported cells yields an overall verdict with zero regressions"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then

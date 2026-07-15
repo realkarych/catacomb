@@ -210,3 +210,46 @@ func TestParseTranscriptsWarnsDriftAndVersionTogether(t *testing.T) {
 	assert.Contains(t, out, "newer than tested")
 	assert.Contains(t, out, "9.9.9")
 }
+
+func TestGraphFromObservationsAppliesExtraAndPricer(t *testing.T) {
+	obs, err := parseTranscripts("testdata/session.jsonl", nil, "exec-1")
+	require.NoError(t, err)
+	extra := boundaryObservations("s1", "task:t1", time.Unix(0, 0).UTC(), time.Unix(10, 0).UTC())
+	g := graphFromObservations(obs, "exec-1", newPricer(), extra)
+	require.NotNil(t, g)
+	marks := graphMarkerNames(g)
+	_, ok := marks["task:t1"]
+	assert.True(t, ok)
+}
+
+func TestTranscriptTimeBounds(t *testing.T) {
+	obs, err := parseTranscripts("testdata/session.jsonl", nil, "exec-1")
+	require.NoError(t, err)
+	start, end, ok := transcriptTimeBounds(obs)
+	require.True(t, ok)
+	assert.False(t, start.After(end))
+}
+
+func TestTranscriptTimeBoundsEmpty(t *testing.T) {
+	_, _, ok := transcriptTimeBounds(nil)
+	assert.False(t, ok)
+}
+
+func TestTranscriptTimeBoundsSkipsZeroAndOutOfOrder(t *testing.T) {
+	obs := []model.Observation{
+		{EventTime: time.Unix(100, 0).UTC()},
+		{},
+		{EventTime: time.Unix(50, 0).UTC()},
+		{EventTime: time.Unix(200, 0).UTC()},
+	}
+	start, end, ok := transcriptTimeBounds(obs)
+	require.True(t, ok)
+	assert.True(t, start.Equal(time.Unix(50, 0).UTC()))
+	assert.True(t, end.Equal(time.Unix(200, 0).UTC()))
+}
+
+func TestLoadGraphOfflineStillWorks(t *testing.T) {
+	g, err := loadGraphOffline("testdata/session.jsonl", nil, "exec-1", newPricer(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, g)
+}

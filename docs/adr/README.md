@@ -33,6 +33,7 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0027](0027-verification-layer-and-reliability-metrics.md) | Verification layer and reliability metrics (post-pivot vector) | Accepted |
 | [0028](0028-per-cell-workspace-isolation.md) | Per-cell workspace isolation (fresh workdir, patch handover, teardown) | Accepted |
 | [0029](0029-basket-relative-path-resolution.md) | Basket-relative path resolution for dir and ./ argv | Accepted |
+| [0030](0030-interactive-session-import.md) | Interactive session import (`catacomb import`, evidence-only second entry point) | Accepted |
 
 Design spec: [`../internal/specs/2026-06-20-catacomb-design.md`](../internal/specs/2026-06-20-catacomb-design.md).
 

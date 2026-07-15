@@ -37,7 +37,7 @@ Each entry of `tasks` is a `Task`: the agent command and how to run and check it
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | yes | — | Unique within `tasks`. Charset `^[A-Za-z0-9._-]+$`, at most 256 bytes. |
-| `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell) with the cell's working directory as its cwd. `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element is left as-is and resolves against that working directory at exec time (stage the script under `dir`). The command must emit stream-json so the runner can read the session id. |
+| `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell) with the cell's working directory as its cwd. `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element is left as-is and resolves against that working directory at exec time (stage the script under `dir`). The command must emit stream-json so the runner can read the session id. `cmd` drives [`bench`](cli.md#bench) only — [`catacomb import`](cli.md#import) ingests a session you ran yourself and ignores `cmd`. |
 | `dir` | string | no | the process working directory (where you run `catacomb`) | Working directory for the cell. A relative value resolves against the basket file's directory. Mutually exclusive with `workspace`. |
 | `env` | map string→string | no | — | Extra environment for the agent child. A variant's `env` wins per key. |
 | `checkpoints` | list of strings | no | — | Phase names the agent is expected to mark itself. Charset `^[A-Za-z0-9._:-]+$` (colon allowed here), at most 256 bytes, unique within the task; may not equal the reserved `task:<id>` marker. Declaring a checkpoint does not make the agent emit it — wire the marker tool (`--mcp-config` pointing at the catacomb `mcp` server, plus a CLAUDE.md instruction to call `mcp__catacomb__mark`); see [Placing markers](workflows.md#placing-markers). |
@@ -212,4 +212,6 @@ exec claude -p "$PROMPT" --model "$MODEL" --output-format stream-json
 
 This expands to `2 tasks × 2 variants × 5 reps = 20` cells. Run it with
 `catacomb bench checkout.yaml`; re-run the verifiers later with
-`catacomb verify checkout.yaml --runs-dir <dir>`.
+`catacomb verify checkout.yaml --runs-dir <dir>`. Each task's `claude -p … stream-json`
+`cmd` above drives [`bench`](cli.md#bench) only — [`catacomb import`](cli.md#import), which
+ingests a session you ran yourself, ignores `cmd`.

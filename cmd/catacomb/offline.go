@@ -119,6 +119,10 @@ func loadGraphOffline(main string, subs []string, executionID string, pricer red
 	if err != nil {
 		return nil, err
 	}
+	return graphFromObservations(obs, executionID, pricer, extra), nil
+}
+
+func graphFromObservations(obs []model.Observation, executionID string, pricer reduce.Pricer, extra []model.Observation) *reduce.Graph {
 	base := len(obs)
 	for i := range extra {
 		e := extra[i]
@@ -137,7 +141,28 @@ func loadGraphOffline(main string, subs []string, executionID string, pricer red
 		g = reduce.NewGraph()
 	}
 	g.ApplyAll(obs)
-	return g, nil
+	return g
+}
+
+func transcriptTimeBounds(obs []model.Observation) (time.Time, time.Time, bool) {
+	var start, end time.Time
+	found := false
+	for _, o := range obs {
+		if o.EventTime.IsZero() {
+			continue
+		}
+		if !found {
+			start, end, found = o.EventTime, o.EventTime, true
+			continue
+		}
+		if o.EventTime.Before(start) {
+			start = o.EventTime
+		}
+		if o.EventTime.After(end) {
+			end = o.EventTime
+		}
+	}
+	return start, end, found
 }
 
 func sortedGraphSnapshot(g *reduce.Graph) ([]*model.Node, []*model.Edge) {

@@ -211,6 +211,11 @@ exec claude -p "${PROMPT}" \
 (The last two flags keep your user-scope plugins and hooks out of the benchmark, so
 runs are comparable across machines.)
 
+> **Prefer the interactive TUI?** You don't have to script `claude -p`. Run the task by
+> hand, then ingest the finished session with
+> [`catacomb import`](docs/guide/cli.md#import) — it shapes an interactive transcript into
+> the same evidence a bench cell produces, so `verify` and `regress` work on it unchanged.
+
 `demo.yaml` declares the experiment — a *basket*: the matrix of tasks × variants ×
 reps. Each combination is one cell, run as a plain local process:
 

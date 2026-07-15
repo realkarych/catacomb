@@ -12,6 +12,7 @@ The command set:
 | --- | --- |
 | [`bench`](#bench) | Run a benchmark basket and record redacted evidence per cell |
 | [`verify`](#verify) | Re-run a basket's verifiers offline over recorded evidence dirs |
+| [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |
 | [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`) |
 | [`regress`](#regress) | Compare a candidate run group against a baseline and gate |
 | [`trends`](#trends) | Replay a baseline's recorded regression history |
@@ -27,8 +28,8 @@ Exit codes are uniform: `0` success, `1` regression (a stopped `--fail-fast`
 basket, or a failing [`verify`](#verify) cell), `2` operational error (bad input,
 missing files, store problems).
 
-Any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`, `export`,
-`replay`) may print up to two advisory lines to **stderr**: a format-drift count for
+Any command that parses transcripts (`bench`, `import`, `regress`, `diff`, `subgraph`,
+`export`, `replay`) may print up to two advisory lines to **stderr**: a format-drift count for
 records it did not recognize, and a version-ceiling notice when a transcript's Claude
 Code version is newer than the release this binary was tested against (for example
 `warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199`). Both are
@@ -74,9 +75,11 @@ rejected at load.
 Each cell's child runs as a plain local process with `CATACOMB_LABELS` (the merged
 ambient + cell labels) and `CATACOMB_RUN_ID` (the cell's run-id) added to its
 environment, while the runner peeks its stdout for the stream-json `session_id` and the
-terminal `result` event's `total_cost_usd` — the task `cmd` must emit stream-json
-(`claude -p <prompt> --output-format stream-json`), which is where the session id comes
-from. After the child exits the runner resolves the session's transcripts under
+terminal `result` event's `total_cost_usd` — a **bench-driven** cell's `cmd` must emit
+stream-json (`claude -p <prompt> --output-format stream-json`), which is where the runner
+learns the session id. For a session run by hand (interactive TUI), which streams no
+stream-json on stdout, record it with [`import`](#import) instead. After the child exits
+the runner resolves the session's transcripts under
 `--projects-dir` — the main `<session-id>.jsonl` plus any `subagents/agent-*.jsonl` —
 retrying for up to ~3 s while the file lands; a session id matching no transcript (or
 more than one) records the reason in the cell's manifest `note` and skips verification
@@ -310,6 +313,111 @@ the verifiers offline, then gate. `regress --runs-dir` auto-loads each cell's re
 [Run-level scores](#run-level-scores)). See
 [The bench → verify → regress cycle](workflows.md#the-bench--verify--regress-cycle) in the
 workflows guide for the worked loop.
+
+---
+
+## import
+
+Ingest an **already-finished** session transcript — including one from a session you ran
+by hand in the interactive TUI — into a [`bench`](#bench)-cell-shaped evidence directory,
+so [`verify`](#verify) and [`regress`](#regress) read it with no special case. Where
+`bench` launches the agent and records what it observes, `import` records a run you drove
+yourself: you ran the agent, `import` shapes its transcript into the same evidence.
+
+```sh
+catacomb import <basket.yaml> --task <id> --variant <id> \
+  (--session-id <uuid> | --transcript <path>) [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--task` | **required** | Task id in the basket — selects its `verify`, `checkpoints`, and labels |
+| `--variant` | **required** | Variant id in the basket |
+| `--session-id` | (none) | Session UUID resolved under `--projects-dir`; mutually exclusive with `--transcript` (exactly one required) |
+| `--transcript` | (none) | Direct path to a main session `.jsonl`; mutually exclusive with `--session-id` |
+| `--rep` | `1` | Repetition index, recorded as the `rep` label |
+| `--run-id` | `import-<basket>-<task>-<variant>-r<rep>` | Evidence dir name under `--runs-dir` |
+| `--projects-dir` | `~/.claude/projects` | Claude projects dir holding session transcripts (for `--session-id`) |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence output directory |
+| `--label` | (none) | Extra ambient labels merged under the cell labels (`k=v`, comma-separated) |
+
+The **basket is the source of truth** for the cell's `task`, `variant`, `verify:`,
+`checkpoints:`, and labels — exactly as under `bench`. The task `cmd` is **ignored**: you
+ran the agent yourself, so there is nothing for `import` to launch. `--task` and
+`--variant` must name a task and variant that exist in the basket.
+
+Two input modes select the transcript, and **exactly one is required**:
+
+- `--session-id <uuid>` resolves the session's transcripts under `--projects-dir` — the
+  main `<session-id>.jsonl` plus any `subagents/agent-*.jsonl` — the same resolution
+  `bench` does after its child exits. Pin the id up front so this always works (see the
+  workflow below).
+- `--transcript <path>` points straight at a main session `.jsonl` (its subagent
+  transcripts are read from `<transcript-dir>/<session>/subagents/agent-*.jsonl`). Reach
+  for it when the session id is unknown — the newest file under
+  `~/.claude/projects/<encoded-cwd>/` is the session you just ran.
+
+`import` writes `<runs-dir>/<run-id>/` — `session.jsonl`, `subagents/agent-*.jsonl` when
+present, and a `meta.json` — secret-redacted and shaped like a bench cell's evidence dir.
+It carries the same redacted transcripts and `meta.json` a bench cell does, so the
+transcript-driven downstream commands read it unchanged; the one thing it does **not**
+carry is a captured `artifacts/` directory. The default run-id is
+`import-<basket>-<task>-<variant>-r<rep>` (the `bench-` prefix a bench cell carries becomes
+`import-`), overridable with `--run-id`. On success it prints one line,
+`import <run-id>: <dir>`.
+
+`import` captures **no `artifacts/`**: it runs no task `cmd`, so there is no live workdir
+to copy files from. A `verify:` that reads a captured artifact — `cell.artifact("out/result.csv")`,
+say — therefore cannot score an imported cell; it errors with no verdict. A verifier meant
+to run over imports should read the transcript and the rest of the evidence dir, not
+`artifacts/`.
+
+The `task:<id>` marker window is synthesized from the transcript's first and last record
+timestamps, giving `regress` the same stable phase axis a bench cell carries. Any
+`mcp__catacomb__mark` checkpoints the agent recorded during the session are honored;
+a `checkpoints:` name the task declares but the transcript never marked is **warned to
+stderr** (`import <run-id>: missing checkpoints: <names>`) and never gates — visibility
+only, exactly as under `bench`.
+
+`meta.json`'s `cost_usd` field is **omitted** for an import: an interactive transcript carries
+no terminal `total_cost_usd` for `import` to read, so the field is left unset and its key never
+appears in the file. The token-derived `cost_usd` *metric*
+still works — it is priced from the transcript's token counts through the built-in pricing
+table — so cost gating in [`regress`](#regress) stays comparable between imported and
+bench-recorded runs.
+
+Verification stays a **separate step**: `import` only records evidence. Run
+[`verify`](#verify) afterward to score the task's `verify:` block over it, then
+[`regress`](#regress) to gate — the same `bench → verify → regress` cycle, entered one cell
+at a time.
+
+Exit codes: `0` the evidence dir was written, `2` operational error (a bad basket, an
+unknown `--task` or `--variant`, neither or both of `--session-id`/`--transcript`, an
+unresolvable transcript, a transcript with no timestamped records, or an evidence-write
+failure).
+
+### Recommended workflow
+
+Pin the session id before you start so `import` can always find the transcript afterward:
+
+```sh
+SID=$(uuidgen)
+claude --session-id "$SID" --mcp-config catacomb-mcp.json
+# … do the task by hand; call mcp__catacomb__mark at each checkpoint …
+catacomb import basket.yaml --task work-task --variant candidate --session-id "$SID"
+catacomb verify basket.yaml --runs-dir ~/.catacomb/runs
+```
+
+When you did not pin the id, fall back to `--transcript` with the newest transcript under
+your project's Claude projects dir:
+
+```sh
+catacomb import basket.yaml --task work-task --variant candidate \
+  --transcript "$(ls -t ~/.claude/projects/<encoded-cwd>/*.jsonl | head -1)"
+```
+
+See [Importing a hand-run interactive session](workflows.md#importing-a-hand-run-interactive-session)
+for the full recipe.
 
 ---
 
