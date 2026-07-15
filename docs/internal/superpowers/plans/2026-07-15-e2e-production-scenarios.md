@@ -82,9 +82,11 @@ AGENTS.md                            E2E table rows mention the production baske
 ### Task 0: Spike — validate the three live/gate assumptions
 
 **Files:**
+
 - Create: `docs/internal/superpowers/plans/2026-07-15-e2e-production-scenarios-spike.md` (findings record)
 
 **Interfaces:**
+
 - Produces: three decisions consumed by Tasks 3/6 (presence anchor node), 4/7 (skill source set), 6 (sidechain capture confirmed).
 
 This task is an investigation, not TDD. It resolves the §9 risks before fixtures are finalized. Risk 1 is offline (no API); risks 2–3 need an Anthropic auth secret (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`) — run those steps where auth exists (locally or a CI dispatch). Record every finding.
@@ -151,11 +153,13 @@ git commit -m "docs: spike findings — production E2E gate/live assumptions"
 ### Task 1: Real e2e stdio MCP server + protocol driver test
 
 **Files:**
+
 - Create: `e2e/mcp-e2ekit/server.py`
 - Create: `e2e/mcp-e2ekit/smoke.py`
 - Create: `e2e/mcp-e2ekit/mcp.json`
 
 **Interfaces:**
+
 - Produces: a runnable MCP server `python3 e2e/mcp-e2ekit/server.py` speaking newline-JSON-RPC on stdio, serving one tool `record` (`inputSchema` requires a string `value`); `tools/call record {value:X}` writes `X` to the file named by env `E2EKIT_OUT` (default `out/mcp-record.txt`) and returns `{content:[{type:"text",text:"recorded X"}],isError:false}`. `mcp.json` points a Claude Code client at it. Consumed by Tasks 2 and 8.
 
 - [ ] **Step 1: Write the failing driver test (`smoke.py`)**
@@ -349,6 +353,7 @@ git commit -m "test(e2e): real stdio MCP server fixture (tool record) + protocol
 ### Task 2: Hermetic prod harness + MCP protocol/step-node scenario
 
 **Files:**
+
 - Create: `e2e/hermetic/prod/run.sh`
 - Create: `e2e/hermetic/prod/lib.sh`
 - Create: `e2e/hermetic/prod/fixtures/emit.sh`
@@ -357,6 +362,7 @@ git commit -m "test(e2e): real stdio MCP server fixture (tool record) + protocol
 - Modify: `e2e/hermetic/run.sh` (append one step invoking the prod dispatcher)
 
 **Interfaces:**
+
 - Consumes: `e2e/mcp-e2ekit/server.py`, `smoke.py` (Task 1).
 - Produces: `lib.sh` exporting `pass/failrec/record/run_json` and a `PROD_FAILURES` array + `prod_report` summariser; `emit.sh` (renders `$SCENARIO_TMPL` to `$HERMETIC_PROJECTS/hermetic/$sid.jsonl`); the dispatcher `run.sh` that sources `lib.sh` then runs every `scenarios/*.sh` in sorted order and exits non-zero if any recorded a failure. Consumed by Tasks 3/4/5.
 
@@ -535,10 +541,12 @@ git commit -m "test(e2e): hermetic prod harness + real-MCP protocol/step-node sc
 ### Task 3: Hermetic subagent presence scenario
 
 **Files:**
+
 - Create: `e2e/hermetic/prod/scenarios/20-subagent.sh`
 - Create: `e2e/hermetic/prod/fixtures/subagent.jsonl.tmpl`, `subagent-degraded.jsonl.tmpl`, `subagent.basket.yaml.tmpl`
 
 **Interfaces:**
+
 - Consumes: `lib.sh`, `emit.sh`, dispatcher paths (Task 2).
 - Produces: nothing downstream (a self-contained scenario). Parallel-safe with Task 4 (disjoint files).
 
@@ -642,11 +650,13 @@ git commit -m "test(e2e): hermetic subagent-presence scenario"
 ### Task 4: Hermetic skill presence scenario + real skill
 
 **Files:**
+
 - Create: `e2e/skills/e2e-emit/SKILL.md`
 - Create: `e2e/hermetic/prod/scenarios/30-skill.sh`
 - Create: `e2e/hermetic/prod/fixtures/skill.jsonl.tmpl`, `skill-degraded.jsonl.tmpl`, `skill.basket.yaml.tmpl`
 
 **Interfaces:**
+
 - Consumes: `lib.sh`, `emit.sh`, dispatcher paths (Task 2).
 - Produces: `e2e/skills/e2e-emit/SKILL.md`, consumed by Task 5 (composite) and Task 7 (live skill basket). Parallel-safe with Task 3.
 
@@ -664,7 +674,9 @@ When invoked, create the directory `out` if it does not exist, then write exactl
 the following single line (no trailing newline, no extra text) to `out/result.csv`:
 
 ```
+
 CATACOMB-SKILL-OK
+
 ```
 
 Then reply `done`. Do not perform any other action.
@@ -765,11 +777,13 @@ git commit -m "test(e2e): hermetic skill-presence scenario + real e2e-emit skill
 ### Task 5: Hermetic composite scenario (subagent + skill + MCP + verifier)
 
 **Files:**
+
 - Create: `e2e/hermetic/prod/scenarios/40-composite.sh`
 - Create: `e2e/hermetic/prod/fixtures/composite.jsonl.tmpl`, `composite-degraded.jsonl.tmpl`, `composite.basket.yaml.tmpl`
 - Create: `e2e/hermetic/prod/fixtures/verify_token.py`
 
 **Interfaces:**
+
 - Consumes: `lib.sh`, `emit.sh`, dispatcher paths (Task 2); the `e2e-emit` skill (Task 4) conceptually.
 - Produces: nothing downstream. Depends on Task 4 (runs after it).
 
@@ -922,10 +936,12 @@ git commit -m "test(e2e): hermetic composite production scenario (all axes)"
 ### Task 6: Live subagent basket
 
 **Files:**
+
 - Create: `e2e/basket-subagent.yaml`, `e2e/subagent.sh`
 - Modify: `e2e/run.sh` (add bench + control + seeded-regression assertions)
 
 **Interfaces:**
+
 - Consumes: Task 0 findings (sidechain capture confirmed); the existing `verify_sql.py` + `sql-seed.sql` + `sql-golden.csv` machinery in `e2e/run.sh`.
 - Produces: nothing downstream. Edits `e2e/run.sh` — serial with Tasks 7, 8.
 
@@ -1027,11 +1043,13 @@ git commit -m "test(e2e): live subagent basket (Task delegation, presence + veri
 ### Task 7: Live skill basket
 
 **Files:**
+
 - Create: `e2e/basket-skill.yaml`, `e2e/skill.sh`, `e2e/verify_emit.py`
 - Modify: `e2e/run.sh`
 - Uses: `e2e/skills/e2e-emit/SKILL.md` (Task 4)
 
 **Interfaces:**
+
 - Consumes: Task 0 skill-source-set finding; the `e2e-emit` skill (Task 4).
 - Produces: nothing downstream. Edits `e2e/run.sh` — serial after Task 6.
 
@@ -1156,11 +1174,13 @@ git commit -m "test(e2e): live skill basket (real e2e-emit skill, presence + ver
 ### Task 8: Live MCP basket
 
 **Files:**
+
 - Create: `e2e/basket-mcp.yaml`, `e2e/mcp-record.sh`
 - Modify: `e2e/run.sh`
 - Uses: `e2e/mcp-e2ekit/` (Task 1)
 
 **Interfaces:**
+
 - Consumes: the real e2e MCP server (Task 1).
 - Produces: nothing downstream. Edits `e2e/run.sh` — serial after Task 7.
 
@@ -1264,11 +1284,13 @@ git commit -m "test(e2e): live MCP basket (real e2ekit server, presence + verifi
 ### Task 9: Workflow + docs + full-suite validation
 
 **Files:**
+
 - Modify: `.github/workflows/e2e-live.yml` (timeout + cost header)
 - Modify: `e2e/run.sh` (cost header comment)
 - Modify: `AGENTS.md` (E2E table rows)
 
 **Interfaces:**
+
 - Consumes: everything. This task raises the CI budget/time headroom and documents the new baskets, then validates the live suite via a dispatch run.
 
 - [ ] **Step 1: Bump the live workflow timeout + cost note**
@@ -1281,7 +1303,7 @@ Change the `Cost: ~$1.7 ... (60 bench cells; ...)` line to `Cost: ~$5–7 of rea
 
 - [ ] **Step 3: Update `AGENTS.md` E2E rows**
 
-In the CI/linters table, extend the E2E rows to mention the production baskets. Replace the `E2E live gate` row detail with: `real \`claude -p\` baskets — presence/continuous/sql + subagent/skill/mcp production scenarios; needs ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN`. Add an `E2E hermetic` row if not present: `\`.github/workflows/e2e-hermetic.yml\` — fixture-transcript pipeline incl. subagent/skill/real-MCP production scenarios (per PR, $0)`.
+In the CI/linters table, extend the E2E rows to mention the production baskets. Replace the `E2E live gate` row detail with: `real \`claude -p\` baskets — presence/continuous/sql + subagent/skill/mcp production scenarios; needs ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN`. Add an`E2E hermetic` row if not present: `\`.github/workflows/e2e-hermetic.yml\` — fixture-transcript pipeline incl. subagent/skill/real-MCP production scenarios (per PR, $0)`.
 
 - [ ] **Step 4: Full hermetic run (must be green, no API)**
 
@@ -1304,6 +1326,7 @@ git commit -m "ci(e2e): raise live budget/timeout + document production baskets"
 ## Self-Review
 
 **1. Spec coverage:**
+
 - Both lanes → hermetic Tasks 2–5, live Tasks 6–8, workflow Task 9. ✓
 - Both signals (presence + verifier) → presence in every scenario; verifier in composite (Task 5) and all three live baskets (6–8). ✓
 - Real MCP server (not mock) → Task 1 (protocol-conformant server + smoke), used live in Task 8 and hermetic in Task 2. ✓
