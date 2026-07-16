@@ -20,6 +20,9 @@ const (
 	basicFixture   = "testdata/basic.jsonl"
 	basicSessionID = "019f6b85-627f-7be3-81dc-ae8563860180"
 	basicPrompt    = "Reply with exactly: hello"
+	toolsFixture   = "testdata/tools.jsonl"
+	toolsSessionID = "019f6b85-aaaa-7be3-81dc-ae8563860181"
+	mcpFixture     = "testdata/mcp.jsonl"
 )
 
 type parseCase struct {
@@ -270,8 +273,6 @@ func TestParse(t *testing.T) {
 		{
 			name: "known event_msg types skipped without drift",
 			input: `{"type":"event_msg","payload":{"type":"agent_message","message":"hi"}}` + "\n" +
-				`{"type":"event_msg","payload":{"type":"mcp_tool_call_begin"}}` + "\n" +
-				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end"}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"error"}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"session_error"}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"stream_error"}}` + "\n" +
@@ -289,10 +290,6 @@ func TestParse(t *testing.T) {
 		{
 			name: "known response_item types skipped without drift",
 			input: `{"type":"response_item","payload":{"type":"reasoning","encrypted_content":"gAAA"}}` + "\n" +
-				`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c1"}}` + "\n" +
-				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1"}}` + "\n" +
-				`{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch"}}` + "\n" +
-				`{"type":"response_item","payload":{"type":"custom_tool_call_output"}}` + "\n" +
 				`{"type":"response_item","payload":{"type":"tool_search_call"}}` + "\n" +
 				`{"type":"response_item","payload":{"type":"tool_search_output"}}` + "\n" +
 				`{"type":"response_item","payload":{"type":"web_search_call"}}` + "\n" +
@@ -383,6 +380,174 @@ func TestParse(t *testing.T) {
 				up := byKind(obs, "user_prompt")
 				require.Len(t, up, 1)
 				assert.Equal(t, "system", up[0].Attrs["prompt_kind"])
+			},
+		},
+		{
+			name: "tools fixture emission counts and call_id pairing",
+			file: toolsFixture,
+			check: func(t *testing.T, obs []model.Observation, dc drift.Counts) {
+				uses := byKind(obs, "assistant_tool_use")
+				results := byKind(obs, "tool_result")
+				require.Len(t, uses, 3)
+				require.Len(t, results, 3)
+				assert.Len(t, obs, 8)
+				assert.Empty(t, dc)
+				wantIDs := []string{"call_exec_ok", "call_patch", "call_exec_fail"}
+				for i, id := range wantIDs {
+					assert.Equal(t, id, uses[i].Correlation.ToolUseID)
+					assert.Equal(t, id, results[i].Correlation.ToolUseID)
+					assert.Equal(t, "T1", uses[i].Correlation.MessageID)
+					assert.Equal(t, toolsSessionID, uses[i].Correlation.SessionID)
+					assert.Equal(t, toolsSessionID, results[i].Correlation.SessionID)
+				}
+			},
+		},
+		{
+			name: "tools fixture decoded input payloads",
+			file: toolsFixture,
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				uses := byKind(obs, "assistant_tool_use")
+				require.Len(t, uses, 3)
+				assert.Equal(t, "exec_command", uses[0].Attrs["name"])
+				require.NotNil(t, uses[0].Payload)
+				assert.JSONEq(t, `{"cmd":"echo probe-42","yield_time_ms":10000}`, string(uses[0].Payload.Input))
+				assert.Empty(t, uses[0].Payload.Output)
+				assert.NotEmpty(t, uses[0].Payload.Hash)
+				assert.Equal(t, "apply_patch", uses[1].Attrs["name"])
+				require.NotNil(t, uses[1].Payload)
+				assert.JSONEq(t, `"*** Begin Patch\n*** Add File: probe.txt\n+probe-42\n*** End Patch"`, string(uses[1].Payload.Input))
+				assert.Equal(t, "exec_command", uses[2].Attrs["name"])
+				assert.Equal(t, time.Date(2026, 7, 16, 15, 30, 2, 0, time.UTC), uses[0].EventTime)
+			},
+		},
+		{
+			name: "tools fixture result statuses and outputs",
+			file: toolsFixture,
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				results := byKind(obs, "tool_result")
+				require.Len(t, results, 3)
+				assert.Equal(t, "ok", results[0].Attrs["status"])
+				require.NotNil(t, results[0].Payload)
+				assert.JSONEq(t, `"Process exited with code 0\nWall time: 0.021 seconds\nOutput:\nprobe-42"`, string(results[0].Payload.Output))
+				assert.Empty(t, results[0].Payload.Input)
+				assert.NotEmpty(t, results[0].Payload.Hash)
+				assert.Equal(t, "ok", results[1].Attrs["status"])
+				require.NotNil(t, results[1].Payload)
+				assert.JSONEq(t, `"Success. Updated the following files:\nA probe.txt"`, string(results[1].Payload.Output))
+				assert.Equal(t, "error", results[2].Attrs["status"])
+				assert.Empty(t, results[2].Correlation.MessageID)
+			},
+		},
+		{
+			name: "mcp fixture mark pair",
+			file: mcpFixture,
+			check: func(t *testing.T, obs []model.Observation, dc drift.Counts) {
+				uses := byKind(obs, "assistant_tool_use")
+				require.Len(t, uses, 1)
+				assert.Equal(t, "mcp__catacomb__mark", uses[0].Attrs["name"])
+				assert.Equal(t, "call_mark", uses[0].Correlation.ToolUseID)
+				assert.Equal(t, "T1", uses[0].Correlation.MessageID)
+				require.NotNil(t, uses[0].Payload)
+				assert.JSONEq(t, `{"name":"plan","boundary":"start"}`, string(uses[0].Payload.Input))
+				results := byKind(obs, "tool_result")
+				require.Len(t, results, 1)
+				assert.Equal(t, "ok", results[0].Attrs["status"])
+				assert.Equal(t, "call_mark", results[0].Correlation.ToolUseID)
+				require.NotNil(t, results[0].Payload)
+				assert.JSONEq(t, `{"content":[{"type":"text","text":"marked plan start"}],"is_error":false}`, string(results[0].Payload.Output))
+				assert.Empty(t, dc)
+			},
+		},
+		{
+			name: "spawn and wait agent stay plain tool calls",
+			input: `{"type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"agent_role\":\"reviewer\"}","call_id":"c1"}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call","name":"wait_agent","arguments":"{\"thread_id\":\"th1\"}","call_id":"c2"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, dc drift.Counts) {
+				require.Len(t, obs, 2)
+				uses := byKind(obs, "assistant_tool_use")
+				require.Len(t, uses, 2)
+				assert.Equal(t, "spawn_agent", uses[0].Attrs["name"])
+				assert.JSONEq(t, `{"agent_role":"reviewer"}`, string(uses[0].Payload.Input))
+				assert.Equal(t, "wait_agent", uses[1].Attrs["name"])
+				assert.JSONEq(t, `{"thread_id":"th1"}`, string(uses[1].Payload.Input))
+				assert.Empty(t, dc)
+			},
+		},
+		{
+			name:  "function_call arguments already json kept raw",
+			input: `{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":{"cmd":"direct"},"call_id":"c3"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				uses := byKind(obs, "assistant_tool_use")
+				require.Len(t, uses, 1)
+				assert.JSONEq(t, `{"cmd":"direct"}`, string(uses[0].Payload.Input))
+			},
+		},
+		{
+			name:  "function_call without arguments emits empty input",
+			input: `{"type":"response_item","payload":{"type":"function_call","name":"noop","call_id":"c4"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				uses := byKind(obs, "assistant_tool_use")
+				require.Len(t, uses, 1)
+				require.NotNil(t, uses[0].Payload)
+				assert.Empty(t, uses[0].Payload.Input)
+			},
+		},
+		{
+			name:  "function_call_output without output stays ok",
+			input: `{"type":"response_item","payload":{"type":"function_call_output","call_id":"c9"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				results := byKind(obs, "tool_result")
+				require.Len(t, results, 1)
+				assert.Equal(t, "ok", results[0].Attrs["status"])
+				require.NotNil(t, results[0].Payload)
+				assert.Empty(t, results[0].Payload.Output)
+			},
+		},
+		{
+			name: "exit header only matches whole lines",
+			input: `{"type":"response_item","payload":{"type":"function_call_output","call_id":"c5","output":"note: Process exited with code 3 happened earlier"}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c6","output":"some output\nProcess exited with code 3"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				results := byKind(obs, "tool_result")
+				require.Len(t, results, 2)
+				assert.Equal(t, "ok", results[0].Attrs["status"])
+				assert.Equal(t, "error", results[1].Attrs["status"])
+			},
+		},
+		{
+			name: "mcp end variants map error status",
+			input: `{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e1","invocation":{"server":"s","tool":"t"},"error":"boom"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e2","invocation":{"server":"s","tool":"t"},"result":{"content":[],"is_error":true}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e3","invocation":{"server":"s","tool":"t"},"result":null}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e4","invocation":{"server":"s","tool":"t"},"error":null,"result":{"is_error":false}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e5","invocation":{"server":"s","tool":"t"},"error":""}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e6","invocation":{"server":"s","tool":"t"},"result":"done"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, dc drift.Counts) {
+				results := byKind(obs, "tool_result")
+				require.Len(t, results, 6)
+				wantStatus := []string{"error", "error", "ok", "ok", "ok", "ok"}
+				for i, want := range wantStatus {
+					assert.Equal(t, want, results[i].Attrs["status"])
+				}
+				assert.Nil(t, results[0].Payload)
+				require.NotNil(t, results[1].Payload)
+				assert.JSONEq(t, `{"content":[],"is_error":true}`, string(results[1].Payload.Output))
+				assert.Nil(t, results[2].Payload)
+				assert.Nil(t, results[4].Payload)
+				require.NotNil(t, results[5].Payload)
+				assert.JSONEq(t, `"done"`, string(results[5].Payload.Output))
+				assert.Empty(t, dc)
+			},
+		},
+		{
+			name: "mcp begin attributes to current turn",
+			input: `{"type":"event_msg","payload":{"type":"turn_started","turn_id":"T7"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"mcp_tool_call_begin","call_id":"b1","invocation":{"server":"catacomb","tool":"mark","arguments":{"name":"impl","boundary":"end"}}}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				uses := byKind(obs, "assistant_tool_use")
+				require.Len(t, uses, 1)
+				assert.Equal(t, "T7", uses[0].Correlation.MessageID)
+				assert.Equal(t, "b1", uses[0].Correlation.ToolUseID)
 			},
 		},
 	}
