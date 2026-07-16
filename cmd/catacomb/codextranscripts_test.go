@@ -59,9 +59,9 @@ func writeZstFile(t *testing.T, path string, data []byte) {
 	require.NoError(t, f.Close())
 }
 
-func mainPayload(threadID string) map[string]any {
+func mainPayload() map[string]any {
 	return map[string]any{
-		"session_id": threadID, "id": threadID,
+		"session_id": codexMainThread, "id": codexMainThread,
 		"cwd": "/w", "cli_version": "0.144.4", "source": "exec",
 	}
 }
@@ -86,7 +86,7 @@ func nestedChildPayload(threadID, parent string) map[string]any {
 
 func TestResolveCodexTranscriptsDiscoversDescendants(t *testing.T) {
 	root := t.TempDir()
-	main := stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	main := stageCodexRollout(t, root, codexMainThread, mainPayload())
 	child := stageCodexRollout(t, root, codexChildThread, childPayload(codexChildThread, codexMainThread))
 	grand := stageCodexRollout(t, root, codexGrandThread, nestedChildPayload(codexGrandThread, codexChildThread))
 	stageCodexRollout(t, root, codexOtherThread, childPayload(codexOtherThread, "unrelated-thread"))
@@ -104,7 +104,7 @@ func TestResolveCodexTranscriptsDiscoversDescendants(t *testing.T) {
 func TestResolveCodexTranscriptsZstMain(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(codexDayDir(t, root), codexRolloutName(codexMainThread)+".zst")
-	writeZstFile(t, p, codexMetaLine(t, mainPayload(codexMainThread)))
+	writeZstFile(t, p, codexMetaLine(t, mainPayload()))
 
 	ts, err := resolveCodexTranscripts(root, codexMainThread)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestResolveCodexTranscriptsZstMain(t *testing.T) {
 
 func TestResolveCodexTranscriptsZstChild(t *testing.T) {
 	root := t.TempDir()
-	stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	stageCodexRollout(t, root, codexMainThread, mainPayload())
 	p := filepath.Join(codexDayDir(t, root), codexRolloutName(codexChildThread)+".zst")
 	writeZstFile(t, p, codexMetaLine(t, childPayload(codexChildThread, codexMainThread)))
 
@@ -132,9 +132,9 @@ func TestResolveCodexTranscriptsNotFound(t *testing.T) {
 
 func TestResolveCodexTranscriptsAmbiguous(t *testing.T) {
 	root := t.TempDir()
-	stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	stageCodexRollout(t, root, codexMainThread, mainPayload())
 	p := filepath.Join(codexDayDir(t, root), codexRolloutName(codexMainThread)+".zst")
-	writeZstFile(t, p, codexMetaLine(t, mainPayload(codexMainThread)))
+	writeZstFile(t, p, codexMetaLine(t, mainPayload()))
 
 	_, err := resolveCodexTranscripts(root, codexMainThread)
 	require.Error(t, err)
@@ -143,14 +143,14 @@ func TestResolveCodexTranscriptsAmbiguous(t *testing.T) {
 
 func TestResolveCodexTranscriptsBadPattern(t *testing.T) {
 	root := t.TempDir()
-	stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	stageCodexRollout(t, root, codexMainThread, mainPayload())
 	_, err := resolveCodexTranscripts(root, "[a")
 	require.ErrorIs(t, err, filepath.ErrBadPattern)
 }
 
 func TestResolveCodexTranscriptsCycleGuard(t *testing.T) {
 	root := t.TempDir()
-	main := stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	main := stageCodexRollout(t, root, codexMainThread, mainPayload())
 	child := stageCodexRollout(t, root, codexChildThread, childPayload(codexChildThread, codexMainThread))
 	grand := stageCodexRollout(t, root, codexGrandThread, childPayload(codexGrandThread, codexChildThread))
 	back := filepath.Join(codexDayDir(t, root), "rollout-2026-07-16T15-23-11-"+codexChildThread+".jsonl")
@@ -164,7 +164,7 @@ func TestResolveCodexTranscriptsCycleGuard(t *testing.T) {
 
 func TestResolveCodexTranscriptsUnreachableCyclePair(t *testing.T) {
 	root := t.TempDir()
-	stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	stageCodexRollout(t, root, codexMainThread, mainPayload())
 	stageCodexRollout(t, root, codexChildThread, childPayload(codexChildThread, codexGrandThread))
 	stageCodexRollout(t, root, codexGrandThread, childPayload(codexGrandThread, codexChildThread))
 
@@ -175,7 +175,7 @@ func TestResolveCodexTranscriptsUnreachableCyclePair(t *testing.T) {
 
 func TestResolveCodexTranscriptsSkipsUndecodableCandidates(t *testing.T) {
 	root := t.TempDir()
-	main := stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	main := stageCodexRollout(t, root, codexMainThread, mainPayload())
 	child := stageCodexRollout(t, root, codexChildThread, childPayload(codexChildThread, codexMainThread))
 	day := codexDayDir(t, root)
 	require.NoError(t, os.WriteFile(filepath.Join(day, codexRolloutName("garbage-1111")), []byte("not json\n"), 0o600))

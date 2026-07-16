@@ -16,7 +16,7 @@ func TestResolveCodexTranscriptsWalkError(t *testing.T) {
 		t.Skip("permission checks do not apply to root")
 	}
 	root := t.TempDir()
-	stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	stageCodexRollout(t, root, codexMainThread, mainPayload())
 	locked := filepath.Join(root, "locked")
 	require.NoError(t, os.MkdirAll(locked, 0o700))
 	require.NoError(t, os.Chmod(locked, 0o000))
@@ -33,7 +33,7 @@ func TestCodexTranscriptByPathWalkError(t *testing.T) {
 	}
 	root := t.TempDir()
 	main := filepath.Join(root, codexRolloutName(codexMainThread))
-	require.NoError(t, os.WriteFile(main, codexMetaLine(t, mainPayload(codexMainThread)), 0o600))
+	require.NoError(t, os.WriteFile(main, codexMetaLine(t, mainPayload()), 0o600))
 	locked := filepath.Join(root, "locked")
 	require.NoError(t, os.MkdirAll(locked, 0o700))
 	require.NoError(t, os.Chmod(locked, 0o000))
@@ -49,7 +49,7 @@ func TestResolveCodexTranscriptsSkipsUnreadableFile(t *testing.T) {
 		t.Skip("permission checks do not apply to root")
 	}
 	root := t.TempDir()
-	main := stageCodexRollout(t, root, codexMainThread, mainPayload(codexMainThread))
+	main := stageCodexRollout(t, root, codexMainThread, mainPayload())
 	child := stageCodexRollout(t, root, codexChildThread, childPayload(codexChildThread, codexMainThread))
 	sealed := stageCodexRollout(t, root, codexOtherThread, childPayload(codexOtherThread, codexMainThread))
 	require.NoError(t, os.Chmod(sealed, 0o000))
