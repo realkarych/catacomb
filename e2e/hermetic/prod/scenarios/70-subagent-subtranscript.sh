@@ -17,11 +17,15 @@
 # no subagents/ dir. Assertions:
 #   - CAPTURE: the baseline run dir contains subagents/agent-*.jsonl (bench snapshotted
 #     the real second file); a degraded run dir has no subagents/ dir at all.
-#   - GATE (the core new coverage): regress --fail-on-notable gates (exit 1) with a
-#     step-scope presence/notable finding named Agent (present 5/5 -> 0/5) — the
-#     delegating step and its subagent vanished. This path reduces main + subs via
-#     loadGraphOffline (runsdir.go), so the gate proves the subagent came from the
-#     REAL separate file.
+#   - GATE (the core new coverage): regress --fail-on-notable gates (exit 1) on a
+#     step-scope presence finding named Glob (present 5/5 -> 0/5). Glob is emitted ONLY
+#     inside the sub-transcript — absent from BOTH the main and the degraded transcripts
+#     — so a Glob step exists in the reduced baseline graph ONLY when catacomb merges
+#     subagents/agent-*.jsonl into the main via loadGraphOffline(main, subs) (runsdir.go).
+#     Break that two-file reduce and the Glob step never appears, so this gate fails: it
+#     is genuinely keyed on the merge, guarding the whole capture->merge->reduce path.
+#     (The delegating Agent tool_use lives in the MAIN transcript and drops regardless of
+#     the merge, so it is kept only as a SECONDARY check — not the merge-sensitive signal.)
 #   - STRUCTURE + NON-VACUITY: replay reads only the main file, so the two-file
 #     evidence is reduced by concatenating session.jsonl + subagents/agent-*.jsonl and
 #     replaying the concat — the baseline graph carries a "type":"subagent" node
@@ -62,20 +66,35 @@ run_json 1 "$w/regress.json" "degraded drops the delegated subagent -> STEP nota
 rc=0; python3 - "$w/regress.json" <<'PY' || rc=$?
 import json, sys
 rep = json.load(open(sys.argv[1]))
-hits = [
-    f for f in rep.get("findings", [])
-    if f.get("scope") == "step" and f.get("name") == "Agent"
-    and f.get("metric") == "presence" and f.get("verdict") == "notable"
-    and "present 5/5 -> 0/5" in (f.get("detail") or "")
-]
-if not hits:
-    print("no step-scope Agent presence/notable finding; findings:", file=sys.stderr)
+
+def drop(name):
+    return [
+        f for f in rep.get("findings", [])
+        if f.get("scope") == "step" and f.get("name") == name
+        and f.get("metric") == "presence" and f.get("verdict") in ("regression", "notable")
+        and "present 5/5 -> 0/5" in (f.get("detail") or "")
+    ]
+
+# Glob is emitted ONLY inside the sub-transcript (absent from the main AND the degraded
+# transcript), so a Glob step exists in the reduced baseline graph — and thus this
+# presence drop — ONLY when catacomb merges subagents/agent-*.jsonl into the main via
+# loadGraphOffline(main, subs). This is the merge-sensitive signal: break the two-file
+# reduce and the Glob finding vanishes, failing the gate.
+sub_only = drop("Glob")
+# The delegating Agent tool_use lives in the MAIN transcript and drops regardless of the
+# merge; kept as a secondary check, NOT the merge-sensitive one.
+agent = drop("Agent")
+if not sub_only or not agent:
+    print("missing required step presence drop(s):", file=sys.stderr)
+    print("  Glob (sub-only, merge-sensitive):", bool(sub_only),
+          " Agent (main, secondary):", bool(agent), file=sys.stderr)
     for f in rep.get("findings", []):
         print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
     sys.exit(1)
-print("step-scope Agent presence/notable finding present (delegated subagent dropped)")
+print("sub-only Glob step presence/notable finding present (exists only via the two-file "
+      "merge); delegating Agent step also dropped")
 PY
-record "$rc" "regress attributes a STEP-scope notable finding to the dropped Agent/subagent (5/5 -> 0/5)"
+record "$rc" "regress gates on the sub-only Glob step presence drop (5/5 -> 0/5) — proving the two-file merge reduced the sub-transcript in — plus the secondary Agent drop"
 
 echo "== prod.70 subagent sub-transcript: structural subagent node + non-vacuity =="
 # replay reads only the main file, so the two-file evidence is reduced by concatenating

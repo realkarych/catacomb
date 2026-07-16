@@ -7,7 +7,9 @@
 # loadGraphOffline(main, subs). It renders the main template named by SCENARIO_TMPL
 # into $HERMETIC_PROJECTS/hermetic/$sid.jsonl, and — only when WITH_SUBTRANSCRIPT=1 —
 # renders SUBAGENT_TMPL (the subagent's own isSidechain/agentId turns, carrying a
-# top-level subagent_type and a tool_use) into
+# top-level subagent_type and a sub-only Glob tool_use — a tool present in NEITHER the
+# main nor the degraded transcript, so its reduced step exists only via the two-file
+# merge and can key the scenario's gate) into
 # $HERMETIC_PROJECTS/hermetic/$sid/subagents/agent-<id>.jsonl, so the delegating
 # variant writes a real second file and the inline variant writes none. Prints the
 # two stream-json lines bench reads on stdout. No API spend.
