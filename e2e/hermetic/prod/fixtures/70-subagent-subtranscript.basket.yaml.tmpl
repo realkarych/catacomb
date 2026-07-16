@@ -1,0 +1,21 @@
+basket: prod-subagent-subtranscript
+reps: 5
+tasks:
+  - id: subagent
+    cmd: ["__PROD__/fixtures/emit-subtranscript.sh"]
+    dir: __WORK__/cellwork
+variants:
+  - id: baseline
+    env:
+      SCENARIO_TMPL: "__PROD__/fixtures/70-subagent-main.jsonl.tmpl"
+      SUBAGENT_TMPL: "__PROD__/fixtures/70-subagent-sub.jsonl.tmpl"
+      WITH_SUBTRANSCRIPT: "1"
+  - id: degraded
+    env:
+      SCENARIO_TMPL: "__PROD__/fixtures/70-subagent-degraded.jsonl.tmpl"
+      WITH_SUBTRANSCRIPT: "0"
+  - id: baseline2
+    env:
+      SCENARIO_TMPL: "__PROD__/fixtures/70-subagent-main.jsonl.tmpl"
+      SUBAGENT_TMPL: "__PROD__/fixtures/70-subagent-sub.jsonl.tmpl"
+      WITH_SUBTRANSCRIPT: "1"
