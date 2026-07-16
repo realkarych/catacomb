@@ -1,0 +1,9 @@
+basket: prod-redaction
+reps: 1
+tasks:
+  - id: redaction
+    cmd: ["__PROD__/fixtures/emit.sh"]
+    dir: __WORK__/cellwork
+variants:
+  - id: baseline
+    env: { SCENARIO_TMPL: "__WORK__/redaction.jsonl.tmpl" }

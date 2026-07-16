@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","sessionId":"__SESSION_ID__","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"deploy the release"}}
+{"type":"assistant","uuid":"a1","sessionId":"__SESSION_ID__","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"m1","model":"claude-sonnet-5","content":[{"type":"text","text":"Configuring the deploy with token __SECRET__ before publishing."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"deploy --token __SECRET__ --env prod"}}]}}
+{"type":"user","uuid":"u2","sessionId":"__SESSION_ID__","timestamp":"2026-06-20T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"deployed","is_error":false}]}}
+{"type":"assistant","uuid":"a2","sessionId":"__SESSION_ID__","timestamp":"2026-06-20T10:00:03Z","message":{"role":"assistant","id":"m2","model":"claude-sonnet-5","content":[{"type":"text","text":"Release deployed."}]}}
