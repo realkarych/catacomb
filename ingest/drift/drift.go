@@ -5,7 +5,15 @@ import (
 	"strings"
 )
 
-const TestedClaudeCodeVersion = "2.1.199"
+const (
+	TestedClaudeCodeVersion = "2.1.199"
+	TestedCodexVersion      = "0.144.4"
+)
+
+const (
+	RuntimeClaudeCode = "claude-code"
+	RuntimeCodex      = "codex"
+)
 
 const (
 	ReasonUnknownRecordType   = "unknown_record_type"
@@ -37,7 +45,29 @@ func (c Counts) Merge(other Counts) Counts {
 }
 
 func NewerThanTested(v string) bool {
-	return CompareVersions(v, TestedClaudeCodeVersion) > 0
+	return NewerThanTestedFor(RuntimeClaudeCode, v)
+}
+
+func NewerThanTestedFor(runtime, v string) bool {
+	if v == "" {
+		return false
+	}
+	tested, ok := testedFor(runtime)
+	if !ok {
+		return false
+	}
+	return CompareVersions(v, tested) > 0
+}
+
+func testedFor(runtime string) (string, bool) {
+	switch runtime {
+	case RuntimeClaudeCode:
+		return TestedClaudeCodeVersion, true
+	case RuntimeCodex:
+		return TestedCodexVersion, true
+	default:
+		return "", false
+	}
 }
 
 func CompareVersions(a, b string) int {
