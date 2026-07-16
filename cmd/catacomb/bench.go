@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/realkarych/catacomb/bench"
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 )
@@ -383,30 +383,22 @@ func offlineMeta(entry bench.ManifestEntry, labels map[string]string, start, end
 	}
 }
 
-func benchEnvStamps(runs []model.Run, sessionID string, ws *bench.Workspace) *evidence.EnvStamps {
-	env := &evidence.EnvStamps{
-		CatacombVersion: Version,
-		Resources:       evidence.Resources{OS: runtime.GOOS, Arch: runtime.GOARCH, CPUs: runtime.NumCPU()},
-	}
-	if ws != nil {
-		env.Workspace = &evidence.WorkspaceStamp{Rev: ws.Rev, PatchSHA256: ws.PatchSHA256}
-	}
-	for _, r := range runs {
-		if r.ID != sessionID {
-			continue
-		}
-		env.ModelID = r.ModelID
-		if r.Repro != nil {
-			env.ClaudeCodeVersion = r.Repro.ClaudeCodeVersion
-		}
-	}
-	return env
-}
-
 func offlineFiles(ts transcriptSet) []evidence.SourceFile {
 	files := []evidence.SourceFile{{Src: ts.Main, Rel: "session.jsonl"}}
 	for _, sub := range ts.Subagents {
 		files = append(files, evidence.SourceFile{Src: sub, Rel: filepath.Join("subagents", filepath.Base(sub))})
+	}
+	return files
+}
+
+func offlineFilesFor(rt string, ts transcriptSet) []evidence.SourceFile {
+	if rt != drift.RuntimeCodex {
+		return offlineFiles(ts)
+	}
+	files := []evidence.SourceFile{{Src: ts.Main, Rel: "session.jsonl"}}
+	for _, sub := range ts.Subagents {
+		rel := filepath.Join("subagents", "agent-"+codexThreadIDFromFilename(filepath.Base(sub))+".jsonl")
+		files = append(files, evidence.SourceFile{Src: sub, Rel: rel})
 	}
 	return files
 }
