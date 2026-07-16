@@ -489,6 +489,25 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestBenchRejectsCodexBasket(t *testing.T) {
+	basket := writeBasket(t, "basket: b\nruntime: codex\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"codex\"]\nvariants:\n  - id: v1\n")
+	var out, errb bytes.Buffer
+	err := runBench(t.Context(), &out, &errb, basket, benchFlags{projectsDir: t.TempDir(), runsDir: t.TempDir()})
+	require.Error(t, err)
+	assert.Equal(t, `bench: runtime "codex" is import-only for now — run the session with codex exec and use catacomb import`, err.Error())
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
+func TestBenchRejectsCodexBasketExitCode(t *testing.T) {
+	basket := writeBasket(t, "basket: b\nruntime: codex\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"codex\"]\nvariants:\n  - id: v1\n  - id: v2\n")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"bench", basket, "--dry-run"}, &stdout, &stderr)
+	require.Equal(t, 2, code, stderr.String())
+	assert.Contains(t, stderr.String(), `runtime "codex" is import-only`)
+	assert.Empty(t, stdout.String())
+}
+
 func TestBenchOfflineMissingDirsIsOperational(t *testing.T) {
 	basket := writeBasket(t, "basket: b\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"x\"]\nvariants:\n  - id: v1\n")
 	var out, errb bytes.Buffer
