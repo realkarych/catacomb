@@ -20,6 +20,7 @@ import (
 
 	"github.com/realkarych/catacomb/bench"
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -357,8 +358,35 @@ func TestBenchEnvStamps(t *testing.T) {
 			assert.Equal(t, runtime.NumCPU(), env.Resources.CPUs)
 			assert.Equal(t, tt.wantModel, env.ModelID)
 			assert.Equal(t, tt.wantCCV, env.ClaudeCodeVersion)
+			assert.Equal(t, drift.RuntimeClaudeCode, env.AgentRuntime)
+			assert.Equal(t, tt.wantCCV, env.AgentVersion)
 		})
 	}
+}
+
+func TestCodexEnvStamps(t *testing.T) {
+	runs := []model.Run{{ID: "sess", ModelID: "gpt-5.4-mini"}}
+	env := codexEnvStamps(runs, "sess", "0.144.4")
+	require.NotNil(t, env)
+	assert.Equal(t, drift.RuntimeCodex, env.AgentRuntime)
+	assert.Equal(t, "0.144.4", env.AgentVersion)
+	assert.Equal(t, "gpt-5.4-mini", env.ModelID)
+	assert.Empty(t, env.ClaudeCodeVersion)
+	assert.Nil(t, env.Workspace)
+}
+
+func TestImportEnvStamps(t *testing.T) {
+	obs := []model.Observation{{Attrs: map[string]any{"codex_version": "0.144.4"}}}
+	codexEnv := importEnvStamps(drift.RuntimeCodex, nil, "sess", obs)
+	assert.Equal(t, drift.RuntimeCodex, codexEnv.AgentRuntime)
+	assert.Equal(t, "0.144.4", codexEnv.AgentVersion)
+
+	claudeEnv := importEnvStamps(drift.RuntimeClaudeCode, []model.Run{
+		{ID: "sess", Repro: &model.ReproMeta{ClaudeCodeVersion: "2.1.50"}},
+	}, "sess", nil)
+	assert.Equal(t, drift.RuntimeClaudeCode, claudeEnv.AgentRuntime)
+	assert.Equal(t, "2.1.50", claudeEnv.AgentVersion)
+	assert.Equal(t, "2.1.50", claudeEnv.ClaudeCodeVersion)
 }
 
 func TestBenchOfflineEnvStampsInMeta(t *testing.T) {

@@ -139,35 +139,46 @@ func TestParseTranscriptsNoWarnOnCleanTranscript(t *testing.T) {
 	assert.Empty(t, buf.String())
 }
 
-func TestMaxObservedVersion(t *testing.T) {
+func TestMaxObservedVersionFor(t *testing.T) {
 	obs := []model.Observation{
 		{Attrs: nil},
 		{Attrs: map[string]any{"claude_code_version": 123}},
 		{Attrs: map[string]any{"claude_code_version": "1.2.3"}},
 		{Attrs: map[string]any{"claude_code_version": "9.9.9"}},
 		{Attrs: map[string]any{"claude_code_version": "2.0.0"}},
+		{Attrs: map[string]any{"codex_version": "0.150.0"}},
+		{Attrs: map[string]any{"codex_version": "0.144.4"}},
 	}
-	assert.Equal(t, "9.9.9", maxObservedVersion(obs))
-	assert.Equal(t, "", maxObservedVersion(nil))
+	assert.Equal(t, "9.9.9", maxObservedVersionFor(drift.RuntimeClaudeCode, obs))
+	assert.Equal(t, "0.150.0", maxObservedVersionFor(drift.RuntimeCodex, obs))
+	assert.Equal(t, "", maxObservedVersionFor(drift.RuntimeClaudeCode, nil))
 }
 
-func TestWarnVersionFiresAndStaysSilent(t *testing.T) {
+func TestWarnVersionForFiresAndStaysSilent(t *testing.T) {
 	resetDriftWarnings()
 	buf := captureDriftOut(t)
-	warnVersion("9.9.9")
+	warnVersionFor(drift.RuntimeClaudeCode, "9.9.9")
 	out := buf.String()
-	assert.Contains(t, out, "9.9.9")
+	assert.Contains(t, out, "Claude Code version 9.9.9")
 	assert.Contains(t, out, drift.TestedClaudeCodeVersion)
 	assert.Contains(t, out, "newer than tested")
 
 	buf.Reset()
-	warnVersion(drift.TestedClaudeCodeVersion)
-	warnVersion("")
-	warnVersion("1.0.0")
+	warnVersionFor(drift.RuntimeClaudeCode, drift.TestedClaudeCodeVersion)
+	warnVersionFor(drift.RuntimeClaudeCode, "")
+	warnVersionFor(drift.RuntimeClaudeCode, "1.0.0")
+	warnVersionFor(drift.RuntimeCodex, drift.TestedCodexVersion)
 	assert.Empty(t, buf.String())
 }
 
-func TestWarnVersionDedupes(t *testing.T) {
+func TestWarnVersionForCodexMessage(t *testing.T) {
+	resetDriftWarnings()
+	buf := captureDriftOut(t)
+	warnVersionFor(drift.RuntimeCodex, "0.150.0")
+	assert.Equal(t, "warning: transcript Codex version 0.150.0 is newer than tested "+drift.TestedCodexVersion+"\n", buf.String())
+}
+
+func TestWarnVersionForDedupesPerRuntime(t *testing.T) {
 	resetDriftWarnings()
 	var buf bytes.Buffer
 	old := driftOut
@@ -175,9 +186,12 @@ func TestWarnVersionDedupes(t *testing.T) {
 	defer func() { driftOut = old }()
 
 	high := "999.0.0"
-	warnVersion(high)
-	warnVersion(high)
+	warnVersionFor(drift.RuntimeClaudeCode, high)
+	warnVersionFor(drift.RuntimeClaudeCode, high)
 	assert.Equal(t, 1, strings.Count(buf.String(), "newer than tested"))
+	warnVersionFor(drift.RuntimeCodex, high)
+	assert.Equal(t, 2, strings.Count(buf.String(), "newer than tested"))
+	assert.Equal(t, 1, strings.Count(buf.String(), "Codex version"))
 }
 
 func TestParseTranscriptsWarnsOnNewerVersion(t *testing.T) {
