@@ -23,6 +23,8 @@ const (
 	toolsFixture   = "testdata/tools.jsonl"
 	toolsSessionID = "019f6b85-aaaa-7be3-81dc-ae8563860181"
 	mcpFixture     = "testdata/mcp.jsonl"
+	childFixture   = "testdata/child.jsonl"
+	childSessionID = "019f6b85-eeee-7be3-81dc-ae8563860199"
 )
 
 type parseCase struct {
@@ -537,6 +539,83 @@ func TestParse(t *testing.T) {
 				require.NotNil(t, results[5].Payload)
 				assert.JSONEq(t, `"done"`, string(results[5].Payload.Output))
 				assert.Empty(t, dc)
+			},
+		},
+		{
+			name:      "child fixture correlations and subagent stop",
+			file:      childFixture,
+			mainRunID: "MAIN",
+			check: func(t *testing.T, obs []model.Observation, dc drift.Counts) {
+				require.Len(t, obs, 3)
+				for _, o := range obs {
+					assert.Equal(t, "MAIN", o.RunID)
+					assert.Equal(t, "MAIN", o.Correlation.SessionID)
+					assert.Equal(t, childSessionID, o.Correlation.AgentID)
+				}
+				up := byKind(obs, "user_prompt")
+				require.Len(t, up, 1)
+				assert.Equal(t, model.PromptUUID(childSessionID, "Explore the repo layout"), up[0].Correlation.UUID)
+				turns := byKind(obs, "assistant_turn")
+				require.Len(t, turns, 1)
+				assert.Equal(t, "CT1", turns[0].Correlation.MessageID)
+				stop := obs[2]
+				assert.Equal(t, "subagent_stop", stop.Kind)
+				assert.Equal(t, "explorer", stop.Attrs["subagent_type"])
+				assert.Equal(t, "codex", stop.Attrs["agent_runtime"])
+				assert.Equal(t, "0.144.4", stop.Attrs["codex_version"])
+				assert.Equal(t, "/work/codex-probe", stop.Attrs["cwd"])
+				assert.Nil(t, stop.Payload)
+				assert.Equal(t, time.Date(2026, 7, 16, 15, 40, 2, 200000000, time.UTC), stop.EventTime)
+				assert.Empty(t, dc)
+			},
+		},
+		{
+			name:      "top-level parent id without role falls back to codex-agent",
+			input:     `{"type":"session_meta","payload":{"session_id":"child-2","parent_thread_id":"parent-1"}}` + "\n",
+			mainRunID: "MAIN",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				require.Len(t, obs, 1)
+				assert.Equal(t, "subagent_stop", obs[0].Kind)
+				assert.Equal(t, "codex-agent", obs[0].Attrs["subagent_type"])
+				assert.Equal(t, "child-2", obs[0].Correlation.AgentID)
+				assert.Equal(t, "MAIN", obs[0].Correlation.SessionID)
+				assert.Equal(t, "MAIN", obs[0].RunID)
+				assert.True(t, obs[0].EventTime.IsZero())
+			},
+		},
+		{
+			name: "thread_spawn source supplies parent and role",
+			input: `{"type":"session_meta","payload":{"session_id":"child-3","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-1","depth":1,"agent_role":"reviewer","agent_nickname":"rev"}}}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}` + "\n",
+			mainRunID: "MAIN",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				require.Len(t, obs, 2)
+				assert.Equal(t, "user_prompt", obs[0].Kind)
+				assert.Equal(t, "MAIN", obs[0].Correlation.SessionID)
+				assert.Equal(t, "child-3", obs[0].Correlation.AgentID)
+				assert.Equal(t, "subagent_stop", obs[1].Kind)
+				assert.Equal(t, "reviewer", obs[1].Attrs["subagent_type"])
+				assert.Equal(t, "child-3", obs[1].Correlation.AgentID)
+			},
+		},
+		{
+			name:  "top-level agent_role wins over thread_spawn copy",
+			input: `{"type":"session_meta","payload":{"session_id":"child-4","parent_thread_id":"parent-1","agent_role":"top","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-other","agent_role":"spawn"}}}}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				require.Len(t, obs, 1)
+				assert.Equal(t, "subagent_stop", obs[0].Kind)
+				assert.Equal(t, "top", obs[0].Attrs["subagent_type"])
+			},
+		},
+		{
+			name: "source object without subagent stays main session",
+			input: `{"type":"session_meta","payload":{"session_id":"s1","source":{"other":true}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				require.Len(t, obs, 1)
+				assert.Equal(t, "user_prompt", obs[0].Kind)
+				assert.Equal(t, "s1", obs[0].Correlation.SessionID)
+				assert.Empty(t, obs[0].Correlation.AgentID)
 			},
 		},
 		{

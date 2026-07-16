@@ -22,10 +22,26 @@ type rolloutLine struct {
 }
 
 type sessionMetaPayload struct {
-	SessionID  string `json:"session_id"`
-	ID         string `json:"id"`
-	Cwd        string `json:"cwd"`
-	CLIVersion string `json:"cli_version"`
+	SessionID      string          `json:"session_id"`
+	ID             string          `json:"id"`
+	Cwd            string          `json:"cwd"`
+	CLIVersion     string          `json:"cli_version"`
+	ParentThreadID string          `json:"parent_thread_id"`
+	AgentRole      string          `json:"agent_role"`
+	Source         json.RawMessage `json:"source"`
+}
+
+type threadSpawn struct {
+	ParentThreadID string `json:"parent_thread_id"`
+	AgentRole      string `json:"agent_role"`
+}
+
+type spawnSubagent struct {
+	ThreadSpawn threadSpawn `json:"thread_spawn"`
+}
+
+type spawnSource struct {
+	Subagent spawnSubagent `json:"subagent"`
 }
 
 type turnContextPayload struct {
@@ -101,14 +117,16 @@ type emission struct {
 }
 
 type parser struct {
-	sessionID     string
-	version       string
-	cwd           string
-	currentTurnID string
-	turns         map[string]*turnState
-	turnOrder     []string
-	emissions     []emission
-	counts        drift.Counts
+	sessionID      string
+	version        string
+	cwd            string
+	parentThreadID string
+	agentRole      string
+	currentTurnID  string
+	turns          map[string]*turnState
+	turnOrder      []string
+	emissions      []emission
+	counts         drift.Counts
 }
 
 func Parse(r io.Reader, mainRunID, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
@@ -128,6 +146,7 @@ func Parse(r io.Reader, mainRunID, executionID string, nextSeq func() uint64, ob
 		return nil, nil, fmt.Errorf("codex.Parse: %w", err)
 	}
 	p.flushOpenTurns()
+	p.appendSubagentStop()
 	return p.observations(mainRunID, executionID, nextSeq, observedAt), p.counts, nil
 }
 
@@ -168,7 +187,23 @@ func (p *parser) sessionMeta(raw json.RawMessage) error {
 	}
 	p.version = meta.CLIVersion
 	p.cwd = meta.Cwd
+	p.parentThreadID = meta.ParentThreadID
+	p.agentRole = meta.AgentRole
+	p.applySpawnSource(meta.Source)
 	return nil
+}
+
+func (p *parser) applySpawnSource(raw json.RawMessage) {
+	var src spawnSource
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return
+	}
+	if p.parentThreadID == "" {
+		p.parentThreadID = src.Subagent.ThreadSpawn.ParentThreadID
+	}
+	if p.agentRole == "" {
+		p.agentRole = src.Subagent.ThreadSpawn.AgentRole
+	}
 }
 
 func (p *parser) turnContext(raw json.RawMessage, ts time.Time) error {
@@ -465,6 +500,25 @@ func (p *parser) flushOpenTurns() {
 	}
 }
 
+func (p *parser) appendSubagentStop() {
+	if p.parentThreadID == "" {
+		return
+	}
+	role := p.agentRole
+	if role == "" {
+		role = "codex-agent"
+	}
+	var ts time.Time
+	if n := len(p.emissions); n > 0 {
+		ts = p.emissions[n-1].eventTime
+	}
+	p.emissions = append(p.emissions, emission{
+		kind:      "subagent_stop",
+		attrs:     map[string]any{"subagent_type": role},
+		eventTime: ts,
+	})
+}
+
 func (p *parser) observations(mainRunID, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) []model.Observation {
 	runID := mainRunID
 	if runID == "" {
@@ -472,6 +526,10 @@ func (p *parser) observations(mainRunID, executionID string, nextSeq func() uint
 	}
 	var out []model.Observation
 	for _, e := range p.emissions {
+		if p.parentThreadID != "" {
+			e.correlation.AgentID = p.sessionID
+			e.correlation.SessionID = runID
+		}
 		e.attrs["agent_runtime"] = drift.RuntimeCodex
 		if p.version != "" {
 			e.attrs["codex_version"] = p.version
