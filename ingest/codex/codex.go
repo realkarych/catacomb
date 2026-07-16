@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,10 +43,15 @@ type contentItem struct {
 }
 
 type responseItemPayload struct {
-	Type     string        `json:"type"`
-	Role     string        `json:"role"`
-	Content  []contentItem `json:"content"`
-	Metadata turnMetadata  `json:"internal_chat_message_metadata_passthrough"`
+	Type      string          `json:"type"`
+	Role      string          `json:"role"`
+	Name      string          `json:"name"`
+	CallID    string          `json:"call_id"`
+	Arguments json.RawMessage `json:"arguments"`
+	Input     json.RawMessage `json:"input"`
+	Output    json.RawMessage `json:"output"`
+	Content   []contentItem   `json:"content"`
+	Metadata  turnMetadata    `json:"internal_chat_message_metadata_passthrough"`
 }
 
 type tokenUsage struct {
@@ -58,12 +64,22 @@ type tokenInfo struct {
 	LastTokenUsage *tokenUsage `json:"last_token_usage"`
 }
 
+type mcpInvocation struct {
+	Server    string          `json:"server"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
 type eventMsgPayload struct {
-	Type       string     `json:"type"`
-	Message    string     `json:"message"`
-	TurnID     string     `json:"turn_id"`
-	DurationMS *int64     `json:"duration_ms"`
-	Info       *tokenInfo `json:"info"`
+	Type       string          `json:"type"`
+	Message    string          `json:"message"`
+	TurnID     string          `json:"turn_id"`
+	CallID     string          `json:"call_id"`
+	DurationMS *int64          `json:"duration_ms"`
+	Info       *tokenInfo      `json:"info"`
+	Invocation mcpInvocation   `json:"invocation"`
+	Error      json.RawMessage `json:"error"`
+	Result     json.RawMessage `json:"result"`
 }
 
 type turnState struct {
@@ -170,14 +186,76 @@ func (p *parser) responseItem(raw json.RawMessage, ts time.Time) error {
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return fmt.Errorf("codex.responseItem: %w", err)
 	}
-	if item.Type == "message" {
+	switch item.Type {
+	case "message":
 		p.assistantMessage(item, ts)
-		return nil
-	}
-	if !knownResponseItemType(item.Type) {
-		p.counts = p.counts.Bump(drift.ReasonUnknownRecordType)
+	case "function_call":
+		p.toolCall(item, item.Arguments, ts)
+	case "custom_tool_call":
+		p.toolCall(item, item.Input, ts)
+	case "function_call_output", "custom_tool_call_output":
+		p.toolResult(item, ts)
+	default:
+		if !knownResponseItemType(item.Type) {
+			p.counts = p.counts.Bump(drift.ReasonUnknownRecordType)
+		}
 	}
 	return nil
+}
+
+func (p *parser) toolCall(item responseItemPayload, args json.RawMessage, ts time.Time) {
+	pl := &model.Payload{Input: decodedToolInput(args)}
+	pl.Hash = model.HashPayload(pl)
+	p.emissions = append(p.emissions, emission{
+		kind: "assistant_tool_use",
+		correlation: model.Correlation{
+			SessionID: p.sessionID,
+			ToolUseID: item.CallID,
+			MessageID: p.orCurrent(item.Metadata.TurnID),
+		},
+		attrs:     map[string]any{"name": item.Name},
+		payload:   pl,
+		eventTime: ts,
+	})
+}
+
+func decodedToolInput(raw json.RawMessage) json.RawMessage {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil && json.Valid([]byte(s)) {
+		return json.RawMessage(s)
+	}
+	return raw
+}
+
+func (p *parser) toolResult(item responseItemPayload, ts time.Time) {
+	pl := &model.Payload{Output: item.Output}
+	pl.Hash = model.HashPayload(pl)
+	p.emissions = append(p.emissions, emission{
+		kind:        "tool_result",
+		correlation: model.Correlation{SessionID: p.sessionID, ToolUseID: item.CallID},
+		attrs:       map[string]any{"status": string(outputStatus(proseString(item.Output)))},
+		payload:     pl,
+		eventTime:   ts,
+	})
+}
+
+func proseString(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return string(raw)
+}
+
+var exitCodeRe = regexp.MustCompile(`(?m)^Process exited with code (\d+)$`)
+
+func outputStatus(output string) model.Status {
+	for _, m := range exitCodeRe.FindAllStringSubmatch(output, -1) {
+		if m[1] != "0" {
+			return model.StatusError
+		}
+	}
+	return model.StatusOK
 }
 
 func (p *parser) assistantMessage(item responseItemPayload, ts time.Time) {
@@ -203,9 +281,7 @@ func outputText(content []contentItem) string {
 
 func knownResponseItemType(t string) bool {
 	switch t {
-	case "reasoning", "function_call", "function_call_output",
-		"custom_tool_call", "custom_tool_call_output",
-		"tool_search_call", "tool_search_output", "web_search_call":
+	case "reasoning", "tool_search_call", "tool_search_output", "web_search_call":
 		return true
 	default:
 		return strings.HasPrefix(t, "mcp_tool_call")
@@ -226,6 +302,10 @@ func (p *parser) eventMsg(raw json.RawMessage, ts time.Time) error {
 		p.tokenCount(ev, ts)
 	case "task_complete":
 		p.taskComplete(ev, ts)
+	case "mcp_tool_call_begin":
+		p.mcpToolCallBegin(ev, ts)
+	case "mcp_tool_call_end":
+		p.mcpToolCallEnd(ev, ts)
 	default:
 		if !knownEventType(ev.Type) {
 			p.counts = p.counts.Bump(drift.ReasonUnknownRecordType)
@@ -236,14 +316,62 @@ func (p *parser) eventMsg(raw json.RawMessage, ts time.Time) error {
 
 func knownEventType(t string) bool {
 	switch t {
-	case "agent_message", "mcp_tool_call_begin", "mcp_tool_call_end",
-		"error", "session_error", "stream_error", "turn_aborted",
-		"context_compacted", "exec_command_begin", "exec_command_end",
-		"patch_apply_begin", "patch_apply_end":
+	case "agent_message", "error", "session_error", "stream_error",
+		"turn_aborted", "context_compacted", "exec_command_begin",
+		"exec_command_end", "patch_apply_begin", "patch_apply_end":
 		return true
 	default:
 		return false
 	}
+}
+
+func (p *parser) mcpToolCallBegin(ev eventMsgPayload, ts time.Time) {
+	pl := &model.Payload{Input: ev.Invocation.Arguments}
+	pl.Hash = model.HashPayload(pl)
+	p.emissions = append(p.emissions, emission{
+		kind: "assistant_tool_use",
+		correlation: model.Correlation{
+			SessionID: p.sessionID,
+			ToolUseID: ev.CallID,
+			MessageID: p.orCurrent(ev.TurnID),
+		},
+		attrs:     map[string]any{"name": "mcp__" + ev.Invocation.Server + "__" + ev.Invocation.Tool},
+		payload:   pl,
+		eventTime: ts,
+	})
+}
+
+func (p *parser) mcpToolCallEnd(ev eventMsgPayload, ts time.Time) {
+	var pl *model.Payload
+	if jsonValuePresent(ev.Result) {
+		pl = &model.Payload{Output: ev.Result}
+		pl.Hash = model.HashPayload(pl)
+	}
+	p.emissions = append(p.emissions, emission{
+		kind:        "tool_result",
+		correlation: model.Correlation{SessionID: p.sessionID, ToolUseID: ev.CallID},
+		attrs:       map[string]any{"status": string(mcpStatus(ev))},
+		payload:     pl,
+		eventTime:   ts,
+	})
+}
+
+func mcpStatus(ev eventMsgPayload) model.Status {
+	if jsonValuePresent(ev.Error) {
+		return model.StatusError
+	}
+	var res struct {
+		IsError bool `json:"is_error"`
+	}
+	if err := json.Unmarshal(ev.Result, &res); err == nil && res.IsError {
+		return model.StatusError
+	}
+	return model.StatusOK
+}
+
+func jsonValuePresent(raw json.RawMessage) bool {
+	s := string(raw)
+	return s != "" && s != "null" && s != `""`
 }
 
 func (p *parser) userMessage(text string, ts time.Time) {
