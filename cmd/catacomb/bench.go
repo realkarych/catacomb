@@ -28,6 +28,8 @@ var errBenchFailFast = errors.New("bench: stopped after a failing cell (--fail-f
 
 var errBenchOfflineDirs = errors.New("bench: --projects-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
 
+var errBenchCodexImportOnly = errors.New(`bench: runtime "codex" is import-only for now — run the session with codex exec and use catacomb import`)
+
 type benchFlags struct {
 	manifest       string
 	resume         bool
@@ -74,6 +76,9 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, basketPath string, 
 	basket, hash, err := bench.Load(basketPath)
 	if err != nil {
 		return operational(err)
+	}
+	if basket.EffectiveRuntime() == drift.RuntimeCodex {
+		return operational(errBenchCodexImportOnly)
 	}
 	cells := basket.Cells()
 	if len(basket.Variants) == 1 {
