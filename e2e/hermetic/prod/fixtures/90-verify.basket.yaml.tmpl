@@ -1,0 +1,13 @@
+basket: prod-analysis-verify
+reps: 2
+tasks:
+  - id: tok
+    cmd: ["__PROD__/fixtures/emit.sh"]
+    dir: __WORK__/cellwork
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "__PROD__/fixtures/verify_token.py"]
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { SCENARIO_TMPL: "__PROD__/fixtures/composite.jsonl.tmpl", EMIT_CSV: "CATACOMB-OK" }
