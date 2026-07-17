@@ -561,6 +561,188 @@ print(f"--paired-min-tasks 3 --paired-alpha 0.15: sensitivity.paired={paired!r} 
 PY
 record "$rc" "--paired-min-tasks 3 --paired-alpha 0.15: sensitivity reports the paired axis NOT reachable at min_tasks=3 (deterministic on matched-task COUNT, independent of live model verdicts)"
 
+echo "== e4. baseline list --db --json: e2e-presence-main pinned with 5 runs =="
+run_json 0 "$artifacts/baseline-list.json" "baseline list --db --json" -- \
+	catacomb baseline list --db "$db" --json
+rc=0
+python3 - "$artifacts/baseline-list.json" <<'PY' || rc=$?
+import json, sys
+
+bs = json.load(open(sys.argv[1])) or []
+hits = [b for b in bs if b.get("name") == "e2e-presence-main"]
+errs = []
+if len(hits) != 1:
+    errs.append(f"want exactly 1 baseline named e2e-presence-main, got {len(hits)} (all: {[b.get('name') for b in bs]!r})")
+b = hits[0] if hits else {}
+if len(b.get("run_ids") or []) != 5:
+    errs.append(f"run_ids={b.get('run_ids')!r} want 5 (the haiku-baseline cells pinned at step e)")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"baseline list: e2e-presence-main pinned with {len(b['run_ids'])} runs")
+PY
+record "$rc" "baseline list --json shows e2e-presence-main with runs=5"
+
+echo "== e5. baseline export e2e-presence-main -> non-empty bundle =="
+run_expect 0 "baseline export e2e-presence-main" -- \
+	catacomb baseline export e2e-presence-main --db "$db" --runs-dir "$runs1" \
+	--out "$work/live-baseline.tar.gz"
+rc=0
+[ -s "$work/live-baseline.tar.gz" ] || rc=1
+record "$rc" "baseline export bundle is non-empty"
+
+echo "== e6. baseline import into a fresh db+runs: reimported count matches; regress gates IDENTICALLY to step d =="
+# Import only lands the pinned baseline's own runs (the 5 haiku-baseline cells); the
+# degraded candidate evidence is copied in separately, exactly as the hermetic mirror
+# (e2e/hermetic/run.sh step 18) copies its own candidate cells alongside an imported
+# baseline. The regress call below reuses step d's EXACT selector shape (name:
+# e2e-presence-main resolves to the identical 5 run ids the label selector did at step
+# d, since no new haiku-baseline runs have been created since) so the comparison is
+# byte-for-byte the same input — the "gates IDENTICALLY" claim is a determinism claim
+# about the pipeline (same evidence -> same verdict), not a live-variance guess.
+run_json 0 "$work/baseline-import.out" "baseline import into a fresh db+runs" -- \
+	catacomb baseline import "$work/live-baseline.tar.gz" \
+	--db "$work/import.db" --runs-dir "$work/import-runs"
+rc=0
+grep -q "imported baseline e2e-presence-main: 5 runs" "$work/baseline-import.out" || rc=1
+record "$rc" "import lands the 5 pinned haiku-baseline cells (reimported run count matches)"
+cp -R "$runs1"/bench-e2e-presence-haiku-degraded-r* "$work/import-runs/" 2>/dev/null || true
+rc=0
+deg_count=$(find "$work/import-runs" -maxdepth 1 -type d -name 'bench-e2e-presence-haiku-degraded-r*' 2>/dev/null | wc -l | tr -d ' ')
+[ "$deg_count" -eq 5 ] || rc=1
+record "$rc" "candidate (degraded) evidence copied into the fresh import-runs dir ($deg_count/5)"
+run_json 1 "$work/regress-imported-degraded.json" \
+	"regress over the imported db (name:e2e-presence-main vs degraded)" -- \
+	catacomb regress --db "$work/import.db" --runs-dir "$work/import-runs" \
+	--baseline name:e2e-presence-main \
+	--candidate label:basket=e2e-presence,task=haiku,variant=degraded --json
+rc=0
+python3 - "$artifacts/regress-presence-degraded.json" "$work/regress-imported-degraded.json" <<'PY' || rc=$?
+import json, sys
+
+def proj(p):
+    r = json.load(open(p))
+    # Matched by (scope, metric, verdict), NOT by finding name -- same convention as
+    # the hermetic bundle round-trip (e2e/hermetic/run.sh step 18): a decisive
+    # aggregate finding can carry a null name, and mixing None with str in a sort key
+    # is a TypeError waiting to happen.
+    return (r.get("overall_verdict"), r.get("regressions"),
+            sorted((f.get("scope"), f.get("metric"), f.get("verdict"))
+                   for f in r.get("findings", [])))
+
+src, imported = proj(sys.argv[1]), proj(sys.argv[2])
+if src != imported:
+    print(f"source (step d) {src} != imported-db {imported}", file=sys.stderr)
+    sys.exit(1)
+print("regress over the reimported baseline gates IDENTICALLY to step d (same overall_verdict, regression count, and finding set)")
+PY
+record "$rc" "reimported baseline's regress vs degraded gates IDENTICALLY to step d"
+
+echo "== e7. record a 2nd history row on e2e-presence-main (baseline vs baseline2, A-vs-A) -> trends --json/--metric =="
+# Step e already recorded one row (baseline vs degraded, --strict --record). This adds a
+# SECOND row on the SAME baseline (baseline vs baseline2, the A-vs-A control, continuum
+# band widened for the same inter-batch drift reason as steps c/f/l/o/r/u) so
+# trends --json has >=2 rows to parse and --metric duration_ms has >=2 rows to render.
+run_json 0 "$artifacts/regress-presence-record-ava.json" \
+	"record 2nd history row (name:e2e-presence-main vs baseline2, A-vs-A must NOT gate)" -- \
+	catacomb regress --db "$db" --runs-dir "$runs1" \
+	--baseline name:e2e-presence-main \
+	--candidate label:basket=e2e-presence,task=haiku,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --record --json
+rc=0
+catacomb trends e2e-presence-main --db "$db" --json >"$work/trends-presence-2rows.json" 2>"$work/trends-presence-2rows.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ]; then
+	pass "trends e2e-presence-main --json exits 0 after 2 recorded rows"
+else
+	failrec "trends e2e-presence-main --json exits 0 after 2 recorded rows (exit $rc)"
+	sed 's/^/        stderr: /' "$work/trends-presence-2rows.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$work/trends-presence-2rows.json" <<'PY' || rc=$?
+import json, sys
+
+entries = json.load(open(sys.argv[1]))
+errs = []
+if len(entries) != 2:
+    errs.append(f"want exactly 2 recorded history rows, got {len(entries)}")
+for e in entries:
+    if "seq" not in e or "record" not in e:
+        errs.append(f"entry missing seq/record: {e!r}")
+        continue
+    rec = e.get("record") or {}
+    if "candidate_selector" not in rec:
+        errs.append(f"record missing candidate_selector: {rec!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"trends --json: {len(entries)} rows parse (seq+record present on both)")
+PY
+record "$rc" "trends --json: both recorded rows (degraded + baseline2 A-vs-A) parse with seq/record fields"
+rc=0
+catacomb trends e2e-presence-main --db "$db" --metric duration_ms \
+	>"$work/trends-presence-metric.txt" 2>"$work/trends-presence-metric.txt.stderr" || rc=$?
+if [ "$rc" -eq 0 ]; then
+	pass "trends e2e-presence-main --metric duration_ms exits 0"
+else
+	failrec "trends e2e-presence-main --metric duration_ms exits 0 (exit $rc)"
+	sed 's/^/        stderr: /' "$work/trends-presence-metric.txt.stderr" >&2 || true
+fi
+rc=0
+{ [ -s "$work/trends-presence-metric.txt" ] && grep -q 'BASELINE-VALUE' "$work/trends-presence-metric.txt"; } || rc=1
+mlines=$(grep -c . "$work/trends-presence-metric.txt" || true)
+[ "$mlines" -ge 3 ] || rc=1
+record "$rc" "trends --metric duration_ms renders the metric table header + 2 data rows ($mlines lines)"
+
+echo "== e8. pin a baseline off the sql verifier.pass axis; record >=2 rows; trends --pareto --json resolves =="
+# LIVE-FLAKINESS: verifier.pass is only asserted >=4/5 on real evidence (step j tolerates
+# one stochastic miss), so the pareto accuracy VALUE is not hard-asserted here -- only
+# that the table resolves, carries the recorded rows, and every point exposes BOTH axes
+# (accuracy + cost_usd), the same structural contract the hermetic mirror
+# (e2e/hermetic/run.sh step 11) proves deterministically over fabricated verifier.pass.
+run_expect 0 "baseline set e2e-sql-main (sql verifier.pass axis)" -- \
+	catacomb baseline set e2e-sql-main \
+	--label basket=e2e-sql,variant=baseline --runs-dir "$runs3" --db "$db"
+run_json 0 "$artifacts/regress-sql-record-ava.json" \
+	"record row 1 on e2e-sql-main (baseline vs baseline2, A-vs-A must NOT gate)" -- \
+	catacomb regress --db "$db" --runs-dir "$runs3" \
+	--baseline name:e2e-sql-main \
+	--candidate label:basket=e2e-sql,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --record --json
+run_json 1 "$artifacts/regress-sql-record-degraded.json" \
+	"record row 2 on e2e-sql-main (baseline vs degraded, must gate on verifier.pass)" -- \
+	catacomb regress --db "$db" --runs-dir "$runs3" \
+	--baseline name:e2e-sql-main \
+	--candidate label:basket=e2e-sql,variant=degraded \
+	--record --json
+run_json 0 "$artifacts/trends-sql-pareto.json" \
+	"trends e2e-sql-main --pareto --json resolves over real verifier.pass" -- \
+	catacomb trends e2e-sql-main --db "$db" --pareto --json
+rc=0
+python3 - "$artifacts/trends-sql-pareto.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+points = rep.get("points") or []
+errs = []
+if rep.get("baseline") != "e2e-sql-main":
+    errs.append(f"baseline={rep.get('baseline')!r} want 'e2e-sql-main'")
+if len(points) != 3:
+    errs.append(f"want 3 pareto points (baseline pin + 2 recorded rows), got {len(points)}")
+for p in points:
+    tag = p.get("candidate") or p.get("source")
+    if "accuracy" not in p or "cost_usd" not in p:
+        errs.append(f"point {tag!r} lacks an axis: keys={sorted(p)}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+accs = {(p.get("candidate") or p.get("source")): p.get("accuracy") for p in points}
+print(f"trends --pareto --json: {len(points)} points over real verifier.pass, every point carries accuracy+cost_usd; accuracy={accs!r} (logged, not asserted)")
+PY
+record "$rc" "trends --pareto --json resolves 3 points (baseline + 2 recorded rows) with real verifier.pass accuracy axes"
+
 echo "== f. bench continuous basket + continuous gate =="
 run_expect 0 "bench continuous basket" -- \
 	catacomb bench basket-continuous.yaml --runs-dir "$runs2" --manifest "$manifest2"
@@ -1752,6 +1934,33 @@ for d in "$runs8"/bench-e2e-failmode-failmode-clean-r*; do
 	if grep -q '"status":"error"' "$snap"; then rc=1; fi
 done
 record "$rc" "errseed carries a tool_call error node in >=1 run; clean carries none"
+
+echo "== y. baseline rm e2e-presence-main (LAST consumer of \$db in this driver) =="
+# ORDERING CONSTRAINT: this MUST stay the final e2e-presence-main/\$db operation in the
+# driver. Every other read of name:e2e-presence-main / \$db has already run by this
+# point: step e's pin/strict-record/trends, steps e2/e3's paired axis (over \$runs1,
+# not \$db, but still logically "before the baseline is torn down"), and e4-e7's
+# list/export/import-regress-equivalence/2nd-record/trends round-trip above. e8's
+# e2e-sql-main baseline is a SEPARATE row in the same \$db and is intentionally left in
+# place (it is not the baseline this step tears down). Moving this rm any earlier would
+# break any later \$db read of e2e-presence-main.
+run_expect 0 "baseline rm e2e-presence-main" -- \
+	catacomb baseline rm e2e-presence-main --db "$db"
+run_json 0 "$work/baseline-list-after-rm.json" \
+	"baseline list --db --json after rm" -- \
+	catacomb baseline list --db "$db" --json
+rc=0
+python3 - "$work/baseline-list-after-rm.json" <<'PY' || rc=$?
+import json, sys
+
+bs = json.load(open(sys.argv[1])) or []
+names = [b.get("name") for b in bs]
+if "e2e-presence-main" in names:
+    print(f"e2e-presence-main still present after rm: {names!r}", file=sys.stderr)
+    sys.exit(1)
+print(f"baseline list after rm: e2e-presence-main absent (remaining: {names!r})")
+PY
+record "$rc" "baseline list no longer shows e2e-presence-main after rm"
 
 echo "== w. cost report =="
 python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$manifest8" "$artifacts/cost.txt" <<'PY'
