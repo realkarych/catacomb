@@ -101,7 +101,7 @@ rundir="$w/runs/bench-prod-codex-bench-probe-baseline-r1"
 snap="$w/export.snap.jsonl"
 run_json 0 "$w/export.out" "export baseline-r1 evidence dir -> jsonl graph snapshot" -- \
   catacomb export "$rundir" --out "$snap"
-rc=0; grep -q '"type":"marker"[^}]*"name":"plan"\|"name":"plan"[^}]*"type":"marker"' "$snap" || rc=1
+rc=0; grep -Eq '"type":"marker"[^}]*"name":"plan"|"name":"plan"[^}]*"type":"marker"' "$snap" || rc=1
 record "$rc" "mcp__catacomb__mark pair became a \"type\":\"marker\" name=plan checkpoint node"
 
 echo "== prod.56 codex-bench: degraded (error result + 3x tokens_out) -> regress GATES (exit 1) =="

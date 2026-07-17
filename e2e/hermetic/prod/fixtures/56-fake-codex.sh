@@ -9,7 +9,10 @@
 # real codex exec stream emits — thread.started is what bench's codex peeker
 # reads the session id from. Rollout timestamps are stamped near NOW (__TS__ /
 # __EPOCH__), so event times land inside the bench run window instead of at a
-# hardcoded past instant. bash/sed/date only; zero network, zero API spend.
+# hardcoded past instant. FAKE_TOKENS_OUT (default 100) sets the stream's
+# turn.completed output_tokens so it agrees with the rendered rollout — the
+# degraded variant sets 300 to match its 3x token_count plant. bash/sed/date
+# only; zero network, zero API spend.
 set -euo pipefail
 seq_file="$FAKE_SESSIONS_DIR/.seq"
 mkdir -p "$FAKE_SESSIONS_DIR"
@@ -24,4 +27,4 @@ sed -e "s/__THREAD_ID__/$tid/g" -e "s/__TS__/$ts/g" -e "s/__EPOCH__/$epoch/g" \
   "$FAKE_ROLLOUT_TMPL" > "$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$tid.jsonl"
 printf '{"type":"thread.started","thread_id":"%s"}\n' "$tid"
 printf '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"probe done"}}\n'
-printf '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":100}}\n'
+printf '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":%s}}\n' "${FAKE_TOKENS_OUT:-100}"
