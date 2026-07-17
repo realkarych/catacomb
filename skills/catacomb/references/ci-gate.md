@@ -3,8 +3,10 @@
 Once the local gate from [setup.md](setup.md) passes, wire it into CI so a regression
 blocks the merge instead of relying on someone remembering to run `regress` by hand. The
 whole mechanism is one exit code: `regress` exits non-zero on a regression, that fails the
-job, and a failed required check blocks the PR. The steps below stand it up on GitHub
-Actions first; the same three moves port to any CI at the end.
+job, and a failed required check blocks the PR. On GitHub Actions the packaged
+`catacomb-gate` composite action stands the whole job up in one step and posts the
+verdict on the PR; the manual job below it is the same mechanism spelled out, and
+ports to any CI at the end.
 
 ## What the gate needs
 
@@ -35,11 +37,60 @@ group (or publish the group as a retrievable artifact the job restores before `r
 Miss either and the baseline cannot resolve. See [accuracy.md](accuracy.md) for pinning,
 re-pinning after an intended shift, and trend history in depth.
 
-## The GitHub Actions job
+## The GitHub Action (primary path)
 
-Drop this in `.github/workflows/catacomb-gate.yml` as the starting point. The action
-`@<sha>` pins are placeholders: this repo pins Actions to commit SHAs, so resolve each one
-to the current release SHA for the tag noted in the trailing comment before committing.
+Catacomb ships the whole job as a composite action — `catacomb-gate`, living in the
+catacomb repository under `.github/actions/catacomb-gate` (in-repo for now, not yet a
+marketplace action). It installs a pinned, checksum-verified catacomb release,
+optionally benches the PR's basket, runs `catacomb regress`, posts the verdict as a
+**sticky PR comment** (the exact `regress --format markdown` output, updated in place
+on re-runs), and re-raises the regress exit code so the check fails on a regression.
+Reference it by its in-repo path:
+
+```yaml
+name: catacomb-gate
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write # sticky verdict comment
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@<sha>  # v7
+        with:
+          persist-credentials: false
+      - uses: realkarych/catacomb/.github/actions/catacomb-gate@<sha>  # pin to a release tag/SHA
+        with:
+          version: v0.2.0           # catacomb release the gate runs on — pin it
+          basket: basket.yaml       # benched on every PR; omit to gate pre-benched evidence
+          baseline: name:golden
+          candidate: label:basket=<name>,variant=candidate
+          db: catacomb.db           # committed store holding the golden baseline
+          runs-dir: runs            # evidence dir holding the baseline group
+```
+
+The committed `catacomb.db` + `runs/` pair is the same baseline-restore obligation as
+the manual job below — the action does not conjure the baseline. A `baseline-bundle`
+input that restores one via `catacomb baseline import` exists, but it needs a catacomb
+release that ships `baseline import`; no tagged release carries it yet, so on current
+releases that path fails with catacomb's unknown-command error. Other inputs worth
+knowing: `candidate-runs-dir` (hand in pre-benched evidence and skip the bench),
+`strict`, `comment: "false"` (no PR comment), and `reps`/`model` (exported to the
+bench step's env for baskets written to read them). The action exposes `verdict`,
+`exit-code`, and `report-json` outputs for downstream steps; the full input/output
+table is in the action's README (`.github/actions/catacomb-gate/README.md`).
+
+## The manual job (the underlying mechanism)
+
+The action is thin shell around three catacomb invocations — install, `bench`,
+`regress` — so when its inputs don't cover your shape (or you want to see exactly what
+runs), write the job directly. Drop this in `.github/workflows/catacomb-gate.yml` as
+the starting point. The action `@<sha>` pins are placeholders: this repo pins Actions
+to commit SHAs, so resolve each one to the current release SHA for the tag noted in
+the trailing comment before committing.
 
 ```yaml
 name: catacomb-gate
@@ -85,8 +136,10 @@ of:
 - `CLAUDE_CODE_OAUTH_TOKEN` — a Claude Pro/Max subscription (generate it with
   `claude setup-token`).
 
-Pass whichever you set through the bench step's `env:`, exactly as the `ANTHROPIC_API_KEY`
-line above shows. **`bench` spends real money on every PR**, so keep the CI variant cheap.
+Pass whichever you set through the job's (or the bench step's) `env:`, as the
+`ANTHROPIC_API_KEY` lines in both snippets above show — the action's bench step
+inherits the job env. **`bench` spends real money on every PR**, so keep the CI
+variant cheap.
 
 ## Keeping CI cheap
 

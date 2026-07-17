@@ -4,15 +4,16 @@ Catacomb follows [SemVer 2.0.0](https://semver.org). Releases are annotated tags
 
 ## The compatibility surface
 
-For version arithmetic, catacomb's "public API" is the union of these seven contracts. A change is *breaking* iff it can invalidate a working user setup — a basket, a verifier, recorded evidence, a baseline, or a script parsing our output:
+For version arithmetic, catacomb's "public API" is the union of these eight contracts. A change is *breaking* iff it can invalidate a working user setup — a basket, a verifier, recorded evidence, a baseline, a caller workflow, or a script parsing our output:
 
-1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and `--json` output shapes. Human-readable table output is *not* a contract; `--json` is.
+1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and machine-readable output shapes: `--json`, the `regress --format` value set (`human|json|markdown`), and the markdown report's document shape (verdict headline, summary line, findings table, collapsible reliability/audit section — the surface PR comments and their consumers are built on). Human-readable table output is *not* a contract; `--json`, `--format json`, and `--format markdown` are. `--json` on `regress` is a deprecated alias for `--format json`; removing it is breaking until it goes through a deprecation cycle.
 2. **Basket YAML schema** — field names, types, validation semantics (`KnownFields` means any rename is breaking by construction).
 3. **Verifier exec contract** — `CATACOMB_*` env vars, the scores-JSONL dialect (including reserved `verifier.pass` and provenance fields), `verify.json` ledger shape, artifact capture semantics.
 4. **Evidence layout** — directory structure under a runs dir, `meta.json` schema (field removal/retyping is breaking; addition is not).
 5. **Store** — baseline and record bodies, and schema migrations. A lossless auto-migration is compatible; a migration that drops or rewrites user data is breaking.
 6. **Key schemes** — `stepkey`/`phasekey` scheme identity. A scheme change silently mis-aligns every existing baseline; version stamps + `--strict` refuse it at runtime, and it is always MAJOR (pre-1.0: always MINOR, never PATCH).
 7. **Python SDKs** — the public API of `catacomb-verifier` and `catacomb-judge` (`integrations/`); they version with the repo.
+8. **GitHub Action** — the `catacomb-gate` composite action (`.github/actions/catacomb-gate`): input names, defaults, and semantics; output names (`verdict`, `exit-code`, `report-json`) and their meanings; the exit-code re-raise behavior; and the sticky-comment marker convention (`<!-- catacomb-gate:<baseline-identity> -->`). Removing or renaming an input/output, changing a default, or changing what an output carries is breaking. The action versions with the repo while it lives in-repo.
 
 Not part of the surface: model behavior, Claude Code transcript drift (handled by the version watchlist as PATCH-level parser fixes), descriptive env stamps content, wording of notes/advisories on stderr.
 

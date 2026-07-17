@@ -49,6 +49,7 @@ nondeterministic session needs a CI verdict instead of a vibe check.
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
 - **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
+- **Gate PRs from CI.** A bundled composite GitHub Action ([`catacomb-gate`](.github/actions/catacomb-gate)) installs a pinned release, runs the gate, and posts the verdict as a sticky PR comment ([recipe](docs/guide/workflows.md#gate-a-pr-with-the-action)) — it lives in this repo for now; marketplace extraction is a follow-up.
 - **Drive it from your agent.** A bundled [Claude Code skill](skills/catacomb/SKILL.md) teaches your agent to scaffold a basket, wire the CI gate, and read a `regress` verdict for you — just ask it to set up catacomb.
 
 <hr>

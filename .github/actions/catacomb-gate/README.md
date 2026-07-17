@@ -46,6 +46,8 @@ jobs:
 > against your agent CLI. Size the basket (and its `reps`) for PR budgets, or
 > bench elsewhere and hand the evidence in via `candidate-runs-dir`.
 
+<!-- two separate callouts; the comment keeps MD028 quiet -->
+
 > **Baseline restore — a bundle is the recommended path.** Commit (or fetch) an
 > exported baseline bundle and pass it as `baseline-bundle`; the action runs
 > `catacomb baseline import` before gating. This needs a catacomb `version`
