@@ -1,7 +1,8 @@
 # CLI reference
 
 Catacomb is a single offline binary. Every command reads local files — Claude Code
-transcripts under `~/.claude/projects`, [`bench`](#bench) evidence directories, or the
+transcripts under `~/.claude/projects` (or Codex rollouts under `~/.codex/sessions`;
+see [Runtimes](ingestion.md#runtimes)), [`bench`](#bench) evidence directories, or the
 local SQLite store — and no command opens a network connection. Most read commands
 accept `--json` for machine-readable output. For task-oriented recipes see
 [workflows.md](workflows.md).
@@ -30,8 +31,9 @@ missing files, store problems).
 
 Any command that parses transcripts (`bench`, `import`, `regress`, `diff`, `subgraph`,
 `export`, `replay`) may print up to two advisory lines to **stderr**: a format-drift count for
-records it did not recognize, and a version-ceiling notice when a transcript's Claude
-Code version is newer than the release this binary was tested against (for example
+records it did not recognize, and a version-ceiling notice when a transcript's agent CLI
+version — Claude Code or Codex, each with its own ceiling — is newer than the release
+this binary was tested against (for example
 `warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199`). Both are
 diagnostic only — `stdout`/`--json` stay clean and neither changes the exit code. See
 [Format drift](privacy-and-operations.md#format-drift) for what they mean and what to do.
@@ -62,6 +64,12 @@ catacomb bench <basket.yaml> [flags]
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
 combination, and cells run sequentially. The full basket file schema — every field, its
 type, and validation rules — is documented in [basket.md](basket.md).
+
+A basket that declares [`runtime: codex`](basket.md#top-level-fields) is **rejected**
+before any cell runs: Codex support is import-only for now, so `bench` exits `2` with
+`bench: runtime "codex" is import-only for now — run the session with codex exec and
+use catacomb import`. Record Codex sessions with [`import`](#import) instead; see
+[Runtimes](ingestion.md#runtimes).
 
 Each cell runs under run-id `bench-<basket>-<task>-<variant>-r<rep>` and carries the
 labels `basket`, `task`, `variant`, and `rep`, so `baseline` and `regress` selectors
@@ -156,9 +164,10 @@ accumulates is not).
 A failing cell is recorded and the basket continues (deciding whether a change
 regressed is `catacomb regress`'s job, not the runner's). Exit codes: `0` every cell
 ran (even if some cells failed), `1` `--fail-fast` stopped at a failing cell, `2`
-operational error (bad basket, a non-fresh manifest, manifest I/O, a resume hash
-mismatch, or an unresolvable home directory — set `--projects-dir` and `--runs-dir`
-explicitly). On success the runner prints a `marked <n>/<total> cells` summary, the
+operational error (bad basket, an import-only `runtime: codex` basket, a non-fresh
+manifest, manifest I/O, a resume hash mismatch, or an unresolvable home directory — set
+`--projects-dir` and `--runs-dir` explicitly). On success the runner prints a
+`marked <n>/<total> cells` summary, the
 checkpoint rollup, and a copy-pasteable epilogue: with two or more variants, a
 [`regress --runs-dir`](#regress) comparing the first two. Append `,task=<id>` to the
 epilogue's `label:` selectors to narrow the comparison to a single task. When the
@@ -333,11 +342,12 @@ catacomb import <basket.yaml> --task <id> --variant <id> \
 | --- | --- | --- |
 | `--task` | **required** | Task id in the basket — selects its `verify`, `checkpoints`, and labels |
 | `--variant` | **required** | Variant id in the basket |
-| `--session-id` | (none) | Session UUID resolved under `--projects-dir`; mutually exclusive with `--transcript` (exactly one required) |
-| `--transcript` | (none) | Direct path to a main session `.jsonl`; mutually exclusive with `--session-id` |
+| `--session-id` | (none) | Session UUID resolved under `--projects-dir` (for a `runtime: codex` basket: the thread id, resolved under `--sessions-dir`); mutually exclusive with `--transcript` (exactly one required) |
+| `--transcript` | (none) | Direct path to a main session `.jsonl` (for `runtime: codex`: a rollout `.jsonl` or `.jsonl.zst`); mutually exclusive with `--session-id` |
 | `--rep` | `1` | Repetition index, recorded as the `rep` label |
 | `--run-id` | `import-<basket>-<task>-<variant>-r<rep>` | Evidence dir name under `--runs-dir` |
 | `--projects-dir` | `~/.claude/projects` | Claude projects dir holding session transcripts (for `--session-id`) |
+| `--sessions-dir` | `~/.codex/sessions` | Codex sessions dir holding rollout transcripts (for `--session-id` under `runtime: codex`) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory |
 | `--label` | (none) | Extra ambient labels merged under the cell labels (`k=v`, comma-separated) |
 
@@ -356,6 +366,10 @@ Two input modes select the transcript, and **exactly one is required**:
   transcripts are read from `<transcript-dir>/<session>/subagents/agent-*.jsonl`). Reach
   for it when the session id is unknown — the newest file under
   `~/.claude/projects/<encoded-cwd>/` is the session you just ran.
+
+Under a [`runtime: codex`](basket.md#top-level-fields) basket both modes exist but
+resolve against Codex's rollout files instead — see
+[Codex sessions](#codex-sessions-runtime-codex) below.
 
 `import` writes `<runs-dir>/<run-id>/` — `session.jsonl`, `subagents/agent-*.jsonl` when
 present, and a `meta.json` — secret-redacted and shaped like a bench cell's evidence dir.
@@ -384,7 +398,8 @@ no terminal `total_cost_usd` for `import` to read, so the field is left unset an
 appears in the file. The token-derived `cost_usd` *metric*
 still works — it is priced from the transcript's token counts through the built-in pricing
 table — so cost gating in [`regress`](#regress) stays comparable between imported and
-bench-recorded runs.
+bench-recorded runs. Codex sessions are the exception: no OpenAI pricing tiers yet — see
+[Codex sessions](#codex-sessions-runtime-codex).
 
 Verification stays a **separate step**: `import` only records evidence. Run
 [`verify`](#verify) afterward to score the task's `verify:` block over it, then
@@ -395,6 +410,51 @@ Exit codes: `0` the evidence dir was written, `2` operational error (a bad baske
 unknown `--task` or `--variant`, neither or both of `--session-id`/`--transcript`, an
 unresolvable transcript, a transcript with no timestamped records, or an evidence-write
 failure).
+
+### Codex sessions (`runtime: codex`)
+
+When the basket declares [`runtime: codex`](basket.md#top-level-fields), `import`
+ingests OpenAI Codex CLI sessions. Codex persists each session as a **rollout** —
+`~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl`, zstd-compressed
+to `.jsonl.zst` when cold; catacomb reads both forms (see
+[Runtimes](ingestion.md#runtimes)). The two input modes become:
+
+- `--session-id <thread-id>` resolves the rollout under `--sessions-dir` (default
+  `~/.codex/sessions`). The session id here is Codex's **thread id**: `codex exec
+  --json` announces it as the first `thread.started` event on stdout, and it is the
+  trailing UUID of the rollout filename. Subagent rollouts are discovered anywhere
+  under `--sessions-dir` by the `parent_thread_id` recorded in each child's first line
+  — transitively, so nested subagents come along — and land in evidence as
+  `subagents/agent-<thread-id>.jsonl`.
+- `--transcript <path>` points straight at a rollout file (`.jsonl` or `.jsonl.zst`);
+  the thread id is derived from the filename, so the file must keep its
+  `rollout-<timestamp>-<thread-id>.jsonl[.zst]` name. Subagent children are discovered
+  under the transcript's own directory — the day directory — so a session whose
+  subagents span midnight into the next day's directory needs `--session-id` mode
+  instead.
+
+Checkpoints work exactly as under Claude Code: register the catacomb [`mcp`](#mcp)
+server in Codex's config (`~/.codex/config.toml`),
+
+```toml
+[mcp_servers.catacomb]
+command = "catacomb"
+args = ["mcp"]
+```
+
+and the agent's `mcp__catacomb__mark` calls ride the rollout as MCP tool-call records,
+reducing to the same marker nodes and honoring the task's `checkpoints:`.
+
+Cost semantics differ in one more way: rollouts report token usage but no dollar cost,
+and the built-in pricing table carries no OpenAI tiers yet, so — unlike a Claude Code
+import — the token-derived `cost_usd` *metric* stays unpriced for Codex evidence until
+pricing tiers land ([ADR-0031](../adr/0031-multi-runtime-ingestion-codex.md) stage 2).
+`tokens_in`, `tokens_out`, and `duration_ms` are first-class and gate normally.
+
+Everything else is unchanged: the evidence dir has the same shape — with the runtime
+and the rollout's CLI version stamped into `meta.json`'s `env` block as
+`agent_runtime`/`agent_version` — and [`verify`](#verify) and [`regress`](#regress)
+consume it with no special case.
 
 ### Recommended workflow
 
