@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/realkarych/catacomb/ingest/drift"
 )
 
 func stubChildContext(t *testing.T) {
@@ -32,8 +34,77 @@ func TestStreamPeek(t *testing.T) {
 	p.onLine([]byte(`{"type":"system","session_id":"s-2"}`))
 	p.onLine([]byte(`{"type":"result","total_cost_usd":0.5}`))
 	require.Equal(t, "s-1", p.sessionID)
+	require.Equal(t, "s-1", p.session())
 	require.NotNil(t, p.costUSD)
 	require.InDelta(t, 0.5, *p.costUSD, 1e-9)
+	require.Same(t, p.costUSD, p.cost())
+}
+
+func TestCodexPeek(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			name:  "captures thread id from thread.started",
+			lines: []string{`{"type":"thread.started","thread_id":"th-1"}`},
+			want:  "th-1",
+		},
+		{
+			name: "first thread id wins",
+			lines: []string{
+				`{"type":"thread.started","thread_id":"th-1"}`,
+				`{"type":"thread.started","thread_id":"th-2"}`,
+			},
+			want: "th-1",
+		},
+		{
+			name: "non json lines ignored",
+			lines: []string{
+				"not json",
+				`{"type":"thread.started","thread_id":"th-1"}`,
+			},
+			want: "th-1",
+		},
+		{
+			name:  "thread id outside thread.started ignored",
+			lines: []string{`{"type":"turn.started","thread_id":"th-9"}`},
+			want:  "",
+		},
+		{
+			name: "empty thread id skipped",
+			lines: []string{
+				`{"type":"thread.started","thread_id":""}`,
+				`{"type":"thread.started","thread_id":"th-late"}`,
+			},
+			want: "th-late",
+		},
+		{
+			name:  "turn.completed usage records nothing",
+			lines: []string{`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}`},
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &codexPeek{}
+			for _, line := range tt.lines {
+				p.onLine([]byte(line))
+			}
+			assert.Equal(t, tt.want, p.session())
+			assert.Nil(t, p.cost())
+		})
+	}
+}
+
+func TestNewPeeker(t *testing.T) {
+	_, codex := newPeeker(drift.RuntimeCodex).(*codexPeek)
+	assert.True(t, codex)
+	_, claude := newPeeker(drift.RuntimeClaudeCode).(*streamPeek)
+	assert.True(t, claude)
+	_, unset := newPeeker("").(*streamPeek)
+	assert.True(t, unset)
 }
 
 func TestStreamPeekCostOnlyFromResult(t *testing.T) {
