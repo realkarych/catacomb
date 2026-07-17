@@ -78,9 +78,14 @@ recorded in a rollout (the [`catacomb mcp`](cli.md#mcp) server registered in Cod
 `[mcp_servers.catacomb]` config) reduces to the same marker node.
 
 Rollouts report token usage but no dollar cost, so imported Codex evidence carries no
-`cost_usd` in `meta.json` and the token-derived `cost_usd` metric stays unpriced until
-OpenAI pricing tiers land (ADR-0031 stage 2); `tokens_in`, `tokens_out`, and
-`duration_ms` are first-class metrics from day one.
+reported `cost_usd` in `meta.json`; the token-derived `cost_usd` metric is **estimated**
+from the built-in pricing table, which carries OpenAI GPT-5-family tiers (ADR-0031
+stage 2) — model ids with no published price stay unpriced. `tokens_in` means the same
+thing it does for Claude Code: uncached input tokens, with cached input counted
+separately at the cache-read rate. Note that OpenAI's long-context surcharge (2× input /
+1.5× output past 272K input tokens on 1M-context models) is not modeled, so the flat
+estimate undercounts such requests. `tokens_in`, `tokens_out`, and `duration_ms` are
+first-class metrics throughout.
 
 What stays Claude-only for now: `bench` (above), and the raw-transcript commands —
 `replay`, `diff`, `subgraph`, and `export` **given a transcript path** — which parse

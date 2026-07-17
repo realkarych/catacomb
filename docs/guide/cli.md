@@ -398,7 +398,8 @@ no terminal `total_cost_usd` for `import` to read, so the field is left unset an
 appears in the file. The token-derived `cost_usd` *metric*
 still works — it is priced from the transcript's token counts through the built-in pricing
 table — so cost gating in [`regress`](#regress) stays comparable between imported and
-bench-recorded runs. Codex sessions are the exception: no OpenAI pricing tiers yet — see
+bench-recorded runs. The table carries OpenAI GPT-5-family tiers alongside the Anthropic
+ones, so this holds for Codex sessions too — with one long-context caveat; see
 [Codex sessions](#codex-sessions-runtime-codex).
 
 Verification stays a **separate step**: `import` only records evidence. Run
@@ -445,11 +446,20 @@ args = ["mcp"]
 and the agent's `mcp__catacomb__mark` calls ride the rollout as MCP tool-call records,
 reducing to the same marker nodes and honoring the task's `checkpoints:`.
 
-Cost semantics differ in one more way: rollouts report token usage but no dollar cost,
-and the built-in pricing table carries no OpenAI tiers yet, so — unlike a Claude Code
-import — the token-derived `cost_usd` *metric* stays unpriced for Codex evidence until
-pricing tiers land ([ADR-0031](../adr/0031-multi-runtime-ingestion-codex.md) stage 2).
-`tokens_in`, `tokens_out`, and `duration_ms` are first-class and gate normally.
+Cost semantics keep one Codex-specific wrinkle: rollouts report token usage but no
+dollar cost, so the *reported* `cost_usd` in `meta.json` stays absent — there is nothing
+to read. The token-derived `cost_usd` *metric* is estimated, though: the built-in
+pricing table carries OpenAI GPT-5-family tiers
+([ADR-0031](../adr/0031-multi-runtime-ingestion-codex.md) stage 2) — `gpt-5.4-mini`
+prices at $0.75 input / $0.075 cache-read / $4.50 output per MTok, for example — and
+model ids without a published price, such as `codex-auto-review`, stay unpriced rather
+than guessed. One caveat: OpenAI bills prompts past 272K input tokens on its 1M-context
+models at 2× input / 1.5× output, which catacomb's flat estimate does not model, so
+long-context requests are undercounted. Token metrics follow Claude Code semantics:
+`tokens_in` counts **uncached** input (the rollout's `input_tokens` minus
+`cached_input_tokens`), cached input is tracked separately and priced at the cache-read
+rate, and a cache write maps through whenever the rollout reports one. `tokens_in`,
+`tokens_out`, and `duration_ms` are first-class and gate normally.
 
 Everything else is unchanged: the evidence dir has the same shape — with the runtime
 and the rollout's CLI version stamped into `meta.json`'s `env` block as
