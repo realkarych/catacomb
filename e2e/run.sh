@@ -972,7 +972,9 @@ echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells)
 #       minimal live `codex exec` ping (gpt-5.4-mini, low reasoning effort, 60s
 #       cap) verifies the key end-to-end — codex only honors CODEX_API_KEY on
 #       `exec`, so a real exec is the cheapest reliable check. That ping is
-#       token-billed and counted in the spend note below.
+#       token-billed and counted in the spend note below. The cap is mandatory:
+#       when timeout(1) is unavailable the leg SKIPS rather than running a paid
+#       ping uncapped.
 # The basket mirrors basket-continuous on the codex runtime: `main` answers
 # tersely, `candidate` reasons verbosely (a tokens_out growth a regress SHOULD
 # eventually flag) — but with n=3 on a brand-new runtime the verdict is LOGGED,
@@ -981,11 +983,7 @@ echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells)
 # (~/.codex/sessions), exactly where live `codex exec` writes them — the codex
 # analogue of the claude baskets' default-projects-dir contract.
 codex_ping_probe() {
-	if command -v timeout >/dev/null 2>&1; then
-		timeout 60 codex exec -m gpt-5.4-mini -c model_reasoning_effort=low --skip-git-repo-check --json "ping" </dev/null >/dev/null 2>&1
-	else
-		codex exec -m gpt-5.4-mini -c model_reasoning_effort=low --skip-git-repo-check --json "ping" </dev/null >/dev/null 2>&1
-	fi
+	timeout 60 codex exec -m gpt-5.4-mini -c model_reasoning_effort=low --skip-git-repo-check --json "ping" </dev/null >/dev/null 2>&1
 }
 codex_leg_ran=0
 codex_probe_paid=0
@@ -994,12 +992,14 @@ if ! command -v codex >/dev/null 2>&1; then
 elif codex login status >/dev/null 2>&1; then
 	echo "  [info] codex auth: stored login (codex login status — no-spend probe)"
 	codex_leg_ran=1
+elif [ -n "${CODEX_API_KEY:-}" ] && ! command -v timeout >/dev/null 2>&1; then
+	skip "codex live leg: timeout(1) unavailable — refusing to run the paid CODEX_API_KEY ping uncapped — leg not run, overall exit unaffected"
 elif [ -n "${CODEX_API_KEY:-}" ] && codex_ping_probe; then
 	echo "  [info] codex auth: CODEX_API_KEY verified via one live exec ping (token-billed, counted in the spend note)"
 	codex_leg_ran=1
 	codex_probe_paid=1
 else
-	skip "codex live leg: codex unauthenticated (no stored login; CODEX_API_KEY unset or rejected) — leg not run, overall exit unaffected"
+	skip "codex live leg: codex unauthenticated (no stored login; CODEX_API_KEY unset, rejected, or probe failed/timed out) — leg not run, overall exit unaffected"
 fi
 
 if [ "$codex_leg_ran" -eq 1 ]; then
