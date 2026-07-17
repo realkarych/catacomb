@@ -49,6 +49,7 @@ nondeterministic session needs a CI verdict instead of a vibe check.
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
 - **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
+- **Gates OpenAI Codex CLI sessions too.** Declare `runtime: codex` in the basket and `catacomb import` ingests recorded Codex rollouts — subagents, checkpoints, and token metrics included — through the same evidence and gate. Import-only for now ([runtimes](docs/guide/ingestion.md#runtimes)).
 - **Drive it from your agent.** A bundled [Claude Code skill](skills/catacomb/SKILL.md) teaches your agent to scaffold a basket, wire the CI gate, and read a `regress` verdict for you — just ask it to set up catacomb.
 
 <hr>
@@ -94,8 +95,11 @@ $ echo $?
 [Claude Code](https://www.anthropic.com/claude-code) installed and `claude` on your
 PATH, and **signed in** — a Claude subscription, or `ANTHROPIC_API_KEY` set for API
 billing. `catacomb bench` spends real money through Claude Code, so verify it works
-first with `claude -p hello`. Catacomb itself is a single static binary — no runtime,
-no dependencies, no config file.
+first with `claude -p hello`. The exception is gating
+[Codex CLI sessions](docs/guide/ingestion.md#runtimes): `catacomb import` reads
+already-recorded rollout files, so it needs neither `claude` nor a Codex install.
+Catacomb itself is a single static binary — no runtime, no dependencies, no config
+file.
 
 <hr>
 

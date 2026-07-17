@@ -1,8 +1,10 @@
 # Ingestion
 
-Catacomb has one ingestion source: the transcript JSONL files Claude Code writes to disk.
-Every command builds its graph by parsing them — there is no daemon, no hooks, and no
-telemetry receiver. See [`concepts.md`](concepts.md) for the graph model.
+Catacomb has one ingestion source: the transcript JSONL files an agent CLI writes to
+disk. Every command builds its graph by parsing them — there is no daemon, no hooks, and
+no telemetry receiver. Two runtimes are supported, Claude Code (the default) and
+OpenAI's Codex CLI (import-only for now) — see [Runtimes](#runtimes). See
+[`concepts.md`](concepts.md) for the graph model.
 
 ## Transcript JSONL
 
@@ -32,6 +34,59 @@ Commands consume transcripts in two ways:
 - **`replay`, `diff`, `subgraph`, and `export`** take a transcript path (or an evidence
   dir, for `export`) directly on the command line.
 
+## Runtimes
+
+Parsing is a per-runtime adapter behind one seam
+([ADR-0031](../adr/0031-multi-runtime-ingestion-codex.md)); everything downstream of it
+— the graph, step and phase keys, evidence, verify, regress, baselines — is
+runtime-neutral. Two adapters exist:
+
+- **Claude Code** (`claude-code`, the default) — the transcript layout above. Every
+  command speaks it.
+- **Codex CLI** (`codex`) — OpenAI's agent CLI, **import-only in this release**:
+  [`bench`](cli.md#bench) rejects a `runtime: codex` basket with an operational error
+  (exit `2`), so a Codex session is run with `codex exec` (or the interactive TUI) and
+  recorded with [`catacomb import`](cli.md#import) — see
+  [Codex sessions](cli.md#codex-sessions-runtime-codex) for the import mechanics.
+
+A basket declares its runtime in the top-level
+[`runtime:` field](basket.md#top-level-fields) — one basket, one runtime; there are no
+per-command runtime flags. Evidence `meta.json` stamps the runtime into its `env` block
+(`agent_runtime`, plus the recording CLI's version as `agent_version`), and the
+commands that re-reduce recorded evidence — `regress`, and `export` over an evidence
+dir — dispatch on that stamp to pick the right parser. `verify` execs verifiers over
+the evidence dir without parsing transcripts at all. Imported Codex evidence therefore
+flows through the whole gate with no special case.
+
+Codex persists each session as a **rollout**: an append-only JSONL file under a
+date-partitioned tree, named by the session's thread id:
+
+```text
+~/.codex/sessions/YYYY/MM/DD/
+└── rollout-<timestamp>-<thread-id>.jsonl   # one per thread; .jsonl.zst when cold
+```
+
+Cold rollouts are zstd-compressed to `.jsonl.zst` by Codex itself; catacomb reads both
+forms transparently (a pure-Go decoder, no system `zstd`), and the copies written into
+evidence are always plain, secret-redacted `.jsonl`. Subagents are separate rollout
+files whose first-line `session_meta` names the parent thread (`parent_thread_id`);
+import discovers children by scanning the sessions tree for that link — transitively,
+so nested subagents come along — and merges each one into evidence as
+`subagents/agent-<thread-id>.jsonl`, joining the same run exactly like Claude Code
+sub-transcripts. Checkpoints carry over unchanged too: an `mcp__catacomb__mark` call
+recorded in a rollout (the [`catacomb mcp`](cli.md#mcp) server registered in Codex's
+`[mcp_servers.catacomb]` config) reduces to the same marker node.
+
+Rollouts report token usage but no dollar cost, so imported Codex evidence carries no
+`cost_usd` in `meta.json` and the token-derived `cost_usd` metric stays unpriced until
+OpenAI pricing tiers land (ADR-0031 stage 2); `tokens_in`, `tokens_out`, and
+`duration_ms` are first-class metrics from day one.
+
+What stays Claude-only for now: `bench` (above), and the raw-transcript commands —
+`replay`, `diff`, `subgraph`, and `export` **given a transcript path** — which parse
+Claude Code JSONL only. `export` over an imported evidence *directory* dispatches on
+the meta stamp and works for Codex evidence.
+
 ## Checkpoint markers
 
 Phase boundaries ride the same transcript. When the agent calls the
@@ -59,8 +114,8 @@ Transcripts carry the session; the run-level metadata around it comes from `benc
 
 ## Format drift
 
-Claude Code's transcript format evolves. Records that parse as JSON but match no known
-shape are counted per reason (`unknown_record_type`, `unknown_content_block`) and
+Both transcript formats evolve. Records that parse as JSON but match no known shape are
+counted per reason (`unknown_record_type`, `unknown_content_block`, `bad_timestamp`) and
 surfaced as a single stderr warning whenever a command parses transcripts:
 
 ```text
@@ -70,15 +125,17 @@ warning: 3 unrecognized transcript record(s) [unknown_record_type=3]
 The graph is still built from everything that did parse; the warning is the signal to
 upgrade catacomb ([ADR-0025](../adr/0025-capture-format-drift-detection.md)).
 
-Catacomb also keeps a **version watchlist**: it records the newest Claude Code version
-it has been tested against, and when a parsed transcript is stamped with a newer version
-it prints a second stderr line naming both versions:
+Catacomb also keeps a **version watchlist**, with one ceiling per runtime: it records
+the newest Claude Code and Codex CLI versions it has been tested against, and when a
+parsed transcript is stamped with a newer version it prints a second stderr line naming
+both versions:
 
 ```text
 warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199
+warning: transcript Codex version 0.150.0 is newer than tested 0.144.4
 ```
 
-This is the companion signal — a heads-up that Claude Code moved past the release this
+This is the companion signal — a heads-up that the agent CLI moved past the release this
 catacomb was validated on, so the parser may be a step behind. Like the drift count it
 fires only when triggered, on any command that parses transcripts, and never touches the
 graph, `stdout`, `--json`, or the exit code.

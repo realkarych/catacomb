@@ -22,6 +22,7 @@ The top-level document is a `Basket`:
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `basket` | string | yes | — | The basket name. Charset `^[A-Za-z0-9._-]+$` (no spaces, commas, or `=`), at most 256 bytes. Becomes the `basket` label on every cell. |
+| `runtime` | string | no | `claude-code` | The agent CLI whose sessions this basket gates: `claude-code` or `codex`. Any other value fails at load with `runtime must be "claude-code" or "codex"`. Codex is **import-only** for now: [`bench`](cli.md#bench) rejects a `runtime: codex` basket (exit `2`) — record its sessions with [`catacomb import`](cli.md#import) instead. See [Runtimes](ingestion.md#runtimes). |
 | `reps` | int | yes | — | Repetitions per cell. Must be `>= 1`; a missing or `< 1` value fails at load with `reps must be >= 1`. |
 | `tasks` | list | yes (≥1) | — | One or more [tasks](#task). |
 | `variants` | list | yes (≥1) | — | One or more [variants](#variant). A single variant runs and records evidence, but `regress` needs ≥2 variants to gate — see [What happens if](#what-happens-if). |
@@ -152,6 +153,9 @@ verifier needs to read again.
 - **A task declares both `dir` and `workspace`?** Rejected at load with
   `dir and workspace are mutually exclusive` (likewise a variant `workspace` alongside
   any task `dir`).
+- **You run `bench` on a `runtime: codex` basket?** Rejected with an operational error
+  (exit `2`): Codex support is import-only for now — run the session with `codex exec`
+  and record it with [`catacomb import`](cli.md#import).
 - **You declare a single variant?** `bench` runs and records evidence normally, but
   `regress` needs at least two variants to gate — with one variant there is nothing to
   compare, and `bench` prints an advisory saying so.
