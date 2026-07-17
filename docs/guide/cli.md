@@ -57,6 +57,7 @@ catacomb bench <basket.yaml> [flags]
 | `--fail-fast` | false | Stop at the first failing cell |
 | `--dry-run` | false | Print the cell expansion table and exit without executing |
 | `--projects-dir` | `~/.claude/projects` | Claude projects directory holding session transcripts |
+| `--sessions-dir` | `~/.codex/sessions` | Codex sessions directory holding rollout transcripts (for a [`runtime: codex`](basket.md#top-level-fields) basket) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory for bench runs |
 | `--workspaces-dir` | OS temp dir | Base directory for per-cell workspace dirs (see [Workspace isolation](#workspace-isolation)) |
 | `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
@@ -64,12 +65,6 @@ catacomb bench <basket.yaml> [flags]
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
 combination, and cells run sequentially. The full basket file schema — every field, its
 type, and validation rules — is documented in [basket.md](basket.md).
-
-A basket that declares [`runtime: codex`](basket.md#top-level-fields) is **rejected**
-before any cell runs: Codex support is import-only for now, so `bench` exits `2` with
-`bench: runtime "codex" is import-only for now — run the session with codex exec and
-use catacomb import`. Record Codex sessions with [`import`](#import) instead; see
-[Runtimes](ingestion.md#runtimes).
 
 Each cell runs under run-id `bench-<basket>-<task>-<variant>-r<rep>` and carries the
 labels `basket`, `task`, `variant`, and `rep`, so `baseline` and `regress` selectors
@@ -92,6 +87,20 @@ the runner resolves the session's transcripts under
 retrying for up to ~3 s while the file lands; a session id matching no transcript (or
 more than one) records the reason in the cell's manifest `note` and skips verification
 and evidence for that cell.
+
+Under a [`runtime: codex`](basket.md#top-level-fields) basket the same contract shifts
+vocabularies: the cell's `cmd` must emit the Codex exec JSON stream
+(`codex exec --json <prompt>`), where the runner peeks the first `thread.started` event for the
+session's **thread id**; after the child exits it resolves the rollout — plus any
+subagent rollouts linked by `parent_thread_id` — under `--sessions-dir` instead of
+`--projects-dir` (see [Codex sessions](#codex-sessions-runtime-codex)). In a wrapper
+script, redirect stdin away (`codex exec --json "$PROMPT" < /dev/null`): when stdin is
+not a tty, `codex` reads the prompt from it instead of argv. Codex emits no terminal
+cost event, so the cell's manifest and `meta.json` carry no reported `cost_usd` —
+exactly like an [imported](#codex-sessions-runtime-codex) Codex session; the
+token-derived `cost_usd` *metric* still prices through the built-in OpenAI tiers.
+Everything else — run-ids, labels, checkpoints, evidence shape, the epilogue — is
+unchanged.
 
 A task's optional `timeout:` — a Go duration string such as `30s` or `5m` — puts a
 per-cell deadline on the whole cell: the variant's `setup:` commands and the child
@@ -164,9 +173,9 @@ accumulates is not).
 A failing cell is recorded and the basket continues (deciding whether a change
 regressed is `catacomb regress`'s job, not the runner's). Exit codes: `0` every cell
 ran (even if some cells failed), `1` `--fail-fast` stopped at a failing cell, `2`
-operational error (bad basket, an import-only `runtime: codex` basket, a non-fresh
-manifest, manifest I/O, a resume hash mismatch, or an unresolvable home directory — set
-`--projects-dir` and `--runs-dir` explicitly). On success the runner prints a
+operational error (bad basket, a non-fresh manifest, manifest I/O, a resume hash
+mismatch, or an unresolvable home directory — set `--projects-dir` (or `--sessions-dir`
+for a `runtime: codex` basket) and `--runs-dir` explicitly). On success the runner prints a
 `marked <n>/<total> cells` summary, the
 checkpoint rollup, and a copy-pasteable epilogue: with two or more variants, a
 [`regress --runs-dir`](#regress) comparing the first two. Append `,task=<id>` to the

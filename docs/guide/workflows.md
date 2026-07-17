@@ -704,7 +704,11 @@ Each bench cell invokes `claude -p` with `--setting-sources project` and a stric
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
 The checkpoint (mark) and SQL (verifier) tasks run on Sonnet for instruction-following
 reliability while the step and continuous tasks stay on Haiku, which also exercises
-multi-model pricing.
+multi-model pricing. An optional Codex leg (`e2e/basket-codex.yaml`, six live
+`codex exec --json` cells on `gpt-5.4-mini`) runs after the Claude baskets when a
+signed-in `codex` CLI is on the runner's PATH and is skipped otherwise; it asserts
+rollout resolution and evidence parity but only logs its `regress` verdict —
+advisory, because A-vs-A calibration for the Codex runtime has not accumulated yet.
 
 Because it spends real API budget (~$1.7 per run), it is not part of per-PR CI: trigger it
 by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It

@@ -8,7 +8,7 @@ behind most of these.
 | --- | --- |
 | Manifest note says `no session id observed` | The cell's `cmd` must emit stream-json: run `claude` with `--output-format stream-json`. For a hand-run interactive session, use [`catacomb import`](cli.md#import) — it does not need stream-json on stdout |
 | Manifest note says `transcripts not found` | Check `--projects-dir` points at the Claude projects dir that owns the session; bench retries for ~3 s after the child exits. For a hand-run interactive session, use [`catacomb import`](cli.md#import) with `--session-id` or `--transcript` |
-| `bench: runtime "codex" is import-only for now …` | Codex baskets cannot be bench-driven yet ([ADR-0031](../adr/0031-multi-runtime-ingestion-codex.md) stage 1 is import-only) — run the session with `codex exec` yourself and record it with [`catacomb import`](cli.md#import) |
+| A `runtime: codex` bench cell fails with `no session id observed` | The cell's `cmd` must pass `--json` to `codex exec` — the runner peeks the `thread.started` event for the thread id. In a wrapper script also redirect stdin (`codex exec --json "$PROMPT" < /dev/null`): a non-tty `codex` reads the prompt from stdin instead of argv |
 | `no transcript for session … under …` | The session id matched no transcript in the searched dir. A Claude Code session resolves under `--projects-dir`; a `runtime: codex` basket resolves the **thread id** under `--sessions-dir` (default `~/.codex/sessions`) — check the id and point the right flag at the dir that owns the session |
 | `selector matched no runs` | Inspect `<runs-dir>/*/meta.json` labels; check `--runs-dir` and the `label:` terms (all terms are ANDed) |
 | `no catacomb store found` | Create the store with a write-path command: `catacomb baseline set` |

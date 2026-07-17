@@ -3,7 +3,7 @@
 Catacomb has one ingestion source: the transcript JSONL files an agent CLI writes to
 disk. Every command builds its graph by parsing them — there is no daemon, no hooks, and
 no telemetry receiver. Two runtimes are supported, Claude Code (the default) and
-OpenAI's Codex CLI (import-only for now) — see [Runtimes](#runtimes). See
+OpenAI's Codex CLI — see [Runtimes](#runtimes). See
 [`concepts.md`](concepts.md) for the graph model.
 
 ## Transcript JSONL
@@ -29,7 +29,9 @@ Commands consume transcripts in two ways:
   `session_id`; after the child exits, bench looks up
   `<projects-dir>/*/<session-id>.jsonl` and the matching `subagents/` directory (retrying
   for up to ~3 s while the file lands) and copies them — secret-redacted — into the cell's
-  evidence directory. `regress`, `baseline set`, and `export` then read those evidence
+  evidence directory (a [`runtime: codex`](#runtimes) cell instead peeks the
+  `thread.started` event of `codex exec --json` and resolves the rollout under
+  `--sessions-dir`). `regress`, `baseline set`, and `export` then read those evidence
   copies.
 - **`replay`, `diff`, `subgraph`, and `export`** take a transcript path (or an evidence
   dir, for `export`) directly on the command line.
@@ -43,11 +45,12 @@ runtime-neutral. Two adapters exist:
 
 - **Claude Code** (`claude-code`, the default) — the transcript layout above. Every
   command speaks it.
-- **Codex CLI** (`codex`) — OpenAI's agent CLI, **import-only in this release**:
-  [`bench`](cli.md#bench) rejects a `runtime: codex` basket with an operational error
-  (exit `2`), so a Codex session is run with `codex exec` (or the interactive TUI) and
-  recorded with [`catacomb import`](cli.md#import) — see
-  [Codex sessions](cli.md#codex-sessions-runtime-codex) for the import mechanics.
+- **Codex CLI** (`codex`) — OpenAI's agent CLI, with both entry points:
+  [`bench`](cli.md#bench) drives cells whose `cmd` emits the `codex exec --json`
+  stream and resolves each cell's rollout under `--sessions-dir`, and a session run by
+  hand (`codex exec` or the interactive TUI) is recorded with
+  [`catacomb import`](cli.md#import) — see
+  [Codex sessions](cli.md#codex-sessions-runtime-codex) for the ingestion mechanics.
 
 A basket declares its runtime in the top-level
 [`runtime:` field](basket.md#top-level-fields) — one basket, one runtime; there are no
@@ -55,8 +58,8 @@ per-command runtime flags. Evidence `meta.json` stamps the runtime into its `env
 (`agent_runtime`, plus the recording CLI's version as `agent_version`), and the
 commands that re-reduce recorded evidence — `regress`, and `export` over an evidence
 dir — dispatch on that stamp to pick the right parser. `verify` execs verifiers over
-the evidence dir without parsing transcripts at all. Imported Codex evidence therefore
-flows through the whole gate with no special case.
+the evidence dir without parsing transcripts at all. Codex evidence — bench-recorded
+or imported — therefore flows through the whole gate with no special case.
 
 Codex persists each session as a **rollout**: an append-only JSONL file under a
 date-partitioned tree, named by the session's thread id:
@@ -77,7 +80,8 @@ sub-transcripts. Checkpoints carry over unchanged too: an `mcp__catacomb__mark` 
 recorded in a rollout (the [`catacomb mcp`](cli.md#mcp) server registered in Codex's
 `[mcp_servers.catacomb]` config) reduces to the same marker node.
 
-Rollouts report token usage but no dollar cost, so imported Codex evidence carries no
+Rollouts report token usage but no dollar cost — and `codex exec` emits no terminal
+cost event for `bench` to peek — so Codex evidence carries no
 reported `cost_usd` in `meta.json`; the token-derived `cost_usd` metric is **estimated**
 from the built-in pricing table, which carries OpenAI GPT-5-family tiers (ADR-0031
 stage 2) — model ids with no published price stay unpriced (one pinned exception:
@@ -88,9 +92,9 @@ surcharge (2× input / 1.5× output past 272K input tokens on 1M-context models)
 modeled, so the flat estimate undercounts such requests. `tokens_in`, `tokens_out`, and
 `duration_ms` are first-class metrics throughout.
 
-What stays Claude-only for now: `bench` (above), and the raw-transcript commands —
+What stays Claude-only for now: the raw-transcript commands —
 `replay`, `diff`, `subgraph`, and `export` **given a transcript path** — which parse
-Claude Code JSONL only. `export` over an imported evidence *directory* dispatches on
+Claude Code JSONL only. `export` over an evidence *directory* dispatches on
 the meta stamp and works for Codex evidence.
 
 ## Checkpoint markers
@@ -116,7 +120,8 @@ Transcripts carry the session; the run-level metadata around it comes from `benc
   its evidence directory. The cell's child process gets `CATACOMB_RUN_ID` and
   `CATACOMB_LABELS` in its environment.
 - **Exit code and cost.** The child's exit code and the stream-json `result` event's
-  `total_cost_usd` are recorded in `meta.json` and the manifest.
+  `total_cost_usd` are recorded in `meta.json` and the manifest (a `runtime: codex`
+  cell records no reported cost — `codex exec` emits no cost event).
 
 ## Format drift
 

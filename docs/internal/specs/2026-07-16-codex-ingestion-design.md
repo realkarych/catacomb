@@ -260,7 +260,7 @@ type Basket struct {
   last non-null per turn (stage 1 already does this; stage 2 adds the
   power-test characterization for Codex-shaped groups).
 
-## 4. Stage 3 — bench spawn (separate plan)
+## 4. Stage 3 — bench spawn (shipped as specified below)
 
 - `childlocal.go` peek gains a Codex mode: first `--json` stdout line
   `thread.started` → session id; no terminal cost event exists, so the manifest
