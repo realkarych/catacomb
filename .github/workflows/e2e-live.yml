@@ -8,7 +8,7 @@
 # an Anthropic auth secret: either `ANTHROPIC_API_KEY` (API billing) or
 # `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
 # `claude setup-token`). When both are set the API key takes precedence (API billing).
-# Trigger it manually (workflow_dispatch) or let the weekly schedule run it; the guard
+# Trigger it manually (workflow_dispatch) or let the twice-weekly schedule run it; the guard
 # step fails fast with a clear message when neither is set so a fork or an unconfigured
 # repo does not burn a confusing red run.
 # An OPTIONAL codex leg (6 live `codex exec` cells on gpt-5.4-mini, ~$0.05 extra when
@@ -19,8 +19,9 @@ name: E2E Live Gate
 on:
   workflow_dispatch:
   schedule:
-    # Mondays 06:00 UTC — a weekly canary over the live gate.
-    - cron: "0 6 * * 1"
+    # Mondays and Thursdays 06:00 UTC — a twice-weekly canary over the live gate,
+    # so drift surfaces within 3–4 days instead of ~7.
+    - cron: "0 6 * * 1,4"
 
 permissions:
   contents: read
