@@ -523,6 +523,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--json` | false | Emit the full report as JSON |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
+| `--project` | (empty) | Project identity stamped into the recorded history row (`project` in the record body) for fleet-level joins; requires `--record` |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
 | `--scores` | (none) | JSONL file of external scores applied as node annotations before comparison (see [Gating on external scores](#gating-on-external-scores)) |
 | `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
@@ -783,7 +784,10 @@ The store must already exist: `--record` requires a `name:` baseline, and resolv
 against an absent store fails first (exit `2`), so the store is created by
 [`baseline set`](#baseline-set), never by `--record`. Each record carries the version
 stamps of the recording binary (catacomb version and step-key scheme) in its body
-alongside the report.
+alongside the report. With `--project <id>` the body also carries a stable project
+identity, so histories exported from many repositories can be joined fleet-side; see
+[Roll up a fleet](workflows.md#roll-up-a-fleet). `--project` without `--record` is an
+operational error (exit `2`) — the stamp has nowhere to land.
 
 Sequence numbers are assigned atomically in a single statement, so a record is never
 silently overwritten. But concurrent `--record` writers against one store file — a
@@ -845,12 +849,15 @@ a spliced history is never read as a continuous one.
 
 `--json` emits the raw stored history verbatim as `[{"seq":N,"record":<stored bytes>}]`:
 each `record` is the exact JSON body that was written, byte-for-byte, not a
-re-encoding. A body carries a schema version field `v` (currently `1`), the candidate
-selector, thresholds, annotation specs, the report, its own `created_at` (RFC3339 UTC),
-a `baseline_created_at` stamp mirroring the baseline's `created_at` at record time, and
+re-encoding. A body carries a schema version field `v` (currently `2`; the schema is
+additive-only, and every version from `1` through the current one still renders), the
+candidate selector, the `project` identity when recorded with
+[`--project`](#regress) (records written without it lack the field), thresholds,
+annotation specs, the report, its own `created_at` (RFC3339 UTC), a
+`baseline_created_at` stamp mirroring the baseline's `created_at` at record time, and
 the recording binary's version `stamps` (catacomb version and step-key scheme; records
 written before stamps existed lack the field) — ready for dashboards or diffing
-scripts. A record whose `v` is not understood by this binary is an exit-`2` error
+scripts. A record whose `v` is newer than this binary understands is an exit-`2` error
 naming the sequence and version (upgrade catacomb).
 
 ### Accuracy-vs-cost Pareto

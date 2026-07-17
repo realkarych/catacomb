@@ -47,7 +47,7 @@ nondeterministic session needs a CI verdict instead of a vibe check.
 - **Plain local files.** Evidence directories plus an optional SQLite store for baselines — nothing listens, nothing phones home.
 - **Evidence you can share.** Recorded transcripts pass through best-effort secret redaction before they ever touch disk ([what is and isn't caught](docs/guide/privacy-and-operations.md)).
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
-- **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
+- **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)) — and, stamped with `--project`, joins across a fleet of repos in your own warehouse ([roll up a fleet](docs/guide/workflows.md#roll-up-a-fleet)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
 - **Drive it from your agent.** A bundled [Claude Code skill](skills/catacomb/SKILL.md) teaches your agent to scaffold a basket, wire the CI gate, and read a `regress` verdict for you — just ask it to set up catacomb.
 
