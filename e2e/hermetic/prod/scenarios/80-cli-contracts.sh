@@ -19,11 +19,30 @@
 #         --presence-delta  : a 5/5 -> 3/5 step-presence drop (absence delta 0.4) gates
 #                             under --fail-on-notable at the default 0.20 but not at 0.50.
 #
+#   (C) bench lifecycle flags (mirrors e2e/run.sh steps a0/a1/i2, live but Go-unit-only
+#       until now): a fabricated basket run through the REAL `catacomb bench` (task cmd
+#       `sh -c "exit 0"`, no session observed — bench still records a manifest entry per
+#       cell regardless of session-peek success, so this exercises real bench mechanics
+#       at $0, no fake-agent transcript needed):
+#         --dry-run        : prints the RUN_ID/TASK/VARIANT/REP table for all 4 planned
+#                             cells (1 task x 2 variants x 2 reps) and writes no manifest.
+#         --workspaces-dir/--keep-workspaces: every cell's per-cell workspace dir survives
+#                             teardown under the given root and holds the files its
+#                             workspace.cmd staged (mirrors the live SQL basket's
+#                             sql-live.sh/verify_sql.py copy-in).
+#         --resume          : re-invoked over the manifest the first bench call just
+#                             wrote, every cell is already completed, so it skips all 4
+#                             (0 newly executed) and prints NO "marked N/M" summary line
+#                             (runBenchCells only prints it when executed > 0 — pinned by
+#                             the Go unit TestRunBenchCellsResumeAllSkippedOmitsMarked).
+#
 # Evidence run dirs are built directly (meta.json + session.jsonl) rather than via
 # bench: identical bench reps can only ever produce 0/N or N/N presence and a zero
 # IQR, so per-run control over token counts and step presence is what makes each flip
-# deterministic. Zero API spend. Sourced by run.sh with lib.sh loaded and
-# PROD/WORK/HERMETIC_* exported. catacomb is on PATH.
+# deterministic. Section (C) is the exception — it drives the real `bench` binary to
+# exercise its lifecycle flags, not the reduce/regress pipeline. Zero API spend.
+# Sourced by run.sh with lib.sh loaded and PROD/WORK/HERMETIC_* exported. catacomb is
+# on PATH.
 set -euo pipefail
 
 w="$WORK/cli-contracts"; rm -rf "$w"; mkdir -p "$w"
@@ -141,3 +160,63 @@ if not dg or lg:
 print("presence-delta flip: step presence %s gates at default 0.2, silent at loose 0.5" % dg[0]["verdict"])
 PY
 record "$rc" "--presence-delta flips the step presence gate: gates at 0.2, silent at 0.5"
+
+echo "== prod.80 cli-contracts: bench lifecycle flags --dry-run/--resume/--workspaces-dir/--keep-workspaces (fabricated basket, real bench binary, \$0) =="
+lw="$w/lifecycle"; rm -rf "$lw"; mkdir -p "$lw/stage" "$lw/workspaces"
+printf '#!/bin/sh\necho staged-wrapper\n'  >"$lw/stage/wrapper.sh"
+printf '#!/bin/sh\necho staged-verify\n'   >"$lw/stage/verify.sh"
+# The task cmd never observes a session id (bench still records a manifest entry per
+# cell — no session id just means the entry carries a "no session id observed" note,
+# same as any local no-op child), so this drives the real bench binary without a fake
+# claude/codex transcript wrapper. The workspace cmd copies the two staged files in,
+# mirroring the live SQL basket's sql-live.sh/verify_sql.py staging.
+cat >"$lw/basket.yaml" <<EOF
+basket: prod-lifecycle
+reps: 2
+tasks:
+  - id: probe
+    cmd: ["sh", "-c", "exit 0"]
+    workspace:
+      cmd: ["sh", "-c", "cp $lw/stage/wrapper.sh $lw/stage/verify.sh ."]
+variants:
+  - id: baseline
+  - id: degraded
+EOF
+
+run_json 0 "$lw/dryrun.out" "bench lifecycle --dry-run lists 4 planned cells, writes no manifest" -- \
+  catacomb bench "$lw/basket.yaml" --dry-run
+rc=0
+planned=$(grep -c '^bench-prod-lifecycle-probe-' "$lw/dryrun.out" || true)
+[ "$planned" -eq 4 ] || rc=1
+record "$rc" "dry-run planned-cell count: $planned/4 (1 task x 2 variants x 2 reps)"
+rc=0
+[ -f "$lw/basket.yaml.manifest.jsonl" ] && rc=1
+record "$rc" "dry-run wrote no manifest (default <basket>.manifest.jsonl path absent)"
+
+run_json 0 "$lw/bench1.out" "bench lifecycle basket (--workspaces-dir + --keep-workspaces)" -- \
+  catacomb bench "$lw/basket.yaml" --runs-dir "$lw/runs" --manifest "$lw/m.jsonl" \
+  --workspaces-dir "$lw/workspaces" --keep-workspaces
+rc=0
+ws_count=0
+for d in "$lw"/workspaces/bench-prod-lifecycle-probe-*; do
+  [ -d "$d" ] || continue
+  ws_count=$((ws_count + 1))
+  [ -f "$d/wrapper.sh" ] || rc=1
+  [ -f "$d/verify.sh" ] || rc=1
+done
+[ "$ws_count" -eq 4 ] || rc=1
+record "$rc" "--keep-workspaces kept $ws_count/4 per-cell workspace dirs, each holding the staged wrapper.sh + verify.sh"
+
+run_json 0 "$lw/resume.out" "bench lifecycle --resume over the just-completed manifest: 0 newly-executed cells" -- \
+  catacomb bench "$lw/basket.yaml" --runs-dir "$lw/runs" --manifest "$lw/m.jsonl" --resume
+rc=0
+skips=$(grep -c '(already completed)$' "$lw/resume.out" || true)
+[ "$skips" -eq 4 ] || rc=1
+record "$rc" "resume skip count: $skips/4 already-completed cells (0 newly executed)"
+rc=0
+grep -q '^marked ' "$lw/resume.out" && rc=1
+record "$rc" "resume printed no 'marked N/M' summary (0 cells executed => the live re-invoke's zero-spend contract holds)"
+rc=0
+mlines=$(wc -l <"$lw/m.jsonl" | tr -d ' ')
+[ "$mlines" -eq 4 ] || rc=1
+record "$rc" "manifest unchanged at $mlines/4 entries after --resume"

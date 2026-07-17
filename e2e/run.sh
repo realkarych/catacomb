@@ -195,9 +195,43 @@ ava_metric_band="2.0"
 
 cd "$e2e_dir"
 
+echo "== a0. bench presence --dry-run lists the planned cells, writes no evidence (\$0) =="
+run_json 0 "$work/presence-dryrun.out" "bench presence --dry-run lists 30 planned cells" -- \
+	catacomb bench basket-presence.yaml --dry-run
+rc=0
+planned=$(grep -c '^bench-e2e-presence-' "$work/presence-dryrun.out" || true)
+[ "$planned" -eq 30 ] || rc=1
+record "$rc" "dry-run planned-cell count: $planned/30 (2 tasks x 3 variants x 5 reps)"
+rc=0
+[ -f "$manifest1" ] && rc=1
+[ -n "$(find "$runs1" -mindepth 1 -maxdepth 1 2>/dev/null)" ] && rc=1
+record "$rc" "dry-run wrote no manifest ($manifest1) and created no evidence under \$runs1"
+
 echo "== a. bench presence basket (15 live claude -p cells) =="
 run_expect 0 "bench presence basket" -- \
 	catacomb bench basket-presence.yaml --runs-dir "$runs1" --manifest "$manifest1"
+
+echo "== a1. bench presence --resume + explicit --projects-dir: 0 newly-executed cells (\$0 idempotent re-invoke) =="
+# --resume re-invokes over the manifest step a just completed (reused, not a fresh
+# basket run — every cell is already in $manifest1, so no cell re-executes and no new
+# live spend occurs). The explicit --projects-dir "$HOME/.claude/projects" — identical
+# to bench's own default when unset — piggybacks the flag-parses smoke onto the same
+# $0 call rather than paying for a second live presence bench.
+run_json 0 "$work/presence-resume.out" \
+	"bench presence --resume --projects-dir re-invoke over the completed manifest" -- \
+	catacomb bench basket-presence.yaml --runs-dir "$runs1" --manifest "$manifest1" \
+	--resume --projects-dir "$HOME/.claude/projects"
+rc=0
+skips=$(grep -c '(already completed)$' "$work/presence-resume.out" || true)
+[ "$skips" -eq 30 ] || rc=1
+record "$rc" "resume skip count: $skips/30 already-completed cells (0 newly executed)"
+rc=0
+grep -q '^marked ' "$work/presence-resume.out" && rc=1
+record "$rc" "resume printed no 'marked N/M' summary (0 cells executed => zero incremental live spend; matches TestRunBenchCellsResumeAllSkippedOmitsMarked)"
+rc=0
+mlines=$(wc -l <"$manifest1" | tr -d ' ')
+[ "$mlines" -eq 30 ] || rc=1
+record "$rc" "manifest1 unchanged at $mlines/30 entries after --resume (identical cell count to the dry-run/bench expansion)"
 
 echo "== b. presence manifest assertions =="
 rc=0
@@ -604,8 +638,22 @@ else
 fi
 
 echo "== i. bench sql basket (15 live claude -p cells) — the verifier contract =="
-run_expect 0 "bench sql basket" -- \
-	catacomb bench basket-sql.yaml --runs-dir "$runs3" --manifest "$manifest3"
+mkdir -p "$work/live-workspaces" || fatal "cannot create the sql --workspaces-dir root"
+run_expect 0 "bench sql basket (--workspaces-dir + --keep-workspaces)" -- \
+	catacomb bench basket-sql.yaml --runs-dir "$runs3" --manifest "$manifest3" \
+	--workspaces-dir "$work/live-workspaces" --keep-workspaces
+
+echo "== i2. sql --keep-workspaces: 15 per-cell workspace dirs, each holding the copied wrapper + verifier =="
+rc=0
+ws_count=0
+for d in "$work"/live-workspaces/bench-e2e-sql-sql-*; do
+	[ -d "$d" ] || continue
+	ws_count=$((ws_count + 1))
+	[ -f "$d/sql-live.sh" ] || rc=1
+	[ -f "$d/verify_sql.py" ] || rc=1
+done
+[ "$ws_count" -eq 15 ] || rc=1
+record "$rc" "sql --keep-workspaces: $ws_count/15 per-cell workspace dirs kept, each holding sql-live.sh + verify_sql.py"
 
 echo "== j. sql manifest + verifier.pass calibration assertions =="
 # Verified in the manifest means the verify hook RAN cleanly, not that it passed — the
