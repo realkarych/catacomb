@@ -21,6 +21,9 @@ import (
 const (
 	selectorLabel = "label"
 	selectorName  = "name"
+
+	regressFormatHuman = "human"
+	regressFormatJSON  = "json"
 )
 
 var marshalRecord = json.Marshal
@@ -32,6 +35,7 @@ type regressFlags struct {
 	candidate   string
 	dbPath      string
 	runsDir     string
+	format      string
 	asJSON      bool
 	strict      bool
 	record      bool
@@ -47,6 +51,11 @@ func newRegressCmd() *cobra.Command {
 		Short: "Compare a candidate run group against a baseline",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := resolveRegressFormat(cmd.Flags().Changed("format"), f.format, f.asJSON)
+			if err != nil {
+				return operational(err)
+			}
+			f.format = format
 			open := store.OpenSQLiteReadOnly
 			if f.record {
 				open = store.OpenSQLite
@@ -65,7 +74,10 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().StringVar(&f.candidate, "candidate", "", "candidate selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultDBPath(), "SQLite database path for name:/--record (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve selectors from: label: scans it, name: reads --db's baselines table, --record appends there")
+	cmd.Flags().StringVar(&f.format, "format", regressFormatHuman, "output format: human or json")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
+	_ = cmd.Flags().MarkDeprecated("json", "use --format json")
+	cmd.Flags().SetOutput(flagNoticeStderr{cmd: cmd})
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "fail on insufficient data (exit 1); also refuse baselines with missing or mismatched version stamps (exit 2)")
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
 	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
@@ -83,6 +95,12 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().Float64Var(&f.thresholds.AuditIQRFactor, "audit-iqr-factor", def.AuditIQRFactor, "per-cell audit IQR band factor for outlier flags")
 	cmd.Flags().Float64Var(&f.thresholds.AuditRelDelta, "audit-rel-delta", def.AuditRelDelta, "per-cell audit relative delta floor for outlier flags")
 	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
+}
+
+type flagNoticeStderr struct{ cmd *cobra.Command }
+
+func (w flagNoticeStderr) Write(p []byte) (int, error) {
+	return w.cmd.ErrOrStderr().Write(p)
 }
 
 func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.Pricer, f regressFlags) error {
@@ -190,7 +208,7 @@ func regressReport(out, errOut io.Writer, f regressFlags, specs []regress.Annota
 		CandidateCells: aggregate.Cells(candGroup),
 	}, f.thresholds)
 	warnUnfiredAnnotations(errOut, specs, baseAgg, candAgg)
-	if f.asJSON {
+	if f.format == regressFormatJSON {
 		if err := regress.RenderJSON(rep, out); err != nil {
 			return regress.Report{}, operational(err)
 		}
@@ -198,6 +216,18 @@ func regressReport(out, errOut io.Writer, f regressFlags, specs []regress.Annota
 		regress.RenderHuman(rep, out)
 	}
 	return rep, nil
+}
+
+func resolveRegressFormat(formatChanged bool, format string, asJSON bool) (string, error) {
+	if !formatChanged && asJSON {
+		return regressFormatJSON, nil
+	}
+	switch format {
+	case regressFormatHuman, regressFormatJSON:
+		return format, nil
+	default:
+		return "", fmt.Errorf("regress --format: unknown format %q (want human|json|markdown)", format)
+	}
 }
 
 func recordBaselineName(f regressFlags) (string, error) {

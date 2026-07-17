@@ -66,7 +66,7 @@ func runParityRegressJSON(t *testing.T, runsDir, baseline, candidate string) (re
 		"regress", "--runs-dir", runsDir,
 		"--db", filepath.Join(t.TempDir(), "absent.db"),
 		"--baseline", baseline, "--candidate", candidate,
-		"--json",
+		"--format", "json",
 	}, &out, &errBuf)
 	require.Empty(t, errBuf.String())
 	var rep regress.Report
