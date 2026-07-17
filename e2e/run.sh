@@ -735,6 +735,106 @@ if t <= d:
 PY
 record "$rc" "--audit-rel-delta 0.01 grows the per-cell audit-flagged count vs the step f default (0.5)"
 
+echo "== f6. calibrate standalone self-check over continuous baseline evidence (ADR-0034) =="
+# calibrate (cmd/catacomb/calibrate.go) runs its own business logic to completion and
+# returns either a rendered report (exit 0) or an *operationalError — bad selector,
+# invalid thresholds, IO failure — which cmd/catacomb/run.go maps to exit 2; it never
+# emits the regress errRegressionDetected path. LIVE-FLAKINESS: a reviewed sibling task
+# was rejected for hard-asserting a specific calibration VERDICT, which depends on
+# stochastic model output, so this step follows the same contract as f3-f5/k3 above
+# (run.sh:1089-1090) — assert only that the exit stays in {0,1} (2 is a hard failure)
+# and that the report structure renders/parses; LOG, never gate on, the verdict itself.
+# --group selects ONLY the continuous basket's `baseline` variant: one task, reps=5 (a
+# fixed property of basket-continuous.yaml, not live variance), which sits BELOW the
+# default self-check floor (need = 2*min-support = 2*3 = 6) — so this call is
+# deterministically `sufficient: false` with no `split` block. f7 below flips that with
+# --min-support 2, proving threshold-flag passthrough on the identical evidence.
+rc=0
+catacomb calibrate --runs-dir "$runs2" \
+	--group label:basket=e2e-continuous,variant=baseline --format json \
+	>"$artifacts/calibrate-continuous.json" 2>"$artifacts/calibrate-continuous.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+	pass "calibrate continuous baseline: exit $rc (0 or 1, never operational-error 2)"
+else
+	failrec "calibrate continuous baseline: exit $rc (want 0 or 1, never operational-error 2)"
+	sed 's/^/        stderr: /' "$artifacts/calibrate-continuous.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$artifacts/calibrate-continuous.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+errs = []
+for field in ("runs", "min_support", "sufficient", "thresholds"):
+    if field not in rep:
+        errs.append(f"missing top-level field {field!r}")
+if rep.get("runs") != 5:
+    errs.append(f"runs={rep.get('runs')!r} want 5 (basket-continuous.yaml reps=5, one task, variant=baseline)")
+if rep.get("sufficient") is not False:
+    errs.append(f"sufficient={rep.get('sufficient')!r} want False (5 runs < default need 2*min_support=6)")
+if "split" in rep:
+    errs.append(f"split present on a below-floor (k<need) report: {rep['split']!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"calibrate continuous baseline (default min-support 3): runs={rep['runs']} sufficient={rep['sufficient']} "
+      f"detail={rep.get('detail')!r} (report renders/parses; below self-check floor at reps=5 — see f7)")
+PY
+record "$rc" "calibrate continuous baseline --json parses; report structure renders (runs/min_support/sufficient/thresholds)"
+
+echo "== f7. calibrate --min-support 2 (threshold passthrough): flips sufficient=true, A/A-split renders =="
+# Lowering --min-support to 2 drops the self-check floor to need=2*2=4 <= 5 runs, so this
+# call over the IDENTICAL evidence as f6 is deterministically `sufficient: true` and emits
+# a populated `split` block — proof --min-support threads from the CLI flag into
+# calibrate.Calibrate's own floor (a structural contrast against f6's below-floor result,
+# not a claim about which way the model's A/A split actually swung). Per the
+# LIVE-FLAKINESS contract the split VERDICT value is only logged, never asserted — it is
+# one of regress.Verdict's four values and the A/A outcome is stochastic model output.
+rc=0
+catacomb calibrate --runs-dir "$runs2" \
+	--group label:basket=e2e-continuous,variant=baseline --format json --min-support 2 \
+	>"$artifacts/calibrate-continuous-minsupport.json" 2>"$artifacts/calibrate-continuous-minsupport.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+	pass "calibrate --min-support 2: exit $rc (0 or 1, never operational-error 2)"
+else
+	failrec "calibrate --min-support 2: exit $rc (want 0 or 1, never operational-error 2)"
+	sed 's/^/        stderr: /' "$artifacts/calibrate-continuous-minsupport.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$artifacts/calibrate-continuous-minsupport.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+errs = []
+if rep.get("runs") != 5:
+    errs.append(f"runs={rep.get('runs')!r} want 5 (same evidence as f6)")
+if rep.get("min_support") != 2:
+    errs.append(f"min_support={rep.get('min_support')!r} want 2 (--min-support flag passthrough)")
+if (rep.get("thresholds") or {}).get("min_support") != 2:
+    errs.append(f"thresholds.min_support={(rep.get('thresholds') or {}).get('min_support')!r} want 2 (echoed threshold)")
+if rep.get("sufficient") is not True:
+    errs.append(f"sufficient={rep.get('sufficient')!r} want True (5 runs >= need 2*min_support=4 at --min-support 2)")
+split = rep.get("split")
+known_verdicts = {"ok", "regression", "notable", "insufficient"}
+if split is None:
+    errs.append("split missing on a sufficient report")
+else:
+    if split.get("verdict") not in known_verdicts:
+        errs.append(f"split.verdict={split.get('verdict')!r} not one of {sorted(known_verdicts)}")
+    for field in ("first_n", "second_n"):
+        if field not in split:
+            errs.append(f"split missing {field!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"calibrate --min-support 2 continuous baseline: sufficient=True, A/A-split renders "
+      f"first_n={split.get('first_n')} second_n={split.get('second_n')} verdict={split.get('verdict')!r} "
+      f"(LOGGED only, not asserted — stochastic model output)")
+PY
+record "$rc" "calibrate --min-support 2: threshold passthrough flips sufficient=true; split.verdict renders as a known enum value (logged, not gated)"
+
 echo "== g. artifact smokes on live evidence (diff/subgraph on haiku; export on echo) =="
 # haiku pick (phase axis), no glob-order luck: among haiku baseline cells that bench
 # verified (manifest missing_checkpoints empty), keep those whose verify phase ALSO
