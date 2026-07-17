@@ -62,7 +62,8 @@ the evidence dir without parsing transcripts at all. Codex evidence — bench-re
 or imported — therefore flows through the whole gate with no special case.
 
 Codex persists each session as a **rollout**: an append-only JSONL file under a
-date-partitioned tree, named by the session's thread id:
+date-partitioned tree — `~/.codex/sessions`, or `$CODEX_HOME/sessions` when set,
+which is also catacomb's default `--sessions-dir` — named by the session's thread id:
 
 ```text
 ~/.codex/sessions/YYYY/MM/DD/

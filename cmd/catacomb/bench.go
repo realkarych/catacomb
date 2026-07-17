@@ -58,7 +58,7 @@ func newBenchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.failFast, "fail-fast", false, "stop at the first failing cell")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print the cell expansion and exit without executing")
 	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts")
-	cmd.Flags().StringVar(&f.sessionsDir, "sessions-dir", benchDefaultDir(home, ".codex", "sessions"), "Codex sessions dir holding rollout transcripts (runtime: codex)")
+	cmd.Flags().StringVar(&f.sessionsDir, "sessions-dir", codexSessionsDefault(home), "Codex sessions dir holding rollout transcripts (runtime: codex)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir for bench runs")
 	cmd.Flags().StringVar(&f.workspacesDir, "workspaces-dir", "", "base dir for per-cell workspace dirs (default: OS temp dir)")
 	cmd.Flags().BoolVar(&f.keepWorkspaces, "keep-workspaces", false, "keep per-cell workspace dirs after teardown (paths printed to stderr)")
@@ -70,6 +70,13 @@ func benchDefaultDir(home string, parts ...string) string {
 		return ""
 	}
 	return filepath.Join(append([]string{home}, parts...)...)
+}
+
+func codexSessionsDefault(home string) string {
+	if env := os.Getenv("CODEX_HOME"); env != "" {
+		return filepath.Join(env, "sessions")
+	}
+	return benchDefaultDir(home, ".codex", "sessions")
 }
 
 type cellRunner func(ctx context.Context, cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool)

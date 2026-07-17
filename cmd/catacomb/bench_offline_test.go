@@ -615,6 +615,31 @@ func TestBenchDefaultDir(t *testing.T) {
 	assert.Equal(t, filepath.Join("/home", "a", "b"), benchDefaultDir("/home", "a", "b"))
 }
 
+func TestCodexSessionsDefault(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	assert.Equal(t, filepath.Join("/home", ".codex", "sessions"), codexSessionsDefault("/home"))
+	assert.Empty(t, codexSessionsDefault(""))
+
+	custom := filepath.Join("/custom", "codex-home")
+	t.Setenv("CODEX_HOME", custom)
+	assert.Equal(t, filepath.Join(custom, "sessions"), codexSessionsDefault("/home"))
+	assert.Equal(t, filepath.Join(custom, "sessions"), codexSessionsDefault(""))
+}
+
+func TestSessionsDirFlagDefaultHonorsCodexHome(t *testing.T) {
+	custom := filepath.Join("/custom", "codex-home")
+	t.Setenv("CODEX_HOME", custom)
+	want := filepath.Join(custom, "sessions")
+
+	benchFlag := newBenchCmd().Flags().Lookup("sessions-dir")
+	require.NotNil(t, benchFlag)
+	assert.Equal(t, want, benchFlag.DefValue)
+
+	importFlag := newImportCmd().Flags().Lookup("sessions-dir")
+	require.NotNil(t, importFlag)
+	assert.Equal(t, want, importFlag.DefValue)
+}
+
 func TestPrintOfflineEpilogue(t *testing.T) {
 	var single bytes.Buffer
 	printOfflineEpilogue(&single, bench.Basket{Name: "b", Reps: 1, Variants: []bench.Variant{{ID: "v1"}}}, "/runs")

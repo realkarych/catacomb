@@ -5,14 +5,14 @@ Looking for the basket file schema (tasks, variants, verify, …)? See
 
 Catacomb has no config file and no daemon to configure. Every setting is a command-line
 flag with a sensible default; the only environment variables are the two `bench` uses to
-tag runs.
+tag runs, plus `CODEX_HOME`, which relocates the default Codex sessions dir.
 
 ## Default paths
 
 | Setting | Default | Used by | Override |
 | --- | --- | --- | --- |
 | Claude projects dir (transcripts) | `~/.claude/projects` | `bench` | `--projects-dir` |
-| Codex sessions dir (rollout transcripts) | `~/.codex/sessions` | `bench` (`runtime: codex`), `import` | `--sessions-dir` |
+| Codex sessions dir (rollout transcripts) | `~/.codex/sessions` (or `$CODEX_HOME/sessions` when set) | `bench` (`runtime: codex`), `import` | `--sessions-dir` |
 | Evidence runs dir | `~/.catacomb/runs` | `bench`, `regress`, `baseline set` | `--runs-dir` |
 | SQLite store | `~/.catacomb/catacomb.db` | `baseline`, `regress` (`name:`/`--record`), `trends` | `--db` |
 | Bench manifest | `<basket>.manifest.jsonl` | `bench` | `--manifest` |
@@ -26,6 +26,7 @@ commands that need them error out with exit `2` until the flags are set explicit
 | --- | --- |
 | `CATACOMB_LABELS` | Comma-separated `k=v` list of ambient run labels. `bench` reads it and merges the pairs under each cell's own `basket`/`task`/`variant`/`rep` labels (cell labels win per key); the merged set is recorded in the cell's evidence `meta.json` and matched by `label:` selectors. Keys must match `[a-z0-9_.-]{1,64}`; values are capped at 256 bytes. |
 | `CATACOMB_RUN_ID` | Set *by* `bench` in each cell's child environment (alongside the merged `CATACOMB_LABELS`) to the cell's run-id, so tooling running inside the cell can correlate itself with the evidence directory. |
+| `CODEX_HOME` | When set, the `--sessions-dir` default for `bench` and `import` becomes `$CODEX_HOME/sessions` instead of `~/.codex/sessions` — mirroring the Codex CLI, which honors the same variable when writing rollouts. |
 
 ## The store
 

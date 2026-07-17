@@ -53,7 +53,7 @@ func newImportCmd() *cobra.Command {
 	cmd.Flags().IntVar(&f.rep, "rep", 1, "repetition index")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "evidence dir name (default: import-<basket>-<task>-<variant>-r<rep>)")
 	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts")
-	cmd.Flags().StringVar(&f.sessionsDir, "sessions-dir", benchDefaultDir(home, ".codex", "sessions"), "Codex sessions dir holding rollout transcripts (runtime: codex)")
+	cmd.Flags().StringVar(&f.sessionsDir, "sessions-dir", codexSessionsDefault(home), "Codex sessions dir holding rollout transcripts (runtime: codex)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir")
 	cmd.Flags().StringVar(&f.labels, "label", "", "extra ambient labels merged under cell labels (k=v, comma-separated)")
 	return cmd

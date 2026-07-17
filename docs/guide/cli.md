@@ -57,7 +57,7 @@ catacomb bench <basket.yaml> [flags]
 | `--fail-fast` | false | Stop at the first failing cell |
 | `--dry-run` | false | Print the cell expansion table and exit without executing |
 | `--projects-dir` | `~/.claude/projects` | Claude projects directory holding session transcripts |
-| `--sessions-dir` | `~/.codex/sessions` | Codex sessions directory holding rollout transcripts (for a [`runtime: codex`](basket.md#top-level-fields) basket) |
+| `--sessions-dir` | `~/.codex/sessions` (or `$CODEX_HOME/sessions` when set) | Codex sessions directory holding rollout transcripts (for a [`runtime: codex`](basket.md#top-level-fields) basket) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory for bench runs |
 | `--workspaces-dir` | OS temp dir | Base directory for per-cell workspace dirs (see [Workspace isolation](#workspace-isolation)) |
 | `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
@@ -356,7 +356,7 @@ catacomb import <basket.yaml> --task <id> --variant <id> \
 | `--rep` | `1` | Repetition index, recorded as the `rep` label |
 | `--run-id` | `import-<basket>-<task>-<variant>-r<rep>` | Evidence dir name under `--runs-dir` |
 | `--projects-dir` | `~/.claude/projects` | Claude projects dir holding session transcripts (for `--session-id`) |
-| `--sessions-dir` | `~/.codex/sessions` | Codex sessions dir holding rollout transcripts (for `--session-id` under `runtime: codex`) |
+| `--sessions-dir` | `~/.codex/sessions` (or `$CODEX_HOME/sessions` when set) | Codex sessions dir holding rollout transcripts (for `--session-id` under `runtime: codex`) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory |
 | `--label` | (none) | Extra ambient labels merged under the cell labels (`k=v`, comma-separated) |
 
@@ -430,8 +430,9 @@ to `.jsonl.zst` when cold; catacomb reads both forms (see
 [Runtimes](ingestion.md#runtimes)). The two input modes become:
 
 - `--session-id <thread-id>` resolves the rollout under `--sessions-dir` (default
-  `~/.codex/sessions`). The session id here is Codex's **thread id**: `codex exec
-  --json` announces it as the first `thread.started` event on stdout, and it is the
+  `~/.codex/sessions`, or `$CODEX_HOME/sessions` when set). The session id here is
+  Codex's **thread id**: `codex exec --json` announces it as the first
+  `thread.started` event on stdout, and it is the
   trailing UUID of the rollout filename. Subagent rollouts are discovered anywhere
   under `--sessions-dir` by the `parent_thread_id` recorded in each child's first line
   — transitively, so nested subagents come along — and land in evidence as
