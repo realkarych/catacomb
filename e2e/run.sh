@@ -25,6 +25,12 @@
 # Cost: ~$3–7 of real API spend (105 bench cells: presence/continuous/sql +
 # subagent/skill/mcp production baskets on sonnet; subagent cells spawn children).
 #
+# An OPTIONAL codex leg (basket-codex.yaml: 6 live `codex exec` cells on
+# gpt-5.4-mini, ~$0.05-equivalent) runs after the claude baskets when the codex
+# CLI is present AND authenticated (stored `codex login` or CODEX_API_KEY), and
+# SKIPS cleanly otherwise — the overall exit is unaffected. Codex reports token
+# counts but no dollar cost, so the leg never contributes to the cost total.
+#
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
 #                   Its directory is also prepended to PATH so the in-run MCP
@@ -36,6 +42,9 @@
 #                       workflow). If both are set, ANTHROPIC_API_KEY takes precedence.
 #   CLAUDE_CODE_OAUTH_TOKEN   Claude Pro/Max subscription auth for `claude -p`, an
 #                       alternative to ANTHROPIC_API_KEY (generate: `claude setup-token`).
+#   CODEX_API_KEY   optional OpenAI auth for the codex leg's `codex exec` cells;
+#                   when it is absent and no stored `codex login` exists, the
+#                   codex leg skips (never fatal).
 #
 # The bench cells resolve `./presence.sh` / `./answer.sh` and `mcp.json` relative to
 # the e2e directory, so this driver cd's into its own directory before invoking bench
@@ -91,14 +100,16 @@ runs3="$work/runs-sql"
 runs4="$work/runs-subagent"
 runs5="$work/runs-skill"
 runs6="$work/runs-mcp"
+runs7="$work/runs-codex"
 manifest1="$work/manifest-presence.jsonl"
 manifest2="$work/manifest-continuous.jsonl"
 manifest3="$work/manifest-sql.jsonl"
 manifest4="$work/manifest-subagent.jsonl"
 manifest5="$work/manifest-skill.jsonl"
 manifest6="$work/manifest-mcp.jsonl"
+manifest7="$work/manifest-codex.jsonl"
 db="$work/e2e.db"
-mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6"
+mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7"
 
 # The SQL basket's agent reads a seeded database and its verifier reads the golden; both
 # live here in the work dir, OUTSIDE every cell's per-cell workspace — the documented
@@ -127,6 +138,7 @@ copy_artifacts() {
 	cp -f "$manifest4" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest5" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest6" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest7" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
@@ -948,7 +960,116 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-mcp-AvA.json" || rc=$?
 record "$rc" "mcp A-vs-A reports zero regressions"
 
-echo "== v. cost report =="
+echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells) =="
+# The codex leg is OPTIONAL: unlike claude (hard-required at the top of this
+# driver), a missing or unauthenticated codex CLI SKIPS this section and leaves
+# the overall exit unaffected. Auth is probed cheapest-first:
+#   (1) `codex login status` — reads the stored credentials (a ChatGPT login or a
+#       key saved via `codex login --with-api-key`) locally, with NO network call
+#       and NO spend; exit 0 means authenticated. It cannot see env-var auth, so
+#   (2) when it fails and CODEX_API_KEY is set (the CI path: e2e-live.yml exports
+#       the secret unconditionally, absent -> empty -> this arm is skipped), one
+#       minimal live `codex exec` ping (gpt-5.4-mini, low reasoning effort, 60s
+#       cap) verifies the key end-to-end — codex only honors CODEX_API_KEY on
+#       `exec`, so a real exec is the cheapest reliable check. That ping is
+#       token-billed and counted in the spend note below.
+# The basket mirrors basket-continuous on the codex runtime: `main` answers
+# tersely, `candidate` reasons verbosely (a tokens_out growth a regress SHOULD
+# eventually flag) — but with n=3 on a brand-new runtime the verdict is LOGGED,
+# not asserted (gather calibration data first); only exit 2 — regress itself
+# erroring — fails. Rollouts land under the DEFAULT --sessions-dir
+# (~/.codex/sessions), exactly where live `codex exec` writes them — the codex
+# analogue of the claude baskets' default-projects-dir contract.
+codex_ping_probe() {
+	if command -v timeout >/dev/null 2>&1; then
+		timeout 60 codex exec -m gpt-5.4-mini -c model_reasoning_effort=low --skip-git-repo-check --json "ping" </dev/null >/dev/null 2>&1
+	else
+		codex exec -m gpt-5.4-mini -c model_reasoning_effort=low --skip-git-repo-check --json "ping" </dev/null >/dev/null 2>&1
+	fi
+}
+codex_leg_ran=0
+codex_probe_paid=0
+if ! command -v codex >/dev/null 2>&1; then
+	skip "codex live leg: codex CLI not on PATH (npm install -g @openai/codex) — leg not run, overall exit unaffected"
+elif codex login status >/dev/null 2>&1; then
+	echo "  [info] codex auth: stored login (codex login status — no-spend probe)"
+	codex_leg_ran=1
+elif [ -n "${CODEX_API_KEY:-}" ] && codex_ping_probe; then
+	echo "  [info] codex auth: CODEX_API_KEY verified via one live exec ping (token-billed, counted in the spend note)"
+	codex_leg_ran=1
+	codex_probe_paid=1
+else
+	skip "codex live leg: codex unauthenticated (no stored login; CODEX_API_KEY unset or rejected) — leg not run, overall exit unaffected"
+fi
+
+if [ "$codex_leg_ran" -eq 1 ]; then
+	run_expect 0 "bench codex basket (6 live codex exec cells)" -- \
+		catacomb bench basket-codex.yaml --runs-dir "$runs7" --manifest "$manifest7"
+	rc=0
+	python3 - "$manifest7" <<'PY' || rc=$?
+import json, os, sys
+
+entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+errs = []
+if len(entries) != 6:
+    errs.append(f"expected 6 cells (1 task x 2 variants x 3 reps), got {len(entries)}")
+for e in entries:
+    rid = e.get("run_id", "?")
+    if not e.get("marked"):
+        errs.append(f"{rid}: not marked (thread.started peek -> rollout resolution failed) note={e.get('note','')}")
+    if e.get("exit_code") != 0:
+        errs.append(f"{rid}: exit_code={e.get('exit_code')} note={e.get('note','')}")
+    if not e.get("session_id"):
+        errs.append(f"{rid}: empty session_id note={e.get('note','')}")
+    if "cost_usd" in e:
+        errs.append(f"{rid}: cost_usd present in the manifest (codex reports no dollar cost; want the key absent)")
+    ev = e.get("evidence_dir", "")
+    if not ev or not os.path.isdir(ev):
+        errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+        continue
+    try:
+        meta = json.load(open(os.path.join(ev, "meta.json")))
+    except (OSError, ValueError) as ex:
+        errs.append(f"{rid}: meta.json unreadable: {ex}")
+        continue
+    rt = (meta.get("env") or {}).get("agent_runtime")
+    if rt != "codex":
+        errs.append(f"{rid}: meta agent_runtime={rt!r} (want 'codex')")
+if errs:
+    print("codex manifest assertion failures:", file=sys.stderr)
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"codex manifest OK: {len(entries)} cells marked, all exit 0, session ids + "
+      f"evidence present, agent_runtime=codex stamped on every meta, no cost_usd")
+PY
+	record "$rc" "codex manifest: 6/6 marked, exit 0, session+evidence present, every meta stamps agent_runtime=codex"
+
+	echo "-- codex regress (main vs candidate): must render + --json must parse; verdict logged, NOT asserted --"
+	rc=0
+	catacomb regress --runs-dir "$runs7" \
+		--baseline label:basket=e2e-codex,variant=main \
+		--candidate label:basket=e2e-codex,variant=candidate \
+		>"$artifacts/regress-codex.txt" 2>&1 || rc=$?
+	if [ "$rc" -le 1 ] && [ -s "$artifacts/regress-codex.txt" ]; then
+		pass "codex regress renders (exit $rc; 0 and 1 both acceptable)"
+	else
+		failrec "codex regress render failed (exit $rc, want 0 or 1 with output; report: $artifacts/regress-codex.txt)"
+	fi
+	rc=0
+	catacomb regress --runs-dir "$runs7" \
+		--baseline label:basket=e2e-codex,variant=main \
+		--candidate label:basket=e2e-codex,variant=candidate --json \
+		>"$artifacts/regress-codex.json" 2>/dev/null || rc=$?
+	if [ "$rc" -le 1 ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$artifacts/regress-codex.json" 2>/dev/null; then
+		pass "codex regress --json parses (exit $rc; 0 and 1 both acceptable)"
+	else
+		failrec "codex regress --json failed (exit $rc, want 0 or 1 with parseable json: $artifacts/regress-codex.json)"
+	fi
+	echo "  [info] codex main-vs-candidate: overall_verdict=$(verdict_of "$artifacts/regress-codex.json") (informational — n=3 on a new runtime, calibration data only)"
+fi
+
+echo "== w. cost report =="
 python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$artifacts/cost.txt" <<'PY'
 import json, sys
 
@@ -967,6 +1088,19 @@ for p in sys.argv[1:7]:
 open(sys.argv[7], "w").write(f"total live spend: ${total:.2f}\n")
 print(f"total live spend: ${total:.2f}")
 PY
+# The codex leg is token-billed and codex reports NO cost_usd, so it can never be
+# part of the dollar total above — note it separately so the spend record is honest.
+if [ "$codex_leg_ran" -eq 1 ]; then
+	codex_probe_note=""
+	if [ "$codex_probe_paid" -eq 1 ]; then
+		codex_probe_note=" + 1 auth-probe ping"
+	fi
+	codex_note="codex leg: 6 cells${codex_probe_note} on gpt-5.4-mini — token-billed, no reported dollar cost (excluded from the total above)"
+else
+	codex_note="codex leg: skipped (no codex spend)"
+fi
+echo "$codex_note"
+printf '%s\n' "$codex_note" >>"$artifacts/cost.txt"
 
 echo "== summary =="
 if [ "${#failures[@]}" -eq 0 ]; then
