@@ -426,6 +426,141 @@ print(f"trends --json: {len(hits)}/{len(entries)} entries carry record.project==
 PY
 record "$rc" "--project e2e-live stamps the recorded history row; trends --json surfaces it at record.project"
 
+echo "== e2. paired axis (--paired-test sign|wilcoxon) on the pooled presence selector =="
+# Dropping ",task=haiku" from the selector pools BOTH presence tasks (haiku, echo) into
+# one regress call. regress/paired.go's pairedTasks() matches baseline/candidate by
+# aggregate.TaskStats.Task, so >=2 distinct task ids are required before the paired axis
+# has anything to pair; the narrower task=haiku selector used in steps c-e never had more
+# than 1 task and so could never exercise this axis at all.
+#
+# CAUTION (live-flakiness): basket-presence.yaml's PairedMinTasks default is 5 (see
+# regress.DefaultThresholds), but only 2 task ids exist here — so the paired axis is NOT
+# reachable at default settings (matched=2 < 5), on EITHER test. That is fine: a paired
+# finding still renders (verdict="insufficient", not filtered — regress.filterFindings
+# only drops scope!="total" findings whose verdict IS "ok"), proving --paired-test
+# wilcoxon/sign are wired end to end on real evidence. What we do NOT do is hard-assert a
+# paired VERDICT (regression/ok) here — that depends on live model variance and, at this
+# task count, can never fire anyway. The deterministic sign-vs-wilcoxon verdict FLIP is
+# proved hermetically over fixed fixtures with 6 tasks in 82-wilcoxon.sh.
+rc=0
+catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,variant=baseline \
+	--candidate label:basket=e2e-presence,variant=degraded \
+	--paired-test wilcoxon --json \
+	>"$artifacts/regress-presence-paired-wilcoxon.json" 2>"$artifacts/regress-presence-paired-wilcoxon.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+	pass "paired wilcoxon (pooled haiku+echo): flag accepted (exit $rc)"
+else
+	failrec "paired wilcoxon (pooled haiku+echo): flag accepted (exit $rc, want 0 or 1)"
+	sed 's/^/        stderr: /' "$artifacts/regress-presence-paired-wilcoxon.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$artifacts/regress-presence-paired-wilcoxon.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+paired = [f for f in rep.get("findings", []) if f.get("scope") == "paired"]
+if not paired:
+    print("no paired-scope finding rendered; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict")}, file=sys.stderr)
+    sys.exit(1)
+print("--paired-test wilcoxon renders " + str(len(paired)) + " paired-scope finding(s): "
+      + ", ".join(f"{f['metric']}={f['verdict']}" for f in paired))
+PY
+record "$rc" "--paired-test wilcoxon --json renders >=1 paired-scope finding on the pooled haiku+echo selector"
+
+rc=0
+catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,variant=baseline \
+	--candidate label:basket=e2e-presence,variant=degraded \
+	--paired-test sign --json \
+	>"$artifacts/regress-presence-paired-sign.json" 2>"$artifacts/regress-presence-paired-sign.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+	pass "paired sign (pooled haiku+echo): flag accepted (exit $rc)"
+else
+	failrec "paired sign (pooled haiku+echo): flag accepted (exit $rc, want 0 or 1)"
+	sed 's/^/        stderr: /' "$artifacts/regress-presence-paired-sign.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$artifacts/regress-presence-paired-sign.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+paired = [f for f in rep.get("findings", []) if f.get("scope") == "paired"]
+if not paired:
+    print("no paired-scope finding rendered; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict")}, file=sys.stderr)
+    sys.exit(1)
+print("--paired-test sign renders " + str(len(paired)) + " paired-scope finding(s): "
+      + ", ".join(f"{f['metric']}={f['verdict']}" for f in paired))
+PY
+record "$rc" "--paired-test sign --json renders >=1 paired-scope finding on the pooled haiku+echo selector"
+
+# LOG only (not asserted): the sign-vs-wilcoxon per-metric verdict comparison on THIS
+# live evidence. At 2 matched tasks (< PairedMinTasks=5) both tests report the SAME
+# "insufficient" verdict on every metric regardless of model output, so there is nothing
+# to gate on here; a real flip needs >=5 matched tasks, which this basket does not have.
+python3 - "$artifacts/regress-presence-paired-wilcoxon.json" "$artifacts/regress-presence-paired-sign.json" <<'PY'
+import json, sys
+
+
+def paired(path):
+    rep = json.load(open(path))
+    return {f["metric"]: f["verdict"] for f in rep.get("findings", []) if f.get("scope") == "paired"}
+
+
+wil, sig = paired(sys.argv[1]), paired(sys.argv[2])
+print(f"  [info] paired axis per-metric verdicts: wilcoxon={wil!r} sign={sig!r} (logged only, not gated — see 82-wilcoxon.sh for the asserted flip on deterministic fixtures)")
+PY
+
+echo "== e3. --paired-min-tasks 3 --paired-alpha 0.15: paired axis reports NOT reachable =="
+# Deterministic regardless of live model output: regress/paired.go's pairedSensitivity
+# matches tasks by id across the baseline/candidate groups, requiring
+# TaskStats.Runs>=MinSupport(3) on both sides. basket-presence.yaml's 2 task ids (haiku,
+# echo) each ran 5 reps/variant with exit_code==0 for all 30 cells (already asserted in
+# step b), so exactly 2 tasks are ALWAYS matched here, independent of any model verdict.
+#
+# regress/paired.go's smallestFiringTasks() = max(--paired-min-tasks,
+# minUnanimousTasks(--paired-alpha)), where minUnanimousTasks(alpha) is the smallest n
+# with 2^-n <= alpha. At alpha=0.15: 2^-2=0.25 > 0.15 but 2^-3=0.125 <= 0.15, so
+# minUnanimousTasks(0.15)=3 — matching --paired-min-tasks 3 exactly, so BOTH flags bind
+# the same floor (3) and neither is redundant with the other. 2 matched tasks stays below
+# that floor, so the axis reports reachable=false with min_tasks==3 (proving both flags
+# parsed and took effect, not just accepted as no-ops).
+rc=0
+catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,variant=baseline \
+	--candidate label:basket=e2e-presence,variant=degraded \
+	--paired-test sign --paired-min-tasks 3 --paired-alpha 0.15 --json \
+	>"$artifacts/regress-presence-paired-mintasks.json" 2>"$artifacts/regress-presence-paired-mintasks.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+	pass "paired-min-tasks 3 + paired-alpha 0.15: flags accepted (exit $rc)"
+else
+	failrec "paired-min-tasks 3 + paired-alpha 0.15: flags accepted (exit $rc, want 0 or 1)"
+	sed 's/^/        stderr: /' "$artifacts/regress-presence-paired-mintasks.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$artifacts/regress-presence-paired-mintasks.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+sens = rep.get("sensitivity") or {}
+paired = sens.get("paired")
+if paired is None:
+    print(f"sensitivity.paired absent; sensitivity was {sens!r} (want paired.reachable=false)", file=sys.stderr)
+    sys.exit(1)
+if paired.get("reachable") is not False:
+    print(f"sensitivity.paired.reachable={paired.get('reachable')!r} want False (2 matched tasks < 3)", file=sys.stderr)
+    sys.exit(1)
+if paired.get("min_tasks") != 3:
+    print(f"sensitivity.paired.min_tasks={paired.get('min_tasks')!r} want 3 (max(--paired-min-tasks 3, minUnanimousTasks(0.15)=3))", file=sys.stderr)
+    sys.exit(1)
+print(f"--paired-min-tasks 3 --paired-alpha 0.15: sensitivity.paired={paired!r} (not reachable, min_tasks=3, as designed)")
+PY
+record "$rc" "--paired-min-tasks 3 --paired-alpha 0.15: sensitivity reports the paired axis NOT reachable at min_tasks=3 (deterministic on matched-task COUNT, independent of live model verdicts)"
+
 echo "== f. bench continuous basket + continuous gate =="
 run_expect 0 "bench continuous basket" -- \
 	catacomb bench basket-continuous.yaml --runs-dir "$runs2" --manifest "$manifest2"
