@@ -272,6 +272,174 @@ func TestRenderJSONSensitivityRoundTrip(t *testing.T) {
 	assert.Equal(t, rep.Sensitivity.ErrorRate, got.Sensitivity.ErrorRate)
 }
 
+func TestRenderMarkdownGolden(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	RenderMarkdown(sampleReport(), &buf)
+	golden, err := os.ReadFile("testdata/golden_report.md")
+	require.NoError(t, err)
+	assert.Equal(t, string(golden), buf.String())
+}
+
+func TestRenderMarkdownHeadline(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		verdict Verdict
+		want    string
+	}{
+		{VerdictRegression, "**Verdict: ❌ regression**"},
+		{VerdictOK, "**Verdict: ✅ ok**"},
+		{VerdictImprovement, "**Verdict: ✅ improvement**"},
+		{VerdictInsufficient, "**Verdict: ⚠️ insufficient**"},
+		{VerdictNotable, "**Verdict: ⚠️ notable**"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.verdict), func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			RenderMarkdown(Report{OverallVerdict: tc.verdict}, &buf)
+			assert.True(t, strings.HasPrefix(buf.String(), tc.want+"\n\n"), buf.String())
+		})
+	}
+}
+
+func TestRenderMarkdownRunsAndCoverageLine(t *testing.T) {
+	t.Parallel()
+	rep := Report{BaselineRuns: 3, CandidateRuns: 7, Coverage: Coverage{Steps: 0.5, Phases: 0.75}, OverallVerdict: VerdictOK}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	assert.Contains(t, buf.String(), "baseline 3 runs · candidate 7 runs · coverage steps 0.50 phases 0.75\n")
+}
+
+func TestRenderMarkdownSensitivityBlockquote(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		BaselineRuns: 3, CandidateRuns: 3, OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:   RateSensitivity{Reachable: false, MinFullFlipRuns: 4},
+			ErrorRate:  RateSensitivity{Reachable: false, MinFullFlipRuns: 0},
+			Annotation: &RateSensitivity{Reachable: false, MinFullFlipRuns: 6},
+			Paired:     &PairedSensitivity{Reachable: false, MinTasks: 5},
+		},
+	}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	assert.Contains(t, buf.String(),
+		"> ⚠️ gate cannot fire at this support: full flip needs k>=4 presence, full flip unreachable error_rate, full flip needs k>=6 annotation, paired gate needs k>=5 tasks\n")
+}
+
+func TestRenderMarkdownSensitivityReachableSilent(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictOK,
+		Sensitivity: &Sensitivity{
+			Presence:   RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			ErrorRate:  RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			Annotation: &RateSensitivity{Reachable: true, MinFullFlipRuns: 3},
+			Paired:     &PairedSensitivity{Reachable: true, MinTasks: 5},
+		},
+	}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	assert.NotContains(t, buf.String(), "gate cannot fire")
+	buf.Reset()
+	RenderMarkdown(Report{OverallVerdict: VerdictOK}, &buf)
+	assert.NotContains(t, buf.String(), "gate cannot fire")
+}
+
+func TestRenderMarkdownFindingRowPresenceNormalized(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictRegression,
+		Findings: []Finding{{
+			Scope: "phase", Key: "pa", Name: "alpha", Metric: "presence",
+			Verdict: VerdictRegression, Baseline: 0.0, Candidate: 0.667, BandLo: 0, BandHi: 0.20,
+		}},
+	}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	assert.Contains(t, buf.String(), "| regression | phase | pa | alpha | presence | 1.00 | 0.33 | [0.80, 1.00] | - |\n")
+}
+
+func TestRenderMarkdownPipeEscaped(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictRegression,
+		Findings: []Finding{{
+			Scope: "total", Key: "k|1", Name: "n|2", Metric: "ann:a|b",
+			Verdict: VerdictRegression, Baseline: 1, Candidate: 0,
+			Detail: "ones 5/5 -> 2/5 | flaky",
+		}},
+	}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	assert.Contains(t, buf.String(), `| regression | total | k\|1 | n\|2 | ann:a\|b | 1.00 | 0.00 | - | ones 5/5 -> 2/5 \| flaky |`)
+}
+
+func TestRenderMarkdownEmptyFindingsHeaderOnly(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	RenderMarkdown(Report{OverallVerdict: VerdictOK}, &buf)
+	want := "**Verdict: ✅ ok**\n\n" +
+		"baseline 0 runs · candidate 0 runs · coverage steps 0.00 phases 0.00\n\n" +
+		"| Verdict | Scope | Key | Name | Metric | Baseline | Candidate | Band | Detail |\n" +
+		"|---|---|---|---|---|---|---|---|---|\n"
+	assert.Equal(t, want, buf.String())
+}
+
+func TestRenderMarkdownDetailsBlock(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictOK,
+		Reliability: &Reliability{
+			Baseline:  GroupReliability{Tasks: []TaskReliability{{Task: "a", N: 1, Ones: 1, PassK: []float64{1}}}, KMax: 1, Mean: []float64{1}},
+			Candidate: GroupReliability{Tasks: []TaskReliability{{Task: "a", N: 1, Ones: 0, PassK: []float64{0}}}, KMax: 1, Mean: []float64{0}},
+		},
+		Audit: &Audit{
+			Baseline:  []CellFlag{{RunID: "r1", Task: "t1", Metric: "cost_usd", Value: 5, Median: 2, Band: 1}},
+			Candidate: []CellFlag{{RunID: "r2", Metric: "duration_ms", Value: 9000, Median: 1000, Band: 500}},
+		},
+	}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "\n<details>\n<summary>reliability &amp; audit</summary>\n\n")
+	assert.Contains(t, out, "reliability (baseline): pass^1 1.00 (1 task)\n")
+	assert.Contains(t, out, "reliability (candidate): pass^1 0.00 (1 task)\n")
+	assert.Contains(t, out, "audit: baseline run r1 (task t1) cost_usd 5 vs group median 2 (band 1)\n")
+	assert.Contains(t, out, "audit: candidate run r2 duration_ms 9000 vs group median 1000 (band 500)\n")
+	assert.True(t, strings.HasSuffix(out, "\n</details>\n"), out)
+}
+
+func TestRenderMarkdownDetailsAuditOnly(t *testing.T) {
+	t.Parallel()
+	rep := Report{
+		OverallVerdict: VerdictOK,
+		Audit:          &Audit{Baseline: []CellFlag{{RunID: "r1", Metric: "cost_usd", Value: 5, Median: 2, Band: 1}}},
+	}
+	var buf bytes.Buffer
+	RenderMarkdown(rep, &buf)
+	out := buf.String()
+	assert.Contains(t, out, "<details>")
+	assert.Contains(t, out, "audit: baseline run r1 cost_usd 5 vs group median 2 (band 1)\n")
+	assert.NotContains(t, out, "reliability (")
+}
+
+func TestRenderMarkdownOmitsDetailsWhenBothNil(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	RenderMarkdown(sampleReport(), &buf)
+	assert.NotContains(t, buf.String(), "<details>")
+}
+
+func TestRenderMarkdownDeterministic(t *testing.T) {
+	t.Parallel()
+	var first, second bytes.Buffer
+	RenderMarkdown(sampleReport(), &first)
+	RenderMarkdown(sampleReport(), &second)
+	assert.Equal(t, first.Bytes(), second.Bytes())
+}
+
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) {
