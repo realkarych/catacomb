@@ -332,7 +332,11 @@ runs:
             echo "::error::catacomb regress --format json failed unexpectedly (exit $json_rc)"
             exit "$json_rc"
           fi
-          verdict="$(jq -r '.overall_verdict' "$report_json")"
+          if [ -s "$report_json" ]; then
+            verdict="$(jq -r '.overall_verdict' "$report_json")"
+          else
+            verdict=""
+          fi
         fi
         {
           echo "verdict=$verdict"

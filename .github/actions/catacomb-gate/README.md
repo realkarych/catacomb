@@ -108,7 +108,10 @@ gates against different baselines keep separate comments. Only comments
 authored by a bot account are candidates for the update (the default
 `GITHUB_TOKEN` posts as `github-actions[bot]`), so a user who plants the
 marker in their own comment cannot get it overwritten by — or mistaken
-for — the gate's verdict.
+for — the gate's verdict. Consequently, a personal access token passed as
+`github-token` posts comments as a **User**, which this bot-only matching
+never finds, so every run stacks a new comment — stick with the default
+`${{ github.token }}` (`GITHUB_TOKEN`) or a GitHub App token.
 
 ## Supply chain
 

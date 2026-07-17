@@ -136,4 +136,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pip install zizmor==1.26.1
-          zizmor --no-progress .github/workflows/
+          zizmor --no-progress .github/workflows/ .github/actions/
