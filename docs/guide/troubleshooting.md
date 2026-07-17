@@ -20,3 +20,19 @@ behind most of these.
 | `warning: transcript Claude Code/Codex version … is newer than tested …` | The agent CLI outran this binary's tested version ceiling (one per runtime) — upgrade catacomb; see [Format drift](privacy-and-operations.md#format-drift) |
 | `brew` installed an older version than the latest release | Run `brew update && brew upgrade --cask catacomb`; brew, apt, and docker converge within minutes of a release, while `go install` serves the tag immediately |
 | Offline `catacomb verify` cannot find the verifier script | Basket paths resolve against the basket file's directory, not your shell's cwd — keep the verifier next to the basket and reference it as `./verify.py`. See [basket.md](basket.md) |
+
+## Platform support
+
+Linux, macOS, and Windows. Unit tests run on all three in CI, and the Windows
+binary is additionally smoke-tested end-to-end: a `windows-latest` job
+([`windows-smoke.yml`](../../.github/workflows/windows-smoke.yml)) builds
+`catacomb.exe` and drives a real `bench → verify → regress` loop against a
+Python fake agent on every PR, asserting the gate's exit codes.
+
+The bundled hermetic E2E fixtures under [`e2e/`](../../e2e/) are Unix-shell
+based (bash + sqlite3) and do not run on native Windows. On Windows, write
+basket task and verify commands as argv arrays that need no shell — `python`
+scripts or `.exe` binaries, as in
+[`e2e/windows/`](../../e2e/windows/) — or run the Unix fixtures under WSL.
+`catacomb bench` spawns commands directly (no shell interpretation), so any
+runnable program works the same on every platform.

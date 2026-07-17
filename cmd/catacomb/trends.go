@@ -120,8 +120,11 @@ func decodeRecords(results []model.RegressResult) ([]seqRecord, error) {
 		if err := json.Unmarshal(r.Body, &rec); err != nil {
 			return nil, fmt.Errorf("trends: malformed record body at seq %d: %w", r.Seq, err)
 		}
-		if rec.V != regress.RecordVersion {
-			return nil, fmt.Errorf("trends: record at seq %d has version %d, but this binary understands version %d (upgrade catacomb)", r.Seq, rec.V, regress.RecordVersion)
+		if rec.V > regress.RecordVersion {
+			return nil, fmt.Errorf("trends: record at seq %d has version %d, but this binary understands versions up to %d (upgrade catacomb)", r.Seq, rec.V, regress.RecordVersion)
+		}
+		if rec.V < 1 {
+			return nil, fmt.Errorf("trends: record at seq %d has invalid version %d (want 1 through %d)", r.Seq, rec.V, regress.RecordVersion)
 		}
 		out = append(out, seqRecord{seq: r.Seq, rec: rec, body: r.Body})
 	}

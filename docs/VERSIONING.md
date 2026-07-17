@@ -6,11 +6,11 @@ Catacomb follows [SemVer 2.0.0](https://semver.org). Releases are annotated tags
 
 For version arithmetic, catacomb's "public API" is the union of these seven contracts. A change is *breaking* iff it can invalidate a working user setup — a basket, a verifier, recorded evidence, a baseline, or a script parsing our output:
 
-1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and `--json` output shapes. Human-readable table output is *not* a contract; `--json` is.
+1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and `--json` output shapes. Human-readable table output is *not* a contract; `--json` is. Statistical-test selectors are flags like any other (e.g. `regress --paired-test`, default `sign`): changing a selector's default silently changes verdicts and is breaking.
 2. **Basket YAML schema** — field names, types, validation semantics (`KnownFields` means any rename is breaking by construction).
 3. **Verifier exec contract** — `CATACOMB_*` env vars, the scores-JSONL dialect (including reserved `verifier.pass` and provenance fields), `verify.json` ledger shape, artifact capture semantics.
 4. **Evidence layout** — directory structure under a runs dir, `meta.json` schema (field removal/retyping is breaking; addition is not).
-5. **Store** — baseline and record bodies, and schema migrations. A lossless auto-migration is compatible; a migration that drops or rewrites user data is breaking.
+5. **Store** — baseline and record bodies, and schema migrations. A lossless auto-migration is compatible; a migration that drops or rewrites user data is breaking. Record bodies carry a schema version `v` (`regress.RecordVersion`, currently `2` — v2 added the optional `project` identity stamp for fleet-side joins); bumps are additive-only, and readers accept every version from 1 through their own, so recorded history never needs a migration.
 6. **Key schemes** — `stepkey`/`phasekey` scheme identity. A scheme change silently mis-aligns every existing baseline; version stamps + `--strict` refuse it at runtime, and it is always MAJOR (pre-1.0: always MINOR, never PATCH).
 7. **Python SDKs** — the public API of `catacomb-verifier` and `catacomb-judge` (`integrations/`); they version with the repo.
 
