@@ -15,6 +15,24 @@ import (
 	"github.com/realkarych/catacomb/store"
 )
 
+type runGraphLoadMode int
+
+const (
+	loadFullGraphs runGraphLoadMode = iota
+	loadForAggregation
+)
+
+func (mode runGraphLoadMode) prune(rg *aggregate.RunGraph) {
+	if mode != loadForAggregation {
+		return
+	}
+	for _, n := range rg.Nodes {
+		n.Payload = nil
+		n.Attrs = nil
+		n.Sources = nil
+	}
+}
+
 func validateLabelTerms(terms []string) error {
 	for _, term := range terms {
 		for _, seg := range strings.Split(term, ",") {
@@ -26,13 +44,13 @@ func validateLabelTerms(terms []string) error {
 	return nil
 }
 
-func resolveSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, sel string) ([]aggregate.RunGraph, model.Baseline, error) {
+func resolveSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, sel string, mode runGraphLoadMode) ([]aggregate.RunGraph, model.Baseline, error) {
 	kind, val, err := parseSelector(sel)
 	if err != nil {
 		return nil, model.Baseline{}, operational(err)
 	}
 	if kind == selectorName {
-		return resolveNameSelectorRunsDir(errOut, dbPath, runsDir, pricer, val)
+		return resolveNameSelectorRunsDir(errOut, dbPath, runsDir, pricer, val, mode)
 	}
 	if verr := validateLabelTerms(strings.Split(val, ",")); verr != nil {
 		return nil, model.Baseline{}, operational(verr)
@@ -51,6 +69,7 @@ func resolveSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer red
 		if rerr != nil {
 			return nil, model.Baseline{}, operational(rerr)
 		}
+		mode.prune(&rg)
 		group = append(group, rg)
 	}
 	if len(group) == 0 {
@@ -59,7 +78,7 @@ func resolveSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer red
 	return group, model.Baseline{}, nil
 }
 
-func resolveNameSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, name string) ([]aggregate.RunGraph, model.Baseline, error) {
+func resolveNameSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer reduce.Pricer, name string, mode runGraphLoadMode) ([]aggregate.RunGraph, model.Baseline, error) {
 	s, err := openReadStore(store.OpenSQLiteReadOnly, dbPath)
 	if err != nil {
 		return nil, model.Baseline{}, operational(err)
@@ -78,7 +97,7 @@ func resolveNameSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer
 	if b.RunsDir != "" && b.RunsDir != runsDir {
 		fmt.Fprintf(errOut, "warning: baseline %q recorded runs-dir %q; using --runs-dir %q\n", name, b.RunsDir, runsDir)
 	}
-	group, err := runGroupFromDirs(runsDir, name, b.RunIDs, pricer)
+	group, err := runGroupFromDirs(runsDir, name, b.RunIDs, pricer, mode)
 	if err != nil {
 		return nil, model.Baseline{}, err
 	}
@@ -88,7 +107,7 @@ func resolveNameSelectorRunsDir(errOut io.Writer, dbPath, runsDir string, pricer
 	return group, b, nil
 }
 
-func runGroupFromDirs(runsDir, name string, ids []string, pricer reduce.Pricer) ([]aggregate.RunGraph, error) {
+func runGroupFromDirs(runsDir, name string, ids []string, pricer reduce.Pricer, mode runGraphLoadMode) ([]aggregate.RunGraph, error) {
 	group := make([]aggregate.RunGraph, 0, len(ids))
 	for _, id := range ids {
 		dir := filepath.Join(runsDir, id)
@@ -100,6 +119,7 @@ func runGroupFromDirs(runsDir, name string, ids []string, pricer reduce.Pricer) 
 		if err != nil {
 			return nil, operational(fmt.Errorf("regress name:%s: run %q dir %q: %w", name, id, dir, err))
 		}
+		mode.prune(&rg)
 		group = append(group, rg)
 	}
 	return group, nil

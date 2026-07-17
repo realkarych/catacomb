@@ -523,6 +523,7 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--json` | false | Emit the full report as JSON |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
+| `--project` | (empty) | Project identity stamped into the recorded history row (`project` in the record body) for fleet-level joins; requires `--record` |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
 | `--scores` | (none) | JSONL file of external scores applied as node annotations before comparison (see [Gating on external scores](#gating-on-external-scores)) |
 | `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
@@ -552,6 +553,11 @@ directories under `--runs-dir`:
   and dir. A baseline records the runs dir it was resolved from; when the `--runs-dir`
   flag names a different directory, a stderr warning notes the recorded dir and the
   flag wins.
+
+Both loaders strip node payloads before the groups are held for aggregation — the
+gate never reads them — so `regress` memory scales with graph structure, not
+transcript size; see [Scale](privacy-and-operations.md#scale) for the measured
+envelope.
 
 Groups are aggregated and compared per
 [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
@@ -783,7 +789,10 @@ The store must already exist: `--record` requires a `name:` baseline, and resolv
 against an absent store fails first (exit `2`), so the store is created by
 [`baseline set`](#baseline-set), never by `--record`. Each record carries the version
 stamps of the recording binary (catacomb version and step-key scheme) in its body
-alongside the report.
+alongside the report. With `--project <id>` the body also carries a stable project
+identity, so histories exported from many repositories can be joined fleet-side; see
+[Roll up a fleet](workflows.md#roll-up-a-fleet). `--project` without `--record` is an
+operational error (exit `2`) — the stamp has nowhere to land.
 
 Sequence numbers are assigned atomically in a single statement, so a record is never
 silently overwritten. But concurrent `--record` writers against one store file — a
@@ -845,12 +854,15 @@ a spliced history is never read as a continuous one.
 
 `--json` emits the raw stored history verbatim as `[{"seq":N,"record":<stored bytes>}]`:
 each `record` is the exact JSON body that was written, byte-for-byte, not a
-re-encoding. A body carries a schema version field `v` (currently `1`), the candidate
-selector, thresholds, annotation specs, the report, its own `created_at` (RFC3339 UTC),
-a `baseline_created_at` stamp mirroring the baseline's `created_at` at record time, and
+re-encoding. A body carries a schema version field `v` (currently `2`; the schema is
+additive-only, and every version from `1` through the current one still renders), the
+candidate selector, the `project` identity when recorded with
+[`--project`](#regress) (records written without it lack the field), thresholds,
+annotation specs, the report, its own `created_at` (RFC3339 UTC), a
+`baseline_created_at` stamp mirroring the baseline's `created_at` at record time, and
 the recording binary's version `stamps` (catacomb version and step-key scheme; records
 written before stamps existed lack the field) — ready for dashboards or diffing
-scripts. A record whose `v` is not understood by this binary is an exit-`2` error
+scripts. A record whose `v` is newer than this binary understands is an exit-`2` error
 naming the sequence and version (upgrade catacomb).
 
 ### Accuracy-vs-cost Pareto
@@ -1035,14 +1047,16 @@ so review them before shipping a pack to an external service. Alongside the run 
   `--sample` value), `runs` (the sampled IDs), and `created_at`.
 - `INSTRUCTIONS.md` — a fixed template for the external inspector: what the bundle
   contains, what to look for (shortcuts, gaming, tool misuse, fabricated results), and
-  the exact scores-JSONL contract for returning findings.
+  the exact scores-JSONL contract for returning findings, provenance included.
 
 The return loop is the existing scores boundary — nothing new to integrate. The
 inspector (a human, or an LLM driven outside catacomb — the judge prompt and spend are
-the user's business) writes one JSONL line per run-level finding:
+the user's business) writes one JSONL line per run-level finding, stamped with a
+`tool` field naming the judge that produced it (optional `tool_version` and
+`prompt_hash` refine the provenance):
 
 ```json
-{"key":"audit.clean","value":1,"run_id":"<run id>"}
+{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>"}
 ```
 
 and the findings gate like any other [run-level score](#run-level-scores):
@@ -1051,7 +1065,10 @@ and the findings gate like any other [run-level score](#run-level-scores):
 catacomb regress --scores findings.jsonl --annotation audit.clean:higher-better ...
 ```
 
-(`:lower-better` when a higher value is worse). See
+(`:lower-better` when a higher value is worse). The gate ignores the provenance
+fields, but they let the same file feed `catacomb-judge agreement` and
+`catacomb-judge panel` first — calibrating or aggregating the judge before its
+scores gate (see [Calibrating a judge](workflows.md#calibrating-a-judge)). See
 [Auditing cells](workflows.md#auditing-cells) for the full loop.
 
 Exit codes: `0` success (stdout reports `packed N of M runs into <out>`), `2`
