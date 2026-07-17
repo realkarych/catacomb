@@ -102,6 +102,30 @@ def paired(report):
 wil_paired = paired(wil)
 sig_paired = paired(sig)
 
+
+# regress.Report.Sensitivity (json:"sensitivity,omitempty") is how the paired axis's
+# reachability (regress.PairedSensitivity.Reachable, json:"reachable", vs. MinTasks,
+# json:"min_tasks") surfaces in --json. Because of omitempty, regress.computeSensitivity
+# returns nil -- dropping the ENTIRE "sensitivity" key -- once every axis (presence,
+# error_rate, paired) is reachable; confirmed empirically against the built binary by
+# forcing only 4 matched tasks (< PairedMinTasks=5), which surfaces
+# "sensitivity":{"paired":{"reachable":false,"min_tasks":5},...}. This scenario's 6
+# matched tasks (t1..t6) are >= PairedMinTasks=5 on BOTH invocations (matched tasks
+# don't depend on --paired-test), so "sensitivity" must be absent -- or, if present for
+# some other reason, its "paired" must say reachable=true -- on both sides.
+def paired_reachable(report):
+    sens = report.get("sensitivity")
+    if sens is None:
+        return True
+    paired_sens = sens.get("paired")
+    return paired_sens is None or paired_sens["reachable"]
+
+
+if not paired_reachable(wil):
+    errs.append(f"wilcoxon: paired axis NOT reachable: {wil.get('sensitivity')!r}")
+if not paired_reachable(sig):
+    errs.append(f"sign: paired axis NOT reachable: {sig.get('sensitivity')!r}")
+
 wil_duration = [f for f in wil_paired if f["metric"] == "duration_ms"]
 if len(wil_duration) != 1:
     errs.append(f"wilcoxon: want exactly 1 paired/duration_ms finding, got {wil_duration!r}")
@@ -118,6 +142,10 @@ else:
 # verdict is not "ok". The sign run's paired/duration_ms verdict IS "ok" (pReg=7/64 ~=
 # 0.1094 > 0.05), so it must be ABSENT from findings entirely -- proving the flag alone,
 # not the evidence (identical between the two invocations), flips the outcome.
+# Combined with the paired-axis-reachable check above (both sides had >= PairedMinTasks
+# matched tasks), this absence can only mean "computed and ok" -- not "the paired test
+# never ran" or "too few matched tasks to fire" -- ruling out a false read from broken
+# task pairing.
 sig_duration = [f for f in sig_paired if f["metric"] == "duration_ms"]
 if sig_duration:
     errs.append(f"sign: paired/duration_ms present {sig_duration!r} want ABSENT (verdict ok is filtered)")
