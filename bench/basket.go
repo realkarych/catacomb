@@ -443,9 +443,9 @@ func (b Basket) Cells() []Cell {
 		return nil
 	}
 	cells := make([]Cell, 0, len(b.Tasks)*len(b.Variants)*b.Reps)
-	for _, t := range b.Tasks {
-		for _, v := range b.Variants {
-			for rep := 1; rep <= b.Reps; rep++ {
+	for rep := 1; rep <= b.Reps; rep++ {
+		for _, t := range b.Tasks {
+			for _, v := range b.Variants {
 				cells = append(cells, Cell{
 					Task:    t,
 					Variant: v,

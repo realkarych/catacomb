@@ -154,12 +154,12 @@ func TestCellsExpansionOrderAndDerivation(t *testing.T) {
 
 	wantRunIDs := []string{
 		"bench-checkout-add-item-baseline-r1",
-		"bench-checkout-add-item-baseline-r2",
 		"bench-checkout-add-item-candidate-r1",
-		"bench-checkout-add-item-candidate-r2",
 		"bench-checkout-remove-item-baseline-r1",
-		"bench-checkout-remove-item-baseline-r2",
 		"bench-checkout-remove-item-candidate-r1",
+		"bench-checkout-add-item-baseline-r2",
+		"bench-checkout-add-item-candidate-r2",
+		"bench-checkout-remove-item-baseline-r2",
 		"bench-checkout-remove-item-candidate-r2",
 	}
 	for i, c := range cells {
@@ -182,6 +182,36 @@ func TestCellsExpansionOrderAndDerivation(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"basket": "checkout", "task": "remove-item", "variant": "candidate", "rep": "2",
 	}, last.Labels)
+}
+
+func TestCellsInterleaveRepMajor(t *testing.T) {
+	b := bench.Basket{
+		Name: "il",
+		Reps: 2,
+		Tasks: []bench.Task{
+			{ID: "t1", Cmd: []string{"echo"}},
+			{ID: "t2", Cmd: []string{"echo"}},
+		},
+		Variants: []bench.Variant{{ID: "v1"}, {ID: "v2"}},
+	}
+
+	cells := b.Cells()
+	require.Len(t, cells, 8)
+
+	gotRunIDs := make([]string, len(cells))
+	for i, c := range cells {
+		gotRunIDs[i] = c.RunID
+	}
+	assert.Equal(t, []string{
+		"bench-il-t1-v1-r1",
+		"bench-il-t1-v2-r1",
+		"bench-il-t2-v1-r1",
+		"bench-il-t2-v2-r1",
+		"bench-il-t1-v1-r2",
+		"bench-il-t1-v2-r2",
+		"bench-il-t2-v1-r2",
+		"bench-il-t2-v2-r2",
+	}, gotRunIDs)
 }
 
 func TestCellsEmptyWhenNoReps(t *testing.T) {
