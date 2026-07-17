@@ -268,7 +268,19 @@ func (imp *bundleImporter) bindManifest(m bundleManifest) error {
 	if err := validateBaselineName(m.Baseline.Name); err != nil {
 		return err
 	}
+	if err := validateBundleRunIDs(m.Baseline.RunIDs); err != nil {
+		return err
+	}
 	imp.manifest = m
+	return nil
+}
+
+func validateBundleRunIDs(ids []string) error {
+	for _, id := range ids {
+		if !filepath.IsLocal(id) || strings.ContainsAny(id, `/\`) {
+			return fmt.Errorf("run id %q: %w", id, errBundleRunID)
+		}
+	}
 	return nil
 }
 
@@ -324,7 +336,10 @@ func (imp *bundleImporter) consumePayload(existing bool, runID, rel string, r io
 
 func (imp *bundleImporter) matchDisk(runID, rel, want string) error {
 	disk, err := hashFile(filepath.Join(imp.runsDir, runID, rel))
-	if err != nil || disk != want {
+	if err != nil {
+		return fmt.Errorf("existing run %q file %q: %w", runID, rel, err)
+	}
+	if disk != want {
 		return fmt.Errorf("existing run %q file %q differs from the bundle: %w", runID, rel, errBundleCollision)
 	}
 	return nil

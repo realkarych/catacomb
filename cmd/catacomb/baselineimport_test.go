@@ -220,7 +220,7 @@ func TestBaselineImportCollisions(t *testing.T) {
 	cases := []struct {
 		name    string
 		corrupt func(t *testing.T, runsDir string)
-		want    string
+		wants   []string
 	}{
 		{
 			"different content",
@@ -229,7 +229,7 @@ func TestBaselineImportCollisions(t *testing.T) {
 				p := filepath.Join(runsDir, "base-0", "session.jsonl")
 				require.NoError(t, os.WriteFile(p, []byte("tampered\n"), 0o600))
 			},
-			"base-0",
+			[]string{"different content", "base-0"},
 		},
 		{
 			"missing file",
@@ -237,7 +237,7 @@ func TestBaselineImportCollisions(t *testing.T) {
 				t.Helper()
 				require.NoError(t, os.Remove(filepath.Join(runsDir, "base-1", "meta.json")))
 			},
-			"base-1",
+			[]string{"base-1", "meta.json"},
 		},
 		{
 			"extra file",
@@ -246,7 +246,7 @@ func TestBaselineImportCollisions(t *testing.T) {
 				p := filepath.Join(runsDir, "base-0", "extra.txt")
 				require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
 			},
-			"extra.txt",
+			[]string{"different content", "extra.txt"},
 		},
 	}
 	for _, tc := range cases {
@@ -257,8 +257,9 @@ func TestBaselineImportCollisions(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			code := run(importArgs(bundle, targetDB, targetRuns), &stdout, &stderr)
 			assert.Equal(t, 2, code)
-			assert.Contains(t, stderr.String(), "different content")
-			assert.Contains(t, stderr.String(), tc.want)
+			for _, want := range tc.wants {
+				assert.Contains(t, stderr.String(), want)
+			}
 			assert.ElementsMatch(t, []string{"base-0", "base-1"}, runDirNames(t, targetRuns))
 		})
 	}
@@ -374,6 +375,30 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 			"not a regular file",
 		},
 		{
+			"run id path traversal",
+			func(t *testing.T) []byte {
+				t.Helper()
+				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("../evil"), map[string]string{}))
+			},
+			"run id is not a clean local name",
+		},
+		{
+			"run id embedded slash",
+			func(t *testing.T) []byte {
+				t.Helper()
+				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("nested/run"), map[string]string{}))
+			},
+			"run id is not a clean local name",
+		},
+		{
+			"run id embedded backslash",
+			func(t *testing.T) []byte {
+				t.Helper()
+				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline(`nested\run`), map[string]string{}))
+			},
+			"run id is not a clean local name",
+		},
+		{
 			"invalid baseline name",
 			func(t *testing.T) []byte {
 				t.Helper()
@@ -442,6 +467,26 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 			assertNoImportResidue(t, targetRuns, targetDB)
 		})
 	}
+}
+
+func TestBaselineImportHostileRunIDSentinel(t *testing.T) {
+	bundle := writeImportBundle(t, gzipTarBundle(t, importManifestEntry(t, importTestBaseline("../evil"), map[string]string{})))
+
+	err := runBaselineImport(io.Discard, store.OpenSQLite, emptyStoreDB(t), bundle, filepath.Join(t.TempDir(), "runs"))
+	require.ErrorIs(t, err, errBundleRunID)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
+func TestBaselineImportMissingDiskFileIsReadErrorNotCollision(t *testing.T) {
+	bundle, targetRuns, targetDB := importedGoldenTarget(t)
+	require.NoError(t, os.Remove(filepath.Join(targetRuns, "base-1", "meta.json")))
+
+	err := runBaselineImport(io.Discard, store.OpenSQLite, targetDB, bundle, targetRuns)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	assert.NotErrorIs(t, err, errBundleCollision)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
 }
 
 func TestBaselineImportEmptyRunsBundle(t *testing.T) {

@@ -29,6 +29,7 @@ const (
 var (
 	errBundleVersion   = errors.New("baseline bundle: format version newer than this catacomb supports")
 	errBundleEntry     = errors.New("baseline bundle: entry escapes bundle root or is not a regular file")
+	errBundleRunID     = errors.New("baseline bundle: run id is not a clean local name")
 	errBundleHash      = errors.New("baseline bundle: file hash mismatch")
 	errBundleCollision = errors.New("baseline bundle: run dir exists with different content")
 )
