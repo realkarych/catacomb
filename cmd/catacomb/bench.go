@@ -252,7 +252,7 @@ func runBenchCellInWorkdir(ctx context.Context, stdout, stderr io.Writer, cell b
 		return true, false
 	}
 	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
-	peek := newPeeker(o.runtime)
+	peek := newPeeker(offlineRuntime(o))
 	start := nowFn()
 	err := runChildLocal(ctx, stdout, stderr, cell.Task.Cmd, workdir, offlineEnv(cell, merged), peek.onLine)
 	end := nowFn()
