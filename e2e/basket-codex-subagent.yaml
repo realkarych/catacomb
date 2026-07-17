@@ -1,0 +1,40 @@
+# Codex live-subagent basket (the optional live codex leg): does asking a real
+# `codex exec` to delegate produce a real child rollout catacomb's offline
+# pipeline reduces into a "type":"subagent" node?
+#
+# 1 task x 3 variants x 5 reps = 15 live `codex exec` cells (reps 5 for base-rate
+# headroom on a discretionary signal — see below). Delegation in Codex is
+# PROMPT-DISCRETIONARY, not flag-forced: unlike Claude Code's always-available
+# Task tool, the model must choose to call spawn_agent/wait_agent, gated only by
+# instruction wording (codex-subagent-live.sh's `-c agents.max_threads=2` merely
+# raises the ceiling; it does not force the call). baseline EXPLICITLY instructs
+# spawn_agent delegation; degraded EXPLICITLY forbids it; baseline2 repeats
+# baseline as the A-vs-A twin. A live run may spawn 0/5 on baseline if the model
+# under-follows the instruction at low reasoning effort — that is expected, not a
+# bug. Consequently run.sh's live leg (Task 14) LOGS the baseline-vs-degraded
+# verdict for this basket rather than hard-asserting it; only a `regress` error
+# (exit 2) fails the leg. The hermetic mirror (58-codex-subagent.sh) proves the
+# structural reduce/regress path against deterministic fixtures and DOES assert
+# the gate there, since fixture delegation is not discretionary. If live spawn
+# rate proves too low under `low` reasoning effort, the documented lever is
+# bumping this basket's reasoning effort to `medium` (codex-subagent-live.sh).
+#
+# `dir: .` — same cwd contract as basket-codex.yaml: run.sh cd's into e2e so
+# ./codex-subagent-live.sh resolves here.
+basket: e2e-codex-subagent
+runtime: codex
+reps: 5
+tasks:
+  - id: delegate
+    cmd: ["./codex-subagent-live.sh"]
+    dir: .
+variants:
+  - id: baseline
+    env:
+      PROMPT: "You must delegate this task: call spawn_agent to create a subagent, have it count from 1 to 20 and report the final count back to you, then call wait_agent to retrieve its result and tell me the count it reported. Do not count it yourself."
+  - id: degraded
+    env:
+      PROMPT: "Count from 1 to 20 yourself and tell me the final count. Do not call spawn_agent, wait_agent, or delegate to any subagent."
+  - id: baseline2
+    env:
+      PROMPT: "You must delegate this task: call spawn_agent to create a subagent, have it count from 1 to 20 and report the final count back to you, then call wait_agent to retrieve its result and tell me the count it reported. Do not count it yourself."

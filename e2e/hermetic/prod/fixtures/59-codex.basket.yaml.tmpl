@@ -1,0 +1,17 @@
+basket: prod-codex-skill
+runtime: codex
+reps: 3
+tasks:
+  - id: skill
+    cmd: ["__PROD__/fixtures/59-fake-codex.sh"]
+    dir: __WORK__/cellwork
+    env: { FAKE_SESSIONS_DIR: "__WORK__/sessions" }
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "__REPO__/e2e/verify_emit.py"]
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/59-codex-baseline.jsonl.tmpl", FAKE_ARTIFACT: "CATACOMB-SKILL-OK" }
+  - id: degraded
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/59-codex-degraded.jsonl.tmpl" }

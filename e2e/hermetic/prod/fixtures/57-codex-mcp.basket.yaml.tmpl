@@ -1,0 +1,19 @@
+basket: prod-codex-mcp
+runtime: codex
+reps: 3
+tasks:
+  - id: probe
+    cmd: ["__PROD__/fixtures/57-fake-codex-mcp.sh"]
+    dir: __WORK__/cellwork
+    env: { FAKE_SESSIONS_DIR: "__WORK__/sessions" }
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "__REPO__/e2e/verify_emit.py"]
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/57-codex-mcp-baseline.jsonl.tmpl", FAKE_ARTIFACT: "CATACOMB-SKILL-OK" }
+  - id: degraded
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/57-codex-mcp-degraded.jsonl.tmpl" }
+  - id: baseline2
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/57-codex-mcp-baseline.jsonl.tmpl", FAKE_ARTIFACT: "CATACOMB-SKILL-OK" }
