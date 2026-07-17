@@ -8,6 +8,8 @@ into the guide.
 - **[Basket schema](guide/basket.md)** — every field you can put in a basket file.
 - **[Troubleshooting](guide/troubleshooting.md)** — symptoms and fixes.
 - **[Architecture decisions](adr/README.md)** — the ADR log.
+- **[Evaluation brief](PITCH.md)** — the case for a statistical gate: science,
+  methodology, competitive landscape, roadmap (for technical leadership).
 
 `internal/` holds **historical** development material — plans, specs, reviews, and
 agent tooling accumulated while catacomb was built, including designs for a superseded
