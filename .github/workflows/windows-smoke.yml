@@ -1,0 +1,38 @@
+name: windows-smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: Windows artifact smoke
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Build catacomb.exe
+        run: go build -o bin/catacomb.exe ./cmd/catacomb
+      # The driver is python (windows-latest ships it): a python fake agent
+      # emits stream-json, then catacomb.exe runs bench -> verify -> regress
+      # and the driver asserts the exit codes. No bash, no API, no network.
+      - name: Run the smoke pipeline (bench -> verify -> regress)
+        env:
+          CATACOMB_BIN: bin/catacomb.exe
+        run: python e2e/windows/run.py
