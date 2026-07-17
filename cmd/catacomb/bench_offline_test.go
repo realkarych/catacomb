@@ -20,6 +20,7 @@ import (
 
 	"github.com/realkarych/catacomb/bench"
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -357,8 +358,41 @@ func TestBenchEnvStamps(t *testing.T) {
 			assert.Equal(t, runtime.NumCPU(), env.Resources.CPUs)
 			assert.Equal(t, tt.wantModel, env.ModelID)
 			assert.Equal(t, tt.wantCCV, env.ClaudeCodeVersion)
+			assert.Equal(t, drift.RuntimeClaudeCode, env.AgentRuntime)
+			assert.Equal(t, tt.wantCCV, env.AgentVersion)
 		})
 	}
+}
+
+func TestCodexEnvStamps(t *testing.T) {
+	runs := []model.Run{{ID: "sess", ModelID: "gpt-5.4-mini"}}
+	env := codexEnvStamps(runs, "sess", "0.144.4", nil)
+	require.NotNil(t, env)
+	assert.Equal(t, drift.RuntimeCodex, env.AgentRuntime)
+	assert.Equal(t, "0.144.4", env.AgentVersion)
+	assert.Equal(t, "gpt-5.4-mini", env.ModelID)
+	assert.Empty(t, env.ClaudeCodeVersion)
+	assert.Nil(t, env.Workspace)
+
+	ws := &bench.Workspace{Rev: "r42", PatchSHA256: "ab34"}
+	wsEnv := codexEnvStamps(runs, "sess", "0.144.4", ws)
+	require.NotNil(t, wsEnv.Workspace)
+	assert.Equal(t, "r42", wsEnv.Workspace.Rev)
+	assert.Equal(t, "ab34", wsEnv.Workspace.PatchSHA256)
+}
+
+func TestEnvStampsFor(t *testing.T) {
+	obs := []model.Observation{{Attrs: map[string]any{"codex_version": "0.144.4"}}}
+	codexEnv := envStampsFor(drift.RuntimeCodex, nil, "sess", nil, obs)
+	assert.Equal(t, drift.RuntimeCodex, codexEnv.AgentRuntime)
+	assert.Equal(t, "0.144.4", codexEnv.AgentVersion)
+
+	claudeEnv := envStampsFor(drift.RuntimeClaudeCode, []model.Run{
+		{ID: "sess", Repro: &model.ReproMeta{ClaudeCodeVersion: "2.1.50"}},
+	}, "sess", nil, nil)
+	assert.Equal(t, drift.RuntimeClaudeCode, claudeEnv.AgentRuntime)
+	assert.Equal(t, "2.1.50", claudeEnv.AgentVersion)
+	assert.Equal(t, "2.1.50", claudeEnv.ClaudeCodeVersion)
 }
 
 func TestBenchOfflineEnvStampsInMeta(t *testing.T) {
@@ -461,6 +495,110 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestBenchCodexOfflineEndToEnd(t *testing.T) {
+	resetDriftWarnings()
+	sessions := t.TempDir()
+	runs := t.TempDir()
+	stubBenchChild(t, "HELPER_CODEX_THREAD="+codexMainThread, "HELPER_SESSIONS="+sessions)
+	basket := writeBasket(t,
+		"basket: bcx\nruntime: codex\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"codex\"]\n    checkpoints:\n      - phase:cart\nvariants:\n  - id: base\n")
+	manifestPath := filepath.Join(t.TempDir(), "m.jsonl")
+
+	before := nowFn().UTC()
+	var out, errb bytes.Buffer
+	err := runBench(t.Context(), &out, &errb, basket, benchFlags{
+		projectsDir: t.TempDir(), sessionsDir: sessions, runsDir: runs, manifest: manifestPath,
+	})
+	after := nowFn().UTC()
+	require.NoError(t, err)
+
+	entries, err := bench.Manifest{Path: manifestPath}.Completed()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entry := entries["bench-bcx-t1-base-r1"]
+	assert.True(t, entry.Marked)
+	assert.Equal(t, codexMainThread, entry.SessionID)
+	assert.Nil(t, entry.CostUSD)
+	assert.Empty(t, entry.MissingCheckpoints)
+	require.NotEmpty(t, entry.EvidenceDir)
+	assert.Contains(t, out.String(), "marked 1/1 cells")
+	assert.Contains(t, out.String(), "checkpoints[t1]: phase:cart 1/1")
+
+	meta, err := evidence.ReadMeta(entry.EvidenceDir)
+	require.NoError(t, err)
+	assert.Equal(t, codexMainThread, meta.SessionID)
+	assert.Nil(t, meta.CostUSD)
+	assert.Equal(t, "task:t1", meta.MarkerName)
+	require.NotNil(t, meta.Env)
+	assert.Equal(t, drift.RuntimeCodex, meta.Env.AgentRuntime)
+	assert.Equal(t, "0.144.4", meta.Env.AgentVersion)
+	assert.Equal(t, "gpt-5.4-mini", meta.Env.ModelID)
+	assert.Empty(t, meta.Env.ClaudeCodeVersion)
+	assert.WithinRange(t, meta.MarkerStart, before.Add(-time.Second), after.Add(time.Second))
+	assert.WithinRange(t, meta.MarkerEnd, meta.MarkerStart, after.Add(time.Second))
+
+	require.FileExists(t, filepath.Join(entry.EvidenceDir, "session.jsonl"))
+	require.FileExists(t, filepath.Join(entry.EvidenceDir, "subagents", "agent-"+codexChildThread+".jsonl"))
+}
+
+func TestBenchCodexCLISessionsDirFlag(t *testing.T) {
+	resetDriftWarnings()
+	sessions := t.TempDir()
+	runs := t.TempDir()
+	stubBenchChild(t, "HELPER_CODEX_THREAD="+codexMainThread, "HELPER_SESSIONS="+sessions)
+	basket := writeBasket(t, "basket: bcli\nruntime: codex\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"codex\"]\nvariants:\n  - id: base\n")
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"bench", basket, "--runs-dir", runs, "--sessions-dir", sessions, "--manifest", manifest}, &stdout, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	assert.Contains(t, stdout.String(), "marked 1/1 cells")
+}
+
+func TestBenchCodexDryRun(t *testing.T) {
+	basket := writeBasket(t, "basket: b\nruntime: codex\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"codex\"]\nvariants:\n  - id: v1\n  - id: v2\n")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"bench", basket, "--dry-run"}, &stdout, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	assert.Contains(t, stdout.String(), "bench-b-t1-v1-r1")
+	assert.Contains(t, stdout.String(), "bench-b-t1-v2-r1")
+}
+
+func TestBenchCodexNoThreadIDNote(t *testing.T) {
+	stubBenchChild(t, "HELPER_SESSION=sess-ignored")
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"codex"}}, bench.Variant{ID: "base"})
+	entry, failed, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{runtime: drift.RuntimeCodex, sessionsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Equal(t, "no session id observed", entry.Note)
+	assert.Empty(t, entry.SessionID)
+	assert.Nil(t, entry.CostUSD)
+	assert.False(t, failed)
+	assert.False(t, verified)
+}
+
+func TestBenchCodexResolveTimeoutNote(t *testing.T) {
+	restore := sleepFn
+	sleepFn = func(time.Duration) {}
+	t.Cleanup(func() { sleepFn = restore })
+	stubBenchChild(t, "HELPER_CODEX_THREAD=ghost-thread")
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"codex"}}, bench.Variant{ID: "base"})
+	entry, _, verified := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{runtime: drift.RuntimeCodex, sessionsDir: t.TempDir(), runsDir: t.TempDir()})
+	assert.Contains(t, entry.Note, "transcripts not found")
+	assert.Equal(t, "ghost-thread", entry.SessionID)
+	assert.False(t, verified)
+	assert.Empty(t, entry.EvidenceDir)
+}
+
+func TestBenchCodexMissingSessionsDirIsOperational(t *testing.T) {
+	basket := writeBasket(t, "basket: b\nruntime: codex\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"codex\"]\nvariants:\n  - id: v1\n")
+	var out, errb bytes.Buffer
+	err := runBench(t.Context(), &out, &errb, basket,
+		benchFlags{projectsDir: t.TempDir(), sessionsDir: "", runsDir: t.TempDir()})
+	require.ErrorIs(t, err, errBenchCodexDirs)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
 func TestBenchOfflineMissingDirsIsOperational(t *testing.T) {
 	basket := writeBasket(t, "basket: b\nreps: 1\ntasks:\n  - id: t1\n    cmd: [\"x\"]\nvariants:\n  - id: v1\n")
 	var out, errb bytes.Buffer
@@ -475,6 +613,31 @@ func TestBenchDefaultDir(t *testing.T) {
 	assert.Empty(t, benchDefaultDir(""))
 	assert.Empty(t, benchDefaultDir("", "a", "b"))
 	assert.Equal(t, filepath.Join("/home", "a", "b"), benchDefaultDir("/home", "a", "b"))
+}
+
+func TestCodexSessionsDefault(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	assert.Equal(t, filepath.Join("/home", ".codex", "sessions"), codexSessionsDefault("/home"))
+	assert.Empty(t, codexSessionsDefault(""))
+
+	custom := filepath.Join("/custom", "codex-home")
+	t.Setenv("CODEX_HOME", custom)
+	assert.Equal(t, filepath.Join(custom, "sessions"), codexSessionsDefault("/home"))
+	assert.Equal(t, filepath.Join(custom, "sessions"), codexSessionsDefault(""))
+}
+
+func TestSessionsDirFlagDefaultHonorsCodexHome(t *testing.T) {
+	custom := filepath.Join("/custom", "codex-home")
+	t.Setenv("CODEX_HOME", custom)
+	want := filepath.Join(custom, "sessions")
+
+	benchFlag := newBenchCmd().Flags().Lookup("sessions-dir")
+	require.NotNil(t, benchFlag)
+	assert.Equal(t, want, benchFlag.DefValue)
+
+	importFlag := newImportCmd().Flags().Lookup("sessions-dir")
+	require.NotNil(t, importFlag)
+	assert.Equal(t, want, importFlag.DefValue)
 }
 
 func TestPrintOfflineEpilogue(t *testing.T) {
@@ -499,6 +662,12 @@ func TestHelperBenchChild(t *testing.T) {
 	if os.Getenv("HELPER_EXIT1") == "1" {
 		os.Exit(1)
 	}
+	if tid := os.Getenv("HELPER_CODEX_THREAD"); tid != "" {
+		writeHelperCodexRollouts(tid)
+		fmt.Printf("{\"type\":\"thread.started\",\"thread_id\":%q}\n", tid)
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}`)
+		os.Exit(0)
+	}
 	sid := os.Getenv("HELPER_SESSION")
 	writeHelperTranscript(sid)
 	if sid != "" {
@@ -506,6 +675,25 @@ func TestHelperBenchChild(t *testing.T) {
 	}
 	fmt.Println(`{"type":"result","total_cost_usd":0.01}`)
 	os.Exit(0)
+}
+
+func writeHelperCodexRollouts(threadID string) {
+	root := os.Getenv("HELPER_SESSIONS")
+	if root == "" {
+		return
+	}
+	day := filepath.Join(root, "2026", "07", "16")
+	if err := os.MkdirAll(day, 0o700); err != nil {
+		os.Exit(1)
+	}
+	main := filepath.Join(day, codexRolloutName(threadID))
+	if err := os.WriteFile(main, []byte(codexMainBody("0.144.4", threadID)), 0o600); err != nil {
+		os.Exit(1)
+	}
+	child := filepath.Join(day, codexRolloutName(codexChildThread))
+	if err := os.WriteFile(child, []byte(codexChildBody("0.144.4", codexChildThread, threadID)), 0o600); err != nil {
+		os.Exit(1)
+	}
 }
 
 func writeHelperTranscript(sid string) {

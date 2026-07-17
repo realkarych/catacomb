@@ -61,6 +61,7 @@ func defaultEcho() ThresholdsEcho {
 		AnnotationRateDelta: 0.1,
 		PairedAlpha:         0.05,
 		PairedMinTasks:      5,
+		PairedTest:          "sign",
 		AuditIQRFactor:      3.0,
 		AuditRelDelta:       0.5,
 	}
@@ -99,6 +100,7 @@ func TestThresholdsEchoMirrorsEveryRegressThresholdsField(t *testing.T) {
 		AnnotationRateDelta: 8,
 		PairedAlpha:         9,
 		PairedMinTasks:      10,
+		PairedTest:          "wilcoxon",
 		AuditIQRFactor:      11,
 		AuditRelDelta:       12,
 	}

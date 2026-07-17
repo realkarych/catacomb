@@ -132,6 +132,37 @@ on a lock), or give each shard its own store file. Concurrent `--record` writers
 can collide on SQLite's write lock and fail loudly with `SQLITE_BUSY` (exit `2`, no corruption)
 rather than queue.
 
+### Ship the baseline to CI
+
+A `name:` baseline is two halves — the store row and the pinned evidence dirs — and an
+ephemeral CI runner starts with neither. Move both as one artifact: export the bundle once
+(and again on every golden refresh), store it where the job can fetch it (a CI artifact, a
+release asset, the object store your CI already uses), and import it at job start:
+
+```sh
+# once, on the machine that pinned the baseline
+catacomb baseline export checkout-main --out checkout-main.tar.gz
+
+# at job start, on the ephemeral runner
+catacomb baseline import checkout-main.tar.gz --db catacomb.db --runs-dir runs
+catacomb regress --db catacomb.db --runs-dir runs \
+  --baseline name:checkout-main \
+  --candidate label:basket=checkout,variant=candidate
+```
+
+The bundle is byte-deterministic and hash-verified on import (see
+[`baseline export`](cli.md#baseline-export) / [`import`](cli.md#baseline-import)): the same
+golden group restores bit-identically on every runner, and a corrupted or tampered artifact
+fails the job with exit `2` instead of gating against damaged evidence. Import rewrites the
+baseline's recorded runs dir to the local `--runs-dir`, so the gate resolves without a
+runs-dir warning. The bundle carries the baseline and its evidence only — recorded
+`--record`/`trends` history stays a persistent-store concern.
+
+The alternative — committing `catacomb.db` and the baseline's `runs/` tree to the repository
+(or uploading and restoring both halves by hand) — still works, but it bloats the repo,
+invites binary-database merge conflicts, and ties no integrity check between the row and the
+evidence it references; prefer the bundle.
+
 ### Gate sensitivity at small k
 
 The rate gate (presence, error rate) hard-flags a `regression` only when the baseline and
@@ -213,7 +244,8 @@ extent the recorded comparisons share the task basket: the table marks baseline 
 
 `trends` reads the store read-only; see [`trends`](cli.md#trends) for the full table shapes, the
 [Pareto column and JSON semantics](cli.md#accuracy-vs-cost-pareto), the `--json` form, and exit
-codes.
+codes. Running many repositories? Stamp each recorded comparison with `--project` and join the
+exports fleet-side — see [Roll up a fleet](#roll-up-a-fleet).
 
 ### Self-check your gate
 
@@ -573,8 +605,10 @@ judge, its prompt, and its budget stay outside, the same boundary as
    ```
 
    The prompt, the model, and the spend are yours; catacomb only defines the contract:
-   one JSONL line per run-level finding, an `audit.`-prefixed key, a numeric value, and
-   the `run_id` it applies to — `{"key":"audit.clean","value":1,"run_id":"<run id>"}`.
+   one JSONL line per run-level finding, an `audit.`-prefixed key, a numeric value, the
+   `run_id` it applies to, and a `tool` field naming the judge that produced the line
+   (optionally `tool_version` and `prompt_hash` too) —
+   `{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>"}`.
 
 4. **Gate the findings.** The returned file is an ordinary [`--scores`](cli.md#gating-on-external-scores)
    file, and `--annotation` declares the gate direction:
@@ -588,18 +622,32 @@ judge, its prompt, and its budget stay outside, the same boundary as
 
    When every value is `0`/`1` the key gates as a rate (the same Wilson-bounds rule as
    `verifier.pass`); a key scored on only one side reports `insufficient` rather than
-   guessing, so partial audits surface instead of silently passing.
+   guessing, so partial audits surface instead of silently passing. And because each
+   finding carries `tool` provenance, the same file can first be calibrated against a
+   gold set or aggregated across several reviewers via `catacomb-judge` before it
+   gates — see [Calibrating a judge](#calibrating-a-judge).
 
 ## Calibrating a judge
 
+The scores this section calibrates are exactly the provenance-stamped findings a
+[`pack` audit](#auditing-cells) — or any external judge writing the same scores-JSONL
+dialect — produces, so the full loop reads: pack the flagged cells, judge them (each
+line stamped with `tool`), calibrate the judge against a gold set
+(`agreement --min-kappa`) and/or aggregate a `panel`, then gate the calibrated scores
+with [`regress --scores`](cli.md#gating-on-external-scores). At no point does catacomb
+run a judge: it defines the provenance contract, calibrates whatever judge you bring
+against measured human agreement before that judge may gate anything, and gates
+deterministically on the result — nothing leaves your machine beyond the pack you
+chose to ship.
+
 An LLM judge is a measurement instrument, and an uncalibrated instrument should gate
-nothing. Before a judge's scores join a [`--scores` gate](cli.md#gating-on-external-scores),
-measure the judge against a small hand-labeled gold set; when single-judge agreement
-stalls, aggregate several judges into a panel instead of prompt-tuning one judge forever.
-Both utilities live in [`integrations/judge`](../../integrations/judge/README.md)
-(`catacomb-judge`, stdlib-only), read the same scores-JSONL dialect the gate consumes,
-and run fully offline — the judge itself, its prompt, and its spend stay outside
-catacomb, the same boundary as the [audit loop](#auditing-cells) above.
+nothing. Before a judge's scores join the gate, measure the judge against a small
+hand-labeled gold set; when single-judge agreement stalls, aggregate several judges
+into a panel instead of prompt-tuning one judge forever. Both utilities live in
+[`integrations/judge`](../../integrations/judge/README.md) (`catacomb-judge`,
+stdlib-only), read the same scores-JSONL dialect the gate consumes, and run fully
+offline — the judge itself, its prompt, and its spend stay outside catacomb, the same
+boundary as the audit loop above.
 
 1. **Hand-label a gold set.** One JSONL line per verdict, on the same coordinates the
    judge scored — `run_id` plus the annotation `key` (plus `step_key` for step-level
@@ -755,12 +803,53 @@ This snapshot is the input format of the
 and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 [export](cli.md#export) for flags.
 
+## Roll up a fleet
+
+One gate guards one repository; a fleet is many repositories each running their own
+gate. Catacomb deliberately ships no hosted service, collector, or daemon to aggregate
+them ([ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md)) — what it owns is
+the stable, versioned per-repo JSON contract, and the roll-up is a join in whatever
+warehouse your org already runs.
+
+Give each repository's CI a stable project id and stamp it into every recorded
+comparison (`--project` requires `--record`), then export the history from the same
+job:
+
+```sh
+catacomb regress --baseline name:golden --candidate label:variant=candidate \
+  --record --project payments-api --strict
+catacomb trends golden --json > trends-payments-api.json
+```
+
+`--project` writes a `project` field into the record body, and `trends --json` replays
+the stored bodies verbatim, so every exported row self-identifies its repository. A
+fleet job collects the per-repo files — build artifacts, an object-store bucket,
+whatever the CI already has — flattens them, and loads them into the org's warehouse
+(BigQuery, Splunk, a data lake), joining on `project`:
+
+```sh
+jq -c '.[].record' trends-*.json > fleet-records.jsonl
+```
+
+Each line is one recorded comparison carrying `project`, `created_at`, the thresholds,
+the full report, and the recording binary's version `stamps` — enough to chart verdict
+rates, cost drift, or `verifier.pass` rates across the fleet with no catacomb binary in
+the loop. The body is versioned (`v`, additive-only; see the
+[versioning policy](../VERSIONING.md)), so a loader keyed on documented fields survives
+upgrades, and records written before `--project` existed simply lack the field.
+
+The `project` stamp lives on the recorded history, not on evidence dirs. Per-run
+evidence is already labeled (`basket`, `task`, `variant`, `rep` on every [`bench`](cli.md#bench)
+cell, and [`import`](cli.md#import) `--label project=payments-api` adds free-form
+pairs), and evidence stays local to each repository's CI — only the recorded history
+JSON travels.
+
 ## Continuous live validation
 
 The offline gate is itself validated end-to-end against the real `claude -p` CLI by the
 [E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
 CI-portable rerun of the [PV-6b calibration](../internal/reviews/2026-07-08-pv6b-live-calibration.md)
-methodology. It runs three live baskets and asserts the gate's behavior on the real
+methodology. It runs a suite of live Claude baskets and asserts the gate's behavior on the real
 evidence: the A-vs-A controls must raise no presence or verifier false positives at default
 sensitivity (their continuous metrics are asserted at a widened band, since sequential
 batches drift on API latency, cost, and tokens), while a seeded checkpoint-presence
@@ -774,7 +863,11 @@ Each bench cell invokes `claude -p` with `--setting-sources project` and a stric
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
 The checkpoint (mark) and SQL (verifier) tasks run on Sonnet for instruction-following
 reliability while the step and continuous tasks stay on Haiku, which also exercises
-multi-model pricing.
+multi-model pricing. An optional Codex leg (`e2e/basket-codex.yaml`, six live
+`codex exec --json` cells on `gpt-5.4-mini`) runs after the Claude baskets when a
+signed-in `codex` CLI is on the runner's PATH and is skipped otherwise; it asserts
+rollout resolution and evidence parity but only logs its `regress` verdict —
+advisory, because A-vs-A calibration for the Codex runtime has not accumulated yet.
 
 Because it spends real API budget (~$1.7 per run), it is not part of per-PR CI: trigger it
 by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It

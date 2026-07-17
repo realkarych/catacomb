@@ -63,7 +63,7 @@ func runCalibrate(out, errOut io.Writer, mkPricer func() reduce.Pricer, f calibr
 	if f.runsDir == "" {
 		return operational(errCalibrateNoRunsDir)
 	}
-	group, _, err := resolveSelectorRunsDir(errOut, "calibrate", f.dbPath, f.runsDir, mkPricer(), f.group)
+	group, _, err := resolveSelectorRunsDir(errOut, "calibrate", f.dbPath, f.runsDir, mkPricer(), f.group, loadForAggregation)
 	if err != nil {
 		return err
 	}

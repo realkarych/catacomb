@@ -156,6 +156,28 @@ jobs:
             "ghcr.io/realkarych/catacomb:${TAG}" \
             version
 
+  smoke-windows:
+    needs: goreleaser
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    env:
+      TAG: ${{ needs.goreleaser.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Download and run the shipped Windows binary
+        run: |
+          gh release download "$env:TAG" -R "$env:GITHUB_REPOSITORY" -p "*_catacomb_windows_amd64.zip" -D dist
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $zip = Get-ChildItem dist -Filter *.zip | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath dist\unpacked
+          $exe = Get-ChildItem dist\unpacked -Recurse -Filter catacomb.exe | Select-Object -First 1
+          & $exe.FullName version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
   update-apt:
     needs: goreleaser
     runs-on: ubuntu-latest

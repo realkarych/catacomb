@@ -40,12 +40,18 @@ func resolveTranscripts(root, sessionID string) (transcriptSet, error) {
 }
 
 func resolveTranscriptsRetry(root, sessionID string, attempts int, delay time.Duration) (transcriptSet, error) {
+	return resolveWithRetry(attempts, delay, func() (transcriptSet, error) {
+		return resolveTranscripts(root, sessionID)
+	})
+}
+
+func resolveWithRetry(attempts int, delay time.Duration, resolve func() (transcriptSet, error)) (transcriptSet, error) {
 	if attempts < 1 {
 		attempts = 1
 	}
 	var last error
 	for i := 0; i < attempts; i++ {
-		ts, err := resolveTranscripts(root, sessionID)
+		ts, err := resolve()
 		if err == nil {
 			return ts, nil
 		}

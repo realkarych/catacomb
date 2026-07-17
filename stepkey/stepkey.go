@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -169,9 +170,49 @@ func salient(name string, red []byte) string {
 		return project(red, "file_path", "path")
 	case "bash":
 		return project(red, "command")
+	case "exec_command":
+		return project(red, "cmd")
+	case "apply_patch":
+		return patchSalient(red)
+	case "write_stdin":
+		return project(red, "session_id")
 	default:
 		return canon(red)
 	}
+}
+
+var patchFileDirective = regexp.MustCompile(`\*\*\* (?:Add|Update|Delete) File: (.+)`)
+
+func patchSalient(red []byte) string {
+	text, ok := patchText(red)
+	if !ok {
+		return canon(red)
+	}
+	m := patchFileDirective.FindStringSubmatch(text)
+	if m == nil {
+		return canon(red)
+	}
+	fb, _ := json.Marshal(m[1])
+	return `{"file":` + string(fb) + `}`
+}
+
+func patchText(red []byte) (string, bool) {
+	var s string
+	if err := json.Unmarshal(red, &s); err == nil {
+		return s, true
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(red, &obj); err != nil {
+		return "", false
+	}
+	raw, ok := obj["input"]
+	if !ok {
+		return "", false
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
 }
 
 func normTool(name string) string {

@@ -105,7 +105,7 @@ func TestRenderJSONThresholdsKeysAreSnakeCase(t *testing.T) {
 		"presence_delta", "error_delta", "metric_rel_delta", "iqr_factor",
 		"min_support", "coverage_floor", "z", "fail_on_notable",
 		"annotation_rate_delta", "paired_alpha", "paired_min_tasks",
-		"audit_iqr_factor", "audit_rel_delta",
+		"paired_test", "audit_iqr_factor", "audit_rel_delta",
 	}
 	assert.Len(t, th, len(want))
 	for _, key := range want {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/realkarych/catacomb/ingest/codex"
 	"github.com/realkarych/catacomb/ingest/drift"
 	ijsonl "github.com/realkarych/catacomb/ingest/jsonl"
 	"github.com/realkarych/catacomb/model"
@@ -25,18 +26,16 @@ var driftSeen = map[string]struct{}{}
 func resetDriftWarnings() { driftSeen = map[string]struct{}{} }
 
 func parseTranscripts(main string, subs []string, executionID string) ([]model.Observation, error) {
+	return parseTranscriptsFor(drift.RuntimeClaudeCode, main, subs, "", executionID)
+}
+
+func parseTranscriptsFor(rt, main string, subs []string, mainRunID, executionID string) ([]model.Observation, error) {
 	var all []model.Observation
 	var counts drift.Counts
 	for _, p := range append([]string{main}, subs...) {
-		f, err := os.Open(p)
+		obs, dc, err := parseTranscriptFile(rt, p, mainRunID, executionID)
 		if err != nil {
-			return nil, fmt.Errorf("open %s: %w", p, err)
-		}
-		var seq uint64
-		next := func() uint64 { s := seq; seq++; return s }
-		obs, dc, perr := ijsonl.Parse(f, executionID, next, func(ts time.Time) time.Time { return ts })
-		if rerr := errors.Join(perr, f.Close()); rerr != nil {
-			return nil, fmt.Errorf("read %s: %w", p, rerr)
+			return nil, err
 		}
 		counts = counts.Merge(dc)
 		all = append(all, obs...)
@@ -45,14 +44,51 @@ func parseTranscripts(main string, subs []string, executionID string) ([]model.O
 		all[i].Seq = uint64(i + 1)
 	}
 	warnDrift(counts)
-	warnVersion(maxObservedVersion(all))
+	warnVersionFor(rt, maxObservedVersionFor(rt, all))
 	return all, nil
 }
 
-func maxObservedVersion(obs []model.Observation) string {
+func parseTranscriptFile(rt, path, mainRunID, executionID string) ([]model.Observation, drift.Counts, error) {
+	r, err := openTranscript(rt, path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	var seq uint64
+	next := func() uint64 { s := seq; seq++; return s }
+	keepEventTime := func(ts time.Time) time.Time { return ts }
+	var obs []model.Observation
+	var dc drift.Counts
+	var perr error
+	if rt == drift.RuntimeCodex {
+		obs, dc, perr = codex.Parse(r, mainRunID, executionID, next, keepEventTime)
+	} else {
+		obs, dc, perr = ijsonl.Parse(r, executionID, next, keepEventTime)
+	}
+	if rerr := errors.Join(perr, r.Close()); rerr != nil {
+		return nil, nil, fmt.Errorf("read %s: %w", path, rerr)
+	}
+	return obs, dc, nil
+}
+
+func openTranscript(rt, path string) (io.ReadCloser, error) {
+	if rt == drift.RuntimeCodex {
+		return codex.Open(path)
+	}
+	return os.Open(path)
+}
+
+func runtimeVersionAttr(rt string) string {
+	if rt == drift.RuntimeCodex {
+		return "codex_version"
+	}
+	return "claude_code_version"
+}
+
+func maxObservedVersionFor(rt string, obs []model.Observation) string {
+	attr := runtimeVersionAttr(rt)
 	newest := ""
 	for _, o := range obs {
-		v, ok := o.Attrs["claude_code_version"].(string)
+		v, ok := o.Attrs[attr].(string)
 		if !ok {
 			continue
 		}
@@ -63,15 +99,24 @@ func maxObservedVersion(obs []model.Observation) string {
 	return newest
 }
 
-func warnVersion(observed string) {
-	if !drift.NewerThanTested(observed) {
+func runtimeNameAndCeiling(rt string) (string, string) {
+	if rt == drift.RuntimeCodex {
+		return "Codex", drift.TestedCodexVersion
+	}
+	return "Claude Code", drift.TestedClaudeCodeVersion
+}
+
+func warnVersionFor(rt, observed string) {
+	if !drift.NewerThanTestedFor(rt, observed) {
 		return
 	}
-	if _, ok := driftSeen[observed]; ok {
+	key := rt + " " + observed
+	if _, ok := driftSeen[key]; ok {
 		return
 	}
-	driftSeen[observed] = struct{}{}
-	fmt.Fprintf(driftOut, "warning: transcript Claude Code version %s is newer than tested %s\n", observed, drift.TestedClaudeCodeVersion)
+	driftSeen[key] = struct{}{}
+	name, tested := runtimeNameAndCeiling(rt)
+	fmt.Fprintf(driftOut, "warning: transcript %s version %s is newer than tested %s\n", name, observed, tested)
 }
 
 func warnDrift(counts drift.Counts) {
@@ -115,7 +160,11 @@ func markerObservation(sessionID, name, boundary string, at time.Time) model.Obs
 }
 
 func loadGraphOffline(main string, subs []string, executionID string, pricer reduce.Pricer, extra []model.Observation) (*reduce.Graph, error) {
-	obs, err := parseTranscripts(main, subs, executionID)
+	return loadGraphOfflineFor(drift.RuntimeClaudeCode, main, subs, "", executionID, pricer, extra)
+}
+
+func loadGraphOfflineFor(rt, main string, subs []string, mainRunID, executionID string, pricer reduce.Pricer, extra []model.Observation) (*reduce.Graph, error) {
+	obs, err := parseTranscriptsFor(rt, main, subs, mainRunID, executionID)
 	if err != nil {
 		return nil, err
 	}

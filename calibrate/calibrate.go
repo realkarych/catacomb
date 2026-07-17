@@ -30,6 +30,7 @@ type ThresholdsEcho struct {
 	AnnotationRateDelta float64 `json:"annotation_rate_delta"`
 	PairedAlpha         float64 `json:"paired_alpha"`
 	PairedMinTasks      int     `json:"paired_min_tasks"`
+	PairedTest          string  `json:"paired_test"`
 	AuditIQRFactor      float64 `json:"audit_iqr_factor"`
 	AuditRelDelta       float64 `json:"audit_rel_delta"`
 }

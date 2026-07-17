@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/evidence"
@@ -36,6 +37,31 @@ func TestWriteReadRoundtrip(t *testing.T) {
 	copied, err := os.ReadFile(filepath.Join(dir, "session.jsonl"))
 	require.NoError(t, err)
 	require.Equal(t, string(redact.Redact([]byte("{\"a\":1}")).Data)+"\n"+string(redact.Redact([]byte("{\"b\":2}")).Data)+"\n", string(copied))
+}
+
+func TestWriteDecompressesZstSources(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl.zst")
+	f, err := os.Create(src)
+	require.NoError(t, err)
+	enc, err := zstd.NewWriter(f)
+	require.NoError(t, err)
+	_, err = enc.Write([]byte("{\"a\":1}\n{\"b\":2}\n"))
+	require.NoError(t, err)
+	require.NoError(t, enc.Close())
+	require.NoError(t, f.Close())
+
+	dir := filepath.Join(t.TempDir(), "run-z")
+	require.NoError(t, evidence.Write(dir, sampleMeta("run-z", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}}))
+	copied, err := os.ReadFile(filepath.Join(dir, "session.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(copied))
+}
+
+func TestWriteCorruptZstSourceFails(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "bad.jsonl.zst")
+	require.NoError(t, os.WriteFile(src, []byte("not zstd"), 0o600))
+	err := evidence.Write(filepath.Join(t.TempDir(), "run-bz"), sampleMeta("run-bz", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}})
+	require.Error(t, err)
 }
 
 func TestWriteNestedRelAndErrors(t *testing.T) {
@@ -98,17 +124,38 @@ func TestMetaEnvJSONShape(t *testing.T) {
 				CatacombVersion:   "1.2.3",
 				ModelID:           "claude-opus-4-8",
 				ClaudeCodeVersion: "2.1.100",
+				AgentRuntime:      "claude-code",
+				AgentVersion:      "2.1.100",
 				Resources:         evidence.Resources{OS: "linux", Arch: "amd64", CPUs: 8},
 			},
 			want: map[string]any{
 				"catacomb_version":    "1.2.3",
 				"model_id":            "claude-opus-4-8",
 				"claude_code_version": "2.1.100",
+				"agent_runtime":       "claude-code",
+				"agent_version":       "2.1.100",
 				"resources":           map[string]any{"os": "linux", "arch": "amd64", "cpus": float64(8)},
 			},
 		},
 		{
-			name: "empty model and claude code version omitted",
+			name: "codex env leaves claude code version out",
+			env: &evidence.EnvStamps{
+				CatacombVersion: "1.2.3",
+				ModelID:         "gpt-5.4-mini",
+				AgentRuntime:    "codex",
+				AgentVersion:    "0.144.4",
+				Resources:       evidence.Resources{OS: "linux", Arch: "amd64", CPUs: 8},
+			},
+			want: map[string]any{
+				"catacomb_version": "1.2.3",
+				"model_id":         "gpt-5.4-mini",
+				"agent_runtime":    "codex",
+				"agent_version":    "0.144.4",
+				"resources":        map[string]any{"os": "linux", "arch": "amd64", "cpus": float64(8)},
+			},
+		},
+		{
+			name: "empty model, versions, and runtime omitted",
 			env: &evidence.EnvStamps{
 				CatacombVersion: "1.2.3",
 				Resources:       evidence.Resources{OS: "darwin", Arch: "arm64", CPUs: 1},

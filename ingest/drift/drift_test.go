@@ -58,3 +58,28 @@ func TestNewerThanTested(t *testing.T) {
 	assert.False(t, NewerThanTested("1.0.0"))
 	assert.True(t, NewerThanTested("9999.0.0"))
 }
+
+func TestRuntimeConstants(t *testing.T) {
+	require.Equal(t, "0.144.5", TestedCodexVersion)
+	require.Equal(t, "claude-code", RuntimeClaudeCode)
+	require.Equal(t, "codex", RuntimeCodex)
+}
+
+func TestNewerThanTestedFor(t *testing.T) {
+	cases := []struct {
+		name, runtime, v string
+		want             bool
+	}{
+		{"codex newer", RuntimeCodex, "0.145.0", true},
+		{"codex equal", RuntimeCodex, TestedCodexVersion, false},
+		{"codex older", RuntimeCodex, "0.133.0", false},
+		{"claude delegates", RuntimeClaudeCode, "99.0.0", true},
+		{"unknown runtime never warns", "gemini", "99.0.0", false},
+		{"empty version", RuntimeCodex, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, NewerThanTestedFor(tc.runtime, tc.v))
+		})
+	}
+}
