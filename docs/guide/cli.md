@@ -1040,14 +1040,16 @@ so review them before shipping a pack to an external service. Alongside the run 
   `--sample` value), `runs` (the sampled IDs), and `created_at`.
 - `INSTRUCTIONS.md` — a fixed template for the external inspector: what the bundle
   contains, what to look for (shortcuts, gaming, tool misuse, fabricated results), and
-  the exact scores-JSONL contract for returning findings.
+  the exact scores-JSONL contract for returning findings, provenance included.
 
 The return loop is the existing scores boundary — nothing new to integrate. The
 inspector (a human, or an LLM driven outside catacomb — the judge prompt and spend are
-the user's business) writes one JSONL line per run-level finding:
+the user's business) writes one JSONL line per run-level finding, stamped with a
+`tool` field naming the judge that produced it (optional `tool_version` and
+`prompt_hash` refine the provenance):
 
 ```json
-{"key":"audit.clean","value":1,"run_id":"<run id>"}
+{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>"}
 ```
 
 and the findings gate like any other [run-level score](#run-level-scores):
@@ -1056,7 +1058,10 @@ and the findings gate like any other [run-level score](#run-level-scores):
 catacomb regress --scores findings.jsonl --annotation audit.clean:higher-better ...
 ```
 
-(`:lower-better` when a higher value is worse). See
+(`:lower-better` when a higher value is worse). The gate ignores the provenance
+fields, but they let the same file feed `catacomb-judge agreement` and
+`catacomb-judge panel` first — calibrating or aggregating the judge before its
+scores gate (see [Calibrating a judge](workflows.md#calibrating-a-judge)). See
 [Auditing cells](workflows.md#auditing-cells) for the full loop.
 
 Exit codes: `0` success (stdout reports `packed N of M runs into <out>`), `2`
