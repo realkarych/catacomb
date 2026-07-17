@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
   schedule:
     # Mondays and Thursdays 06:00 UTC — a twice-weekly canary over the live gate,
-    # so drift surfaces within ~3 days instead of ~7.
+    # so drift surfaces within 3–4 days instead of ~7.
     - cron: "0 6 * * 1,4"
 
 permissions:
