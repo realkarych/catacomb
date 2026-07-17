@@ -367,7 +367,34 @@ print(f"decisive finding: step {h.get('name')!r} presence {h.get('verdict')} ({h
 PY
 record "$rc" "echo seeded step regression: Bash step presence drop at step scope (regression|notable)"
 
-echo "== e. baseline pin + strict record + trends =="
+echo "== d3. regress --presence-delta 1.5: seeded presence regression no longer gates the verify phase =="
+# Presence deltas are probability differences bounded in [0,1]; 1.5 exceeds the maximum
+# possible delta, so the verify-phase presence finding this step's default assertion
+# proves as a regression (step d) can mathematically never gate here — a deterministic,
+# non-live-variance-dependent contrast (unlike the continuous-metric flags below).
+catacomb regress --runs-dir "$runs1" \
+	--baseline label:basket=e2e-presence,task=haiku,variant=baseline \
+	--candidate label:basket=e2e-presence,task=haiku,variant=degraded \
+	--presence-delta 1.5 --json \
+	>"$artifacts/regress-presence-loosedelta.json" 2>/dev/null || true
+rc=0
+python3 - "$artifacts/regress-presence-loosedelta.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "phase" and f.get("name") == "verify"
+    and f.get("metric") == "presence" and f.get("verdict") in ("regression", "notable")
+]
+if hits:
+    print("phase verify presence still gates at --presence-delta 1.5:", hits, file=sys.stderr)
+    sys.exit(1)
+print("phase verify presence gate disabled at --presence-delta 1.5 (contrast vs step d's default regression)")
+PY
+record "$rc" "--presence-delta 1.5 disables the verify-phase presence gate that step d's default asserts as a regression"
+
+echo "== e. baseline pin + strict record (--project e2e-live) + trends =="
 run_expect 0 "baseline set e2e-presence-main" -- \
 	catacomb baseline set e2e-presence-main \
 	--label basket=e2e-presence,task=haiku,variant=baseline --runs-dir "$runs1" --db "$db"
@@ -375,11 +402,29 @@ run_json 1 "$artifacts/regress-presence-strict-record.json" \
 	"strict+record name:e2e-presence-main vs degraded must gate" -- \
 	catacomb regress --db "$db" --runs-dir "$runs1" \
 	--baseline name:e2e-presence-main \
-	--candidate label:basket=e2e-presence,task=haiku,variant=degraded --record --strict --json
+	--candidate label:basket=e2e-presence,task=haiku,variant=degraded \
+	--record --strict --project e2e-live --json
 rc=0
 catacomb trends e2e-presence-main --db "$db" >"$artifacts/trends-presence.txt" 2>&1 || rc=$?
 record "$rc" "trends e2e-presence-main exits 0"
 if [ -s "$artifacts/trends-presence.txt" ]; then pass "trends output non-empty"; else failrec "trends output empty"; fi
+rc=0
+catacomb trends e2e-presence-main --db "$db" --json >"$artifacts/trends-presence.json" 2>/dev/null || rc=$?
+record "$rc" "trends e2e-presence-main --json exits 0"
+rc=0
+python3 - "$artifacts/trends-presence.json" <<'PY' || rc=$?
+import json, sys
+
+entries = json.load(open(sys.argv[1]))
+hits = [e for e in entries if e.get("record", {}).get("project") == "e2e-live"]
+if not hits:
+    print("no trends entry carries record.project=='e2e-live'; entries were:", file=sys.stderr)
+    for e in entries:
+        print("  ", {"project": e.get("record", {}).get("project")}, file=sys.stderr)
+    sys.exit(1)
+print(f"trends --json: {len(hits)}/{len(entries)} entries carry record.project=='e2e-live'")
+PY
+record "$rc" "--project e2e-live stamps the recorded history row; trends --json surfaces it at record.project"
 
 echo "== f. bench continuous basket + continuous gate =="
 run_expect 0 "bench continuous basket" -- \
@@ -447,6 +492,113 @@ h = hits[0]
 print(f"decisive finding: tokens_out {h.get('baseline')} -> {h.get('candidate')} (regression, scope {h.get('scope')})")
 PY
 record "$rc" "continuous regression attributed to tokens_out growth"
+
+echo "== f2. regress --min-support 6 --strict: continuous baseline-vs-baseline2 (5 runs/group) is insufficient at floor 6 =="
+# Real behavior (cmd/catacomb/regress_test.go TestRegressStrictInsufficientExitOne):
+# --strict on an overall_verdict=insufficient report maps to exit 1 (errRegressionDetected),
+# NOT exit 2 — exit 2 is reserved for operational/parse errors (cmd/catacomb/run.go).
+# basket-continuous.yaml runs 5 reps/variant, so --min-support 6 pushes every group below
+# the trusted floor and every finding downgrades to insufficient.
+run_json 1 "$artifacts/regress-continuous-minsupport.json" \
+	"min-support 6 --strict: continuous baseline-vs-baseline2 (5 runs/group) insufficient" -- \
+	catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=baseline2 \
+	--min-support 6 --strict --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["overall_verdict"]=="insufficient" else 1)' \
+	"$artifacts/regress-continuous-minsupport.json" || rc=$?
+record "$rc" "--min-support 6 flips continuous baseline-vs-baseline2 to overall_verdict=insufficient (exit 1 under --strict)"
+
+echo "== f3. regress --iqr-factor tightened: a continuous metric band narrows vs the step f default (same evidence) =="
+# Real API duration/cost/token jitter is unpredictable in advance, so this does not assert
+# an exact verdict flip (unlike the fabricated hermetic mirror in 80-cli-contracts.sh, which
+# proves the flip deterministically). Instead it asserts the flag's DEMONSTRABLE, always-
+# computable effect on the finding itself: shrinking --iqr-factor can only narrow or hold
+# the reported band (band = max(metric-rel-delta*median, iqr-factor*IQR)), and narrows it
+# for real whenever the IQR term was contributing — virtually certain for at least one of
+# duration_ms/cost_usd/tokens_in/tokens_out/nodes across 5 independent live API replicates.
+catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=baseline2 \
+	--iqr-factor 0.01 --json \
+	>"$artifacts/regress-continuous-iqrtight.json" 2>/dev/null || true
+rc=0
+python3 - "$artifacts/regress-continuous-AvA-default.json" "$artifacts/regress-continuous-iqrtight.json" <<'PY' || rc=$?
+import json, sys
+
+def widths(path):
+    rep = json.load(open(path))
+    out = {}
+    for f in rep.get("findings", []):
+        if f.get("scope") == "total" and f.get("metric") in (
+            "duration_ms", "cost_usd", "tokens_in", "tokens_out", "nodes"
+        ):
+            out[f["metric"]] = f.get("band_hi", 0) - f.get("band_lo", 0)
+    return out
+
+default_w = widths(sys.argv[1])
+tight_w = widths(sys.argv[2])
+narrowed = {
+    m: (default_w[m], tight_w[m])
+    for m in default_w
+    if m in tight_w and tight_w[m] < default_w[m] - 1e-9
+}
+if not narrowed:
+    print(f"no continuous metric band narrowed under --iqr-factor 0.01 vs default 1.5; "
+          f"widths default={default_w!r} tight={tight_w!r}", file=sys.stderr)
+    sys.exit(1)
+print(f"iqr-factor 0.01 narrows the band on {sorted(narrowed)} vs default 1.5: {narrowed}")
+PY
+record "$rc" "--iqr-factor 0.01 narrows the total-scope band on >=1 continuous metric vs the step f default (1.5)"
+
+echo "== f4. regress --audit-iqr-factor tightened: the per-cell audit block flags a cell the default run does not =="
+# Same live-variance caveat as f3: the audit block (regress/audit.go computeAudit) is
+# purely informational (never affects overall_verdict/exit code), so this is a $0-safe,
+# best-effort check over real evidence — the hermetic mirror in 80-cli-contracts.sh proves
+# the mechanism deterministically on fabricated cells.
+catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=baseline2 \
+	--audit-iqr-factor 0.01 --json \
+	>"$artifacts/regress-continuous-auditiqr.json" 2>/dev/null || true
+rc=0
+python3 - "$artifacts/regress-continuous-AvA-default.json" "$artifacts/regress-continuous-auditiqr.json" <<'PY' || rc=$?
+import json, sys
+
+def audit_count(path):
+    a = json.load(open(path)).get("audit") or {}
+    return len(a.get("baseline") or []) + len(a.get("candidate") or [])
+
+d, t = audit_count(sys.argv[1]), audit_count(sys.argv[2])
+print(f"audit-flagged cells: default(3.0)={d} -> audit-iqr-factor(0.01)={t}")
+if t <= d:
+    print("no NEW audit-flagged cell observed under --audit-iqr-factor 0.01", file=sys.stderr)
+    sys.exit(1)
+PY
+record "$rc" "--audit-iqr-factor 0.01 grows the per-cell audit-flagged count vs the step f default (3.0)"
+
+echo "== f5. regress --audit-rel-delta tightened: the per-cell audit block flags a cell the default run does not =="
+catacomb regress --runs-dir "$runs2" \
+	--baseline label:basket=e2e-continuous,variant=baseline \
+	--candidate label:basket=e2e-continuous,variant=baseline2 \
+	--audit-rel-delta 0.01 --json \
+	>"$artifacts/regress-continuous-auditreldelta.json" 2>/dev/null || true
+rc=0
+python3 - "$artifacts/regress-continuous-AvA-default.json" "$artifacts/regress-continuous-auditreldelta.json" <<'PY' || rc=$?
+import json, sys
+
+def audit_count(path):
+    a = json.load(open(path)).get("audit") or {}
+    return len(a.get("baseline") or []) + len(a.get("candidate") or [])
+
+d, t = audit_count(sys.argv[1]), audit_count(sys.argv[2])
+print(f"audit-flagged cells: default(0.5)={d} -> audit-rel-delta(0.01)={t}")
+if t <= d:
+    print("no NEW audit-flagged cell observed under --audit-rel-delta 0.01", file=sys.stderr)
+    sys.exit(1)
+PY
+record "$rc" "--audit-rel-delta 0.01 grows the per-cell audit-flagged count vs the step f default (0.5)"
 
 echo "== g. artifact smokes on live evidence (diff/subgraph on haiku; export on echo) =="
 # haiku pick (phase axis), no glob-order luck: among haiku baseline cells that bench
@@ -771,6 +923,37 @@ print(f"decisive finding: ann:verifier.pass {hits[0].get('detail', '')} (regress
 PY
 record "$rc" "sql degraded gate attributed to ann:verifier.pass total regression"
 
+echo "== k2. regress --format markdown: sql seeded regression renders a markdown report =="
+# regress/render.go RenderMarkdown: a bold "**Verdict: <emoji> <verdict>**" header line,
+# a "baseline N runs ..." summary, the findings table (header row + one row per finding),
+# and (when Reliability/Audit are non-nil) a collapsible <details> block. No "#" headers
+# are emitted by this renderer — the bold marker and the table are the real, checkable shape.
+run_json 1 "$work/regress-sql-degraded.md" \
+	"sql seeded regression (baseline vs degraded) --format markdown" -- \
+	catacomb regress --runs-dir "$runs3" \
+	--baseline label:basket=e2e-sql,variant=baseline \
+	--candidate label:basket=e2e-sql,variant=degraded \
+	--format markdown
+rc=0
+grep -q '^\*\*Verdict: .*regression\*\*$' "$work/regress-sql-degraded.md" || rc=1
+grep -q '^| Verdict | Scope | Key | Name | Metric | Baseline | Candidate | Band | Detail |$' "$work/regress-sql-degraded.md" || rc=1
+grep -qE '^\| regression \|' "$work/regress-sql-degraded.md" || rc=1
+record "$rc" "--format markdown renders a bold '**Verdict: ... regression**' header, the findings table header, and >=1 'regression' table row"
+
+echo "== k3. regress --annotation-rate-delta 0.99: sql seeded regression still gates =="
+# Defense-in-depth: even with the annotation-rate axis nearly disabled (0.99, close to the
+# widest possible probability delta), the SAME baseline-vs-degraded comparison must still
+# gate overall. Worst case this is tight: if baseline achieves a clean 5/5 verifier.pass,
+# the bad-rate delta is exactly 1.0 (> 0.99); the one-stochastic-miss floor step j tolerates
+# (4/5) would drop the delta to 0.8, under 0.99 — a live-flakiness risk inherent to this
+# extreme threshold value, not asserted away here per the plan's explicit recipe.
+run_json 1 "$artifacts/regress-sql-ratedelta.json" \
+	"annotation-rate-delta 0.99: sql seeded regression (baseline vs degraded)" -- \
+	catacomb regress --runs-dir "$runs3" \
+	--baseline label:basket=e2e-sql,variant=baseline \
+	--candidate label:basket=e2e-sql,variant=degraded \
+	--annotation-rate-delta 0.99 --json
+
 echo "== l. sql A-vs-A control (baseline vs baseline2) must NOT gate =="
 # verifier.pass is equal across the identical variants (both ~5/5), so the annotation
 # axis never gates; only the continuous metrics can drift on live API latency/cost/token
@@ -785,6 +968,23 @@ run_json 0 "$artifacts/regress-sql-AvA.json" \
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-sql-AvA.json" || rc=$?
 record "$rc" "sql A-vs-A reports zero regressions"
+
+echo "== l2. regress --z 3.0: sql A-vs-A still reports zero regressions (non-flip smoke) =="
+# A wider one-sided Wilson z only WIDENS rate confidence intervals (regress/wilson.go),
+# making the bHi<cLo separation needed for a rate-based regression HARDER to satisfy, never
+# easier — a purely monotonic safety direction. Since step l's default z=1.645 (plus the
+# widened continuous band) already proves zero regressions, z=3.0 on the SAME evidence and
+# SAME widened band can only stay at zero; this is a guaranteed non-flip, not live-variance-
+# dependent.
+run_json 0 "$artifacts/regress-sql-AvA-z.json" \
+	"z 3.0: sql A-vs-A (baseline vs baseline2), continuous band widened" -- \
+	catacomb regress --runs-dir "$runs3" \
+	--baseline label:basket=e2e-sql,variant=baseline \
+	--candidate label:basket=e2e-sql,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --z 3.0 --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-sql-AvA-z.json" || rc=$?
+record "$rc" "sql A-vs-A reports zero regressions at --z 3.0 (non-flip: widening z only widens Wilson CIs, never causes a false gate)"
 
 echo "== m. bench e2e-subagent basket (15 live claude -p cells) — Task delegation =="
 # baseline/baseline2 delegate the seeded SQL task to a subagent (the Task tool);
@@ -939,6 +1139,40 @@ for d in "$runs5"/bench-e2e-skill-skill-degraded-r*; do
 	if grep -q '"type":"skill"' "$snap"; then rc=1; fi
 done
 record "$rc" "skill node present in >=1 baseline run and absent in all degraded runs"
+
+echo "== q3. regress --coverage-floor 0: dropped-skill finding reports regression, not the default-downgraded notable =="
+# Step q's gate needs --fail-on-notable because low step-alignment coverage (the Skill step
+# key present in baseline, absent from degraded) downgrades the true regression to `notable`
+# (regress/regress.go applyDowngrade). --coverage-floor 0 is satisfied by ANY coverage
+# fraction (always >= 0), so StepsTrusted is always true and the downgrade never fires: the
+# same underlying finding reports `regression` outright, gating WITHOUT --fail-on-notable —
+# a deterministic mechanism, not dependent on real API variance.
+run_json 1 "$artifacts/regress-skill-coveragefloor0.json" \
+	"coverage-floor 0: skill baseline-vs-degraded, step alignment always trusted" -- \
+	catacomb regress --runs-dir "$runs5" \
+	--baseline label:basket=e2e-skill,variant=baseline \
+	--candidate label:basket=e2e-skill,variant=degraded \
+	--coverage-floor 0 --json
+rc=0
+python3 - "$artifacts/regress-skill-coveragefloor0.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "step" and f.get("metric") == "presence"
+    and f.get("verdict") == "regression"
+    and "-> 0/5" in str(f.get("detail", ""))
+]
+if not hits:
+    print("no step-scope presence REGRESSION (undowngraded) with a -> 0/5 drop; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: step {h.get('name')!r} presence regression (not notable) at coverage-floor 0 ({h.get('detail', '')})")
+PY
+record "$rc" "--coverage-floor 0 reports the dropped-skill step finding as regression (step q's default floor downgrades it to notable)"
 
 echo "== r. skill A-vs-A control (baseline vs baseline2) must NOT gate =="
 # baseline and baseline2 both invoke the skill, so both carry the Skill step node and both
