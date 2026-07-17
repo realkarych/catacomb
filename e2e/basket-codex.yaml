@@ -1,0 +1,30 @@
+# Codex basket (the optional live codex leg): the `runtime: codex` spawn path
+# end-to-end against the REAL codex CLI.
+#
+# 1 task x 2 variants x 3 reps = 6 live `codex exec` cells. `main` asks for a
+# terse one-sentence answer; `candidate` asks for verbose step-by-step reasoning
+# — the tokens_out growth a regress SHOULD eventually flag. Unlike the claude
+# baskets, run.sh does NOT hard-assert the main-vs-candidate verdict: n=3 on a
+# new runtime is calibration data, so the driver asserts only that bench resolves
+# every cell's rollout (marked 6/6, agent_runtime=codex stamped) and that regress
+# renders; the verdict itself is logged.
+#
+# `dir: .` — same cwd contract as basket-presence.yaml: run.sh cd's into e2e so
+# `./codex-live.sh` resolves here. No checkpoints: this basket exercises rollout
+# resolution and the continuous metrics only.
+basket: e2e-codex
+runtime: codex
+reps: 3
+tasks:
+  - id: answer
+    cmd: ["./codex-live.sh"]
+    dir: .
+variants:
+  # main: a terse answer — the low-token reference arm.
+  - id: main
+    env:
+      PROMPT: "In one short sentence, what is a hash function?"
+  # candidate: verbose chain-of-thought — drives tokens_out well past main.
+  - id: candidate
+    env:
+      PROMPT: "Think step by step and explain in detail what a hash function is. Reason through the definition, the core properties, collision behavior, cryptographic vs non-cryptographic uses, common algorithms, and practical pitfalls, showing your reasoning for each point before giving a final summary."

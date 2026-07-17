@@ -8,7 +8,7 @@ GOLANGCI_LINT_VERSION := v2.12.2
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 FUZZTIME ?= 20s
 
-.PHONY: all build test cover lint fmt tidy clean help fuzz
+.PHONY: all build test cover lint fmt tidy clean help fuzz bench
 
 all: help
 
@@ -36,6 +36,10 @@ fuzz:
 		done; \
 	done
 
+## Run all benchmarks with allocation stats (informational; not a CI gate)
+bench:
+	@go test -bench=. -benchmem -run='^$$' ./...
+
 ## Run linters (pinned golangci-lint)
 lint:
 	@$(GOLANGCI_LINT) run --timeout=5m ./...
@@ -59,6 +63,7 @@ help:
 	@echo "  test    - run tests with -race and a coverage profile"
 	@echo "  cover   - test + enforce the 100% coverage gate"
 	@echo "  fuzz    - fuzz every Fuzz* target for FUZZTIME (default 20s) each; not in cover"
+	@echo "  bench   - run all benchmarks with -benchmem; informational, not a CI gate"
 	@echo "  lint    - run golangci-lint ($(GOLANGCI_LINT_VERSION), pinned)"
 	@echo "  fmt     - apply gofumpt + goimports via golangci-lint ($(GOLANGCI_LINT_VERSION), pinned)"
 	@echo "  tidy    - go mod tidy"

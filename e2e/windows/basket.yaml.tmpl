@@ -1,0 +1,19 @@
+basket: windows-smoke
+reps: 5
+tasks:
+  - id: answer
+    cmd: ["__PYTHON__", "agent.py"]
+    dir: cellwork
+    timeout: 60s
+    artifacts: ["out/result.txt"]
+    verify:
+      cmd: ["__PYTHON__", "./verify.py"]
+      env: { WANT_ANSWER: "42" }
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { AGENT_ANSWER: "42" }
+  - id: degraded
+    env: { AGENT_ANSWER: "wrong" }
+  - id: baseline2
+    env: { AGENT_ANSWER: "42" }

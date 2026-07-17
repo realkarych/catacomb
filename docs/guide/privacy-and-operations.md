@@ -128,19 +128,42 @@ a Claude Code update means the transcript format grew a shape this catacomb does
 know — upgrade catacomb. stdout and `--json` output stay clean; the warning never
 changes an exit code.
 
-The same path carries a **version watchlist**: catacomb records the newest Claude Code
-version it has been tested against, and a transcript stamped with a newer version prints
+The same path carries a **version watchlist**, kept per runtime: catacomb records the
+newest Claude Code and Codex CLI versions it has been tested against — one ceiling
+each — and a transcript stamped with a version newer than its runtime's ceiling prints
 a second advisory line:
 
 ```text
 warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199
+warning: transcript Codex version 0.150.0 is newer than tested 0.144.5
 ```
 
-It is the companion to the drift count — a heads-up that Claude Code outran the release
+It is the companion to the drift count — a heads-up that the agent CLI outran the release
 this catacomb was validated on, so an unrecognized shape may be lurking even when the
 drift count is still zero. Both lines share the same rules: emitted only when triggered,
 on any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`,
 `export`, `replay`), and never touching stdout, `--json`, or the exit code.
+
+### Scale
+
+`regress` is the memory-heavy path: it holds the reduced graphs of every run in both
+the baseline and the candidate group at once. Aggregation and gating read only graph
+structure and per-node metrics — never payloads — so the group loader strips each
+run's payloads, node attrs, and per-observation source refs immediately after
+reduction and score application. Held-group memory therefore scales with graph
+*structure* (node and edge count), not with transcript size: a run's raw payload
+bytes are live only while that single run is being parsed. Commands that do need
+payloads (`diff`, `export`, `pack`, `replay`) still load full graphs.
+
+Measured envelope (`make bench`, Apple M4 Pro, Go 1.26): one regress gate is tested
+to 16 runs (8 baseline + 8 candidate) × ~2,000 nodes per session (1,000 tool calls
+with 2KB outputs each), completing in ~8.4s with ~1.2GB of cumulative allocations
+(`1223717496 B/op` from `-benchmem`; transient, reclaimed by GC). Holding one such
+8-run group retains ~2.1MB of heap per run after the strip versus ~5.2MB without it
+(measured `retained-B` ~16.7MB vs ~41.5MB per group) — the difference is the payload
+bytes, so the saving grows with transcript verbosity up to the 256KB per-node payload
+cap. Benchmarks are informational: run them with `make bench`; they are deliberately
+not a blocking CI gate, since shared-runner timings are noise.
 
 ### Troubleshooting
 

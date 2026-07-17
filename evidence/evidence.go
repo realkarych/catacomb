@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/realkarych/catacomb/redact"
 )
@@ -41,6 +44,8 @@ type EnvStamps struct {
 	CatacombVersion   string          `json:"catacomb_version"`
 	ModelID           string          `json:"model_id,omitempty"`
 	ClaudeCodeVersion string          `json:"claude_code_version,omitempty"`
+	AgentRuntime      string          `json:"agent_runtime,omitempty"`
+	AgentVersion      string          `json:"agent_version,omitempty"`
 	Resources         Resources       `json:"resources"`
 	Workspace         *WorkspaceStamp `json:"workspace,omitempty"`
 }
@@ -98,7 +103,7 @@ func replaceDir(dir string) error {
 }
 
 func copyRedacted(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := openSource(src)
 	if err != nil {
 		return err
 	}
@@ -116,6 +121,32 @@ func copyRedacted(src, dst string) error {
 		return werr
 	}
 	return cerr
+}
+
+func openSource(src string) (io.ReadCloser, error) {
+	f, err := os.Open(src)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(src, ".zst") {
+		return f, nil
+	}
+	dec, _ := zstd.NewReader(f)
+	return &zstSource{file: f, dec: dec}, nil
+}
+
+type zstSource struct {
+	file *os.File
+	dec  *zstd.Decoder
+}
+
+func (z *zstSource) Read(p []byte) (int, error) {
+	return z.dec.Read(p)
+}
+
+func (z *zstSource) Close() error {
+	z.dec.Close()
+	return z.file.Close()
 }
 
 func redactLines(in io.Reader, out io.Writer) error {

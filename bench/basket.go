@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/realkarych/catacomb/ingest/drift"
 )
 
 const maxLabelValueLen = 256
@@ -44,6 +46,7 @@ var (
 	ErrWorkspaceCmd    = errors.New("workspace cmd is empty")
 	ErrWorkspaceDir    = errors.New("dir and workspace are mutually exclusive")
 	ErrWorkspacePatch  = errors.New("workspace patch unreadable")
+	ErrBasketRuntime   = errors.New(`runtime must be "claude-code" or "codex"`)
 )
 
 type Task struct {
@@ -107,9 +110,17 @@ type Variant struct {
 
 type Basket struct {
 	Name     string    `yaml:"basket" json:"basket"`
+	Runtime  string    `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Reps     int       `yaml:"reps" json:"reps"`
 	Tasks    []Task    `yaml:"tasks" json:"tasks"`
 	Variants []Variant `yaml:"variants" json:"variants"`
+}
+
+func (b Basket) EffectiveRuntime() string {
+	if b.Runtime == "" {
+		return drift.RuntimeClaudeCode
+	}
+	return b.Runtime
 }
 
 type Cell struct {
@@ -262,6 +273,9 @@ func validate(b Basket) error {
 	if !idCharset.MatchString(b.Name) {
 		return fmt.Errorf("bench.Load: basket %q: %w", b.Name, ErrCharset)
 	}
+	if err := validateRuntime(b.Runtime); err != nil {
+		return err
+	}
 	if b.Reps < 1 {
 		return fmt.Errorf("bench.Load: reps: %w", ErrReps)
 	}
@@ -281,6 +295,15 @@ func validate(b Basket) error {
 		return err
 	}
 	return validateRunIDs(b)
+}
+
+func validateRuntime(rt string) error {
+	switch rt {
+	case "", drift.RuntimeClaudeCode, drift.RuntimeCodex:
+		return nil
+	default:
+		return fmt.Errorf("bench.Load: runtime %q: %w", rt, ErrBasketRuntime)
+	}
 }
 
 func validateRunIDs(b Basket) error {

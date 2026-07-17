@@ -39,7 +39,7 @@ It fits any Claude Code agent whose behavior you need to keep stable — coding 
 data/ETL pipelines (SQL, transforms), research and tool-use loops — anywhere a
 nondeterministic session needs a CI verdict instead of a vibe check.
 
-> **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts.
+> **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts (and OpenAI Codex CLI sessions — see [runtimes](docs/guide/ingestion.md#runtimes)).
 
 ## <p align=center>✨ Features</p>
 
@@ -47,9 +47,11 @@ nondeterministic session needs a CI verdict instead of a vibe check.
 - **Plain local files.** Evidence directories plus an optional SQLite store for baselines — nothing listens, nothing phones home.
 - **Evidence you can share.** Recorded transcripts pass through best-effort secret redaction before they ever touch disk ([what is and isn't caught](docs/guide/privacy-and-operations.md)).
 - **Comparisons survive prompt rewrites.** The agent can name phases of its own run (checkpoints), giving `regress` a stable axis even when prompt churn re-keys every step ([concepts](docs/guide/concepts.md#phases-and-checkpoints)).
-- **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)).
+- **Longitudinal memory.** Pin golden groups as named baselines; every recorded comparison accumulates into a history that `trends` replays ([workflows](docs/guide/workflows.md#watching-drift-over-time)) — and, stamped with `--project`, joins across a fleet of repos in your own warehouse ([roll up a fleet](docs/guide/workflows.md#roll-up-a-fleet)).
 - **Checks the answer, not just the path.** Declare a per-task verifier and its pass/fail verdict rides the same statistical gate ([verifying task outcomes](docs/guide/workflows.md#verifying-task-outcomes)).
 - **Gate PRs from CI.** A bundled composite GitHub Action ([`catacomb-gate`](.github/actions/catacomb-gate)) installs a pinned release, runs the gate, and posts the verdict as a sticky PR comment ([recipe](docs/guide/workflows.md#gate-a-pr-with-the-action)) — it lives in this repo for now; marketplace extraction is a follow-up.
+- **Gates OpenAI Codex CLI sessions too.** Declare `runtime: codex` in the basket and `catacomb bench` drives `codex exec` cells — or `catacomb import` ingests rollouts you recorded yourself — subagents, checkpoints, and token metrics included, through the same evidence and gate ([runtimes](docs/guide/ingestion.md#runtimes)).
+- **Gate memory scales with graph structure, not transcript size.** `regress` strips payloads before aggregation; the measured envelope and `make bench` live in [operations](docs/guide/privacy-and-operations.md#scale).
 - **Drive it from your agent.** A bundled [Claude Code skill](skills/catacomb/SKILL.md) teaches your agent to scaffold a basket, wire the CI gate, and read a `regress` verdict for you — just ask it to set up catacomb.
 
 <hr>
@@ -95,8 +97,12 @@ $ echo $?
 [Claude Code](https://www.anthropic.com/claude-code) installed and `claude` on your
 PATH, and **signed in** — a Claude subscription, or `ANTHROPIC_API_KEY` set for API
 billing. `catacomb bench` spends real money through Claude Code, so verify it works
-first with `claude -p hello`. Catacomb itself is a single static binary — no runtime,
-no dependencies, no config file.
+first with `claude -p hello`. The exception is gating
+[Codex CLI sessions](docs/guide/ingestion.md#runtimes): bench-driving a
+`runtime: codex` basket needs the OpenAI Codex CLI (`codex`) installed and signed in
+instead of `claude`, and `catacomb import` reads already-recorded rollout files, so it
+needs neither. Catacomb itself is a single static binary — no runtime, no
+dependencies, no config file.
 
 <hr>
 
@@ -167,7 +173,10 @@ Or clone the repo and `make build`.
 Download the pre-built archive from the
 **[Releases](https://github.com/realkarych/catacomb/releases)** page, unpack it, and
 add the binary to your `PATH`. On Windows, you may need `Unblock-File .\catacomb.exe`
-before first run.
+before first run. The Windows binary is smoke-tested end-to-end in CI: a
+`windows-latest` job builds `catacomb.exe` and drives a real
+`bench → verify → regress` loop on every PR — see
+[platform support](docs/guide/troubleshooting.md#platform-support).
 
 </details>
 
