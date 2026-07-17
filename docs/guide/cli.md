@@ -690,7 +690,7 @@ catacomb calibrate --group <selector> [flags]
 | `--audit-rel-delta` | 0.5 | Accepted for threshold parity with `regress` (must be > 0); same note |
 | `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
 | `--z` | 1.645 | One-sided Wilson z for the rate gates (`1.645` = 95% one-sided) |
-| `--fail-on-notable` | false | Count `notable` findings toward the split verdict (never the exit code) |
+| `--fail-on-notable` | false | Count `notable` findings toward the A/A split verdict (`calibrate` always exits 0) |
 
 The selector grammar and resolution are exactly [`regress`](#regress)'s, and the
 threshold flags are the gate's own — the point is to audit the verdict function *as
@@ -702,8 +702,13 @@ The report has three parts:
   `min-support` runs per half, so the self-check requires **k ≥ 2 × min-support**
   (6 at defaults); below that it reports `sufficient: false` with the k it needs
   (`self-check needs k>=6 runs (have 4)`) and stops — never a guess.
-- **Time-ordered A/A split.** The selected runs, in recorded order, split first half
-  vs second half and compared with the full gate. **A `regression` or `notable` here
+- **Time-ordered A/A split.** The selected runs, in wall-clock order — each run's
+  evidence timestamps (marker-window start, tie-broken by marker-window end, then
+  run id), falling back to run-id order when no run in the group carries timestamps
+  (e.g. imported evidence without a marker window) — split first half vs second half
+  and compared with the full gate. The resolved order is echoed in the report
+  (`order:` in human output, `run_ids` in JSON) so the split composition is
+  auditable. **A `regression` or `notable` here
   is NOT a real regression** — the two halves are the same variant, so a gating
   verdict means environmental drift across the recorded sequence (API latency,
   runner load, model-side change) or an outlier run, and each such finding is
@@ -711,31 +716,43 @@ The report has three parts:
   of the split. On groups
   spanning fewer than `--paired-min-tasks` tasks (any single-task basket), a clean
   split reads `A/A insufficient` rather than `A/A ok` — the paired tier honestly
-  reporting it cannot fire, with nothing gating and no drift lines; drift, when
+  reporting it cannot fire, with nothing gating and no drift lines, and the reason
+  echoed as `note:` lines (JSON `split.notes`); drift, when
   present, always reads `A/A regression`/`notable` with `drift:` lines.
 - **Leave-one-out influence.** With k ≥ 2 × min-support + 1 (7 at defaults), each
   run is dropped in turn and the split re-evaluated; every run whose removal changes
-  the overall verdict is reported (`influence: dropping run #2 flips regression ->
-  ok`). A verdict that hinges on one run is fragile — read that run's evidence
+  the overall verdict is reported (`influence: dropping run r2 (#2) flips regression
+  -> ok`). A verdict that hinges on one run is fragile — read that run's evidence
   before acting on it. Below 7 runs the block says so
   (`influence: leave-one-out needs k>=7 runs (have 6)`).
 
+A group spanning **more than one task id** splits into halves whose task mix may
+differ, so total-scope drift can reflect task composition rather than environmental
+drift. `calibrate` prints one stderr warning when that happens (`warning: calibrate
+group spans N tasks; drift may reflect task composition — prefer a per-task selector
+(label:...,task=<id>)`) and still renders the report; prefer auditing one task at a
+time (`--group label:variant=v1,task=<id>`).
+
 ```text
 self-check: sufficient · runs 8 · min-support 3
+order: r1 r2 r3 r4 r5 r6 r7 r8
 A/A regression (first 4 vs second 4)
 drift: total duration_ms regression 41250.00 -> 96400.00
-influence: dropping run #0 flips regression -> ok
+influence: dropping run r1 (#0) flips regression -> ok
 ```
 
 Read that as: "at these thresholds, this basket's own recorded history would gate on
-`duration_ms` with no change at all — and the verdict hangs on run #0." Widen the
+`duration_ms` with no change at all — and the verdict hangs on run `r1`." Widen the
 band deliberately, investigate the drift, or re-bench; what you now know is that a
 red `duration_ms` verdict from this basket is not trustworthy evidence of a real
 regression.
 
-`--format json` carries the same structure: `runs`, `min_support`, `sufficient`,
-`detail`, `split{first_n, second_n, verdict, drift[]}`, and
-`influence{evaluated, detail, flipping_runs[]}`.
+`--format json` carries the same structure: `runs`, `min_support`, `run_ids`,
+`thresholds`, `sufficient`, `detail`,
+`split{first_n, second_n, verdict, notes[], drift[]}`, and
+`influence{evaluated, detail, flipping_runs[]}`. The report echoes the resolved run
+order (`run_ids`) and the effective thresholds (`thresholds`), so a saved JSON
+self-check is self-describing and auditable on its own.
 
 Exit codes: `0` whenever a self-check is rendered — drift findings included;
 `calibrate` audits the gate and never gates. `2` is an operational error (bad

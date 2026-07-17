@@ -8,18 +8,21 @@ import (
 )
 
 type CalibrateReport struct {
-	Runs       int              `json:"runs"`
-	MinSupport int              `json:"min_support"`
-	Sufficient bool             `json:"sufficient"`
-	Detail     string           `json:"detail,omitempty"`
-	Split      *SplitResult     `json:"split,omitempty"`
-	Influence  *InfluenceResult `json:"influence,omitempty"`
+	Runs       int                `json:"runs"`
+	MinSupport int                `json:"min_support"`
+	RunIDs     []string           `json:"run_ids,omitempty"`
+	Thresholds regress.Thresholds `json:"thresholds"`
+	Sufficient bool               `json:"sufficient"`
+	Detail     string             `json:"detail,omitempty"`
+	Split      *SplitResult       `json:"split,omitempty"`
+	Influence  *InfluenceResult   `json:"influence,omitempty"`
 }
 
 type SplitResult struct {
 	FirstN  int             `json:"first_n"`
 	SecondN int             `json:"second_n"`
 	Verdict regress.Verdict `json:"verdict"`
+	Notes   []string        `json:"notes,omitempty"`
 	Drift   []DriftFinding  `json:"drift,omitempty"`
 }
 
@@ -40,13 +43,14 @@ type InfluenceResult struct {
 
 type FlipFinding struct {
 	DroppedIndex int             `json:"dropped_index"`
+	RunID        string          `json:"run_id"`
 	From         regress.Verdict `json:"from"`
 	To           regress.Verdict `json:"to"`
 }
 
 func Calibrate(runs []aggregate.RunGraph, th regress.Thresholds) CalibrateReport {
 	k := len(runs)
-	rep := CalibrateReport{Runs: k, MinSupport: th.MinSupport}
+	rep := CalibrateReport{Runs: k, MinSupport: th.MinSupport, RunIDs: runIDs(runs), Thresholds: th}
 	need := 2 * th.MinSupport
 	if k < need {
 		rep.Detail = fmt.Sprintf("self-check needs k>=%d runs (have %d)", need, k)
@@ -61,8 +65,35 @@ func Calibrate(runs []aggregate.RunGraph, th regress.Thresholds) CalibrateReport
 		Verdict: split.OverallVerdict,
 		Drift:   driftFindings(split.Findings),
 	}
+	if split.OverallVerdict == regress.VerdictInsufficient {
+		rep.Split.Notes = insufficientNotes(split.Findings)
+	}
 	rep.Influence = leaveOneOut(runs, th, split.OverallVerdict)
 	return rep
+}
+
+func runIDs(runs []aggregate.RunGraph) []string {
+	var ids []string
+	for _, rg := range runs {
+		ids = append(ids, rg.Run.ID)
+	}
+	return ids
+}
+
+func insufficientNotes(findings []regress.Finding) []string {
+	var notes []string
+	seen := map[string]struct{}{}
+	for _, f := range findings {
+		if f.Verdict != regress.VerdictInsufficient || f.Detail == "" {
+			continue
+		}
+		if _, dup := seen[f.Detail]; dup {
+			continue
+		}
+		seen[f.Detail] = struct{}{}
+		notes = append(notes, f.Detail)
+	}
+	return notes
 }
 
 func compareGroups(first, second []aggregate.RunGraph, th regress.Thresholds) regress.Report {
@@ -110,6 +141,7 @@ func leaveOneOut(runs []aggregate.RunGraph, th regress.Thresholds, splitVerdict 
 		if verdict != splitVerdict {
 			res.FlippingRuns = append(res.FlippingRuns, FlipFinding{
 				DroppedIndex: i,
+				RunID:        runs[i].Run.ID,
 				From:         splitVerdict,
 				To:           verdict,
 			})

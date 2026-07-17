@@ -1244,10 +1244,16 @@ errs = []
 for field, want in (("runs", 6), ("min_support", 3), ("sufficient", True)):
     if rep.get(field) != want:
         errs.append(f"{field}={rep.get(field)!r} want {want!r}")
+if rep.get("run_ids") != [f"cal-aa-r{i}" for i in range(6)]:
+    errs.append(f"run_ids={rep.get('run_ids')!r} want cal-aa-r0..r5 in time order")
+if (rep.get("thresholds") or {}).get("MinSupport") != 3:
+    errs.append(f"thresholds={rep.get('thresholds')!r} want an echo with MinSupport 3")
 split = rep.get("split") or {}
 for field, want in (("first_n", 3), ("second_n", 3), ("verdict", "insufficient")):
     if split.get(field) != want:
         errs.append(f"split.{field}={split.get(field)!r} want {want!r}")
+if split.get("notes") != ["matched 1 task below paired min 5"]:
+    errs.append(f"split.notes={split.get('notes')!r} want the paired-tier insufficiency detail")
 if split.get("drift"):
     errs.append(f"clean group reports drift: {split['drift']!r}")
 inf = rep.get("influence") or {}
@@ -1331,7 +1337,7 @@ if split.get("verdict") != "regression":
     errs.append(f"split.verdict={split.get('verdict')!r} want 'regression'")
 if inf.get("evaluated") is not True:
     errs.append(f"influence.evaluated={inf.get('evaluated')!r} want True")
-want = [{"dropped_index": i, "from": "regression", "to": "insufficient"} for i in (0, 1, 2)]
+want = [{"dropped_index": i, "run_id": f"cal-il-r{i}", "from": "regression", "to": "insufficient"} for i in (0, 1, 2)]
 if inf.get("flipping_runs") != want:
     errs.append(f"flipping_runs={inf.get('flipping_runs')!r} want {want!r}")
 if errs:

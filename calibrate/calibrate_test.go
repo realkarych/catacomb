@@ -41,15 +41,31 @@ func fixtureGroup(durationsMS ...int64) []aggregate.RunGraph {
 	return group
 }
 
+func withTaskLabels(group []aggregate.RunGraph, task string) []aggregate.RunGraph {
+	for i := range group {
+		group[i].Run.Labels = map[string]string{"task": task}
+	}
+	return group
+}
+
 func TestCalibrateInsufficientRuns(t *testing.T) {
 	got := Calibrate(fixtureGroup(10000, 10000, 10000, 10000), regress.DefaultThresholds())
 	want := CalibrateReport{
 		Runs:       4,
 		MinSupport: 3,
+		RunIDs:     []string{"r00", "r01", "r02", "r03"},
+		Thresholds: regress.DefaultThresholds(),
 		Sufficient: false,
 		Detail:     "self-check needs k>=6 runs (have 4)",
 	}
 	require.Equal(t, want, got)
+}
+
+func TestCalibrateReportEchoesRunIDsAndThresholds(t *testing.T) {
+	th := regress.DefaultThresholds()
+	got := Calibrate(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000), th)
+	assert.Equal(t, []string{"r00", "r01", "r02", "r03", "r04", "r05"}, got.RunIDs)
+	assert.Equal(t, th, got.Thresholds)
 }
 
 func TestCalibrateIdenticalRunsClean(t *testing.T) {
@@ -99,8 +115,35 @@ func TestCalibrateLeaveOneOutNamesFlippingRun(t *testing.T) {
 	require.True(t, got.Influence.Evaluated)
 	assert.Empty(t, got.Influence.Detail)
 	require.Equal(t, []FlipFinding{
-		{DroppedIndex: 2, From: regress.VerdictOK, To: regress.VerdictRegression},
+		{DroppedIndex: 2, RunID: "r02", From: regress.VerdictOK, To: regress.VerdictRegression},
 	}, got.Influence.FlippingRuns)
+}
+
+func TestCalibrateSingleTaskInsufficientSplitCarriesNotes(t *testing.T) {
+	group := withTaskLabels(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000), "sql")
+	got := Calibrate(group, regress.DefaultThresholds())
+	require.True(t, got.Sufficient)
+	require.NotNil(t, got.Split)
+	assert.Equal(t, regress.VerdictInsufficient, got.Split.Verdict)
+	assert.Equal(t, []string{"matched 1 task below paired min 5"}, got.Split.Notes)
+}
+
+func TestCalibrateNonInsufficientSplitHasNoNotes(t *testing.T) {
+	got := Calibrate(fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
+	require.NotNil(t, got.Split)
+	assert.Equal(t, regress.VerdictRegression, got.Split.Verdict)
+	assert.Nil(t, got.Split.Notes)
+}
+
+func TestInsufficientNotesDedupesAndSkipsEmptyDetail(t *testing.T) {
+	notes := insufficientNotes([]regress.Finding{
+		{Verdict: regress.VerdictInsufficient, Detail: "baseline n=2 below min support 3"},
+		{Verdict: regress.VerdictInsufficient, Detail: "baseline n=2 below min support 3"},
+		{Verdict: regress.VerdictInsufficient},
+		{Verdict: regress.VerdictOK, Detail: "not a note"},
+		{Verdict: regress.VerdictInsufficient, Detail: "matched 1 task below paired min 5"},
+	})
+	assert.Equal(t, []string{"baseline n=2 below min support 3", "matched 1 task below paired min 5"}, notes)
 }
 
 func TestCalibrateDeterministic(t *testing.T) {

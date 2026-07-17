@@ -26,7 +26,11 @@ func renderedHuman(t *testing.T, r CalibrateReport) string {
 func TestRenderHumanInsufficientStopsAfterDetail(t *testing.T) {
 	r := Calibrate(fixtureGroup(10000, 10000, 10000, 10000), regress.DefaultThresholds())
 	got := renderedHuman(t, r)
-	assert.Equal(t, "self-check: insufficient · runs 4 · min-support 3\nself-check needs k>=6 runs (have 4)\n", got)
+	assert.Equal(t,
+		"self-check: insufficient · runs 4 · min-support 3\n"+
+			"order: r00 r01 r02 r03\n"+
+			"self-check needs k>=6 runs (have 4)\n",
+		got)
 }
 
 func TestRenderHumanCleanSplitSkippedInfluence(t *testing.T) {
@@ -34,9 +38,22 @@ func TestRenderHumanCleanSplitSkippedInfluence(t *testing.T) {
 	got := renderedHuman(t, r)
 	assert.Equal(t,
 		"self-check: sufficient · runs 6 · min-support 3\n"+
+			"order: r00 r01 r02 r03 r04 r05\n"+
 			"A/A ok (first 3 vs second 3)\n"+
 			"influence: leave-one-out needs k>=7 runs (have 6)\n",
 		got)
+}
+
+func TestRenderHumanNoteLinesUnderInsufficientAA(t *testing.T) {
+	r := Calibrate(withTaskLabels(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000), "sql"), regress.DefaultThresholds())
+	got := renderedHuman(t, r)
+	assert.Contains(t, got, "A/A insufficient (first 3 vs second 3)\n")
+	assert.Contains(t, got, "note: matched 1 task below paired min 5\n")
+}
+
+func TestRenderHumanSufficientWithNilBlocksRendersHeader(t *testing.T) {
+	got := renderedHuman(t, CalibrateReport{Runs: 6, MinSupport: 3, Sufficient: true})
+	assert.Equal(t, "self-check: sufficient · runs 6 · min-support 3\n", got)
 }
 
 func TestRenderHumanDriftLines(t *testing.T) {
@@ -51,7 +68,7 @@ func TestRenderHumanInfluenceFlipLines(t *testing.T) {
 	r := Calibrate(fixtureGroup(10000, 10000, 30000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
 	got := renderedHuman(t, r)
 	assert.Contains(t, got, "A/A ok (first 3 vs second 4)\n")
-	assert.Contains(t, got, "influence: dropping run #2 flips ok -> regression\n")
+	assert.Contains(t, got, "influence: dropping run r02 (#2) flips ok -> regression\n")
 }
 
 func TestRenderHumanInfluenceNoFlip(t *testing.T) {

@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/calibrate"
+	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/regress"
 )
@@ -44,6 +48,7 @@ func newCalibrateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve --group from: label: scans it, name: reads --db's baselines table")
 	cmd.Flags().StringVar(&f.format, "format", calibrateFormatHuman, "output format: human|json")
 	bindThresholdFlags(cmd, &f.thresholds)
+	cmd.Flags().Lookup("fail-on-notable").Usage = "count notable findings toward the A/A split verdict (calibrate always exits 0)"
 	return cmd
 }
 
@@ -58,15 +63,65 @@ func runCalibrate(out, errOut io.Writer, mkPricer func() reduce.Pricer, f calibr
 	if f.runsDir == "" {
 		return operational(errCalibrateNoRunsDir)
 	}
-	runsInRecordedOrder, _, err := resolveSelectorRunsDir(errOut, "calibrate", f.dbPath, f.runsDir, mkPricer(), f.group)
+	group, _, err := resolveSelectorRunsDir(errOut, "calibrate", f.dbPath, f.runsDir, mkPricer(), f.group)
 	if err != nil {
 		return err
 	}
-	rep := calibrate.Calibrate(runsInRecordedOrder, f.thresholds)
+	ordered := orderRunsByTime(group)
+	warnCalibrateTaskMix(errOut, ordered)
+	rep := calibrate.Calibrate(ordered, f.thresholds)
 	if rerr := render(rep, out); rerr != nil {
 		return operational(rerr)
 	}
 	return nil
+}
+
+func orderRunsByTime(runs []aggregate.RunGraph) []aggregate.RunGraph {
+	if !anyRunTimed(runs) {
+		return runs
+	}
+	ordered := make([]aggregate.RunGraph, len(runs))
+	copy(ordered, runs)
+	sort.SliceStable(ordered, func(i, j int) bool { return runTimeLess(ordered[i].Run, ordered[j].Run) })
+	return ordered
+}
+
+func anyRunTimed(runs []aggregate.RunGraph) bool {
+	for _, rg := range runs {
+		if !timeOrZero(rg.Run.StartedAt).IsZero() || !timeOrZero(rg.Run.EndedAt).IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
+func runTimeLess(a, b model.Run) bool {
+	if as, bs := timeOrZero(a.StartedAt), timeOrZero(b.StartedAt); !as.Equal(bs) {
+		return as.Before(bs)
+	}
+	if ae, be := timeOrZero(a.EndedAt), timeOrZero(b.EndedAt); !ae.Equal(be) {
+		return ae.Before(be)
+	}
+	return a.ID < b.ID
+}
+
+func timeOrZero(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+func warnCalibrateTaskMix(errOut io.Writer, runs []aggregate.RunGraph) {
+	tasks := map[string]struct{}{}
+	for _, rg := range runs {
+		if task := rg.Run.Labels["task"]; task != "" {
+			tasks[task] = struct{}{}
+		}
+	}
+	if len(tasks) > 1 {
+		fmt.Fprintf(errOut, "warning: calibrate group spans %d tasks; drift may reflect task composition — prefer a per-task selector (label:...,task=<id>)\n", len(tasks))
+	}
 }
 
 func resolveCalibrateFormat(format string) (func(calibrate.CalibrateReport, io.Writer) error, error) {
