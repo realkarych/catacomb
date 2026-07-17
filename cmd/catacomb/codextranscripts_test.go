@@ -123,6 +123,25 @@ func TestResolveCodexTranscriptsZstChild(t *testing.T) {
 	assert.Equal(t, []string{p}, ts.Subagents)
 }
 
+func TestResolveCodexTranscriptsRejectsThreadIDFragment(t *testing.T) {
+	root := t.TempDir()
+	full := "019f6b85-627f-7be3-81dc-ae8563860201"
+	fragment := "ae8563860201"
+	p := filepath.Join(codexDayDir(t, root), "rollout-2026-07-16T15-40-00-"+full+".jsonl")
+	require.NoError(t, os.WriteFile(p, codexMetaLine(t, map[string]any{
+		"session_id": full, "id": full,
+		"cwd": "/w", "cli_version": "0.144.4", "source": "exec",
+	}), 0o600))
+
+	_, err := resolveCodexTranscripts(root, fragment)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no transcript for session "+fragment+" under "+root)
+
+	ts, err := resolveCodexTranscripts(root, full)
+	require.NoError(t, err)
+	assert.Equal(t, p, ts.Main)
+}
+
 func TestResolveCodexTranscriptsNotFound(t *testing.T) {
 	root := t.TempDir()
 	_, err := resolveCodexTranscripts(root, codexMainThread)

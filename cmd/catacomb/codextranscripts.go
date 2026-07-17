@@ -29,7 +29,7 @@ func resolveCodexTranscripts(sessionsRoot, threadID string) (transcriptSet, erro
 		return transcriptSet{}, fmt.Errorf("resolve transcripts: %w", err)
 	}
 	zst, _ := filepath.Glob(pattern + ".zst")
-	mains = append(mains, zst...)
+	mains = codexExactThreadMatches(append(mains, zst...), threadID)
 	if len(mains) == 0 {
 		return transcriptSet{}, fmt.Errorf("resolve transcripts: no transcript for session %s under %s", threadID, sessionsRoot)
 	}
@@ -41,6 +41,16 @@ func resolveCodexTranscripts(sessionsRoot, threadID string) (transcriptSet, erro
 		return transcriptSet{}, err
 	}
 	return transcriptSet{Main: mains[0], Subagents: subs}, nil
+}
+
+func codexExactThreadMatches(paths []string, threadID string) []string {
+	var exact []string
+	for _, p := range paths {
+		if codexThreadIDFromFilename(filepath.Base(p)) == threadID {
+			exact = append(exact, p)
+		}
+	}
+	return exact
 }
 
 type codexRolloutRef struct {

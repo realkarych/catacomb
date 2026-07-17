@@ -49,7 +49,7 @@ func newImportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.task, "task", "", "task id in the basket (selects verify/checkpoints/labels)")
 	cmd.Flags().StringVar(&f.variant, "variant", "", "variant id in the basket")
 	cmd.Flags().StringVar(&f.sessionID, "session-id", "", "session UUID resolved under --projects-dir")
-	cmd.Flags().StringVar(&f.transcript, "transcript", "", "direct path to a main session .jsonl")
+	cmd.Flags().StringVar(&f.transcript, "transcript", "", "direct path to a main session transcript (.jsonl, or a Codex rollout .jsonl / .jsonl.zst)")
 	cmd.Flags().IntVar(&f.rep, "rep", 1, "repetition index")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "evidence dir name (default: import-<basket>-<task>-<variant>-r<rep>)")
 	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts")
