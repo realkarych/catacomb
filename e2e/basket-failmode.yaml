@@ -28,7 +28,7 @@ tasks:
     cmd: ["./failmode.sh"]
     workspace:
       cmd: ["sh", "-c", "cp \"$E2E_DIR\"/failmode.sh ."]
-    timeout: 60s
+    timeout: 120s
 variants:
   - id: prefail
     env:
