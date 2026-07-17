@@ -1,0 +1,13 @@
+basket: prod-codex-bench
+runtime: codex
+reps: 3
+tasks:
+  - id: probe
+    cmd: ["__PROD__/fixtures/56-fake-codex.sh"]
+    env: { FAKE_SESSIONS_DIR: "__WORK__/sessions" }
+    checkpoints: [plan]
+variants:
+  - id: baseline
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/56-codex-main.jsonl.tmpl" }
+  - id: degraded
+    env: { FAKE_ROLLOUT_TMPL: "__PROD__/fixtures/56-codex-degraded.jsonl.tmpl", FAKE_TOKENS_OUT: "300" }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/realkarych/catacomb/bench"
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 )
 
@@ -29,6 +30,7 @@ type importFlags struct {
 	rep         int
 	runID       string
 	projectsDir string
+	sessionsDir string
 	runsDir     string
 	labels      string
 }
@@ -47,10 +49,11 @@ func newImportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.task, "task", "", "task id in the basket (selects verify/checkpoints/labels)")
 	cmd.Flags().StringVar(&f.variant, "variant", "", "variant id in the basket")
 	cmd.Flags().StringVar(&f.sessionID, "session-id", "", "session UUID resolved under --projects-dir")
-	cmd.Flags().StringVar(&f.transcript, "transcript", "", "direct path to a main session .jsonl")
+	cmd.Flags().StringVar(&f.transcript, "transcript", "", "direct path to a main session transcript (.jsonl, or a Codex rollout .jsonl / .jsonl.zst)")
 	cmd.Flags().IntVar(&f.rep, "rep", 1, "repetition index")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "evidence dir name (default: import-<basket>-<task>-<variant>-r<rep>)")
 	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts")
+	cmd.Flags().StringVar(&f.sessionsDir, "sessions-dir", codexSessionsDefault(home), "Codex sessions dir holding rollout transcripts (runtime: codex)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir")
 	cmd.Flags().StringVar(&f.labels, "label", "", "extra ambient labels merged under cell labels (k=v, comma-separated)")
 	return cmd
@@ -74,9 +77,9 @@ func runImport(ctx context.Context, stdout, stderr io.Writer, basketPath string,
 	return importEvidence(ctx, stdout, stderr, basket, hash, task, f)
 }
 
-func importTranscripts(f importFlags) (transcriptSet, string, error) {
+func importTranscripts(rt string, f importFlags) (transcriptSet, string, error) {
 	if f.sessionID != "" {
-		ts, err := resolveTranscripts(f.projectsDir, f.sessionID)
+		ts, err := resolveImportSession(rt, f)
 		if err != nil {
 			return transcriptSet{}, "", err
 		}
@@ -84,6 +87,9 @@ func importTranscripts(f importFlags) (transcriptSet, string, error) {
 	}
 	if _, err := os.Stat(f.transcript); err != nil {
 		return transcriptSet{}, "", fmt.Errorf("transcript: %w", err)
+	}
+	if rt == drift.RuntimeCodex {
+		return codexTranscriptByPath(f.transcript)
 	}
 	sid := strings.TrimSuffix(filepath.Base(f.transcript), ".jsonl")
 	subs, err := filepath.Glob(filepath.Join(filepath.Dir(f.transcript), sid, "subagents", "agent-*.jsonl"))
@@ -94,13 +100,33 @@ func importTranscripts(f importFlags) (transcriptSet, string, error) {
 	return transcriptSet{Main: f.transcript, Subagents: subs}, sid, nil
 }
 
+func resolveImportSession(rt string, f importFlags) (transcriptSet, error) {
+	if rt == drift.RuntimeCodex {
+		return resolveCodexTranscripts(f.sessionsDir, f.sessionID)
+	}
+	return resolveTranscripts(f.projectsDir, f.sessionID)
+}
+
+func codexTranscriptByPath(path string) (transcriptSet, string, error) {
+	sid := codexThreadIDFromFilename(filepath.Base(path))
+	if sid == "" {
+		return transcriptSet{}, "", fmt.Errorf("transcript %s: cannot derive thread id (expected rollout-<timestamp>-<thread-id>.jsonl[.zst])", path)
+	}
+	subs, err := codexChildTranscripts(filepath.Dir(path), sid)
+	if err != nil {
+		return transcriptSet{}, "", err
+	}
+	return transcriptSet{Main: path, Subagents: subs}, sid, nil
+}
+
 func importEvidence(_ context.Context, stdout, stderr io.Writer, basket bench.Basket, hash string, task bench.Task, f importFlags) error {
-	ts, sessionID, err := importTranscripts(f)
+	rt := basket.EffectiveRuntime()
+	ts, sessionID, err := importTranscripts(rt, f)
 	if err != nil {
 		return operational(fmt.Errorf("import: %w", err))
 	}
 	execID := newExecutionID()
-	obs, err := parseTranscripts(ts.Main, ts.Subagents, execID)
+	obs, err := parseTranscriptsFor(rt, ts.Main, ts.Subagents, sessionID, execID)
 	if err != nil {
 		return operational(fmt.Errorf("import: %w", err))
 	}
@@ -112,11 +138,11 @@ func importEvidence(_ context.Context, stdout, stderr io.Writer, basket bench.Ba
 	g := graphFromObservations(obs, execID, newPricer(), boundary)
 	marks := graphMarkerNames(g)
 	warnMissingCheckpoints(stderr, task, marks, importRunID(f, basket.Name))
-	env := benchEnvStamps(g.RunsSnapshot(), sessionID, nil)
+	env := envStampsFor(rt, g.RunsSnapshot(), sessionID, nil, obs)
 	runID := importRunID(f, basket.Name)
 	meta := importMeta(runID, task.ID, f.variant, f.rep, sessionID, hash, importLabels(f, basket.Name), start, end, env)
 	dir := filepath.Join(f.runsDir, runID)
-	if err := evidence.Write(dir, meta, offlineFiles(ts)); err != nil {
+	if err := evidence.Write(dir, meta, offlineFilesFor(rt, ts)); err != nil {
 		return operational(fmt.Errorf("import: evidence write: %w", err))
 	}
 	fmt.Fprintf(stdout, "import %s: %s\n", runID, dir)

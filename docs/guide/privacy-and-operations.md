@@ -128,15 +128,17 @@ a Claude Code update means the transcript format grew a shape this catacomb does
 know — upgrade catacomb. stdout and `--json` output stay clean; the warning never
 changes an exit code.
 
-The same path carries a **version watchlist**: catacomb records the newest Claude Code
-version it has been tested against, and a transcript stamped with a newer version prints
+The same path carries a **version watchlist**, kept per runtime: catacomb records the
+newest Claude Code and Codex CLI versions it has been tested against — one ceiling
+each — and a transcript stamped with a version newer than its runtime's ceiling prints
 a second advisory line:
 
 ```text
 warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199
+warning: transcript Codex version 0.150.0 is newer than tested 0.144.5
 ```
 
-It is the companion to the drift count — a heads-up that Claude Code outran the release
+It is the companion to the drift count — a heads-up that the agent CLI outran the release
 this catacomb was validated on, so an unrecognized shape may be lurking even when the
 drift count is still zero. Both lines share the same rules: emitted only when triggered,
 on any command that parses transcripts (`bench`, `regress`, `diff`, `subgraph`,
