@@ -93,6 +93,27 @@ func TestRenderJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, r, got)
 }
 
+func TestRenderJSONThresholdsKeysAreSnakeCase(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(r, &buf))
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &raw))
+	var th map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw["thresholds"], &th))
+	want := []string{
+		"presence_delta", "error_delta", "metric_rel_delta", "iqr_factor",
+		"min_support", "coverage_floor", "z", "fail_on_notable",
+		"annotation_rate_delta", "paired_alpha", "paired_min_tasks",
+		"audit_iqr_factor", "audit_rel_delta",
+	}
+	assert.Len(t, th, len(want))
+	for _, key := range want {
+		assert.Contains(t, th, key)
+	}
+	assert.JSONEq(t, "3", string(th["min_support"]))
+}
+
 func TestRenderJSONWriteError(t *testing.T) {
 	r := Calibrate(fixtureGroup(10000, 10000, 10000, 10000), regress.DefaultThresholds())
 	require.Error(t, RenderJSON(r, failWriter{}))

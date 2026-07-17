@@ -2,6 +2,7 @@ package calibrate
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -48,13 +49,30 @@ func withTaskLabels(group []aggregate.RunGraph, task string) []aggregate.RunGrap
 	return group
 }
 
+func defaultEcho() ThresholdsEcho {
+	return ThresholdsEcho{
+		PresenceDelta:       0.2,
+		ErrorRateDelta:      0.1,
+		MetricRelDelta:      0.25,
+		IQRFactor:           1.5,
+		MinSupport:          3,
+		CoverageFloor:       0.7,
+		Z:                   1.645,
+		AnnotationRateDelta: 0.1,
+		PairedAlpha:         0.05,
+		PairedMinTasks:      5,
+		AuditIQRFactor:      3.0,
+		AuditRelDelta:       0.5,
+	}
+}
+
 func TestCalibrateInsufficientRuns(t *testing.T) {
 	got := Calibrate(fixtureGroup(10000, 10000, 10000, 10000), regress.DefaultThresholds())
 	want := CalibrateReport{
 		Runs:       4,
 		MinSupport: 3,
 		RunIDs:     []string{"r00", "r01", "r02", "r03"},
-		Thresholds: regress.DefaultThresholds(),
+		Thresholds: defaultEcho(),
 		Sufficient: false,
 		Detail:     "self-check needs k>=6 runs (have 4)",
 	}
@@ -65,7 +83,33 @@ func TestCalibrateReportEchoesRunIDsAndThresholds(t *testing.T) {
 	th := regress.DefaultThresholds()
 	got := Calibrate(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000), th)
 	assert.Equal(t, []string{"r00", "r01", "r02", "r03", "r04", "r05"}, got.RunIDs)
-	assert.Equal(t, th, got.Thresholds)
+	assert.Equal(t, defaultEcho(), got.Thresholds)
+}
+
+func TestThresholdsEchoMirrorsEveryRegressThresholdsField(t *testing.T) {
+	th := regress.Thresholds{
+		PresenceDelta:       1,
+		ErrorRateDelta:      2,
+		MetricRelDelta:      3,
+		IQRFactor:           4,
+		MinSupport:          5,
+		CoverageFloor:       6,
+		Z:                   7,
+		FailOnNotable:       true,
+		AnnotationRateDelta: 8,
+		PairedAlpha:         9,
+		PairedMinTasks:      10,
+		AuditIQRFactor:      11,
+		AuditRelDelta:       12,
+	}
+	got := Calibrate(nil, th)
+	src := reflect.ValueOf(th)
+	echo := reflect.ValueOf(got.Thresholds)
+	require.Equal(t, src.NumField(), echo.NumField())
+	for i := range src.NumField() {
+		name := src.Type().Field(i).Name
+		assert.Equal(t, src.Field(i).Interface(), echo.FieldByName(name).Interface(), name)
+	}
 }
 
 func TestCalibrateIdenticalRunsClean(t *testing.T) {

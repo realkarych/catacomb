@@ -8,14 +8,30 @@ import (
 )
 
 type CalibrateReport struct {
-	Runs       int                `json:"runs"`
-	MinSupport int                `json:"min_support"`
-	RunIDs     []string           `json:"run_ids,omitempty"`
-	Thresholds regress.Thresholds `json:"thresholds"`
-	Sufficient bool               `json:"sufficient"`
-	Detail     string             `json:"detail,omitempty"`
-	Split      *SplitResult       `json:"split,omitempty"`
-	Influence  *InfluenceResult   `json:"influence,omitempty"`
+	Runs       int              `json:"runs"`
+	MinSupport int              `json:"min_support"`
+	RunIDs     []string         `json:"run_ids,omitempty"`
+	Thresholds ThresholdsEcho   `json:"thresholds"`
+	Sufficient bool             `json:"sufficient"`
+	Detail     string           `json:"detail,omitempty"`
+	Split      *SplitResult     `json:"split,omitempty"`
+	Influence  *InfluenceResult `json:"influence,omitempty"`
+}
+
+type ThresholdsEcho struct {
+	PresenceDelta       float64 `json:"presence_delta"`
+	ErrorRateDelta      float64 `json:"error_delta"`
+	MetricRelDelta      float64 `json:"metric_rel_delta"`
+	IQRFactor           float64 `json:"iqr_factor"`
+	MinSupport          int     `json:"min_support"`
+	CoverageFloor       float64 `json:"coverage_floor"`
+	Z                   float64 `json:"z"`
+	FailOnNotable       bool    `json:"fail_on_notable"`
+	AnnotationRateDelta float64 `json:"annotation_rate_delta"`
+	PairedAlpha         float64 `json:"paired_alpha"`
+	PairedMinTasks      int     `json:"paired_min_tasks"`
+	AuditIQRFactor      float64 `json:"audit_iqr_factor"`
+	AuditRelDelta       float64 `json:"audit_rel_delta"`
 }
 
 type SplitResult struct {
@@ -50,7 +66,7 @@ type FlipFinding struct {
 
 func Calibrate(runs []aggregate.RunGraph, th regress.Thresholds) CalibrateReport {
 	k := len(runs)
-	rep := CalibrateReport{Runs: k, MinSupport: th.MinSupport, RunIDs: runIDs(runs), Thresholds: th}
+	rep := CalibrateReport{Runs: k, MinSupport: th.MinSupport, RunIDs: runIDs(runs), Thresholds: ThresholdsEcho(th)}
 	need := 2 * th.MinSupport
 	if k < need {
 		rep.Detail = fmt.Sprintf("self-check needs k>=%d runs (have %d)", need, k)

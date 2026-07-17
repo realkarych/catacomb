@@ -1246,8 +1246,8 @@ for field, want in (("runs", 6), ("min_support", 3), ("sufficient", True)):
         errs.append(f"{field}={rep.get(field)!r} want {want!r}")
 if rep.get("run_ids") != [f"cal-aa-r{i}" for i in range(6)]:
     errs.append(f"run_ids={rep.get('run_ids')!r} want cal-aa-r0..r5 in time order")
-if (rep.get("thresholds") or {}).get("MinSupport") != 3:
-    errs.append(f"thresholds={rep.get('thresholds')!r} want an echo with MinSupport 3")
+if (rep.get("thresholds") or {}).get("min_support") != 3:
+    errs.append(f"thresholds={rep.get('thresholds')!r} want an echo with min_support 3")
 split = rep.get("split") or {}
 for field, want in (("first_n", 3), ("second_n", 3), ("verdict", "insufficient")):
     if split.get(field) != want:

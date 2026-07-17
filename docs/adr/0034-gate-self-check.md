@@ -34,8 +34,9 @@ the shipped verdict path (`aggregate.Aggregate` + `regress.Compare`) over subset
 **one variant's** recorded runs. It never spends money, never touches the gate's
 own behavior, and reports three things:
 
-1. **Time-ordered A/A split.** Sort the selected runs by run order (their recorded
-   sequence — a proxy for wall-clock order), split into a first half and a second
+1. **Time-ordered A/A split.** Sort the selected runs by each run's evidence
+   timestamps (started/ended, falling back to run-id order when timestamps are
+   absent), split into a first half and a second
    half of ≥`MinSupport` each (so the verb requires **k ≥ 2·MinSupport = 6** runs;
    below that it reports `insufficient` and names the k it needs, mirroring
    ADR-0023's honesty). Run `Compare` with baseline = first half, candidate =
