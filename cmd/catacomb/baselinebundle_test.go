@@ -155,7 +155,9 @@ func TestWriteBundleReadBundleRoundTrip(t *testing.T) {
 	files := bundleFixtureFiles()
 	b, runsDir := writeBundleFixture(t, files)
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, runsDir))
+	count, err := writeBundle(&buf, b, runsDir)
+	require.NoError(t, err)
+	assert.Equal(t, len(files), count)
 	got := map[string][]byte{}
 	m, err := readBundle(bytes.NewReader(buf.Bytes()), collectBundleContents(got))
 	require.NoError(t, err)
@@ -174,8 +176,10 @@ func TestWriteBundleReadBundleRoundTrip(t *testing.T) {
 func TestWriteBundleDeterministic(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, bundleFixtureFiles())
 	var first, second bytes.Buffer
-	require.NoError(t, writeBundle(&first, b, runsDir))
-	require.NoError(t, writeBundle(&second, b, runsDir))
+	_, err := writeBundle(&first, b, runsDir)
+	require.NoError(t, err)
+	_, err = writeBundle(&second, b, runsDir)
+	require.NoError(t, err)
 	firstSum := sha256.Sum256(first.Bytes())
 	secondSum := sha256.Sum256(second.Bytes())
 	assert.Equal(t, hex.EncodeToString(firstSum[:]), hex.EncodeToString(secondSum[:]))
@@ -187,7 +191,8 @@ func TestWriteBundleDeterministic(t *testing.T) {
 func TestWriteBundleEntryOrderAndNormalizedHeaders(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, bundleFixtureFiles())
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, runsDir))
+	_, err := writeBundle(&buf, b, runsDir)
+	require.NoError(t, err)
 	raw := gunzipBundle(t, buf.Bytes())
 	assert.Zero(t, bytes.Count(raw, []byte("PaxHeaders")))
 	tr := tar.NewReader(bytes.NewReader(raw))
@@ -227,19 +232,21 @@ func TestWriteBundleLongPathFallsBackToPAX(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, files)
 	b.RunIDs = []string{"run-a"}
 	var first, second bytes.Buffer
-	require.NoError(t, writeBundle(&first, b, runsDir))
-	require.NoError(t, writeBundle(&second, b, runsDir))
+	_, err := writeBundle(&first, b, runsDir)
+	require.NoError(t, err)
+	_, err = writeBundle(&second, b, runsDir)
+	require.NoError(t, err)
 	assert.Equal(t, first.Bytes(), second.Bytes())
 	raw := gunzipBundle(t, first.Bytes())
 	assert.Equal(t, 1, bytes.Count(raw, []byte("PaxHeaders")))
 	formats := map[string]tar.Format{}
 	tr := tar.NewReader(bytes.NewReader(raw))
 	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
+		hdr, nextErr := tr.Next()
+		if errors.Is(nextErr, io.EOF) {
 			break
 		}
-		require.NoError(t, err)
+		require.NoError(t, nextErr)
 		formats[hdr.Name] = hdr.Format
 	}
 	require.Contains(t, formats, longPath)
@@ -256,7 +263,9 @@ func TestWriteBundleEmptyRunSet(t *testing.T) {
 	b := bundleFixtureBaseline("")
 	b.RunIDs = nil
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, t.TempDir()))
+	count, err := writeBundle(&buf, b, t.TempDir())
+	require.NoError(t, err)
+	assert.Zero(t, count)
 	got := map[string][]byte{}
 	m, err := readBundle(bytes.NewReader(buf.Bytes()), collectBundleContents(got))
 	require.NoError(t, err)
@@ -270,7 +279,9 @@ func TestWriteBundleDuplicateRunIDsPackedOnce(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, files)
 	b.RunIDs = []string{"run-a", "run-a"}
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, runsDir))
+	count, err := writeBundle(&buf, b, runsDir)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 	tr := tar.NewReader(bytes.NewReader(gunzipBundle(t, buf.Bytes())))
 	names := []string{}
 	for {
@@ -287,7 +298,7 @@ func TestWriteBundleDuplicateRunIDsPackedOnce(t *testing.T) {
 func TestWriteBundleRunIDEscapes(t *testing.T) {
 	b := bundleFixtureBaseline("")
 	b.RunIDs = []string{"../esc"}
-	err := writeBundle(io.Discard, b, t.TempDir())
+	_, err := writeBundle(io.Discard, b, t.TempDir())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "escapes the runs dir")
 }
@@ -295,7 +306,7 @@ func TestWriteBundleRunIDEscapes(t *testing.T) {
 func TestWriteBundleMissingRunDir(t *testing.T) {
 	b := bundleFixtureBaseline("")
 	b.RunIDs = []string{"ghost"}
-	err := writeBundle(io.Discard, b, t.TempDir())
+	_, err := writeBundle(io.Discard, b, t.TempDir())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `walk run "ghost"`)
 }
@@ -308,7 +319,7 @@ func TestWriteBundleSymlinkRefused(t *testing.T) {
 	if err := os.Symlink(filepath.Join(runsDir, "run-a", "session.jsonl"), link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	err := writeBundle(io.Discard, b, runsDir)
+	_, err := writeBundle(io.Discard, b, runsDir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "symlink")
 }
@@ -317,7 +328,7 @@ func TestWriteBundleManifestMarshalError(t *testing.T) {
 	b := bundleFixtureBaseline("")
 	b.RunIDs = nil
 	b.CreatedAt = time.Date(10001, 1, 1, 0, 0, 0, 0, time.UTC)
-	err := writeBundle(io.Discard, b, t.TempDir())
+	_, err := writeBundle(io.Discard, b, t.TempDir())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "encode manifest")
 }
@@ -371,7 +382,7 @@ func TestWriteBundleWriterFailures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := writeBundle(&failingWriter{allow: tc.allow}, b, runsDir)
+			_, err := writeBundle(&failingWriter{allow: tc.allow}, b, runsDir)
 			require.ErrorIs(t, err, errBundleTestWrite)
 			assert.Contains(t, err.Error(), tc.want)
 		})
@@ -387,9 +398,10 @@ func TestReadBundleGarbageGzip(t *testing.T) {
 func TestReadBundleTruncatedGzip(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, bundleFixtureFiles())
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, runsDir))
+	_, err := writeBundle(&buf, b, runsDir)
+	require.NoError(t, err)
 	bundle := buf.Bytes()
-	_, err := readBundle(bytes.NewReader(bundle[:len(bundle)/2]), discardBundleFile)
+	_, err = readBundle(bytes.NewReader(bundle[:len(bundle)/2]), discardBundleFile)
 	require.Error(t, err)
 }
 
@@ -409,9 +421,10 @@ func TestReadBundleFirstEntryNotManifest(t *testing.T) {
 func TestReadBundleManifestTruncatedBody(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, bundleFixtureFiles())
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, runsDir))
+	_, err := writeBundle(&buf, b, runsDir)
+	require.NoError(t, err)
 	raw := gunzipBundle(t, buf.Bytes())
-	_, err := readBundle(bytes.NewReader(gzipBytes(t, raw[:520])), discardBundleFile)
+	_, err = readBundle(bytes.NewReader(gzipBytes(t, raw[:520])), discardBundleFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read manifest")
 }
@@ -480,9 +493,10 @@ func TestReadBundleCorruptSecondHeader(t *testing.T) {
 func TestReadBundleCallbackError(t *testing.T) {
 	b, runsDir := writeBundleFixture(t, bundleFixtureFiles())
 	var buf bytes.Buffer
-	require.NoError(t, writeBundle(&buf, b, runsDir))
+	_, err := writeBundle(&buf, b, runsDir)
+	require.NoError(t, err)
 	errCallback := errors.New("bundle test: callback refused")
-	_, err := readBundle(bytes.NewReader(buf.Bytes()), func(string, io.Reader) error { return errCallback })
+	_, err = readBundle(bytes.NewReader(buf.Bytes()), func(string, io.Reader) error { return errCallback })
 	require.ErrorIs(t, err, errCallback)
 }
 

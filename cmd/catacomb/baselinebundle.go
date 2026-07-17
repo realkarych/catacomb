@@ -44,21 +44,21 @@ type bundleFile struct {
 	data []byte
 }
 
-func writeBundle(w io.Writer, b model.Baseline, runsDir string) error {
+func writeBundle(w io.Writer, b model.Baseline, runsDir string) (int, error) {
 	files, err := collectBundleFiles(runsDir, b.RunIDs)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	gz := gzip.NewWriter(w)
 	gz.ModTime = time.Time{}
 	gz.OS = 255
 	if terr := writeBundleTar(gz, b, files); terr != nil {
-		return terr
+		return 0, terr
 	}
 	if cerr := gz.Close(); cerr != nil {
-		return fmt.Errorf("baseline bundle: close gzip: %w", cerr)
+		return 0, fmt.Errorf("baseline bundle: close gzip: %w", cerr)
 	}
-	return nil
+	return len(files), nil
 }
 
 func collectBundleFiles(runsDir string, runIDs []string) ([]bundleFile, error) {

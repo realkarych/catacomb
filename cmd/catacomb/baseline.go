@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -20,14 +21,17 @@ import (
 
 var nowFn = time.Now
 
-var errBaselineNoRunsDir = errors.New("baseline set: --runs-dir is required (home directory could not be resolved; set it explicitly)")
+var (
+	errBaselineNoRunsDir       = errors.New("baseline set: --runs-dir is required (home directory could not be resolved; set it explicitly)")
+	errBaselineExportNoRunsDir = errors.New("baseline export: --runs-dir is required (home directory could not be resolved; set it explicitly)")
+)
 
 func newBaselineCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "baseline",
 		Short: "Manage named baselines for regression comparison",
 	}
-	cmd.AddCommand(newBaselineSetCmd(), newBaselineListCmd(), newBaselineRmCmd())
+	cmd.AddCommand(newBaselineSetCmd(), newBaselineListCmd(), newBaselineRmCmd(), newBaselineExportCmd())
 	return cmd
 }
 
@@ -78,6 +82,86 @@ func newBaselineRmCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
 	return cmd
+}
+
+func newBaselineExportCmd() *cobra.Command {
+	var dbPath string
+	var runsDir string
+	var outPath string
+	cmd := &cobra.Command{
+		Use:   "export <name>",
+		Short: "Export a baseline and its pinned evidence runs as a portable bundle",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBaselineExport(cmd.OutOrStdout(), store.OpenSQLiteReadOnly, dbPath, args[0], runsDir, outPath)
+		},
+	}
+	home, _ := os.UserHomeDir()
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "SQLite database path (default: ~/.catacomb/catacomb.db)")
+	cmd.Flags().StringVar(&runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir holding the baseline's pinned runs")
+	cmd.Flags().StringVar(&outPath, "out", "", "bundle output file (.tar.gz); must not already exist (required)")
+	return cmd
+}
+
+func runBaselineExport(out io.Writer, open storeOpener, dbPath, name, runsDir, outPath string) error {
+	if runsDir == "" {
+		return operational(errBaselineExportNoRunsDir)
+	}
+	if outPath == "" {
+		return operational(fmt.Errorf("baseline export %q: --out is required", name))
+	}
+	if _, err := os.Lstat(outPath); err == nil {
+		return operational(fmt.Errorf("baseline export: out file %q already exists; refusing to overwrite it", outPath))
+	}
+	b, err := exportBaseline(open, dbPath, name)
+	if err != nil {
+		return err
+	}
+	for _, id := range b.RunIDs {
+		info, statErr := os.Stat(filepath.Join(runsDir, id))
+		if statErr != nil || !info.IsDir() {
+			return operational(fmt.Errorf("baseline export %q: pinned run %q has no evidence dir under %q", name, id, runsDir))
+		}
+	}
+	fileCount, err := writeBundleFileAtomic(outPath, b, runsDir)
+	if err != nil {
+		return operational(fmt.Errorf("baseline export %q: %w", name, err))
+	}
+	fmt.Fprintf(out, "exported baseline %s: %s (%d runs, %d files)\n", name, outPath, len(b.RunIDs), fileCount)
+	return nil
+}
+
+func exportBaseline(open storeOpener, dbPath, name string) (model.Baseline, error) {
+	s, err := openReadStore(open, dbPath)
+	if err != nil {
+		return model.Baseline{}, operational(err)
+	}
+	defer func() { _ = s.Close() }()
+	b, ok, err := s.GetBaseline(name)
+	if err != nil {
+		return model.Baseline{}, operational(fmt.Errorf("baseline export: %w", err))
+	}
+	if !ok {
+		return model.Baseline{}, operational(fmt.Errorf("%w: %q", ErrBaselineNotFound, name))
+	}
+	return b, nil
+}
+
+func writeBundleFileAtomic(outPath string, b model.Baseline, runsDir string) (int, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(outPath), "."+filepath.Base(outPath)+".tmp-*")
+	if err != nil {
+		return 0, err
+	}
+	fileCount, writeErr := writeBundle(tmp, b, runsDir)
+	err = errors.Join(writeErr, tmp.Close())
+	if err == nil {
+		err = os.Rename(tmp.Name(), outPath)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+		return 0, err
+	}
+	return fileCount, nil
 }
 
 func runBaselineSet(out io.Writer, open storeOpener, dbPath, name string, labels []string, runsDir string) error {
