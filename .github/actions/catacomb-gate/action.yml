@@ -369,7 +369,8 @@ runs:
           cat "$out/comment.md"
         } > "$body"
         existing="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate |
-          jq -r --arg m "$marker" '.[] | select(.body | startswith($m)) | .id' |
+          jq -r --arg m "$marker" \
+            '.[] | select(.user.type == "Bot" and (.body | startswith($m))) | .id' |
           sed -n 1p)"
         if [ -n "$existing" ]; then
           gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" \

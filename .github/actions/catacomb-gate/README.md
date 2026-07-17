@@ -102,7 +102,11 @@ prefixed with a hidden marker `<!-- catacomb-gate:<baseline-identity> -->`
 (the `baseline` selector, or the bundle filename when only `baseline-bundle`
 is given). Re-runs find the marker and update the same comment instead of
 stacking new ones. One comment is maintained per baseline identity, so two
-gates against different baselines keep separate comments.
+gates against different baselines keep separate comments. Only comments
+authored by a bot account are candidates for the update (the default
+`GITHUB_TOKEN` posts as `github-actions[bot]`), so a user who plants the
+marker in their own comment cannot get it overwritten by — or mistaken
+for — the gate's verdict.
 
 ## Supply chain
 
