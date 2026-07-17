@@ -74,7 +74,7 @@ func writeTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens i
 
 func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 	root := evidenceRoot(t)
-	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	base, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=base")
 	require.NoError(t, err)
 	require.Len(t, base, 2)
 	assert.Equal(t, "base-0", base[0].Run.ID)
@@ -83,34 +83,34 @@ func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 		assert.Equal(t, []string{"s1"}, rg.Run.SessionIDs)
 		assert.NotEmpty(t, rg.Nodes)
 	}
-	cand, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=cand")
+	cand, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=cand")
 	require.NoError(t, err)
 	assert.Len(t, cand, 2)
 }
 
 func TestRunsDirEmptyMatchNamesSelector(t *testing.T) {
 	root := evidenceRoot(t)
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=none")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=none")
 	require.ErrorIs(t, err, ErrEmptyGroup)
 	assert.Contains(t, err.Error(), "label:variant=none")
 }
 
 func TestRunsDirBadSelectorOperational(t *testing.T) {
 	root := evidenceRoot(t)
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "bogus")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "bogus")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid selector")
 }
 
 func TestRunsDirBadLabelTermOperational(t *testing.T) {
 	root := evidenceRoot(t)
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:BAD=x")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:BAD=x")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid --label")
 }
 
 func TestRunsDirScanError(t *testing.T) {
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", filepath.Join(t.TempDir(), "absent"), newPricer(), "label:variant=base")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", filepath.Join(t.TempDir(), "absent"), newPricer(), "label:variant=base")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "runs-dir")
 }
@@ -127,7 +127,7 @@ func TestRunsDirEvidenceLoadErrorPropagates(t *testing.T) {
 		MarkerEnd:   time.Unix(2, 0).UTC(),
 	}
 	require.NoError(t, evidence.Write(filepath.Join(root, "broken"), m, nil))
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=base")
 	require.Error(t, err)
 }
 
@@ -229,7 +229,7 @@ func TestRunsDirNameSelectorMissingRunDir(t *testing.T) {
 		Name: "golden", RunIDs: []string{"base-0", "ghost-99"}, RunsDir: root, Stamps: currentStamps(),
 	})
 
-	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", dbPath, root, newPricer(), "name:golden")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ghost-99")
 	assert.Contains(t, err.Error(), filepath.Join(root, "ghost-99"))
@@ -263,7 +263,7 @@ func TestRunsDirNameSelectorBrokenEvidence(t *testing.T) {
 		Name: "golden", RunIDs: []string{"broken"}, RunsDir: root, Stamps: currentStamps(),
 	})
 
-	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "regress", dbPath, root, newPricer(), "name:golden")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "broken")
 	var opErr *operationalError
@@ -400,7 +400,7 @@ func TestRunsDirAppliesEvidenceScores(t *testing.T) {
 	writeEvidenceRun(t, root, "base-0", "base", "session_marked.jsonl")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "base-0", "scores.jsonl"),
 		[]byte(`{"key":"verifier.pass","value":1}`+"\n"), 0o600))
-	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	base, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=base")
 	require.NoError(t, err)
 	require.Len(t, base, 1)
 	assert.InDelta(t, 1.0, base[0].Annotations["verifier.pass"], 1e-9)

@@ -102,7 +102,7 @@ func runPack(out, errOut io.Writer, f packFlags, sel string) error {
 	if f.sample < 1 {
 		return operational(fmt.Errorf("pack: --sample must be > 0, got %d", f.sample))
 	}
-	group, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, newPricer(), sel)
+	group, _, err := resolveSelectorRunsDir(errOut, "pack", f.dbPath, f.runsDir, newPricer(), sel)
 	if err != nil {
 		return err
 	}

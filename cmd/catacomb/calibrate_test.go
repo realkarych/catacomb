@@ -53,7 +53,7 @@ func TestCalibrateUnknownGroupExitTwo(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := run([]string{"calibrate", "--runs-dir", root, "--group", "label:variant=none"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "matched no runs")
+	assert.Contains(t, errBuf.String(), `calibrate selector "label:variant=none": selector matched no runs`)
 }
 
 func TestCalibrateEmptyGroupSelectorExitTwo(t *testing.T) {

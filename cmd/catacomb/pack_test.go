@@ -103,7 +103,7 @@ func TestPackEmptySelectionExit2(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"pack", "label:variant=none", "--runs-dir", root, "--out", filepath.Join(t.TempDir(), "pack")}, &stdout, &stderr)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, stderr.String(), "matched no runs")
+	assert.Contains(t, stderr.String(), `pack selector "label:variant=none": selector matched no runs`)
 }
 
 func TestPackExistingOutDirExit2(t *testing.T) {
