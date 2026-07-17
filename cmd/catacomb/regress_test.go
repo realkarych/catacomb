@@ -384,11 +384,13 @@ func TestRegressFormatUnknownExitTwo(t *testing.T) {
 	assert.Contains(t, errOut, `regress --format: unknown format "bogus" (want human|json|markdown)`)
 }
 
-func TestRegressFormatMarkdownRejected(t *testing.T) {
+func TestRegressFormatMarkdownRenders(t *testing.T) {
 	root := evidenceRoot(t)
-	code, _, errOut := runRegressCLI(t, root, "--format", "markdown")
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errOut, `regress --format: unknown format "markdown" (want human|json|markdown)`)
+	code, out, _ := runRegressCLI(t, root, "--format", "markdown")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "**Verdict:")
+	assert.Contains(t, out, "| Verdict | Scope | Key | Name | Metric | Baseline | Candidate | Band | Detail |")
+	assert.Contains(t, out, "|---|---|---|---|---|---|---|---|---|")
 }
 
 func TestRegressCmdWired(t *testing.T) {

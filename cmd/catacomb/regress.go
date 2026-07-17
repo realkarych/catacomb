@@ -22,8 +22,9 @@ const (
 	selectorLabel = "label"
 	selectorName  = "name"
 
-	regressFormatHuman = "human"
-	regressFormatJSON  = "json"
+	regressFormatHuman    = "human"
+	regressFormatJSON     = "json"
+	regressFormatMarkdown = "markdown"
 )
 
 var marshalRecord = json.Marshal
@@ -74,7 +75,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().StringVar(&f.candidate, "candidate", "", "candidate selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.dbPath, "db", defaultDBPath(), "SQLite database path for name:/--record (default: ~/.catacomb/catacomb.db)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence dir to resolve selectors from: label: scans it, name: reads --db's baselines table, --record appends there")
-	cmd.Flags().StringVar(&f.format, "format", regressFormatHuman, "output format: human or json")
+	cmd.Flags().StringVar(&f.format, "format", regressFormatHuman, "output format: human|json|markdown")
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
 	_ = cmd.Flags().MarkDeprecated("json", "use --format json")
 	cmd.Flags().SetOutput(flagNoticeStderr{cmd: cmd})
@@ -208,11 +209,14 @@ func regressReport(out, errOut io.Writer, f regressFlags, specs []regress.Annota
 		CandidateCells: aggregate.Cells(candGroup),
 	}, f.thresholds)
 	warnUnfiredAnnotations(errOut, specs, baseAgg, candAgg)
-	if f.format == regressFormatJSON {
+	switch f.format {
+	case regressFormatJSON:
 		if err := regress.RenderJSON(rep, out); err != nil {
 			return regress.Report{}, operational(err)
 		}
-	} else {
+	case regressFormatMarkdown:
+		regress.RenderMarkdown(rep, out)
+	default:
 		regress.RenderHuman(rep, out)
 	}
 	return rep, nil
@@ -223,7 +227,7 @@ func resolveRegressFormat(formatChanged bool, format string, asJSON bool) (strin
 		return regressFormatJSON, nil
 	}
 	switch format {
-	case regressFormatHuman, regressFormatJSON:
+	case regressFormatHuman, regressFormatJSON, regressFormatMarkdown:
 		return format, nil
 	default:
 		return "", fmt.Errorf("regress --format: unknown format %q (want human|json|markdown)", format)
