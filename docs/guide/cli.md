@@ -60,8 +60,10 @@ catacomb bench <basket.yaml> [flags]
 | `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
 
 A basket is a declarative YAML file. `tasks × variants × reps` expands to one *cell* per
-combination, and cells run sequentially. The full basket file schema — every field, its
-type, and validation rules — is documented in [basket.md](basket.md).
+combination, and cells run sequentially in rep-major order (rep → task → variant), so
+time-of-day API drift spreads evenly across variants instead of biasing one side of a
+comparison. The full basket file schema — every field, its type, and validation rules —
+is documented in [basket.md](basket.md).
 
 Each cell runs under run-id `bench-<basket>-<task>-<variant>-r<rep>` and carries the
 labels `basket`, `task`, `variant`, and `rep`, so `baseline` and `regress` selectors

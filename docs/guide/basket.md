@@ -2,8 +2,10 @@
 
 A **basket** is a declarative YAML file that defines a benchmark as a matrix of
 **tasks × variants × reps**. [`catacomb bench`](cli.md#bench) expands that matrix into
-one *cell* per combination, runs the cells sequentially, and writes one evidence
-directory per cell. Offline [`catacomb verify`](cli.md#verify) reads the same basket to
+one *cell* per combination, runs the cells sequentially in rep-major order
+(rep → task → variant), and writes one evidence directory per cell. Interleaving the
+variant groups through time keeps a variant comparison from being confounded by API
+latency and cost drift over the batch. Offline [`catacomb verify`](cli.md#verify) reads the same basket to
 re-run each task's verifier over recorded evidence.
 
 This page is the authoritative reference for every field, its type, and its validation
