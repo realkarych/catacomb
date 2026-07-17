@@ -70,6 +70,7 @@ func Calibrate(runs []aggregate.RunGraph, th regress.Thresholds) CalibrateReport
 ```
 
 Logic:
+
 - `k := len(runs)`. If `k < 2*th.MinSupport` → `Sufficient=false`, `Detail = fmt.Sprintf("self-check needs k>=%d runs (have %d)", 2*th.MinSupport, k)`, no Split/Influence.
 - Else `Sufficient=true`. Split: `firstN := k/2`, first = runs[:firstN], second = runs[firstN:]. Build the A/A verdict via a small internal `compareGroups(first, second, th)` that calls `aggregate.Aggregate` on each half and `regress.Compare` (mirror cmd/catacomb/regress.go's regressReport composition — `aggregate.Options{}` with no annotation keys for the base self-check; NOTE annotations are out of scope for v1, document it). Map every `regression`/`notable` Finding in the resulting Report into a `DriftFinding` (these are the "drift" signals — same variant, so any gating verdict is drift, not a real regression). `Split.Verdict` = the Report's OverallVerdict.
 - Influence: only when `k-1 >= 2*th.MinSupport`. For each index i in 0..k-1, drop runs[i], re-split the remaining k-1 in order, recompute the overall verdict; if it differs from `Split.Verdict`, append a FlipFinding{i, Split.Verdict, newVerdict}. `Evaluated=true`. Else `Evaluated=false`, `Detail = fmt.Sprintf("leave-one-out needs k>=%d runs (have %d)", 2*th.MinSupport+1, k)`.
