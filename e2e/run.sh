@@ -940,19 +940,46 @@ grep -q '^| Verdict | Scope | Key | Name | Metric | Baseline | Candidate | Band 
 grep -qE '^\| regression \|' "$work/regress-sql-degraded.md" || rc=1
 record "$rc" "--format markdown renders a bold '**Verdict: ... regression**' header, the findings table header, and >=1 'regression' table row"
 
-echo "== k3. regress --annotation-rate-delta 0.99: sql seeded regression still gates =="
-# Defense-in-depth: even with the annotation-rate axis nearly disabled (0.99, close to the
-# widest possible probability delta), the SAME baseline-vs-degraded comparison must still
-# gate overall. Worst case this is tight: if baseline achieves a clean 5/5 verifier.pass,
-# the bad-rate delta is exactly 1.0 (> 0.99); the one-stochastic-miss floor step j tolerates
-# (4/5) would drop the delta to 0.8, under 0.99 — a live-flakiness risk inherent to this
-# extreme threshold value, not asserted away here per the plan's explicit recipe.
-run_json 1 "$artifacts/regress-sql-ratedelta.json" \
-	"annotation-rate-delta 0.99: sql seeded regression (baseline vs degraded)" -- \
-	catacomb regress --runs-dir "$runs3" \
+echo "== k3. regress --annotation-rate-delta 0.99: sql seeded regression (annotation axis near-disabled) =="
+# Exit code is NOT hard-asserted here (mirrors d2 above, run.sh:336-343). At
+# --annotation-rate-delta 0.99 the annotation axis only gates when baseline lands a
+# clean 5/5 verifier.pass, since the bad-rate delta is then exactly 1.0 (> 0.99); step j
+# above (run.sh:816/857-871) explicitly tolerates a stochastic 4/5 baseline elsewhere in
+# THIS SAME sql basket, and at 4/5 the delta is only 0.8 (< 0.99), so the axis stops
+# gating and `regress` exits 0 with no real defect present. A hard `run_json 1` here
+# would flake red on exactly that tolerated baseline miss. The deterministic "gates at
+# default 0.1 / clears at loosened 0.7" proof already lives hermetically, over fixed
+# synthetic evidence immune to live-baseline variance, at
+# e2e/hermetic/prod/scenarios/80-cli-contracts.sh:338-358 — so no coverage is lost here.
+# We only assert the flag was accepted (exit 0 or 1, never an operational-error 2) and
+# that --json parses; whether the annotation axis actually gated is LOGGED, not asserted.
+rc=0
+catacomb regress --runs-dir "$runs3" \
 	--baseline label:basket=e2e-sql,variant=baseline \
 	--candidate label:basket=e2e-sql,variant=degraded \
-	--annotation-rate-delta 0.99 --json
+	--annotation-rate-delta 0.99 --json \
+	>"$artifacts/regress-sql-ratedelta.json" 2>"$artifacts/regress-sql-ratedelta.json.stderr" || rc=$?
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+	pass "annotation-rate-delta 0.99: flag accepted (exit $rc)"
+else
+	failrec "annotation-rate-delta 0.99: flag accepted (exit $rc, want 0 or 1)"
+	sed 's/^/        stderr: /' "$artifacts/regress-sql-ratedelta.json.stderr" >&2 || true
+fi
+rc=0
+python3 - "$artifacts/regress-sql-ratedelta.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "total" and f.get("metric") == "ann:verifier.pass"
+]
+if hits:
+    print(f"ann:verifier.pass at rate-delta 0.99: verdict={hits[0].get('verdict')!r} detail={hits[0].get('detail', '')!r} (logged, not gated)")
+else:
+    print("ann:verifier.pass finding absent at rate-delta 0.99 (axis fully disabled for this evidence; logged, not gated)")
+PY
+record "$rc" "annotation-rate-delta 0.99: --json parses; whether the annotation axis gates is logged only, not asserted, since it depends on the tolerated baseline pass-rate from step j"
 
 echo "== l. sql A-vs-A control (baseline vs baseline2) must NOT gate =="
 # verifier.pass is equal across the identical variants (both ~5/5), so the annotation
