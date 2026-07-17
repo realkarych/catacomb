@@ -553,6 +553,11 @@ directories under `--runs-dir`:
   flag names a different directory, a stderr warning notes the recorded dir and the
   flag wins.
 
+Both loaders strip node payloads before the groups are held for aggregation — the
+gate never reads them — so `regress` memory scales with graph structure, not
+transcript size; see [Scale](privacy-and-operations.md#scale) for the measured
+envelope.
+
 Groups are aggregated and compared per
 [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
 
