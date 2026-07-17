@@ -12,6 +12,7 @@ tag runs.
 | Setting | Default | Used by | Override |
 | --- | --- | --- | --- |
 | Claude projects dir (transcripts) | `~/.claude/projects` | `bench` | `--projects-dir` |
+| Codex sessions dir (rollout transcripts) | `~/.codex/sessions` | `bench` (`runtime: codex`), `import` | `--sessions-dir` |
 | Evidence runs dir | `~/.catacomb/runs` | `bench`, `regress`, `baseline set` | `--runs-dir` |
 | SQLite store | `~/.catacomb/catacomb.db` | `baseline`, `regress` (`name:`/`--record`), `trends` | `--db` |
 | Bench manifest | `<basket>.manifest.jsonl` | `bench` | `--manifest` |

@@ -690,7 +690,7 @@ and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 The offline gate is itself validated end-to-end against the real `claude -p` CLI by the
 [E2E Live Gate](../../.github/workflows/e2e-live.yml) workflow (`e2e/run.sh`), a
 CI-portable rerun of the [PV-6b calibration](../internal/reviews/2026-07-08-pv6b-live-calibration.md)
-methodology. It runs three live baskets and asserts the gate's behavior on the real
+methodology. It runs a suite of live Claude baskets and asserts the gate's behavior on the real
 evidence: the A-vs-A controls must raise no presence or verifier false positives at default
 sensitivity (their continuous metrics are asserted at a widened band, since sequential
 batches drift on API latency, cost, and tokens), while a seeded checkpoint-presence
