@@ -642,11 +642,12 @@ record "$rc" "INSTRUCTIONS.md present in the bundle"
 
 echo "== 14. SP4 round-trip: external audit.clean score surfaces as a finding =="
 # Closes the pack loop through the built binary: a hand-written scores line — the
-# exact dialect INSTRUCTIONS.md asks an external auditor to return — lands on a packed
+# exact dialect INSTRUCTIONS.md asks an external auditor to return, tool provenance
+# included (the gate ignores it; catacomb-judge consumes it) — lands on a packed
 # run (baseline r1, index 0 of the step-13 sample) via --scores, and --annotation
 # gates it. Only one baseline run carries the key, so the deterministic outcome is the
 # annotation-absent-in-candidate insufficient finding; exit stays 0 (nothing gates).
-printf '{"key":"audit.clean","value":1,"run_id":"%s"}\n' "$base1" >"$work/audit-clean.scores"
+printf '{"key":"audit.clean","value":1,"run_id":"%s","tool":"hermetic-auditor"}\n' "$base1" >"$work/audit-clean.scores"
 run_json 0 "$work/regress-audit.json" \
 	"A-vs-A with the returned audit.clean score (exit 0)" -- \
 	catacomb regress --runs-dir "$runs" \
