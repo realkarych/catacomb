@@ -34,6 +34,10 @@ var (
 	errBundleCollision = errors.New("baseline bundle: run dir exists with different content")
 )
 
+func validBundleRunID(id string) bool {
+	return filepath.IsLocal(id) && !strings.ContainsAny(id, `/\`) && id == path.Clean(id) && id != "."
+}
+
 type bundleManifest struct {
 	Version  int               `json:"version"`
 	Baseline model.Baseline    `json:"baseline"`
@@ -68,7 +72,7 @@ func collectBundleFiles(runsDir string, runIDs []string) ([]bundleFile, error) {
 	ids = slices.Compact(ids)
 	files := []bundleFile{}
 	for _, id := range ids {
-		if !filepath.IsLocal(id) {
+		if !validBundleRunID(id) {
 			return nil, fmt.Errorf("baseline bundle: run id %q escapes the runs dir", id)
 		}
 		runDir := filepath.Join(runsDir, id)

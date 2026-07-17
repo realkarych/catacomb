@@ -277,7 +277,7 @@ func (imp *bundleImporter) bindManifest(m bundleManifest) error {
 
 func validateBundleRunIDs(ids []string) error {
 	for _, id := range ids {
-		if !filepath.IsLocal(id) || strings.ContainsAny(id, `/\`) {
+		if !validBundleRunID(id) {
 			return fmt.Errorf("run id %q: %w", id, errBundleRunID)
 		}
 	}

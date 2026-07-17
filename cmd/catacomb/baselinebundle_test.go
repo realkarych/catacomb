@@ -296,11 +296,15 @@ func TestWriteBundleDuplicateRunIDsPackedOnce(t *testing.T) {
 }
 
 func TestWriteBundleRunIDEscapes(t *testing.T) {
-	b := bundleFixtureBaseline("")
-	b.RunIDs = []string{"../esc"}
-	_, err := writeBundle(io.Discard, b, t.TempDir())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "escapes the runs dir")
+	for _, id := range []string{"../esc", ".", "", "nested/run", `nested\run`} {
+		t.Run(fmt.Sprintf("id %q", id), func(t *testing.T) {
+			b := bundleFixtureBaseline("")
+			b.RunIDs = []string{id}
+			_, err := writeBundle(io.Discard, b, t.TempDir())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "escapes the runs dir")
+		})
+	}
 }
 
 func TestWriteBundleMissingRunDir(t *testing.T) {

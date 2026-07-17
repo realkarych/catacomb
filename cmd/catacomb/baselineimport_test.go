@@ -399,6 +399,22 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 			"run id is not a clean local name",
 		},
 		{
+			"run id dot aliases the runs dir",
+			func(t *testing.T) []byte {
+				t.Helper()
+				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("."), map[string]string{}))
+			},
+			"run id is not a clean local name",
+		},
+		{
+			"run id empty",
+			func(t *testing.T) []byte {
+				t.Helper()
+				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline(""), map[string]string{}))
+			},
+			"run id is not a clean local name",
+		},
+		{
 			"invalid baseline name",
 			func(t *testing.T) []byte {
 				t.Helper()
@@ -470,12 +486,16 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 }
 
 func TestBaselineImportHostileRunIDSentinel(t *testing.T) {
-	bundle := writeImportBundle(t, gzipTarBundle(t, importManifestEntry(t, importTestBaseline("../evil"), map[string]string{})))
+	for _, id := range []string{"../evil", ".", "", "./nested", "not-clean/./x"} {
+		t.Run(fmt.Sprintf("id %q", id), func(t *testing.T) {
+			bundle := writeImportBundle(t, gzipTarBundle(t, importManifestEntry(t, importTestBaseline(id), map[string]string{})))
 
-	err := runBaselineImport(io.Discard, store.OpenSQLite, emptyStoreDB(t), bundle, filepath.Join(t.TempDir(), "runs"))
-	require.ErrorIs(t, err, errBundleRunID)
-	var opErr *operationalError
-	require.ErrorAs(t, err, &opErr)
+			err := runBaselineImport(io.Discard, store.OpenSQLite, emptyStoreDB(t), bundle, filepath.Join(t.TempDir(), "runs"))
+			require.ErrorIs(t, err, errBundleRunID)
+			var opErr *operationalError
+			require.ErrorAs(t, err, &opErr)
+		})
+	}
 }
 
 func TestBaselineImportMissingDiskFileIsReadErrorNotCollision(t *testing.T) {
