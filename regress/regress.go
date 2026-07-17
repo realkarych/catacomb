@@ -16,12 +16,13 @@ type AnnotationSpec struct {
 	HigherBetter bool   `json:"higher_better"`
 }
 
-const RecordVersion = 1
+const RecordVersion = 2
 
 const VerifierOutcomeKey = "verifier.pass"
 
 type Record struct {
 	V                 int              `json:"v"`
+	Project           string           `json:"project,omitempty"`
 	CandidateSelector string           `json:"candidate_selector"`
 	Thresholds        Thresholds       `json:"thresholds"`
 	Annotations       []AnnotationSpec `json:"annotations,omitempty"`
