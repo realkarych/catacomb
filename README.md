@@ -39,7 +39,7 @@ It fits any Claude Code agent whose behavior you need to keep stable — coding 
 data/ETL pipelines (SQL, transforms), research and tool-use loops — anywhere a
 nondeterministic session needs a CI verdict instead of a vibe check.
 
-> **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts.
+> **Requires [Claude Code](https://www.anthropic.com/claude-code)** installed with `claude` on your PATH — catacomb evaluates Claude Code agent transcripts (and, import-only, OpenAI Codex CLI sessions — see [runtimes](docs/guide/ingestion.md#runtimes)).
 
 ## <p align=center>✨ Features</p>
 
