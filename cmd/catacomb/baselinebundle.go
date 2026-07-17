@@ -151,6 +151,10 @@ func writeBundleEntry(tw *tar.Writer, f bundleFile, modTime time.Time) error {
 }
 
 func readBundle(r io.Reader, onFile func(path string, r io.Reader) error) (bundleManifest, error) {
+	return readBundleWith(r, func(bundleManifest) error { return nil }, onFile)
+}
+
+func readBundleWith(r io.Reader, onManifest func(m bundleManifest) error, onFile func(path string, r io.Reader) error) (bundleManifest, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return bundleManifest{}, fmt.Errorf("baseline bundle: open gzip: %w", err)
@@ -159,6 +163,9 @@ func readBundle(r io.Reader, onFile func(path string, r io.Reader) error) (bundl
 	manifest, err := readBundleManifest(tr)
 	if err != nil {
 		return bundleManifest{}, err
+	}
+	if merr := onManifest(manifest); merr != nil {
+		return bundleManifest{}, merr
 	}
 	if serr := streamBundleFiles(tr, onFile); serr != nil {
 		return bundleManifest{}, serr
