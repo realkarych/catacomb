@@ -215,6 +215,76 @@ extent the recorded comparisons share the task basket: the table marks baseline 
 [Pareto column and JSON semantics](cli.md#accuracy-vs-cost-pareto), the `--json` form, and exit
 codes.
 
+### Self-check your gate
+
+The continuous metric bands (`duration_ms`, `cost_usd`, tokens) are a fixed tolerance, not a
+hypothesis test — their false-positive behavior depends on how much your environment drifts
+between identical runs. Before trusting a red verdict on one of those axes, audit the gate
+against the variant's *own* recorded runs
+([ADR-0034](../adr/0034-gate-self-check.md)):
+
+```sh
+catacomb calibrate --runs-dir ~/.catacomb/runs \
+  --group label:basket=checkout,variant=main
+```
+
+`calibrate` takes **one** selector, splits its runs into a time-ordered first and second half,
+and runs the full gate over that A/A split — both halves are the same variant, so **a drift
+finding is not a real regression**: a gating verdict here means environmental drift across the
+recorded sequence (API latency, runner load, a model-side change) or an outlier run. With 7+
+runs it also drops each run in turn and names every run whose removal flips the overall verdict,
+so a verdict riding on a single outlier is visible before you act on it. The split needs
+`2 × --min-support` runs (6 at defaults) and reports `insufficient` with the k it needs below
+that. Pass the same threshold flags your CI gate uses — the point is to audit the verdict
+function as configured — and read the result as a pre-flight check: if the baseline's own
+history gates against itself on `duration_ms`, a red `duration_ms` verdict against that baseline
+is not trustworthy evidence. `calibrate` itself never gates: exit `0` on every rendered
+self-check, `2` only on operational errors. It deliberately reports no false-positive *rate*
+and suggests no threshold — see [calibrate](cli.md#calibrate) for both non-goals and the full
+report shape.
+
+### The true k-vs-k A/A check
+
+`calibrate` audits the runs you already have, for $0 — but its halves each carry only half the
+support your real gate runs at, and one overlapping half-split of a small group is an audit, not
+a false-positive observation. The statistically honest way to observe false-positive behavior at
+the real operating support is to spend bench budget on it: run **one** variant at `2k` reps and
+`regress` its first `k` against its last `k` as two disjoint groups at the full support `k` your
+gate actually uses.
+
+Selectors match labels exactly (there is no `rep` range syntax), so declare the same variant
+twice — identical id-only entries, no setup difference — and let bench's task → variant → rep
+cell order make the second entry the *later* half of the wall clock:
+
+```yaml
+# checkout-aa.yaml — same basket, one real variant declared twice
+basket: checkout-aa
+reps: 5   # k: the per-side support your gate runs at
+tasks:
+  - id: work-task
+    cmd: ["claude", "-p", "work the checkout task", "--output-format", "stream-json"]
+variants:
+  - id: main
+  - id: main-later   # identical to main: the last k of a 2k-rep A/A
+```
+
+```sh
+catacomb bench checkout-aa.yaml
+catacomb regress --runs-dir ~/.catacomb/runs \
+  --baseline label:basket=checkout-aa,variant=main \
+  --candidate label:basket=checkout-aa,variant=main-later
+```
+
+Nothing changed between the groups except time, so any `regression` here is a directly observed
+false positive at your exact thresholds and support — the same observation `calibrate` can only
+approximate from half-support halves. Exit `1` means the gate as configured would have flagged
+this variant against itself: widen the offending band deliberately, or treat that axis's
+verdicts as advisory for this basket. Repeat the run to accumulate observations before drawing a
+rate — one A/A batch is one observation, not a false-positive rate (the same honesty rule
+[`calibrate`](cli.md#calibrate) applies to itself). The project's own live E2E does exactly this
+control weekly (`e2e/run.sh`, the A-vs-A step) and is where the documented ~2× `duration_ms`
+inter-batch drift was measured.
+
 ### Gate on external scores (optional)
 
 Catacomb compares deterministic observables (status, presence, duration, cost, tokens); it does

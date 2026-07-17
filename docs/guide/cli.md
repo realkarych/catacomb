@@ -15,6 +15,7 @@ The command set:
 | [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |
 | [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`) |
 | [`regress`](#regress) | Compare a candidate run group against a baseline and gate |
+| [`calibrate`](#calibrate) | Self-check the gate over one variant's recorded runs (A/A split + influence) |
 | [`trends`](#trends) | Replay a baseline's recorded regression history |
 | [`diff`](#diff) | Diff two session transcripts by `step_key` |
 | [`subgraph`](#subgraph) | Extract the execution subgraph of a checkpoint phase |
@@ -656,6 +657,102 @@ runs (measured 2026-07-08, [PV-6b](../internal/reviews/2026-07-08-pv6b-live-cali
 inherits runner load — `tokens_out` and `turns` are the trustworthy anomaly axes. In
 particular, the first run of a bench batch often pays a cold-start premium and can flag
 on `duration_ms` routinely — expected, not an anomaly.
+
+## calibrate
+
+Self-check the gate's power over **one** variant's recorded runs before trusting a
+red verdict ([ADR-0034](../adr/0034-gate-self-check.md)). Where [`regress`](#regress)
+compares two groups, `calibrate` audits a single group against itself on the same
+verdict path: it splits the selected runs into a time-ordered first half and second
+half (an A/A comparison — both halves are the same variant), runs the full gate over
+that split, and then drops each run in turn to see whether any single run flips the
+overall verdict.
+
+```sh
+catacomb calibrate --group <selector> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--group` | (empty) | Run group selector: `label:k=v[,k=v...]` or `name:<baseline>` |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence dir to resolve `--group` from: `label:` scans it, `name:` reads `--db`'s baselines table |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path for `name:` selectors |
+| `--format` | `human` | Output format: `human` or `json` |
+| `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
+| `--presence-delta` | 0.2 | Presence-rate delta threshold |
+| `--error-delta` | 0.1 | Error-rate delta threshold |
+| `--annotation-rate-delta` | 0.1 | Rate delta threshold for run-level binary annotations (e.g. `verifier.pass`; must be > 0) |
+| `--paired-alpha` | 0.05 | Significance level for the paired per-task sign test (must be in (0,1)) |
+| `--paired-min-tasks` | 5 | Minimum matched tasks before the paired sign test can gate (must be > 0) |
+| `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
+| `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
+| `--audit-iqr-factor` | 3.0 | Accepted for threshold parity with [`regress`](#regress) (must be > 0); the self-check report carries no [audit](#per-cell-outlier-audit) block |
+| `--audit-rel-delta` | 0.5 | Accepted for threshold parity with `regress` (must be > 0); same note |
+| `--coverage-floor` | 0.7 | Step-alignment coverage below which step verdicts are downgraded |
+| `--z` | 1.645 | One-sided Wilson z for the rate gates (`1.645` = 95% one-sided) |
+| `--fail-on-notable` | false | Count `notable` findings toward the split verdict (never the exit code) |
+
+The selector grammar and resolution are exactly [`regress`](#regress)'s, and the
+threshold flags are the gate's own — the point is to audit the verdict function *as
+configured*, so pass the same thresholds you gate with.
+
+The report has three parts:
+
+- **Support.** The run count and effective `min-support`. The split needs
+  `min-support` runs per half, so the self-check requires **k ≥ 2 × min-support**
+  (6 at defaults); below that it reports `sufficient: false` with the k it needs
+  (`self-check needs k>=6 runs (have 4)`) and stops — never a guess.
+- **Time-ordered A/A split.** The selected runs, in recorded order, split first half
+  vs second half and compared with the full gate. **A `regression` or `notable` here
+  is NOT a real regression** — the two halves are the same variant, so a gating
+  verdict means environmental drift across the recorded sequence (API latency,
+  runner load, model-side change) or an outlier run, and each such finding is
+  reported as a `drift:` line naming the scope, metric, and the values on each side
+  of the split. On groups
+  spanning fewer than `--paired-min-tasks` tasks (any single-task basket), a clean
+  split reads `A/A insufficient` rather than `A/A ok` — the paired tier honestly
+  reporting it cannot fire, with nothing gating and no drift lines; drift, when
+  present, always reads `A/A regression`/`notable` with `drift:` lines.
+- **Leave-one-out influence.** With k ≥ 2 × min-support + 1 (7 at defaults), each
+  run is dropped in turn and the split re-evaluated; every run whose removal changes
+  the overall verdict is reported (`influence: dropping run #2 flips regression ->
+  ok`). A verdict that hinges on one run is fragile — read that run's evidence
+  before acting on it. Below 7 runs the block says so
+  (`influence: leave-one-out needs k>=7 runs (have 6)`).
+
+```text
+self-check: sufficient · runs 8 · min-support 3
+A/A regression (first 4 vs second 4)
+drift: total duration_ms regression 41250.00 -> 96400.00
+influence: dropping run #0 flips regression -> ok
+```
+
+Read that as: "at these thresholds, this basket's own recorded history would gate on
+`duration_ms` with no change at all — and the verdict hangs on run #0." Widen the
+band deliberately, investigate the drift, or re-bench; what you now know is that a
+red `duration_ms` verdict from this basket is not trustworthy evidence of a real
+regression.
+
+`--format json` carries the same structure: `runs`, `min_support`, `sufficient`,
+`detail`, `split{first_n, second_n, verdict, drift[]}`, and
+`influence{evaluated, detail, flipping_runs[]}`.
+
+Exit codes: `0` whenever a self-check is rendered — drift findings included;
+`calibrate` audits the gate and never gates. `2` is an operational error (bad
+selector, empty group, unreadable evidence, bad flag).
+
+Two things `calibrate` deliberately does **not** do
+([ADR-0034](../adr/0034-gate-self-check.md) non-goals):
+
+- **No family-wise false-positive rate.** The overlapping half-splits of a 6–10-run
+  group cannot support a defensible rate; publishing one would be false precision.
+  The verb reports *whether* A/A gates and *what drifts*, not a rate. For a
+  statistically honest false-positive observation, run the
+  [true k-vs-k A/A workflow](workflows.md#the-true-k-vs-k-aa-check) instead.
+- **No auto-suggested thresholds.** Fitting `--metric-rel-delta` to make A/A clean
+  is data-dredging, and the knob is global: widening it for noisy `duration_ms`
+  simultaneously blinds `tokens_out`. `calibrate` surfaces the drift; choosing
+  thresholds stays your judgment.
 
 ## Baseline version stamps
 

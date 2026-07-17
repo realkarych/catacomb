@@ -27,9 +27,11 @@
 #   mean/vote streams; the vote stream gates through regress --scores).
 #   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/rm -> 19 mcp stdio.
 #   Then 20 SP-W workspace isolation + patch-free offline verify (its own basket +
-#   runs dirs, nothing earlier touched). Last, 21 import path: a step-2 session
+#   runs dirs, nothing earlier touched). Then 21 import path: a step-2 session
 #   ingested into a fresh evidence dir and driven through offline verify + regress
-#   with zero agent spawn.
+#   with zero agent spawn -> 22 ADR-0034 gate self-check (calibrate over fabricated
+#   single-variant groups: clean A/A, seeded drift, <6-run insufficiency,
+#   leave-one-out influence flip). Last, 23 production scenarios (prod/run.sh).
 # Steps 5/6 need the clean offline scores produced by step 4. Step 7 points verify at
 # /usr/bin/false: a failing verifier writes NO scores (so scores.jsonl survives intact),
 # but stamps verify.json with an error and the broken config's hash — so it runs after
@@ -74,7 +76,12 @@
 # imported evidence; verify_import.py is the artifact-free twin that reads the
 # ingested session.jsonl from the evidence dir (the import contract: a verifier
 # sees the transcript, not a live workdir), and basket-import.yaml is the sql basket
-# with only that verify cmd swapped, so labels match the sql cells.
+# with only that verify cmd swapped, so labels match the sql cells. Step 22 is the
+# ADR-0034 gate self-check: `catacomb calibrate` over four fabricated
+# single-variant groups (clean A/A, seeded second-half tokens_out drift, a <6-run
+# insufficiency, and a 7-run leave-one-out influence flip), all derived from the
+# fixture transcript template with pinned marker windows — no bench dependency, no
+# earlier evidence touched. Step 23 runs the production scenarios (prod/run.sh).
 #
 # Environment:
 #   CATACOMB_BIN   catacomb binary to drive (default: `catacomb` on PATH). Its dir is
@@ -1170,7 +1177,179 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("overall_verdict") and r.get("regressions")==0 else 1)' "$work/regress-import.json" || rc=$?
 record "$rc" "regress over imported cells yields an overall verdict with zero regressions"
 
-echo "== 22. production scenarios (subagent/skill/mcp) =="
+echo "== 22. gate self-check: calibrate over one variant's fabricated evidence =="
+# ADR-0034: `catacomb calibrate` audits ONE variant's recorded runs on the shipped
+# verdict path — a time-ordered A/A half-split (drift detector) plus leave-one-out
+# influence — and exits 0 on every rendered self-check (2 only on operational
+# errors; it never gates). Four groups are fabricated from the fixture transcript
+# template in bench-evidence shape (labels incl. task, one uuid session per run,
+# marker window pinned to the template's own 4000 ms mark window so duration_ms is
+# byte-identical), mirroring the step-12 plant: drifted runs get usage injected
+# into every assistant turn (5 x 1200 = 6000 tokens_out) under a model the pricer
+# cannot price, so tokens_out is the single moving axis. Because every group spans
+# one task, the paired tier always reports insufficient below paired-min-tasks 5 —
+# a clean A/A therefore reads split verdict "insufficient" (honest tier
+# disclosure, nothing gates, no drift findings), never a fabricated "ok"; seeded
+# drift reads "regression" with drift findings naming the metric. The influence
+# group (3 clean + 4 drifted) flips on exactly the first-half clean runs: dropping
+# one leaves a mixed [clean,clean,drift] baseline whose IQR band (1.5 x 6000)
+# swallows the drifted half, so the verdict decays regression -> insufficient,
+# while dropping a drifted run changes nothing (3 clean vs 3 drifted still gates).
+calruns="$work/calruns"
+mkdir "$calruns"
+cat >"$work/cal-seed-meta.json" <<'JSON'
+{"run_id":"seed","task":"sql","variant":"seed","rep":0,"session_id":"seed","labels":{"basket":"hermetic-cal","task":"sql","variant":"seed","rep":"0"},"exit_code":0,"basket_hash":"hermetic-cal","marker_name":"task:sql","marker_start":"2026-06-20T10:00:03Z","marker_end":"2026-06-20T10:00:07Z","finished_at":"2026-06-20T10:00:08Z"}
+JSON
+cal_stage() { # <run-id> <variant> <rep> <drift 0|1>
+	local rid="$1" variant="$2" rep="$3" drift="$4"
+	local dir="$calruns/$rid"
+	mkdir "$dir"
+	local sid
+	sid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+	if [ "$drift" -eq 0 ]; then
+		sed "s/__SESSION_ID__/$sid/g" "$work/transcript.jsonl.tmpl" >"$dir/session.jsonl"
+	else
+		sed -e "s/__SESSION_ID__/$sid/g" \
+			-e 's|"model":"claude-opus-4-8","content":|"model":"hermetic-calibrate-drift","usage":{"output_tokens":1200},"content":|g' \
+			"$work/transcript.jsonl.tmpl" >"$dir/session.jsonl"
+	fi
+	python3 - "$work/cal-seed-meta.json" "$dir/meta.json" "$rid" "$sid" "$variant" "$rep" <<'PY'
+import json, sys
+
+meta = json.load(open(sys.argv[1]))
+meta["run_id"] = sys.argv[3]
+meta["session_id"] = sys.argv[4]
+meta["variant"] = sys.argv[5]
+meta["rep"] = int(sys.argv[6])
+meta["labels"]["variant"] = sys.argv[5]
+meta["labels"]["rep"] = sys.argv[6]
+json.dump(meta, open(sys.argv[2], "w"))
+PY
+}
+for i in 0 1 2 3 4 5; do cal_stage "cal-aa-r$i" cal-aa "$i" 0; done
+for i in 0 1 2; do cal_stage "cal-drift-r$i" cal-drift "$i" 0; done
+for i in 3 4 5; do cal_stage "cal-drift-r$i" cal-drift "$i" 1; done
+for i in 0 1 2 3; do cal_stage "cal-short-r$i" cal-short "$i" 0; done
+for i in 0 1 2; do cal_stage "cal-il-r$i" cal-il "$i" 0; done
+for i in 3 4 5 6; do cal_stage "cal-il-r$i" cal-il "$i" 1; done
+run_json 0 "$work/calibrate-aa.json" \
+	"calibrate clean 6-run group (exit 0)" -- \
+	catacomb calibrate --runs-dir "$calruns" --group label:variant=cal-aa --format json
+rc=0
+python3 - "$work/calibrate-aa.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+errs = []
+for field, want in (("runs", 6), ("min_support", 3), ("sufficient", True)):
+    if rep.get(field) != want:
+        errs.append(f"{field}={rep.get(field)!r} want {want!r}")
+split = rep.get("split") or {}
+for field, want in (("first_n", 3), ("second_n", 3), ("verdict", "insufficient")):
+    if split.get(field) != want:
+        errs.append(f"split.{field}={split.get(field)!r} want {want!r}")
+if split.get("drift"):
+    errs.append(f"clean group reports drift: {split['drift']!r}")
+inf = rep.get("influence") or {}
+if inf.get("evaluated") is not False or inf.get("detail") != "leave-one-out needs k>=7 runs (have 6)":
+    errs.append(f"influence={inf!r} want unevaluated with the needs-k>=7 detail")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("clean A/A: sufficient, 3v3 split verdict insufficient (single-task paired tier), no drift")
+PY
+record "$rc" "clean 6-run group: sufficient, 3v3 split, no drift, influence needs k>=7"
+run_json 0 "$work/calibrate-drift.json" \
+	"calibrate seeded second-half drift (exit 0: calibrate never gates)" -- \
+	catacomb calibrate --runs-dir "$calruns" --group label:variant=cal-drift --format json
+rc=0
+python3 - "$work/calibrate-drift.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+split = rep.get("split") or {}
+drift = split.get("drift") or []
+errs = []
+if rep.get("runs") != 6 or rep.get("sufficient") is not True:
+    errs.append(f"runs={rep.get('runs')!r} sufficient={rep.get('sufficient')!r} want 6/True")
+if split.get("verdict") != "regression":
+    errs.append(f"split.verdict={split.get('verdict')!r} want 'regression'")
+want_total = {"scope": "total", "metric": "tokens_out", "verdict": "regression",
+              "baseline": 0, "candidate": 6000}
+if not drift:
+    errs.append("drift findings empty despite the seeded tokens_out shift")
+elif drift[0] != want_total:
+    errs.append(f"drift[0]={drift[0]!r} want {want_total!r}")
+for d in drift:
+    if d.get("metric") != "tokens_out":
+        errs.append(f"drift finding on {d.get('metric')!r} (scope {d.get('scope')!r}) — only tokens_out moved")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"drift: A/A regression, {len(drift)} finding(s) all tokens_out, total 0 -> 6000")
+PY
+record "$rc" "seeded drift: A/A regression, drift findings name tokens_out (total 0 -> 6000)"
+run_json 0 "$work/calibrate-short.json" \
+	"calibrate 4-run group stays honest (exit 0)" -- \
+	catacomb calibrate --runs-dir "$calruns" --group label:variant=cal-short --format json
+rc=0
+python3 - "$work/calibrate-short.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+errs = []
+if rep.get("runs") != 4 or rep.get("sufficient") is not False:
+    errs.append(f"runs={rep.get('runs')!r} sufficient={rep.get('sufficient')!r} want 4/False")
+if rep.get("detail") != "self-check needs k>=6 runs (have 4)":
+    errs.append(f"detail={rep.get('detail')!r} want the needed-k line")
+for key in ("split", "influence"):
+    if key in rep:
+        errs.append(f"{key} present on an insufficient report: {rep[key]!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("short group: sufficient false, detail names k>=6, no split/influence blocks")
+PY
+record "$rc" "4-run group: sufficient false with the needed-k detail, no split emitted"
+run_json 0 "$work/calibrate-il.json" \
+	"calibrate 7-run influence group (exit 0)" -- \
+	catacomb calibrate --runs-dir "$calruns" --group label:variant=cal-il --format json
+rc=0
+python3 - "$work/calibrate-il.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+split = rep.get("split") or {}
+inf = rep.get("influence") or {}
+errs = []
+if rep.get("runs") != 7 or (split.get("first_n"), split.get("second_n")) != (3, 4):
+    errs.append(f"runs={rep.get('runs')!r} split={split.get('first_n')!r}v{split.get('second_n')!r} want 7 as 3v4")
+if split.get("verdict") != "regression":
+    errs.append(f"split.verdict={split.get('verdict')!r} want 'regression'")
+if inf.get("evaluated") is not True:
+    errs.append(f"influence.evaluated={inf.get('evaluated')!r} want True")
+want = [{"dropped_index": i, "from": "regression", "to": "insufficient"} for i in (0, 1, 2)]
+if inf.get("flipping_runs") != want:
+    errs.append(f"flipping_runs={inf.get('flipping_runs')!r} want {want!r}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("influence: dropping any first-half clean run flips regression -> insufficient (3 flips)")
+PY
+record "$rc" "influence: flipping_runs pins exactly the three first-half clean runs"
+run_json 2 "$work/calibrate-none.out" \
+	"calibrate unknown group is operational (exit 2)" -- \
+	catacomb calibrate --runs-dir "$calruns" --group label:variant=cal-none --format json
+rc=0
+grep -Fq 'calibrate selector "label:variant=cal-none": selector matched no runs' \
+	"$work/calibrate-none.out.stderr" || rc=1
+record "$rc" "unknown group error carries the calibrate verb prefix"
+
+echo "== 23. production scenarios (subagent/skill/mcp) =="
 prod_rc=0
 WORK="$work/prod" bash "$here/prod/run.sh" || prod_rc=$?
 record "$prod_rc" "hermetic production scenarios (prod/run.sh) all pass"
