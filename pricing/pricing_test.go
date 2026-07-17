@@ -218,6 +218,11 @@ func TestCostOpenAIHandCheckedVectors(t *testing.T) {
 			inputs:  Inputs{ModelID: "gpt-5.6-sol", TokensIn: 1000, TokensOut: 100, CacheReadIn: 2000, CacheWrite: 500},
 			wantUSD: 0.012125,
 		},
+		{
+			name:    "gpt-5-pro dated snapshot at the pro tier",
+			inputs:  Inputs{ModelID: "gpt-5-pro-2025-10-06", TokensIn: 1000, TokensOut: 100},
+			wantUSD: 0.027,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -226,11 +231,15 @@ func TestCostOpenAIHandCheckedVectors(t *testing.T) {
 	}
 }
 
-func TestCostOpenAIDatedSnapshotFallsToFamilyTier(t *testing.T) {
+func TestCostOpenAIDatedSnapshotResolvesBaseTier(t *testing.T) {
 	cases := []struct {
 		modelID string
 		wantUSD float64
 	}{
+		{modelID: "gpt-5-pro-2025-10-06", wantUSD: 15.00},
+		{modelID: "gpt-5.5-pro-2026-04-23", wantUSD: 30.00},
+		{modelID: "gpt-5.2-pro-2025-12-11", wantUSD: 21.00},
+		{modelID: "gpt-5.5-cyber-2026-05-01", wantUSD: 12.50},
 		{modelID: "gpt-5.6-sol-2026-05-12", wantUSD: 5.00},
 		{modelID: "gpt-5.6-terra-2026-05-12", wantUSD: 2.50},
 		{modelID: "gpt-5.6-luna-2026-05-12", wantUSD: 1.00},
@@ -274,7 +283,7 @@ func TestCostOpenAIFamilyClaimsByLongestPrefix(t *testing.T) {
 }
 
 func TestCostOpenAIDeliberatelyUnpricedIDs(t *testing.T) {
-	for _, modelID := range []string{"codex-auto-review", "gpt-5.3-codex-spark"} {
+	for _, modelID := range []string{"codex-auto-review", "gpt-5.3-codex-spark", "gpt-5.3-codex-spark-2026-01-01"} {
 		t.Run(modelID, func(t *testing.T) {
 			e := New()
 			_, ok := e.Cost(Inputs{ModelID: modelID, TokensIn: 1_000_000})

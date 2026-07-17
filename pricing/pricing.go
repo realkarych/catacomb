@@ -57,13 +57,7 @@ func (e *Engine) Cost(in Inputs) (Result, bool) {
 }
 
 func (e *Engine) tierFor(id string) (Tier, bool) {
-	if tier, ok := e.lookup(id); ok {
-		return tier, true
-	}
-	if norm := normalizeModelID(id); norm != id {
-		return e.lookup(norm)
-	}
-	return Tier{}, false
+	return e.lookup(normalizeModelID(id))
 }
 
 func (e *Engine) lookup(id string) (Tier, bool) {
@@ -76,7 +70,7 @@ func (e *Engine) lookup(id string) (Tier, bool) {
 	return e.familyTier(id)
 }
 
-var dateSnapshotRE = regexp.MustCompile(`[@-]\d{8}$`)
+var dateSnapshotRE = regexp.MustCompile(`[@-](\d{8}|\d{4}-\d{2}-\d{2})$`)
 
 func normalizeModelID(id string) string {
 	for stripped := true; stripped; {

@@ -247,7 +247,9 @@ type Basket struct {
   "session_id")`; everything else falls to `canon` as today. Claude
   projections are untouched (salience changes re-key baselines — the Codex
   additions are behind names Claude never emits, so existing step keys are
-  stable; a characterization test pins that).
+  stable; a characterization test pins that). The `apply_patch` directive
+  regex (unanchored, greedy path capture) is hash-frozen under `stepkey/v1` —
+  tightening it later is a re-keying compatibility decision, not a cleanup.
 - `pricing`: OpenAI families (`gpt-5`-prefixed and successors) with per-MTok
   tiers sourced from the published API price list, marked `Source:
   "estimated"`; ChatGPT-plan (credit-billed) runs price the same way with the
