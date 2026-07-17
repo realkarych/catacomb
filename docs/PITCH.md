@@ -195,48 +195,57 @@ Stated here because a serious evaluation will find them anyway:
 - **Bus factor is one.** Mitigation is fork-viability by construction: Apache-2.0,
   four dependencies, pure Go, 100% coverage, and a 30-ADR decision record.
 
-## 6. Roadmap
+## 6. Roadmap — delivered
 
-Every item below survived an adversarial feasibility review against the codebase
-(July 2026); framings reflect the corrected scope, not the ambition.
+Every item below survived an adversarial feasibility review against the codebase,
+then shipped: each is an ADR (where a decision was needed), a TDD implementation
+under the 100%-coverage gate, a per-task and whole-branch adversarial review, and a
+pull request. Framings reflect the corrected scope, not the ambition. What was a
+roadmap at audit time is now the product.
 
-1. **Codex CLI ingestion** (in progress) — a second transcript adapter parsing
-   OpenAI Codex rollout sessions into the same evidence/graph/gate pipeline,
-   staged: import-only first, then runtime-aware step salience, pricing, and drift
-   ceilings, then `bench` spawn support with a live E2E leg. Scope boundary stated
-   honestly: per-runtime baselines under one gate vocabulary — not cross-vendor
-   step-level A/B, which step identity makes impossible by construction.
-2. **Gate self-check** — an offline A/A audit over a user's own recorded runs:
-   time-ordered and leave-one-out splits re-run through the real verdict function
-   to report drift sensitivity and single-run influence before a red verdict is
-   trusted; plus a documented 2k-rep A/A workflow for measuring false-positive
-   behavior at the true operating point.
-3. **Interleaved cell ordering, then bounded `--parallel`** — interleaving removes
-   the time-of-day confound between variant groups (a validity fix); bounded
-   parallelism adds throughput on top of the per-cell workspace isolation that
-   already ships.
-4. **Baseline bundle, then a GitHub Action** — `baseline export/import` packages a
-   pinned baseline (store row, stamps, evidence) as one verifiable artifact for
-   ephemeral CI; the Action wraps pinned-install, bench with cost levers, regress,
-   and a sticky PR comment rendering the verdict table and sensitivity lines.
-5. **Judge-loop closure in documentation** — one end-to-end recipe (pack → any
-   external judge → provenance-stamped scores → the same statistical gate), with
-   judge-agreement calibration before a judge may gate. The boundary is the
-   feature: no LLM calls inside the tool, no data egress.
-6. **Opt-in exact Wilcoxon signed-rank** for the paired axis — fires on
-   majority-plus-magnitude drift where the sign test needs near-unanimity;
-   replaces (never runs beside) the sign test per metric to keep the multiple
-   comparison family flat.
-7. **Scale envelope** — payload-stripped aggregation (bounded memory for large
-   groups), an allocation-gated benchmark suite, and a published "tested to N runs
-   × M MB" envelope.
-8. **Fleet-ready exports** — a repo-identity stamp plus the already-versioned JSON
-   contracts (`regress --json`, `trends --json`, evidence metadata), so a
-   monorepo fleet rolls verdict, drift, and spend data into its existing
-   warehouse. Deliberately not a hosted service.
-9. **Windows artifact smoke** — execute the shipped Windows zip through a real
-   bench→verify→regress loop in CI (unit tests already gate releases on Windows),
-   with an honest note that the bundled E2E fixtures are Unix-shell based.
+1. **Multi-runtime ingestion — Codex CLI** (ADR-0031, shipped) — a second transcript
+   adapter parsing OpenAI Codex rollout sessions into the same evidence/graph/gate
+   pipeline, delivered in three stages: import-only, then runtime-aware step
+   salience + OpenAI pricing + per-runtime drift ceilings, then full `bench` spawn
+   with an optional live E2E leg. Per-runtime baselines under one gate vocabulary —
+   not cross-vendor step-level A/B, which step identity makes impossible.
+2. **Gate self-check — `catacomb calibrate`** (ADR-0034, shipped) — an offline A/A
+   audit over a user's own recorded runs: a wall-clock-ordered split and
+   leave-one-out influence re-run through the real verdict function to report drift
+   and single-run influence before a red verdict is trusted; plus a documented
+   2k-rep A/A workflow for false-positive behavior at the true operating point. No
+   family-wise FP-rate number, no threshold auto-tuning — both rejected in review as
+   false precision / data-dredging.
+3. **Interleaved cell ordering** (shipped) — rep-major expansion so variant groups
+   alternate through time, removing the time-of-day API-drift confound that landed
+   entirely on one side of every comparison; a validity fix at zero wall-clock cost,
+   the reviewed first step toward bounded `--parallel`.
+4. **Baseline bundle + GitHub Action** (ADR-0032, ADR-0033, shipped) —
+   `baseline export/import` packages a pinned baseline as one byte-deterministic,
+   hash-verified artifact for ephemeral CI (replacing commit-a-db-into-git); the
+   `catacomb-gate` composite Action wraps pinned-install, bench with cost levers,
+   regress, and a sticky PR comment rendering the verdict table and the sensitivity
+   line — with the markdown rendered in the binary, not untestable shell.
+5. **Judge-loop closure** (shipped) — the audit `pack` return contract is now
+   provenance-complete, so the same findings gate directly *and* feed
+   `catacomb-judge` agreement/panel calibration; one end-to-end recipe (pack → any
+   external judge → provenance-stamped scores → the same gate), judge-agreement
+   measured before a judge may gate. No LLM calls inside the tool, no data egress.
+6. **Opt-in exact Wilcoxon signed-rank** (ADR-0035, shipped) — fires on
+   majority-plus-magnitude drift where the sign test needs near-unanimity (at 6
+   tasks, one small discordant gates where the sign test cannot); an exact RNG-free
+   null, replacing the sign test per metric so the comparison family stays flat.
+7. **Scale envelope** (shipped) — payload-stripped aggregation (byte-identical
+   verdicts, test-proven) bounds regress memory for large groups; a benchmark suite
+   and a published measured envelope.
+8. **Fleet-ready exports** (shipped) — a `--project` repo-identity stamp on the
+   recorded history plus the already-versioned JSON contracts (`regress --json`,
+   `trends --json`, evidence metadata), so a monorepo fleet rolls verdict, drift,
+   and spend data into its existing warehouse. Deliberately not a hosted service.
+9. **Windows artifact smoke** (shipped) — the built Windows binary now runs a real
+   bench→verify→regress loop against a Windows-idiomatic fixture in CI, plus a
+   post-publish check on the shipped zip, with an honest note that the bundled E2E
+   fixtures are Unix-shell based.
 
 ## 7. Adoption shape
 
