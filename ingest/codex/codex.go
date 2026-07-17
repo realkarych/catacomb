@@ -71,9 +71,10 @@ type responseItemPayload struct {
 }
 
 type tokenUsage struct {
-	InputTokens       int64 `json:"input_tokens"`
-	CachedInputTokens int64 `json:"cached_input_tokens"`
-	OutputTokens      int64 `json:"output_tokens"`
+	InputTokens           int64 `json:"input_tokens"`
+	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
 }
 
 type tokenInfo struct {
@@ -472,9 +473,12 @@ func (p *parser) flushTurn(t *turnState) {
 		attrs["model"] = t.model
 	}
 	if t.usage != nil {
-		attrs["tokens_in"] = t.usage.InputTokens
+		attrs["tokens_in"] = max(int64(0), t.usage.InputTokens-t.usage.CachedInputTokens)
 		attrs["tokens_out"] = t.usage.OutputTokens
 		attrs["cache_read_in"] = t.usage.CachedInputTokens
+		if t.usage.CacheWriteInputTokens > 0 {
+			attrs["cache_write"] = t.usage.CacheWriteInputTokens
+		}
 	}
 	if t.durationMS != nil {
 		attrs["duration_ms"] = *t.durationMS

@@ -105,9 +105,11 @@ func TestParse(t *testing.T) {
 				require.Len(t, turns, 1)
 				assert.Equal(t, "T1", turns[0].Correlation.MessageID)
 				assert.Equal(t, "gpt-5.4-mini", turns[0].Attrs["model"])
-				assert.Equal(t, int64(11663), turns[0].Attrs["tokens_in"])
+				assert.Equal(t, int64(6159), turns[0].Attrs["tokens_in"])
 				assert.Equal(t, int64(16), turns[0].Attrs["tokens_out"])
 				assert.Equal(t, int64(5504), turns[0].Attrs["cache_read_in"])
+				_, hasCacheWrite := turns[0].Attrs["cache_write"]
+				assert.False(t, hasCacheWrite)
 				assert.Equal(t, int64(5875), turns[0].Attrs["duration_ms"])
 				require.NotNil(t, turns[0].Payload)
 				assert.JSONEq(t, `"hello"`, string(turns[0].Payload.Output))
@@ -189,18 +191,45 @@ func TestParse(t *testing.T) {
 			name: "token_count keeps last non-null info",
 			input: `{"type":"turn_context","payload":{"turn_id":"T1","model":"m"}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1,"cached_input_tokens":2,"output_tokens":3}}}}` + "\n" +
-				`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":20,"output_tokens":30}}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":30}}}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"token_count","info":null}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"token_count","info":{}}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"T1","duration_ms":7}}` + "\n",
 			check: func(t *testing.T, obs []model.Observation, dc drift.Counts) {
 				turns := byKind(obs, "assistant_turn")
 				require.Len(t, turns, 1)
-				assert.Equal(t, int64(10), turns[0].Attrs["tokens_in"])
+				assert.Equal(t, int64(6), turns[0].Attrs["tokens_in"])
 				assert.Equal(t, int64(30), turns[0].Attrs["tokens_out"])
-				assert.Equal(t, int64(20), turns[0].Attrs["cache_read_in"])
+				assert.Equal(t, int64(4), turns[0].Attrs["cache_read_in"])
 				assert.Equal(t, int64(7), turns[0].Attrs["duration_ms"])
 				assert.Empty(t, dc)
+			},
+		},
+		{
+			name: "cache write tokens surface as cache_write attr",
+			input: `{"type":"turn_context","payload":{"turn_id":"T1","model":"m"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":700,"cached_input_tokens":100,"cache_write_input_tokens":500,"output_tokens":30}}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"T1","duration_ms":9}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				turns := byKind(obs, "assistant_turn")
+				require.Len(t, turns, 1)
+				assert.Equal(t, int64(600), turns[0].Attrs["tokens_in"])
+				assert.Equal(t, int64(100), turns[0].Attrs["cache_read_in"])
+				assert.Equal(t, int64(500), turns[0].Attrs["cache_write"])
+			},
+		},
+		{
+			name: "cached exceeding input floors tokens_in at zero",
+			input: `{"type":"turn_context","payload":{"turn_id":"T1","model":"m"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":20,"output_tokens":3}}}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"T1"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				turns := byKind(obs, "assistant_turn")
+				require.Len(t, turns, 1)
+				assert.Equal(t, int64(0), turns[0].Attrs["tokens_in"])
+				assert.Equal(t, int64(20), turns[0].Attrs["cache_read_in"])
+				_, hasCacheWrite := turns[0].Attrs["cache_write"]
+				assert.False(t, hasCacheWrite)
 			},
 		},
 		{
