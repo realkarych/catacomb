@@ -1,0 +1,144 @@
+# Hermetic self-test for .github/actions/catacomb-gate — zero API spend, no
+# release download, no PR side effects. It builds catacomb from source, stages
+# a tiny deterministic fixture runs-dir (baseline / degraded / control groups,
+# mirroring how e2e/hermetic/prod scenarios build evidence dirs directly), then
+# drives the composite action's regress+render path twice via the catacomb-bin
+# test seam: a seeded regression must fail the action with exit-code 1 and a
+# "❌ regression" comment, and an identical A-vs-A candidate must pass with
+# exit-code 0 and a "✅ ok" comment. `comment: "false"` keeps the run free of
+# PR-comment side effects.
+name: action-selftest
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  selftest:
+    name: catacomb-gate self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build catacomb
+        run: make build
+
+      - name: Stage fixture evidence
+        # Three 3-run groups, byte-identical except output_tokens: baseline and
+        # control at 100, degraded at 200. The +100% tokens_out delta clears the
+        # default 25% metric band at the default min-support of 3, so
+        # baseline-vs-degraded is a deterministic regression and
+        # baseline-vs-control a deterministic ok. Model "selftest-model" is
+        # unpriced (cost stays 0); marker windows are fixed (no duration drift).
+        run: |
+          set -euo pipefail
+          runs="$RUNNER_TEMP/selftest-evidence/runs"
+          mkdir -p "$runs"
+          mkrun() {
+            rid=$1 grp=$2 tok=$3
+            dir="$runs/$rid" sid="sid-$rid"
+            mkdir -p "$dir"
+            cat >"$dir/meta.json" <<EOF
+          {"run_id":"$rid","task":"selftest","variant":"$grp","rep":1,"session_id":"$sid","labels":{"grp":"$grp"},"exit_code":0,"basket_hash":"h","marker_name":"","marker_start":"2026-06-20T10:00:00Z","marker_end":"2026-06-20T10:00:05Z","finished_at":"2026-06-20T10:00:05Z"}
+          EOF
+            {
+              printf '{"type":"user","uuid":"u1","sessionId":"%s","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"go"}}\n' "$sid"
+              printf '{"type":"assistant","uuid":"a1","sessionId":"%s","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"m1","model":"selftest-model","usage":{"input_tokens":50,"output_tokens":%s},"content":[{"type":"tool_use","id":"tRead","name":"Read","input":{"file_path":"a"}}]}}\n' "$sid" "$tok"
+              printf '{"type":"user","uuid":"u2","parent_tool_use_id":"tRead","sessionId":"%s","timestamp":"2026-06-20T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tRead","content":"ok","is_error":false}]}}\n' "$sid"
+            } >"$dir/session.jsonl"
+          }
+          for i in 1 2 3; do mkrun "base-r$i" baseline 100; done
+          for i in 1 2 3; do mkrun "bad-r$i" degraded 200; done
+          for i in 1 2 3; do mkrun "ok-r$i" control 100; done
+
+      - name: Gate a seeded regression (must exit 1)
+        id: gate-regression
+        continue-on-error: true
+        uses: ./.github/actions/catacomb-gate
+        with:
+          version: v0.0.0-selftest # ignored: catacomb-bin below skips the release download
+          catacomb-bin: ${{ github.workspace }}/bin/catacomb
+          baseline: label:grp=baseline
+          candidate: label:grp=degraded
+          runs-dir: ${{ runner.temp }}/selftest-evidence/runs
+          comment: "false"
+
+      - name: Assert the regression gate
+        env:
+          OUTCOME: ${{ steps.gate-regression.outcome }}
+          VERDICT: ${{ steps.gate-regression.outputs.verdict }}
+          EXIT_CODE: ${{ steps.gate-regression.outputs.exit-code }}
+          REPORT_JSON: ${{ steps.gate-regression.outputs.report-json }}
+        run: |
+          set -euo pipefail
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+          [ "$OUTCOME" = "failure" ] ||
+            fail "expected the action to fail on a seeded regression, got outcome=$OUTCOME"
+          [ "$EXIT_CODE" = "1" ] ||
+            fail "expected exit-code output 1 (regression), got '$EXIT_CODE'"
+          [ "$VERDICT" = "regression" ] ||
+            fail "expected verdict output 'regression', got '$VERDICT'"
+          comment="$RUNNER_TEMP/catacomb-gate/comment.md"
+          [ -s "$comment" ] || fail "comment.md was not rendered at $comment"
+          grep -Fq '**Verdict:' "$comment" ||
+            fail "comment.md is missing the verdict headline"
+          grep -Fq 'regression' "$comment" ||
+            fail "comment.md does not name the regression verdict"
+          [ -s "$REPORT_JSON" ] || fail "report.json missing at $REPORT_JSON"
+          got="$(jq -r '.overall_verdict' "$REPORT_JSON")"
+          [ "$got" = "regression" ] ||
+            fail "report.json overall_verdict is '$got', want 'regression'"
+          echo "regression path OK: exit 1, verdict headline rendered"
+
+      - name: Gate an identical candidate (must exit 0)
+        id: gate-ok
+        uses: ./.github/actions/catacomb-gate
+        with:
+          version: v0.0.0-selftest # ignored: catacomb-bin below skips the release download
+          catacomb-bin: ${{ github.workspace }}/bin/catacomb
+          baseline: label:grp=baseline
+          candidate: label:grp=control
+          # exercises the candidate-runs-dir override path (runs-dir left empty)
+          candidate-runs-dir: ${{ runner.temp }}/selftest-evidence/runs
+          comment: "false"
+
+      - name: Assert the ok gate
+        env:
+          VERDICT: ${{ steps.gate-ok.outputs.verdict }}
+          EXIT_CODE: ${{ steps.gate-ok.outputs.exit-code }}
+          REPORT_JSON: ${{ steps.gate-ok.outputs.report-json }}
+        run: |
+          set -euo pipefail
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+          [ "$EXIT_CODE" = "0" ] ||
+            fail "expected exit-code output 0 (ok), got '$EXIT_CODE'"
+          [ "$VERDICT" = "ok" ] ||
+            fail "expected verdict output 'ok', got '$VERDICT'"
+          comment="$RUNNER_TEMP/catacomb-gate/comment.md"
+          grep -Fq '**Verdict: ✅ ok**' "$comment" ||
+            fail "comment.md is missing the ok verdict headline"
+          got="$(jq -r '.overall_verdict' "$REPORT_JSON")"
+          [ "$got" = "ok" ] ||
+            fail "report.json overall_verdict is '$got', want 'ok'"
+          echo "ok path OK: exit 0, verdict headline rendered"
