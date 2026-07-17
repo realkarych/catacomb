@@ -60,7 +60,7 @@ func TestNewerThanTested(t *testing.T) {
 }
 
 func TestRuntimeConstants(t *testing.T) {
-	assert.Equal(t, "0.144.4", TestedCodexVersion)
+	assert.Equal(t, "0.144.5", TestedCodexVersion)
 	assert.Equal(t, "claude-code", RuntimeClaudeCode)
 	assert.Equal(t, "codex", RuntimeCodex)
 }

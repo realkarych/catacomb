@@ -132,7 +132,7 @@ both versions:
 
 ```text
 warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199
-warning: transcript Codex version 0.150.0 is newer than tested 0.144.4
+warning: transcript Codex version 0.150.0 is newer than tested 0.144.5
 ```
 
 This is the companion signal — a heads-up that the agent CLI moved past the release this

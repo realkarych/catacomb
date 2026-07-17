@@ -7,7 +7,7 @@ import (
 
 const (
 	TestedClaudeCodeVersion = "2.1.199"
-	TestedCodexVersion      = "0.144.4"
+	TestedCodexVersion      = "0.144.5"
 )
 
 const (
