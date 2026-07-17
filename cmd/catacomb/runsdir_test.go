@@ -481,6 +481,34 @@ func TestRegressRunsDirRecordRoundtrip(t *testing.T) {
 	assert.Equal(t, model.Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"}, rec.Stamps)
 	assert.Equal(t, "label:variant=cand", rec.CandidateSelector)
 	assert.Equal(t, regress.RecordVersion, rec.V)
+	assert.Empty(t, rec.Project)
+	assert.NotContains(t, string(res[0].Body), `"project"`)
+}
+
+func TestRegressRunsDirRecordProjectRoundtrip(t *testing.T) {
+	root := evidenceRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	pinBaselineNow(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root, "--db", dbPath, "--record", "--project", "payments-api",
+		"--baseline", "name:golden", "--candidate", "label:variant=cand",
+	}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	s, err := store.OpenSQLiteReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	res, err := s.RegressResultsFor("golden")
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	var rec regress.Record
+	require.NoError(t, json.Unmarshal(res[0].Body, &rec))
+	assert.Equal(t, "payments-api", rec.Project)
+	assert.Equal(t, regress.RecordVersion, rec.V)
+	assert.Contains(t, string(res[0].Body), `"project":"payments-api"`)
 }
 
 func TestRegressRunsDirRecordAppendError(t *testing.T) {
