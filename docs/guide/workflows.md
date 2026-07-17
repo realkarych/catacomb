@@ -213,7 +213,8 @@ extent the recorded comparisons share the task basket: the table marks baseline 
 
 `trends` reads the store read-only; see [`trends`](cli.md#trends) for the full table shapes, the
 [Pareto column and JSON semantics](cli.md#accuracy-vs-cost-pareto), the `--json` form, and exit
-codes.
+codes. Running many repositories? Stamp each recorded comparison with `--project` and join the
+exports fleet-side — see [Roll up a fleet](#roll-up-a-fleet).
 
 ### Gate on external scores (optional)
 
@@ -700,6 +701,47 @@ This snapshot is the input format of the
 [DeepEval bridge](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval)
 and a convenient shape for ad-hoc analysis (`jq`, notebooks, dashboards). See
 [export](cli.md#export) for flags.
+
+## Roll up a fleet
+
+One gate guards one repository; a fleet is many repositories each running their own
+gate. Catacomb deliberately ships no hosted service, collector, or daemon to aggregate
+them ([ADR-0026](../adr/0026-form-factor-pivot-offline-eval-gate.md)) — what it owns is
+the stable, versioned per-repo JSON contract, and the roll-up is a join in whatever
+warehouse your org already runs.
+
+Give each repository's CI a stable project id and stamp it into every recorded
+comparison (`--project` requires `--record`), then export the history from the same
+job:
+
+```sh
+catacomb regress --baseline name:golden --candidate label:variant=candidate \
+  --record --project payments-api --strict
+catacomb trends golden --json > trends-payments-api.json
+```
+
+`--project` writes a `project` field into the record body, and `trends --json` replays
+the stored bodies verbatim, so every exported row self-identifies its repository. A
+fleet job collects the per-repo files — build artifacts, an object-store bucket,
+whatever the CI already has — flattens them, and loads them into the org's warehouse
+(BigQuery, Splunk, a data lake), joining on `project`:
+
+```sh
+jq -c '.[].record' trends-*.json > fleet-records.jsonl
+```
+
+Each line is one recorded comparison carrying `project`, `created_at`, the thresholds,
+the full report, and the recording binary's version `stamps` — enough to chart verdict
+rates, cost drift, or `verifier.pass` rates across the fleet with no catacomb binary in
+the loop. The body is versioned (`v`, additive-only; see the
+[versioning policy](../VERSIONING.md)), so a loader keyed on documented fields survives
+upgrades, and records written before `--project` existed simply lack the field.
+
+The `project` stamp lives on the recorded history, not on evidence dirs. Per-run
+evidence is already labeled (`basket`, `task`, `variant`, `rep` on every [`bench`](cli.md#bench)
+cell, and [`import`](cli.md#import) `--label project=payments-api` adds free-form
+pairs), and evidence stays local to each repository's CI — only the recorded history
+JSON travels.
 
 ## Continuous live validation
 
