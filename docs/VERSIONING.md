@@ -6,7 +6,7 @@ Catacomb follows [SemVer 2.0.0](https://semver.org). Releases are annotated tags
 
 For version arithmetic, catacomb's "public API" is the union of these seven contracts. A change is *breaking* iff it can invalidate a working user setup — a basket, a verifier, recorded evidence, a baseline, or a script parsing our output:
 
-1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and `--json` output shapes. Human-readable table output is *not* a contract; `--json` is.
+1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and `--json` output shapes. Human-readable table output is *not* a contract; `--json` is. Statistical-test selectors are flags like any other (e.g. `regress --paired-test`, default `sign`): changing a selector's default silently changes verdicts and is breaking.
 2. **Basket YAML schema** — field names, types, validation semantics (`KnownFields` means any rename is breaking by construction).
 3. **Verifier exec contract** — `CATACOMB_*` env vars, the scores-JSONL dialect (including reserved `verifier.pass` and provenance fields), `verify.json` ledger shape, artifact capture semantics.
 4. **Evidence layout** — directory structure under a runs dir, `meta.json` schema (field removal/retyping is breaking; addition is not).

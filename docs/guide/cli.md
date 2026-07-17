@@ -529,8 +529,9 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
 | `--error-delta` | 0.1 | Error-rate delta threshold |
 | `--annotation-rate-delta` | 0.1 | Rate delta threshold for run-level binary annotations (e.g. `verifier.pass`; must be > 0) |
-| `--paired-alpha` | 0.05 | Significance level for the paired per-task sign test (must be in (0,1)) |
-| `--paired-min-tasks` | 5 | Minimum matched tasks before the paired sign test can gate (must be > 0) |
+| `--paired-alpha` | 0.05 | Significance level for the paired per-task test (must be in (0,1)) |
+| `--paired-min-tasks` | 5 | Minimum matched tasks before the paired test can gate (must be > 0) |
+| `--paired-test` | `sign` | Paired per-task test: `sign` (exact sign test) or `wilcoxon` (exact Wilcoxon signed-rank; see the sign-vs-wilcoxon note below) |
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
 | `--audit-iqr-factor` | 3.0 | IQR band factor for [per-cell outlier audit](#per-cell-outlier-audit) flags (must be > 0) |
@@ -592,6 +593,17 @@ Groups are aggregated and compared per
   `sensitivity:` note names the smallest task count at which a unanimous shift would
   gate. An `ok` paired row is omitted from the findings like any non-total row. See
   [when the paired test fires](workflows.md#catching-drift-below-the-band-the-paired-sign-test).
+  **Sign vs wilcoxon:** `--paired-test wilcoxon` swaps in an exact Wilcoxon
+  signed-rank test per metric — it *replaces* the sign test rather than running
+  alongside it, so the paired family stays those same four metrics. Where the sign
+  test only counts delta directions, Wilcoxon ranks the delta magnitudes (mid-ranks
+  on ties; zero deltas still dropped) and computes the exact null distribution by a
+  deterministic, RNG-free dynamic program — no asymptotic approximation. That buys
+  real power in 6–10-task baskets: one small-magnitude discordant task among six
+  fires at p=0.031 (detail `W+ 20/21 over 6 tasks, p=0.03125`) where the sign test's
+  5/6 stalls at p=0.109. The reachability floor is unchanged (a unanimous shift has
+  p=2^-n under both tests), so the `sensitivity:` note reads the same; the default
+  remains `sign`.
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is
   always reported; below `--coverage-floor` step-level regressions are downgraded to
   `notable` and the checkpoint (phase) level carries the verdict (under
