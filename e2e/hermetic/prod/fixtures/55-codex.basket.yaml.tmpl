@@ -1,0 +1,11 @@
+basket: prod-codex-import
+runtime: codex
+reps: 5
+tasks:
+  - id: probe
+    cmd: ["true"]
+    checkpoints: [plan]
+variants:
+  - id: baseline
+  - id: degraded
+  - id: baseline2

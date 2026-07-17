@@ -15,7 +15,7 @@ For version arithmetic, catacomb's "public API" is the union of these eight cont
 7. **Python SDKs** — the public API of `catacomb-verifier` and `catacomb-judge` (`integrations/`); they version with the repo.
 8. **Baseline bundle format** — the `baseline export`/`import` archive ([ADR-0032](adr/0032-baseline-bundle.md)), currently **v1**: the `bundle.json` manifest schema (format version, baseline record, per-file sha256 map), the `runs/<run-id>/**` layout, and byte-deterministic export. Additive-only within a major — `import` refuses a bundle whose format version is newer than the binary supports; removing or retyping manifest fields, changing the layout, or breaking export determinism is breaking.
 
-Not part of the surface: model behavior, Claude Code transcript drift (handled by the version watchlist as PATCH-level parser fixes), descriptive env stamps content, wording of notes/advisories on stderr.
+Not part of the surface: model behavior, agent-CLI transcript drift — Claude Code and Codex alike (handled by the per-runtime version watchlist as PATCH-level parser fixes), descriptive env stamps content (exception: the `meta.json` `env.agent_runtime` stamp is the parser-dispatch key for recorded evidence, so it rides surface #4), wording of notes/advisories on stderr.
 
 ## Pre-1.0 rules (current)
 

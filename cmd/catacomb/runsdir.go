@@ -10,6 +10,7 @@ import (
 
 	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
 	"github.com/realkarych/catacomb/store"
@@ -125,6 +126,13 @@ func runGroupFromDirs(runsDir, name string, ids []string, pricer reduce.Pricer, 
 	return group, nil
 }
 
+func metaRuntime(m evidence.Meta) string {
+	if m.Env != nil && m.Env.AgentRuntime != "" {
+		return m.Env.AgentRuntime
+	}
+	return drift.RuntimeClaudeCode
+}
+
 func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggregate.RunGraph, error) {
 	main := filepath.Join(dir, "session.jsonl")
 	subs, _ := filepath.Glob(filepath.Join(dir, "subagents", "agent-*.jsonl"))
@@ -133,7 +141,7 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 	if m.MarkerName != "" {
 		extra = boundaryObservations(m.SessionID, m.MarkerName, m.MarkerStart, m.MarkerEnd)
 	}
-	g, err := loadGraphOffline(main, subs, newExecutionID(), pricer, extra)
+	g, err := loadGraphOfflineFor(metaRuntime(m), main, subs, m.SessionID, newExecutionID(), pricer, extra)
 	if err != nil {
 		return aggregate.RunGraph{}, err
 	}

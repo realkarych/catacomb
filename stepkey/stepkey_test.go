@@ -428,6 +428,101 @@ func TestContentKeyIgnoresPosition(t *testing.T) {
 	assert.Equal(t, ka["a"].Content, kb["b"].Content)
 }
 
+func TestClaudeSalientCharacterization(t *testing.T) {
+	tests := []struct {
+		name string
+		tool string
+		red  string
+		want string
+	}{
+		{"bash projects command", "Bash", `{"command":"ls -la","description":"list"}`, `{"command":"ls -la"}`},
+		{"bash invalid json", "Bash", `not-json`, ``},
+		{"edit projects file_path", "Edit", `{"file_path":"a.go","old_string":"x","new_string":"y"}`, `{"file_path":"a.go"}`},
+		{"multiedit projects file_path", "MultiEdit", `{"file_path":"m.go","edits":[{"old_string":"a","new_string":"b"}]}`, `{"file_path":"m.go"}`},
+		{"write projects file_path", "Write", `{"file_path":"w.go","content":"body"}`, `{"file_path":"w.go"}`},
+		{"read projects file_path", "Read", `{"file_path":"r.go","limit":10}`, `{"file_path":"r.go"}`},
+		{"read falls back to path", "Read", `{"path":"alt.go"}`, `{"path":"alt.go"}`},
+		{"read prefers file_path over path", "Read", `{"path":"p.go","file_path":"f.go"}`, `{"file_path":"f.go"}`},
+		{"unknown tool canonicalizes", "Glob", `{"b":2,"a":1}`, `{"a":1,"b":2}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, salient(tt.tool, []byte(tt.red)))
+		})
+	}
+}
+
+func TestCodexSalientProjections(t *testing.T) {
+	tests := []struct {
+		name string
+		tool string
+		red  string
+		want string
+	}{
+		{"exec_command projects cmd", "exec_command", `{"cmd":"echo probe-42","yield_time_ms":10000}`, `{"cmd":"echo probe-42"}`},
+		{"exec_command missing cmd", "exec_command", `{"yield_time_ms":10000}`, ``},
+		{
+			"apply_patch string form add",
+			"apply_patch",
+			`"*** Begin Patch\n*** Add File: probe.txt\n+probe-42\n*** End Patch"`,
+			`{"file":"probe.txt"}`,
+		},
+		{
+			"apply_patch string form update",
+			"apply_patch",
+			`"*** Begin Patch\n*** Update File: pkg/a.go\n@@\n-x\n+y\n*** End Patch"`,
+			`{"file":"pkg/a.go"}`,
+		},
+		{
+			"apply_patch string form delete",
+			"apply_patch",
+			`"*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch"`,
+			`{"file":"gone.txt"}`,
+		},
+		{
+			"apply_patch object form",
+			"apply_patch",
+			`{"input":"*** Begin Patch\n*** Update File: pkg/b.go\n@@\n-a\n+b\n*** End Patch"}`,
+			`{"file":"pkg/b.go"}`,
+		},
+		{"apply_patch string without directive", "apply_patch", `"no directives here"`, `"no directives here"`},
+		{"apply_patch object missing input", "apply_patch", `{"other":"x"}`, `{"other":"x"}`},
+		{"apply_patch object non-string input", "apply_patch", `{"input":42}`, `{"input":42}`},
+		{"apply_patch invalid json", "apply_patch", `not-json`, `not-json`},
+		{"apply_patch number", "apply_patch", `123`, `123`},
+		{"write_stdin projects session_id", "write_stdin", `{"session_id":"s1","chars":"ls\n","yield_time_ms":250}`, `{"session_id":"s1"}`},
+		{"spawn_agent stays canon", "spawn_agent", `{"b":2,"a":1}`, `{"a":1,"b":2}`},
+		{"update_plan stays canon", "update_plan", `{"plan":["x"],"a":1}`, `{"a":1,"plan":["x"]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, salient(tt.tool, []byte(tt.red)))
+		})
+	}
+}
+
+func TestCodexStepKeysIgnoreVolatileFields(t *testing.T) {
+	ka := one("exec_command", `{"cmd":"echo probe-42","yield_time_ms":10000}`)
+	kb := one("exec_command", `{"cmd":"echo probe-42","yield_time_ms":250,"workdir":"/tmp/x"}`)
+	kc := one("exec_command", `{"cmd":"other"}`)
+	assert.Equal(t, ka.Key, kb.Key)
+	assert.NotEqual(t, ka.Key, kc.Key)
+
+	wa := one("write_stdin", `{"session_id":"s1","chars":"ls\n"}`)
+	wb := one("write_stdin", `{"session_id":"s1","chars":"pwd\n","yield_time_ms":100}`)
+	wc := one("write_stdin", `{"session_id":"s2","chars":"ls\n"}`)
+	assert.Equal(t, wa.Key, wb.Key)
+	assert.NotEqual(t, wa.Key, wc.Key)
+}
+
+func TestCodexApplyPatchFormsConverge(t *testing.T) {
+	str := one("apply_patch", `"*** Begin Patch\n*** Update File: probe.txt\n@@\n-a\n+b\n*** End Patch"`)
+	obj := one("apply_patch", `{"input":"*** Begin Patch\n*** Update File: probe.txt\n@@\n-c\n+d\n*** End Patch"}`)
+	other := one("apply_patch", `"*** Begin Patch\n*** Update File: other.txt\n@@\n-a\n+b\n*** End Patch"`)
+	assert.Equal(t, str.Key, obj.Key)
+	assert.NotEqual(t, str.Key, other.Key)
+}
+
 func TestSchemeExportedAndFeedsBothHashSites(t *testing.T) {
 	assert.Equal(t, "stepkey/v1", Scheme)
 	sess := tnode("sess", model.NodeSession, "", 0, "")
