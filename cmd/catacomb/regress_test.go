@@ -93,6 +93,7 @@ func TestRegressThresholdFlagsMapToFields(t *testing.T) {
 		{"annotation-rate-delta", "0.15", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AnnotationRateDelta, 'g', -1, 64) }},
 		{"paired-alpha", "0.02", func(th regress.Thresholds) string { return strconv.FormatFloat(th.PairedAlpha, 'g', -1, 64) }},
 		{"paired-min-tasks", "7", func(th regress.Thresholds) string { return strconv.Itoa(th.PairedMinTasks) }},
+		{"paired-test", "wilcoxon", func(th regress.Thresholds) string { return th.PairedTest }},
 		{"audit-iqr-factor", "4.5", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AuditIQRFactor, 'g', -1, 64) }},
 		{"audit-rel-delta", "0.7", func(th regress.Thresholds) string { return strconv.FormatFloat(th.AuditRelDelta, 'g', -1, 64) }},
 	}
@@ -170,6 +171,49 @@ func TestRegressPairedMinTasksRejectsNonPositive(t *testing.T) {
 	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--paired-min-tasks", "0"}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "--paired-min-tasks must be > 0")
+}
+
+func TestRegressPairedTestFlagDefault(t *testing.T) {
+	var f regressFlags
+	cmd := &cobra.Command{Use: "regress"}
+	bindRegressFlags(cmd, &f)
+	pt := cmd.Flags().Lookup("paired-test")
+	require.NotNil(t, pt)
+	assert.Equal(t, "sign", pt.DefValue)
+}
+
+func TestRegressPairedTestRejectsUnknown(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--paired-test", "bogus"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), `regress --paired-test: unknown test "bogus" (want sign or wilcoxon)`)
+}
+
+func TestRegressPairedTestSignMatchesDefault(t *testing.T) {
+	root := evidenceRoot(t)
+	args := []string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--json"}
+	var defOut, defErr bytes.Buffer
+	defCode := run(args, &defOut, &defErr)
+	var signOut, signErr bytes.Buffer
+	signCode := run(append(args, "--paired-test", "sign"), &signOut, &signErr)
+	assert.Equal(t, defCode, signCode)
+	assert.Equal(t, defOut.String(), signOut.String())
+}
+
+func TestRegressPairedTestWilcoxonEndToEnd(t *testing.T) {
+	root := t.TempDir()
+	writeTaskTokenEvidenceRun(t, root, "base-0", "base", 10)
+	writeTaskTokenEvidenceRun(t, root, "cand-0", "cand", 1000)
+	var out, errBuf bytes.Buffer
+	code := run([]string{
+		"regress", "--runs-dir", root,
+		"--baseline", "label:variant=base", "--candidate", "label:variant=cand",
+		"--min-support", "1", "--paired-min-tasks", "1", "--paired-alpha", "0.5",
+		"--paired-test", "wilcoxon", "--json",
+	}, &out, &errBuf)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out.String(), "W+ 1/1 over 1 task, p=0.5")
 }
 
 func TestRegressAuditIQRFactorRejectsNonPositive(t *testing.T) {

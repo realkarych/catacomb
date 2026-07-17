@@ -80,6 +80,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().Float64Var(&f.thresholds.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
 	cmd.Flags().Float64Var(&f.thresholds.PairedAlpha, "paired-alpha", def.PairedAlpha, "paired sign-test significance level for per-task median deltas (0,1)")
 	cmd.Flags().IntVar(&f.thresholds.PairedMinTasks, "paired-min-tasks", def.PairedMinTasks, "minimum matched tasks before the paired sign test gates")
+	cmd.Flags().StringVar(&f.thresholds.PairedTest, "paired-test", def.PairedTest, "paired per-task test: sign (exact sign test) or wilcoxon (exact signed-rank; weighs delta magnitudes via ranks)")
 	cmd.Flags().Float64Var(&f.thresholds.AuditIQRFactor, "audit-iqr-factor", def.AuditIQRFactor, "per-cell audit IQR band factor for outlier flags")
 	cmd.Flags().Float64Var(&f.thresholds.AuditRelDelta, "audit-rel-delta", def.AuditRelDelta, "per-cell audit relative delta floor for outlier flags")
 	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
@@ -100,6 +101,9 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	}
 	if f.thresholds.PairedMinTasks < 1 {
 		return operational(fmt.Errorf("regress: --paired-min-tasks must be > 0, got %d", f.thresholds.PairedMinTasks))
+	}
+	if f.thresholds.PairedTest != regress.PairedTestSign && f.thresholds.PairedTest != regress.PairedTestWilcoxon {
+		return operational(fmt.Errorf("regress --paired-test: unknown test %q (want sign or wilcoxon)", f.thresholds.PairedTest))
 	}
 	if f.thresholds.AuditIQRFactor <= 0 {
 		return operational(fmt.Errorf("regress: --audit-iqr-factor must be > 0, got %g", f.thresholds.AuditIQRFactor))
