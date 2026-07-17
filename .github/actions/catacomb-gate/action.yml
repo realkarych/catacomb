@@ -1,0 +1,398 @@
+name: catacomb gate
+description: >-
+  Install a pinned, checksum-verified catacomb release, optionally bench the
+  PR's basket, gate it against a baseline with `catacomb regress`, and upsert
+  a sticky PR comment with the verdict. All report rendering happens inside
+  the catacomb binary; this action only installs, invokes, and pipes.
+author: realkarych
+
+branding:
+  icon: shield
+  color: gray-dark
+
+inputs:
+  version:
+    description: >-
+      catacomb release tag to install (e.g. v0.2.0). Pin it; the gate is only
+      as reproducible as the binary that computes it. Ignored when
+      catacomb-bin is set.
+    required: true
+  basket:
+    description: >-
+      Path to the basket YAML to bench for candidate evidence. Leave empty to
+      skip bench (requires candidate-runs-dir or pre-benched evidence in
+      runs-dir).
+    required: false
+    default: ""
+  candidate-runs-dir:
+    description: >-
+      Evidence dir holding pre-benched candidate runs. When set, bench is
+      skipped and this dir becomes the evidence dir for the whole gate
+      (baseline import lands there and regress resolves both selectors from
+      it), overriding runs-dir.
+    required: false
+    default: ""
+  baseline:
+    description: >-
+      Baseline selector passed to `catacomb regress --baseline`
+      (label:k=v[,k=v...] or name:<baseline>).
+    required: true
+  candidate:
+    description: >-
+      Candidate selector passed to `catacomb regress --candidate`
+      (label:k=v[,k=v...] or name:<baseline>).
+    required: true
+  baseline-bundle:
+    description: >-
+      Path to a baseline bundle to restore before gating (runs
+      `catacomb baseline import` first). Requires a catacomb version that
+      ships `baseline import`. Recommended over committing evidence dirs.
+    required: false
+    default: ""
+  db:
+    description: >-
+      SQLite store path forwarded as --db (used by name: selectors and
+      baseline import). Empty uses catacomb's default.
+    required: false
+    default: ""
+  runs-dir:
+    description: >-
+      Evidence dir forwarded as --runs-dir to bench, baseline import, and
+      regress. Empty uses catacomb's default. Overridden by
+      candidate-runs-dir when that is set.
+    required: false
+    default: ""
+  reps:
+    description: >-
+      Exported to the bench step as the REPS environment variable. catacomb
+      bench has no --reps flag (reps are authored in the basket YAML), but
+      task commands and scripts spawned by bench inherit the environment, so
+      a basket written to read $REPS picks it up. No effect on baskets that
+      hard-code reps.
+    required: false
+    default: ""
+  model:
+    description: >-
+      Exported to the bench step as the MODEL environment variable, inherited
+      by the commands the basket spawns (e.g. `claude --model "$MODEL"`). No
+      effect on baskets that ignore it.
+    required: false
+    default: ""
+  strict:
+    description: >-
+      Forward --strict to regress: fail on insufficient data (exit 1) and
+      refuse baselines with missing or mismatched version stamps (exit 2).
+    required: false
+    default: "false"
+  comment:
+    description: Upsert the sticky PR comment (only in pull_request context).
+    required: false
+    default: "true"
+  github-token:
+    description: >-
+      Token for the release download and the PR comment. Needs
+      pull-requests: write when comment is enabled.
+    required: false
+    default: ${{ github.token }}
+  catacomb-bin:
+    description: >-
+      Testing/advanced: path to a local catacomb binary to use instead of
+      downloading a release. Skips download and verification entirely.
+    required: false
+    default: ""
+
+outputs:
+  verdict:
+    description: >-
+      The gate verdict — catacomb's overall_verdict (ok, regression,
+      improvement, notable, insufficient), or "operational" when the gate
+      could not run (exit 2).
+    value: ${{ steps.gate.outputs.verdict }}
+  exit-code:
+    description: "catacomb regress exit code: 0 ok, 1 regression, 2 operational."
+    value: ${{ steps.gate.outputs.exit-code }}
+  report-json:
+    description: >-
+      Path to the machine-readable regress report (empty file when the gate
+      could not run).
+    value: ${{ steps.gate.outputs.report-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Use local catacomb binary
+      if: ${{ inputs.catacomb-bin != '' }}
+      shell: bash
+      env:
+        INPUT_CATACOMB_BIN: ${{ inputs.catacomb-bin }}
+      # The GITHUB_PATH write is this install step's whole purpose (same
+      # pattern as setup-go); the dir is under RUNNER_TEMP and holds only the
+      # caller-supplied binary.
+      run: | # zizmor: ignore[github-env]
+        set -euo pipefail
+        if [ ! -x "$INPUT_CATACOMB_BIN" ]; then
+          echo "::error::inputs.catacomb-bin is set but $INPUT_CATACOMB_BIN is not an executable file"
+          exit 1
+        fi
+        bin="${RUNNER_TEMP}/catacomb-gate/bin"
+        mkdir -p "$bin"
+        cp "$INPUT_CATACOMB_BIN" "$bin/catacomb"
+        chmod +x "$bin/catacomb"
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "using local catacomb binary (release download and verification skipped)"
+
+    - name: Install catacomb
+      if: ${{ inputs.catacomb-bin == '' }}
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      # The GITHUB_PATH write is this install step's whole purpose (same
+      # pattern as setup-go); the dir is under RUNNER_TEMP and holds only the
+      # checksum-verified release binary.
+      run: | # zizmor: ignore[github-env]
+        set -euo pipefail
+        if [ -z "$INPUT_VERSION" ]; then
+          echo "::error::inputs.version is required (a catacomb release tag, e.g. v0.2.0)"
+          exit 1
+        fi
+        case "$RUNNER_OS" in
+          Linux) goos=linux ;;
+          macOS) goos=darwin ;;
+          Windows) goos=windows ;;
+          *)
+            echo "::error::unsupported runner OS: $RUNNER_OS"
+            exit 1
+            ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64) goarch=amd64 ;;
+          ARM64) goarch=arm64 ;;
+          *)
+            echo "::error::unsupported runner arch: $RUNNER_ARCH"
+            exit 1
+            ;;
+        esac
+        ext=tar.gz
+        if [ "$goos" = "windows" ]; then
+          ext=zip
+        fi
+        asset="${INPUT_VERSION}_catacomb_${goos}_${goarch}.${ext}"
+        repo="${GITHUB_ACTION_REPOSITORY:-realkarych/catacomb}"
+        work="${RUNNER_TEMP}/catacomb-gate/install"
+        mkdir -p "$work"
+        cd "$work"
+        gh release download "$INPUT_VERSION" --repo "$repo" \
+          --pattern "$asset" --pattern checksums.txt --dir "$work" --clobber
+        gh release download "$INPUT_VERSION" --repo "$repo" \
+          --pattern checksums.txt.sigstore.json --dir "$work" --clobber ||
+          echo "release $INPUT_VERSION has no checksums.txt.sigstore.json; continuing with checksum verification only"
+        expected="$(awk -v a="$asset" '$2 == a { print $1 }' checksums.txt)"
+        if [ -z "$expected" ]; then
+          echo "::error::$asset is not listed in checksums.txt for $INPUT_VERSION"
+          exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "$asset" | awk '{ print $1 }')"
+        else
+          actual="$(shasum -a 256 "$asset" | awk '{ print $1 }')"
+        fi
+        if [ "$expected" != "$actual" ]; then
+          echo "::error::checksum mismatch for $asset (expected $expected, got $actual)"
+          exit 1
+        fi
+        echo "checksum verified for $asset"
+        if [ -f checksums.txt.sigstore.json ]; then
+          if command -v cosign >/dev/null 2>&1; then
+            cosign verify-blob \
+              --bundle checksums.txt.sigstore.json \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp "^https://github\.com/${repo}/\.github/workflows/publish\.yml@" \
+              checksums.txt
+            echo "cosign signature verified for checksums.txt"
+          else
+            echo "cosign is not installed on this runner; skipping signature verification (checksum already verified)"
+          fi
+        fi
+        bin="${RUNNER_TEMP}/catacomb-gate/bin"
+        mkdir -p "$bin"
+        case "$ext" in
+          tar.gz) tar -xzf "$asset" -C "$bin" ;;
+          zip) unzip -o "$asset" -d "$bin" ;;
+        esac
+        echo "$bin" >> "$GITHUB_PATH"
+
+    - name: Show catacomb version
+      shell: bash
+      run: |
+        set -euo pipefail
+        catacomb version
+
+    - name: Import baseline bundle
+      if: ${{ inputs.baseline-bundle != '' }}
+      shell: bash
+      env:
+        INPUT_BASELINE_BUNDLE: ${{ inputs.baseline-bundle }}
+        INPUT_DB: ${{ inputs.db }}
+        INPUT_RUNS_DIR: ${{ inputs.runs-dir }}
+        INPUT_CANDIDATE_RUNS_DIR: ${{ inputs.candidate-runs-dir }}
+      run: |
+        set -euo pipefail
+        dir="$INPUT_RUNS_DIR"
+        if [ -n "$INPUT_CANDIDATE_RUNS_DIR" ]; then
+          dir="$INPUT_CANDIDATE_RUNS_DIR"
+        fi
+        args=( baseline import "$INPUT_BASELINE_BUNDLE" )
+        if [ -n "$INPUT_DB" ]; then
+          args+=( --db "$INPUT_DB" )
+        fi
+        if [ -n "$dir" ]; then
+          args+=( --runs-dir "$dir" )
+        fi
+        catacomb "${args[@]}"
+
+    - name: Bench candidate
+      if: ${{ inputs.candidate-runs-dir == '' && inputs.basket != '' }}
+      shell: bash
+      env:
+        INPUT_BASKET: ${{ inputs.basket }}
+        INPUT_RUNS_DIR: ${{ inputs.runs-dir }}
+        INPUT_REPS: ${{ inputs.reps }}
+        INPUT_MODEL: ${{ inputs.model }}
+      run: |
+        set -euo pipefail
+        if [ -n "$INPUT_REPS" ]; then
+          export REPS="$INPUT_REPS"
+        fi
+        if [ -n "$INPUT_MODEL" ]; then
+          export MODEL="$INPUT_MODEL"
+        fi
+        args=( bench "$INPUT_BASKET" )
+        if [ -n "$INPUT_RUNS_DIR" ]; then
+          args+=( --runs-dir "$INPUT_RUNS_DIR" )
+        fi
+        catacomb "${args[@]}"
+
+    - name: Run the regression gate
+      id: gate
+      shell: bash
+      env:
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_CANDIDATE: ${{ inputs.candidate }}
+        INPUT_DB: ${{ inputs.db }}
+        INPUT_RUNS_DIR: ${{ inputs.runs-dir }}
+        INPUT_CANDIDATE_RUNS_DIR: ${{ inputs.candidate-runs-dir }}
+        INPUT_STRICT: ${{ inputs.strict }}
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/catacomb-gate"
+        mkdir -p "$out"
+        comment_md="$out/comment.md"
+        report_json="$out/report.json"
+        stderr_log="$out/regress-stderr.log"
+        dir="$INPUT_RUNS_DIR"
+        if [ -n "$INPUT_CANDIDATE_RUNS_DIR" ]; then
+          dir="$INPUT_CANDIDATE_RUNS_DIR"
+        fi
+        args=( regress --baseline "$INPUT_BASELINE" --candidate "$INPUT_CANDIDATE" )
+        if [ -n "$dir" ]; then
+          args+=( --runs-dir "$dir" )
+        fi
+        if [ -n "$INPUT_DB" ]; then
+          args+=( --db "$INPUT_DB" )
+        fi
+        if [ "$INPUT_STRICT" = "true" ]; then
+          args+=( --strict )
+        fi
+        set +e
+        catacomb "${args[@]}" --format markdown > "$comment_md" 2> "$stderr_log"
+        rc=$?
+        set -e
+        cat "$stderr_log" >&2
+        if [ "$rc" -gt 2 ]; then
+          echo "::error::catacomb regress failed unexpectedly (exit $rc)"
+          exit "$rc"
+        fi
+        if [ "$rc" -eq 2 ]; then
+          verdict=operational
+          : > "$report_json"
+          {
+            echo "**Verdict: ⚠️ gate could not run** (operational error, exit 2)"
+            echo
+            echo '```'
+            cat "$stderr_log"
+            echo '```'
+          } > "$comment_md"
+        else
+          set +e
+          catacomb "${args[@]}" --format json > "$report_json" 2>> "$stderr_log"
+          json_rc=$?
+          set -e
+          if [ "$json_rc" -gt 2 ]; then
+            echo "::error::catacomb regress --format json failed unexpectedly (exit $json_rc)"
+            exit "$json_rc"
+          fi
+          if [ -s "$report_json" ]; then
+            verdict="$(jq -r '.overall_verdict' "$report_json")"
+          else
+            verdict=""
+          fi
+        fi
+        {
+          echo "verdict=$verdict"
+          echo "exit-code=$rc"
+          echo "report-json=$report_json"
+        } >> "$GITHUB_OUTPUT"
+        echo "catacomb gate: verdict=$verdict exit=$rc"
+
+    - name: Upsert sticky PR comment
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_BASELINE_BUNDLE: ${{ inputs.baseline-bundle }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/catacomb-gate"
+        ident="$INPUT_BASELINE"
+        if [ -z "$ident" ] && [ -n "$INPUT_BASELINE_BUNDLE" ]; then
+          ident="$(basename "$INPUT_BASELINE_BUNDLE")"
+        fi
+        if [ -z "$ident" ]; then
+          ident=default
+        fi
+        ident="${ident//$'\n'/ }"
+        ident="${ident//$'\r'/ }"
+        marker="<!-- catacomb-gate:${ident} -->"
+        body="$out/comment-body.md"
+        {
+          printf '%s\n\n' "$marker"
+          cat "$out/comment.md"
+        } > "$body"
+        existing="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate |
+          jq -r --arg m "$marker" \
+            '.[] | select(.user.type == "Bot" and (.body | startswith($m))) | .id' |
+          sed -n 1p)"
+        if [ -n "$existing" ]; then
+          gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" \
+            -F body=@"$body" --silent
+          echo "updated sticky comment ${existing}"
+        else
+          gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -F body=@"$body" --silent
+          echo "created sticky comment"
+        fi
+
+    - name: Enforce the gate exit code
+      shell: bash
+      env:
+        GATE_RC: ${{ steps.gate.outputs.exit-code }}
+      run: |
+        set -euo pipefail
+        if [ "$GATE_RC" -ne 0 ]; then
+          echo "::error::catacomb gate failed (exit $GATE_RC — 1: regression, 2: gate could not run)"
+        fi
+        exit "$GATE_RC"

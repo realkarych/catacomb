@@ -398,6 +398,78 @@ comparison.
   task `checkpoints:` and wire `mcp__catacomb__mark` so there is always a stable, noise-robust
   comparison axis; see [Checkpoints and phase-scoped diff](#checkpoints-and-phase-scoped-diff).
 
+## Gate a PR with the Action
+
+The CI gate above — install catacomb, bench the candidate, `regress`, let the exit code
+fail the job — ships prepackaged as a composite GitHub Action:
+[`catacomb-gate`](../../.github/actions/catacomb-gate/README.md)
+([ADR-0033](../adr/0033-github-action.md)). It installs a pinned, checksum-verified
+catacomb release, optionally restores a baseline, optionally benches the PR's basket,
+runs the gate, posts the verdict as a **sticky PR comment** — the exact
+`regress --format markdown` output ([report formats](cli.md#report-formats)) — and
+re-raises the `regress` exit code so the check fails on a regression.
+
+The action currently lives *inside this repository* under
+`.github/actions/catacomb-gate` — it is not a standalone marketplace action yet
+(extraction is a follow-up) — so a caller workflow references it by its in-repo path:
+
+```yaml
+name: catacomb gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # for the sticky verdict comment
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }} # bench drives the real claude CLI
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: realkarych/catacomb/.github/actions/catacomb-gate@master # pin to a tag/SHA
+        with:
+          version: v0.2.0
+          basket: eval/basket.yaml
+          baseline-bundle: eval/baseline.bundle
+          baseline: label:variant=main
+          candidate: label:variant=pr
+          runs-dir: ${{ runner.temp }}/catacomb-runs
+```
+
+(A workflow in the catacomb repository itself uses the local form,
+`uses: ./.github/actions/catacomb-gate` — that is exactly what the
+[hermetic self-test](../../.github/workflows/action-selftest.yml) does.)
+
+Three notes keep the recipe honest:
+
+- **Bench on PRs spends real API budget.** With `basket` set (and `candidate-runs-dir`
+  empty), every PR run executes the basket's cells against your agent CLI, with auth
+  from the job `env` (`ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN`). Size the
+  basket and its `reps` for PR budgets — or bench elsewhere and hand the evidence in
+  via `candidate-runs-dir`, which skips the bench step entirely.
+- **`baseline-bundle` is the forward-looking restore path.** It runs
+  `catacomb baseline import` before gating, and that subcommand ships with the
+  ADR-0032 baseline-bundle work — no tagged catacomb release carries it yet, so on
+  current releases the import step fails with catacomb's own unknown-command error.
+  Until it ships, restore the baseline the way [the CI gate above](#pin-a-baseline)
+  does: point `runs-dir`/`db` at evidence that already holds the pinned group
+  (committed, or restored from an artifact) and select it with `baseline`.
+- **The exit code is re-raised after the comment posts.** `0` passes the check; `1`
+  (regression — with `strict`, also insufficient data) fails it; `2` means the gate
+  *could not run* and also fails it, with a comment that says so rather than
+  rendering a false regression. The action exposes `verdict`, `exit-code`, and
+  `report-json` outputs for downstream steps.
+
+The full input/output table — including `reps`/`model` env passthrough, `strict`,
+`comment`, and the `catacomb-bin` test seam — lives in the
+[action README](../../.github/actions/catacomb-gate/README.md).
+
 ## Importing a hand-run interactive session
 
 `bench` drives the agent for you, but sometimes you run the agent **by hand** — a session

@@ -645,7 +645,7 @@ func TestRegressRunsDirRenderErrorOperational(t *testing.T) {
 		runsDir:    root,
 		baseline:   "label:variant=base",
 		candidate:  "label:variant=cand",
-		asJSON:     true,
+		format:     regressFormatJSON,
 		thresholds: regress.DefaultThresholds(),
 	}
 	err := runRegress(failWriter{}, io.Discard, openStore(nil), newPricer, f)
