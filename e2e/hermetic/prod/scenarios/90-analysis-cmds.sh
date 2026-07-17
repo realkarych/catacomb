@@ -29,12 +29,15 @@
 #       carries the graph contract, not just node ids.
 #
 #   (4) standalone verify over production-shaped evidence. The `verify` command was only
-#       re-run over the sql/ws/import baskets. A tiny 2-rep basket with a verify hook
-#       (verify_token.py scores out/result.csv into verifier.pass, the composite scenario's
-#       artifact shape) is benched, then `catacomb verify <basket> --runs-dir <runs>` runs
-#       as a SEPARATE offline re-verification step: it must re-score every cell (mode flips
-#       bench -> offline, scores byte-identical, verifier.pass present) — the verify path
-#       exercised over the newer artifact/annotation evidence shape.
+#       re-run over the sql/ws/import baskets. A tiny 2-variant x 2-rep basket with a
+#       verify hook (verify_token.py scores out/result.csv into verifier.pass, the
+#       composite scenario's artifact shape) is benched, then
+#       `catacomb verify <basket> --runs-dir <runs>` runs as a SEPARATE offline
+#       re-verification step: it must re-score every cell (mode flips bench -> offline,
+#       scores byte-identical, verifier.pass present) — the verify path exercised over the
+#       newer artifact/annotation evidence shape. `--label variant=baseline` then narrows
+#       the re-verify to only the baseline cells (2/4 "ok" lines vs. 4/4 unfiltered),
+#       mirroring the live sql basket's 15-total/5-filtered `--label` coverage.
 set -euo pipefail
 w="$WORK/analysis"; rm -rf "$w"; mkdir -p "$w"
 
@@ -195,3 +198,15 @@ if errs:
 print("standalone verify: mode flips bench -> offline, verifier.pass=1 re-scored, per-cell 'ok'")
 PY
 record "$rc" "standalone verify re-scores offline: verify.json mode->offline, verifier.pass=1, per-cell ok"
+
+echo "== prod.90 verify --label: narrows re-verification to the matching variant only =="
+rc=0
+ok_all=$(grep -c ': ok$' "$v/verify.out" || true)
+[ "$ok_all" -eq 4 ] || rc=1
+record "$rc" "unfiltered verify: $ok_all/4 cells re-verified ok (baseline+other x 2 reps)"
+run_json 0 "$v/verify-label.out" "standalone catacomb verify --label variant=baseline (filtered re-verify)" -- \
+  catacomb verify "$v/basket.yaml" --runs-dir "$v/runs" --label variant=baseline
+rc=0
+ok_baseline=$(grep -c ': ok$' "$v/verify-label.out" || true)
+[ "$ok_baseline" -eq 2 ] || rc=1
+record "$rc" "verify --label variant=baseline: $ok_baseline/2 cells re-verified ok (other variant excluded)"

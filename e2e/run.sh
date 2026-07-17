@@ -721,6 +721,31 @@ print(f"sql manifest OK: {len(entries)} cells, all exit 0, session ids + evidenc
 PY
 record "$rc" "sql manifest: 15 cells/exit0/session/evidence/verify-ran; verifier.pass baseline&baseline2 >=4/5, degraded 0/5"
 
+echo "== j2. verify sql basket standalone (offline re-verify) + --label filtering =="
+# Standalone `verify` re-runs the verify hook offline over recorded evidence dirs and
+# prints one "verify <run_id>: ok" line per matched cell that re-verified cleanly (a
+# hook that runs to completion, independent of whether verifier.pass scored 1 or 0 —
+# degraded's wrong SQL result still re-verifies "ok", it just re-records
+# verifier.pass=0). Unfiltered, all 15 sql cells (1 task x 3 variants x 5 reps) match
+# the basket label and re-verify; --label variant=baseline narrows the match to the 5
+# baseline-only cells, proving the label filter actually restricts which cells get
+# re-verified (mirrored hermetically: e2e/hermetic/prod/scenarios/90-analysis-cmds.sh).
+run_json 0 "$work/verify-sql-all.out" \
+	"verify sql basket standalone (all 15 cells)" -- \
+	catacomb verify basket-sql.yaml --runs-dir "$runs3"
+rc=0
+ok_all=$(grep -c ': ok$' "$work/verify-sql-all.out" || true)
+[ "$ok_all" -eq 15 ] || rc=1
+record "$rc" "verify sql basket standalone: $ok_all/15 cells re-verified ok"
+
+run_json 0 "$work/verify-sql-baseline.out" \
+	"verify sql basket --label variant=baseline (5 cells)" -- \
+	catacomb verify basket-sql.yaml --runs-dir "$runs3" --label variant=baseline
+rc=0
+ok_baseline=$(grep -c ': ok$' "$work/verify-sql-baseline.out" || true)
+[ "$ok_baseline" -eq 5 ] || rc=1
+record "$rc" "verify sql basket --label variant=baseline: $ok_baseline/5 cells re-verified ok"
+
 echo "== k. sql seeded regression (baseline vs degraded) must gate on verifier.pass =="
 run_json 1 "$artifacts/regress-sql-degraded.json" \
 	"sql seeded regression (baseline vs degraded)" -- \
