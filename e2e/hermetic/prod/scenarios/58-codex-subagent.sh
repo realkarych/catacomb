@@ -16,8 +16,9 @@
 #       55) while every degraded thread id resolves with no subagents/ dir at
 #       all — the "spawn_agent forces a child, no-spawn_agent has none" split
 #       basket-codex-subagent.yaml documents for the live leg;
-#   (2) stamps: baseline r1's meta.json env carries agent_runtime=codex and
-#       agent_version from the rollout's cli_version, same dispatch key as 55/56;
+#   (2) stamps: every baseline rep's meta.json env carries agent_runtime=codex
+#       and agent_version from the rollout's cli_version, same dispatch key as
+#       55/56;
 #   (3) structural node (the "reduces (baseline) / drops (degraded)" claim,
 #       checked directly per cell BEFORE the aggregate gate, not inferred from
 #       it): exporting baseline r1's evidence dir yields a "type":"subagent"
@@ -40,9 +41,17 @@
 #       tokens_out (100->300). regress gates on total tokens_out and total
 #       error_rate exactly as 55 does — the aggregate verdict — while (3) above
 #       already hard-asserts the structural subagent claim directly;
+#   (4b) the gate tied DIRECTLY to the subagent signal (mirroring 70's
+#       Glob-drop idiom): a SECOND regress call, --fail-on-notable, is
+#       hard-asserted to gate (exit 1) specifically via the subagent stepkey's
+#       OWN step-scope presence finding (the unnamed step, "present 5/5 ->
+#       0/5") — not via the orthogonal exec_command tokens_out/error_rate
+#       plant (4) fires on. This closes the gap where the subagent-presence
+#       claim was only a non-gating "notable" alongside a gate that actually
+#       fires through a shared step;
 #   (5) NON-VACUITY: the same 5 baseline rollouts imported again as variant
 #       baseline2 (A-vs-A) do NOT gate — exit 0, zero regressions, zero
-#       notables — so (4) fires on the planted degradation, not on
+#       notables — so (4)/(4b) fire on the planted degradation, not on
 #       codex-import noise. 5 reps per variant clear regress's MinSupport.
 # Sourced by run.sh with lib.sh loaded and PROD/WORK/HERMETIC_* exported.
 set -euo pipefail
@@ -53,7 +62,7 @@ base_uuid() { printf '019f6b85-58c0-7be3-81dc-ae856386020%s' "$1"; }
 deg_uuid() { printf '019f6b85-58de-7be3-81dc-ae856386030%s' "$1"; }
 child_uuid() { printf '019f6b85-58c4-7be3-81dc-ae856386040%s' "$1"; }
 for r in 1 2 3 4 5; do
-  sed "s/__THREAD_ID__/$(base_uuid "$r")/g" \
+  sed -e "s/__THREAD_ID__/$(base_uuid "$r")/g" -e "s/__CHILD_THREAD_ID__/$(child_uuid "$r")/g" \
     "$PROD/fixtures/58-codex-main.jsonl.tmpl" > "$day/rollout-2026-07-16T15-40-00-$(base_uuid "$r").jsonl"
   sed -e "s/__THREAD_ID__/$(child_uuid "$r")/g" -e "s/__PARENT_THREAD_ID__/$(base_uuid "$r")/g" \
     "$PROD/fixtures/58-codex-child.jsonl.tmpl" > "$day/rollout-2026-07-16T15-40-03-$(child_uuid "$r").jsonl"
@@ -96,23 +105,28 @@ for r in 1 2 3 4 5; do
 done
 record "$rc" "all 5 degraded reps have no subagents dir (no spawn_agent call, no child rollout planted)"
 
-rc=0; python3 - "$rundir/meta.json" <<'PY' || rc=$?
-import json, sys
-m = json.load(open(sys.argv[1]))
-env = m.get("env") or {}
-checks = {
-    "agent_runtime=codex": env.get("agent_runtime") == "codex",
-    "agent_version from cli_version": env.get("agent_version") == "0.144.4",
-    "task label": m.get("task") == "delegate",
-    "variant label": m.get("variant") == "baseline",
-    "session id is the thread id": m.get("session_id") == "019f6b85-58c0-7be3-81dc-ae8563860201",
-}
-bad = [k for k, ok in checks.items() if not ok]
+rc=0; python3 - "$w/runs" <<'PY' || rc=$?
+import json, os, sys
+runs = sys.argv[1]
+bad = []
+for r in range(1, 6):
+    d = os.path.join(runs, "import-prod-codex-subagent-delegate-baseline-r%d" % r)
+    m = json.load(open(os.path.join(d, "meta.json")))
+    env = m.get("env") or {}
+    sid = "019f6b85-58c0-7be3-81dc-ae856386020%d" % r
+    checks = {
+        "agent_runtime=codex": env.get("agent_runtime") == "codex",
+        "agent_version from cli_version": env.get("agent_version") == "0.144.4",
+        "task label": m.get("task") == "delegate",
+        "variant label": m.get("variant") == "baseline",
+        "session id is the thread id": m.get("session_id") == sid,
+    }
+    bad.extend("r%d: %s" % (r, k) for k, ok in checks.items() if not ok)
 if bad:
     print("meta.json checks failed: %s" % ", ".join(bad), file=sys.stderr)
     sys.exit(1)
 PY
-record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.4 and carries cell labels"
+record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.4 and carries cell labels, across all 5 baseline reps"
 
 echo "== prod.58 codex-subagent: export -> subagent node present (baseline) / absent (degraded) =="
 basesnap="$w/export-baseline.snap.jsonl"
@@ -172,6 +186,35 @@ if not subagent_presence_notable:
 print("gate fires on total tokens_out (100->300) and total error_rate (0->1); subagent stepkey presence drop surfaces as a (non-gating) notable")
 PY
 record "$rc" "regress gates on total tokens_out (100->300) and total error_rate (0->1); subagent presence drop logged as notable"
+
+echo "== prod.58 codex-subagent: gate ties DIRECTLY to the subagent-presence signal (--fail-on-notable) =="
+run_json 1 "$w/regress-notable.json" "baseline vs degraded --fail-on-notable -> gates via the subagent stepkey's own presence finding" -- \
+  catacomb regress --runs-dir "$w/runs" \
+  --baseline label:basket=prod-codex-subagent,variant=baseline \
+  --candidate label:basket=prod-codex-subagent,variant=degraded --fail-on-notable --json
+rc=0; python3 - "$w/regress-notable.json" <<'PY' || rc=$?
+import json, sys
+rep = json.load(open(sys.argv[1]))
+f = rep.get("findings", [])
+# Same idiom as 70's Glob-drop check, but pinned on the subagent node's OWN
+# stepkey rather than an orthogonal step: it is a step-scope presence finding
+# with NO "name" (distinct from the named spawn_agent/wait_agent tool-call
+# steps) whose detail records the delegation split going from present in every
+# baseline rep to present in none of the degraded reps.
+subagent_finding = [
+    x for x in f
+    if x.get("scope") == "step" and x.get("metric") == "presence"
+    and x.get("verdict") in ("regression", "notable") and x.get("name") is None
+    and "present 5/5 -> 0/5" in str(x.get("detail", ""))
+]
+if not subagent_finding:
+    print("expected --fail-on-notable to surface the subagent stepkey's own presence finding (unnamed step, 5/5 -> 0/5)", file=sys.stderr)
+    for x in f:
+        print("  ", {k: x.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print("regress --fail-on-notable gates (exit 1) with the subagent stepkey's presence finding present:", subagent_finding[0])
+PY
+record "$rc" "regress --fail-on-notable gates DIRECTLY on the subagent stepkey's own presence finding (unnamed step, 5/5 -> 0/5) -- ties the gate to the subagent signal itself, not just the orthogonal exec_command tokens_out/error_rate plant"
 
 echo "== prod.58 codex-subagent: A-vs-A must NOT gate (non-vacuity) =="
 run_json 0 "$w/ava.json" "A-vs-A (baseline vs baseline2, same rollouts) must NOT gate" -- \
