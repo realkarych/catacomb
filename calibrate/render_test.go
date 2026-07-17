@@ -1,0 +1,82 @@
+package calibrate
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/realkarych/catacomb/regress"
+)
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+func renderedHuman(t *testing.T, r CalibrateReport) string {
+	t.Helper()
+	var buf bytes.Buffer
+	RenderHuman(r, &buf)
+	return buf.String()
+}
+
+func TestRenderHumanInsufficientStopsAfterDetail(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 10000), regress.DefaultThresholds())
+	got := renderedHuman(t, r)
+	assert.Equal(t, "self-check: insufficient · runs 4 · min-support 3\nself-check needs k>=6 runs (have 4)\n", got)
+}
+
+func TestRenderHumanCleanSplitSkippedInfluence(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000), regress.DefaultThresholds())
+	got := renderedHuman(t, r)
+	assert.Equal(t,
+		"self-check: sufficient · runs 6 · min-support 3\n"+
+			"A/A ok (first 3 vs second 3)\n"+
+			"influence: leave-one-out needs k>=7 runs (have 6)\n",
+		got)
+}
+
+func TestRenderHumanDriftLines(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
+	got := renderedHuman(t, r)
+	assert.Contains(t, got, "self-check: sufficient · runs 6 · min-support 3\n")
+	assert.Contains(t, got, "A/A regression (first 3 vs second 3)\n")
+	assert.Contains(t, got, "drift: total duration_ms regression 10000.00 -> 14000.00\n")
+}
+
+func TestRenderHumanInfluenceFlipLines(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 30000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
+	got := renderedHuman(t, r)
+	assert.Contains(t, got, "A/A ok (first 3 vs second 4)\n")
+	assert.Contains(t, got, "influence: dropping run #2 flips ok -> regression\n")
+}
+
+func TestRenderHumanInfluenceNoFlip(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000, 10000), regress.DefaultThresholds())
+	require.NotNil(t, r.Influence)
+	require.True(t, r.Influence.Evaluated)
+	got := renderedHuman(t, r)
+	assert.Contains(t, got, "influence: no single run flips the verdict\n")
+}
+
+func TestRenderHumanDeterministic(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 30000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
+	require.Equal(t, renderedHuman(t, r), renderedHuman(t, r))
+}
+
+func TestRenderJSONRoundTrip(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(r, &buf))
+	var got CalibrateReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	assert.Equal(t, r, got)
+}
+
+func TestRenderJSONWriteError(t *testing.T) {
+	r := Calibrate(fixtureGroup(10000, 10000, 10000, 10000), regress.DefaultThresholds())
+	require.Error(t, RenderJSON(r, failWriter{}))
+}

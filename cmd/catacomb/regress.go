@@ -59,7 +59,6 @@ func newRegressCmd() *cobra.Command {
 }
 
 func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
-	def := regress.DefaultThresholds()
 	home, _ := os.UserHomeDir()
 	cmd.Flags().StringVar(&f.baseline, "baseline", "", "baseline selector: label:k=v[,k=v...] or name:<baseline>")
 	cmd.Flags().StringVar(&f.candidate, "candidate", "", "candidate selector: label:k=v[,k=v...] or name:<baseline>")
@@ -70,42 +69,54 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
 	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
 	cmd.Flags().StringVar(&f.scores, "scores", "", "JSONL file of external scores applied as node annotations before comparison; one {\"step_key\",\"key\",\"value\"[,\"run_id\"]} object per line")
-	cmd.Flags().IntVar(&f.thresholds.MinSupport, "min-support", def.MinSupport, "minimum runs per group for a trusted comparison")
-	cmd.Flags().Float64Var(&f.thresholds.PresenceDelta, "presence-delta", def.PresenceDelta, "presence rate delta threshold")
-	cmd.Flags().Float64Var(&f.thresholds.ErrorRateDelta, "error-delta", def.ErrorRateDelta, "error rate delta threshold")
-	cmd.Flags().Float64Var(&f.thresholds.MetricRelDelta, "metric-rel-delta", def.MetricRelDelta, "relative metric delta threshold")
-	cmd.Flags().Float64Var(&f.thresholds.IQRFactor, "iqr-factor", def.IQRFactor, "IQR band factor")
-	cmd.Flags().Float64Var(&f.thresholds.CoverageFloor, "coverage-floor", def.CoverageFloor, "step alignment coverage floor")
-	cmd.Flags().Float64Var(&f.thresholds.Z, "z", def.Z, "one-sided Wilson z for rate gates (1.645 = 95% one-sided)")
-	cmd.Flags().Float64Var(&f.thresholds.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
-	cmd.Flags().Float64Var(&f.thresholds.PairedAlpha, "paired-alpha", def.PairedAlpha, "paired sign-test significance level for per-task median deltas (0,1)")
-	cmd.Flags().IntVar(&f.thresholds.PairedMinTasks, "paired-min-tasks", def.PairedMinTasks, "minimum matched tasks before the paired sign test gates")
-	cmd.Flags().Float64Var(&f.thresholds.AuditIQRFactor, "audit-iqr-factor", def.AuditIQRFactor, "per-cell audit IQR band factor for outlier flags")
-	cmd.Flags().Float64Var(&f.thresholds.AuditRelDelta, "audit-rel-delta", def.AuditRelDelta, "per-cell audit relative delta floor for outlier flags")
-	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
+	bindThresholdFlags(cmd, &f.thresholds)
+}
+
+func bindThresholdFlags(cmd *cobra.Command, th *regress.Thresholds) {
+	def := regress.DefaultThresholds()
+	cmd.Flags().IntVar(&th.MinSupport, "min-support", def.MinSupport, "minimum runs per group for a trusted comparison")
+	cmd.Flags().Float64Var(&th.PresenceDelta, "presence-delta", def.PresenceDelta, "presence rate delta threshold")
+	cmd.Flags().Float64Var(&th.ErrorRateDelta, "error-delta", def.ErrorRateDelta, "error rate delta threshold")
+	cmd.Flags().Float64Var(&th.MetricRelDelta, "metric-rel-delta", def.MetricRelDelta, "relative metric delta threshold")
+	cmd.Flags().Float64Var(&th.IQRFactor, "iqr-factor", def.IQRFactor, "IQR band factor")
+	cmd.Flags().Float64Var(&th.CoverageFloor, "coverage-floor", def.CoverageFloor, "step alignment coverage floor")
+	cmd.Flags().Float64Var(&th.Z, "z", def.Z, "one-sided Wilson z for rate gates (1.645 = 95% one-sided)")
+	cmd.Flags().Float64Var(&th.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
+	cmd.Flags().Float64Var(&th.PairedAlpha, "paired-alpha", def.PairedAlpha, "paired sign-test significance level for per-task median deltas (0,1)")
+	cmd.Flags().IntVar(&th.PairedMinTasks, "paired-min-tasks", def.PairedMinTasks, "minimum matched tasks before the paired sign test gates")
+	cmd.Flags().Float64Var(&th.AuditIQRFactor, "audit-iqr-factor", def.AuditIQRFactor, "per-cell audit IQR band factor for outlier flags")
+	cmd.Flags().Float64Var(&th.AuditRelDelta, "audit-rel-delta", def.AuditRelDelta, "per-cell audit relative delta floor for outlier flags")
+	cmd.Flags().BoolVar(&th.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
+}
+
+func validateThresholds(verb string, th regress.Thresholds) error {
+	if th.MinSupport < 1 {
+		return operational(fmt.Errorf("%s: --min-support must be >= 1, got %d", verb, th.MinSupport))
+	}
+	if th.Z <= 0 {
+		return operational(fmt.Errorf("%s: --z must be > 0, got %g", verb, th.Z))
+	}
+	if th.AnnotationRateDelta <= 0 {
+		return operational(fmt.Errorf("%s: --annotation-rate-delta must be > 0, got %g", verb, th.AnnotationRateDelta))
+	}
+	if th.PairedAlpha <= 0 || th.PairedAlpha >= 1 {
+		return operational(fmt.Errorf("%s: --paired-alpha must be in (0,1), got %g", verb, th.PairedAlpha))
+	}
+	if th.PairedMinTasks < 1 {
+		return operational(fmt.Errorf("%s: --paired-min-tasks must be > 0, got %d", verb, th.PairedMinTasks))
+	}
+	if th.AuditIQRFactor <= 0 {
+		return operational(fmt.Errorf("%s: --audit-iqr-factor must be > 0, got %g", verb, th.AuditIQRFactor))
+	}
+	if th.AuditRelDelta <= 0 {
+		return operational(fmt.Errorf("%s: --audit-rel-delta must be > 0, got %g", verb, th.AuditRelDelta))
+	}
+	return nil
 }
 
 func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.Pricer, f regressFlags) error {
-	if f.thresholds.MinSupport < 1 {
-		return operational(fmt.Errorf("regress: --min-support must be >= 1, got %d", f.thresholds.MinSupport))
-	}
-	if f.thresholds.Z <= 0 {
-		return operational(fmt.Errorf("regress: --z must be > 0, got %g", f.thresholds.Z))
-	}
-	if f.thresholds.AnnotationRateDelta <= 0 {
-		return operational(fmt.Errorf("regress: --annotation-rate-delta must be > 0, got %g", f.thresholds.AnnotationRateDelta))
-	}
-	if f.thresholds.PairedAlpha <= 0 || f.thresholds.PairedAlpha >= 1 {
-		return operational(fmt.Errorf("regress: --paired-alpha must be in (0,1), got %g", f.thresholds.PairedAlpha))
-	}
-	if f.thresholds.PairedMinTasks < 1 {
-		return operational(fmt.Errorf("regress: --paired-min-tasks must be > 0, got %d", f.thresholds.PairedMinTasks))
-	}
-	if f.thresholds.AuditIQRFactor <= 0 {
-		return operational(fmt.Errorf("regress: --audit-iqr-factor must be > 0, got %g", f.thresholds.AuditIQRFactor))
-	}
-	if f.thresholds.AuditRelDelta <= 0 {
-		return operational(fmt.Errorf("regress: --audit-rel-delta must be > 0, got %g", f.thresholds.AuditRelDelta))
+	if err := validateThresholds("regress", f.thresholds); err != nil {
+		return err
 	}
 	if f.runsDir == "" {
 		return operational(errRegressNoRunsDir)

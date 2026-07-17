@@ -19,7 +19,7 @@ func rootCommandNames() map[string]bool {
 func TestRootCommandSetIsExact(t *testing.T) {
 	names := rootCommandNames()
 	want := []string{
-		"bench", "verify", "regress", "baseline", "trends", "diff",
+		"bench", "verify", "regress", "calibrate", "baseline", "trends", "diff",
 		"subgraph", "export", "pack", "import", "replay", "mcp", "version",
 	}
 	require.Len(t, names, len(want))
