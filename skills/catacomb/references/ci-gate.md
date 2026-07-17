@@ -32,10 +32,22 @@ A **name** survives label churn: `regress --baseline name:golden` keeps resolvin
 group even as basket labels evolve, where a raw `label:` selector would silently re-match.
 The command does not copy the evidence — it records the resolved run IDs and selector in
 `--db`, and `regress` re-reads those `runs/` directories from disk at compare time. So CI
-needs both halves of the reference: commit `catacomb.db` **and** the baseline's `runs/`
-group (or publish the group as a retrievable artifact the job restores before `regress`).
-Miss either and the baseline cannot resolve. See [accuracy.md](accuracy.md) for pinning,
-re-pinning after an intended shift, and trend history in depth.
+needs both halves of the reference: the baseline row and the pinned evidence dirs. Export
+them as **one bundle**:
+
+```sh
+catacomb baseline export golden --db catacomb.db --runs-dir runs --out golden.tar.gz
+```
+
+The bundle is a single hash-verified `.tar.gz` carrying the row and every pinned run.
+Store it where the job can retrieve it — an uploaded workflow artifact, a release asset,
+or the object store your CI already uses — and re-export whenever the golden group is
+re-pinned. Export is byte-deterministic (the same baseline always yields the same bytes),
+so the artifact can be content-addressed and cached. Committing `catacomb.db` and the
+`runs/` tree into the repository still resolves and remains a workable fallback, but it
+bloats the repo, invites binary-database merge conflicts, and ties no integrity check
+between the row and the evidence — prefer the bundle. See [accuracy.md](accuracy.md) for
+pinning, re-pinning after an intended shift, and trend history in depth.
 
 ## The GitHub Action (primary path)
 
@@ -105,6 +117,12 @@ jobs:
           go-version: '1.26'
       - name: Install catacomb
         run: go install github.com/realkarych/catacomb/cmd/catacomb@v0.2.0
+      - name: Fetch baseline bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download catacomb-baseline --pattern golden.tar.gz
+      - name: Restore baseline
+        run: catacomb baseline import golden.tar.gz --db catacomb.db --runs-dir runs
       - name: Bench candidate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -122,10 +140,16 @@ jobs:
           path: runs/
 ```
 
-`go install` needs Go ≥ 1.26, which the `setup-go` step provides. The bench writes the
-candidate group into `runs/`, `regress` compares it against `name:golden` from the
-committed `catacomb.db`, and the final upload runs `if: always()` so the evidence is
-attached even when the gate fails — that archive is what you download to read the report.
+`go install` needs Go ≥ 1.26, which the `setup-go` step provides. The fetch step is
+whatever your artifact store makes retrievable — a release asset (shown), a workflow
+artifact, or an object-store download; the contract is only that `golden.tar.gz` exists
+before the restore. `baseline import` verifies every file hash before landing anything —
+a corrupted or tampered bundle fails the job with exit `2` instead of gating against
+damaged evidence — and rewrites the baseline's recorded runs dir to the local `runs/`,
+so `name:golden` resolves warning-free. The bench then writes the candidate group into
+the same `runs/`, `regress` compares it against the imported `name:golden`, and the
+final upload runs `if: always()` so the evidence is attached even when the gate fails —
+that archive is what you download to read the report.
 
 ## Secrets
 
@@ -177,6 +201,6 @@ actually holds the merge.
 
 Any CI works — nothing here is GitHub-specific. Install the binary (a release archive or
 `go install github.com/realkarych/catacomb/cmd/catacomb@<version>`), expose the same auth
-secret to the environment, run `bench` to produce the candidate group and then `regress`
-against the pinned baseline, and let the non-zero exit fail the job. Commit or restore
-`catacomb.db` and the baseline `runs/` group the same way so `name:golden` resolves.
+secret to the environment, fetch the exported bundle and `catacomb baseline import` it at
+job start so `name:golden` resolves, run `bench` to produce the candidate group and then
+`regress` against the pinned baseline, and let the non-zero exit fail the job.

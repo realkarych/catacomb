@@ -14,7 +14,7 @@ The command set:
 | [`bench`](#bench) | Run a benchmark basket and record redacted evidence per cell |
 | [`verify`](#verify) | Re-run a basket's verifiers offline over recorded evidence dirs |
 | [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |
-| [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`) |
+| [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`, `export`, `import`) |
 | [`regress`](#regress) | Compare a candidate run group against a baseline and gate |
 | [`trends`](#trends) | Replay a baseline's recorded regression history |
 | [`diff`](#diff) | Diff two session transcripts by `step_key` |
@@ -530,7 +530,9 @@ whitespace; at least one `--label` is required. Errors when the selector matches
 runs. Re-running with the same name replaces the stored baseline. The evidence dirs are
 not copied — [`regress`](#regress) re-reads the pinned runs from disk and warns when
 pointed at a different directory. A saved baseline is referenced by `regress` as
-`name:<baseline>`, so a golden group survives later label churn.
+`name:<baseline>`, so a golden group survives later label churn. To move a baseline —
+row and pinned evidence together — to another machine or an ephemeral CI runner, see
+[`baseline export`](#baseline-export) / [`baseline import`](#baseline-import).
 
 ```sh
 catacomb baseline set golden --label basket=checkout --label variant=main
@@ -582,6 +584,78 @@ Deletes the named baseline.
 
 ```sh
 catacomb baseline rm golden
+```
+
+---
+
+## baseline export
+
+Export a baseline and its pinned evidence runs as one portable, verifiable bundle.
+
+```sh
+catacomb baseline export <name> --out <bundle.tar.gz> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--out` | **required** | Bundle output file (`.tar.gz`); must not already exist |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence dir holding the baseline's pinned runs |
+
+The bundle is a gzipped tar: `bundle.json` first (bundle format version, the stored
+baseline record including its version stamps, and a SHA-256 per packed file), then every
+file of every pinned run under `runs/<run-id>/...`. Export is **byte-deterministic** —
+entries are sorted, tar metadata is normalized, and gzip carries no timestamp — so
+exporting the same baseline twice yields identical bytes, and a bundle can be
+content-addressed, cached, or diffed by hash. The bundle is written atomically and an
+existing `--out` file is never overwritten. Evidence enters the bundle exactly as the
+runs dir holds it — already redacted at rest — so exporting adds no new exposure
+surface.
+
+Exit codes: `0` on success; `2` when the baseline does not exist, a pinned run has no
+evidence dir under `--runs-dir`, `--out` is missing, or the `--out` file already exists.
+
+```sh
+catacomb baseline export golden --out golden.tar.gz
+catacomb baseline export golden --db catacomb.db --runs-dir runs --out dist/golden.tar.gz
+```
+
+---
+
+## baseline import
+
+Import a baseline bundle: verify every file hash, land the runs, upsert the baseline row.
+
+```sh
+catacomb baseline import <bundle.tar.gz> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path for the baselines table |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence dir to land the bundle's runs into |
+
+The archive is streamed and treated as untrusted input: every file must hash-match the
+manifest (and every manifest file must be present), entries must be clean relative paths
+under `runs/` — symlinks and irregular entries are rejected, and run ids must be clean
+single-segment names — and a bundle whose format version is newer than this binary
+supports is refused. Nothing is committed until the whole archive verifies: a truncated
+or tampered bundle is rejected with the runs dir and the store untouched.
+
+The imported baseline's `runs_dir` is rewritten to the local `--runs-dir` (resolved to
+an absolute path), so a follow-up `regress --baseline name:<name>` against that same
+directory resolves without a runs-dir warning. Import is **idempotent and
+collision-safe**: a run dir that already exists locally is accepted only when its
+content matches the bundle exactly (hash-for-hash, with no extra files) and is then left
+in place; any difference is a hard error, never an overwrite.
+
+Exit codes: `0` on success (including a no-op re-import over identical runs); `2` on a
+missing or corrupt bundle, a hash mismatch, a run-dir collision, a hostile entry or run
+id, or a too-new bundle format version.
+
+```sh
+catacomb baseline import golden.tar.gz
+catacomb baseline import golden.tar.gz --db catacomb.db --runs-dir runs
 ```
 
 ---
