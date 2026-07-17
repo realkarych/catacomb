@@ -4,7 +4,7 @@ Catacomb follows [SemVer 2.0.0](https://semver.org). Releases are annotated tags
 
 ## The compatibility surface
 
-For version arithmetic, catacomb's "public API" is the union of these seven contracts. A change is *breaking* iff it can invalidate a working user setup — a basket, a verifier, recorded evidence, a baseline, or a script parsing our output:
+For version arithmetic, catacomb's "public API" is the union of these eight contracts. A change is *breaking* iff it can invalidate a working user setup — a basket, a verifier, recorded evidence, a baseline, or a script parsing our output:
 
 1. **CLI** — commands, flags and their defaults, exit-code semantics (`0` ok / `1` regression / `2` operational), and `--json` output shapes. Human-readable table output is *not* a contract; `--json` is.
 2. **Basket YAML schema** — field names, types, validation semantics (`KnownFields` means any rename is breaking by construction).
@@ -13,6 +13,7 @@ For version arithmetic, catacomb's "public API" is the union of these seven cont
 5. **Store** — baseline and record bodies, and schema migrations. A lossless auto-migration is compatible; a migration that drops or rewrites user data is breaking.
 6. **Key schemes** — `stepkey`/`phasekey` scheme identity. A scheme change silently mis-aligns every existing baseline; version stamps + `--strict` refuse it at runtime, and it is always MAJOR (pre-1.0: always MINOR, never PATCH).
 7. **Python SDKs** — the public API of `catacomb-verifier` and `catacomb-judge` (`integrations/`); they version with the repo.
+8. **Baseline bundle format** — the `baseline export`/`import` archive ([ADR-0032](adr/0032-baseline-bundle.md)), currently **v1**: the `bundle.json` manifest schema (format version, baseline record, per-file sha256 map), the `runs/<run-id>/**` layout, and byte-deterministic export. Additive-only within a major — `import` refuses a bundle whose format version is newer than the binary supports; removing or retyping manifest fields, changing the layout, or breaking export determinism is breaking.
 
 Not part of the surface: model behavior, Claude Code transcript drift (handled by the version watchlist as PATCH-level parser fixes), descriptive env stamps content, wording of notes/advisories on stderr.
 

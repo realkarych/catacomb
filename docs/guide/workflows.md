@@ -132,6 +132,37 @@ on a lock), or give each shard its own store file. Concurrent `--record` writers
 can collide on SQLite's write lock and fail loudly with `SQLITE_BUSY` (exit `2`, no corruption)
 rather than queue.
 
+### Ship the baseline to CI
+
+A `name:` baseline is two halves — the store row and the pinned evidence dirs — and an
+ephemeral CI runner starts with neither. Move both as one artifact: export the bundle once
+(and again on every golden refresh), store it where the job can fetch it (a CI artifact, a
+release asset, the object store your CI already uses), and import it at job start:
+
+```sh
+# once, on the machine that pinned the baseline
+catacomb baseline export checkout-main --out checkout-main.tar.gz
+
+# at job start, on the ephemeral runner
+catacomb baseline import checkout-main.tar.gz --db catacomb.db --runs-dir runs
+catacomb regress --db catacomb.db --runs-dir runs \
+  --baseline name:checkout-main \
+  --candidate label:basket=checkout,variant=candidate
+```
+
+The bundle is byte-deterministic and hash-verified on import (see
+[`baseline export`](cli.md#baseline-export) / [`import`](cli.md#baseline-import)): the same
+golden group restores bit-identically on every runner, and a corrupted or tampered artifact
+fails the job with exit `2` instead of gating against damaged evidence. Import rewrites the
+baseline's recorded runs dir to the local `--runs-dir`, so the gate resolves without a
+runs-dir warning. The bundle carries the baseline and its evidence only — recorded
+`--record`/`trends` history stays a persistent-store concern.
+
+The alternative — committing `catacomb.db` and the baseline's `runs/` tree to the repository
+(or uploading and restoring both halves by hand) — still works, but it bloats the repo,
+invites binary-database merge conflicts, and ties no integrity check between the row and the
+evidence it references; prefer the bundle.
+
 ### Gate sensitivity at small k
 
 The rate gate (presence, error rate) hard-flags a `regression` only when the baseline and
