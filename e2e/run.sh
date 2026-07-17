@@ -101,6 +101,7 @@ runs4="$work/runs-subagent"
 runs5="$work/runs-skill"
 runs6="$work/runs-mcp"
 runs7="$work/runs-codex"
+runs8="$work/runs-failmode"
 manifest1="$work/manifest-presence.jsonl"
 manifest2="$work/manifest-continuous.jsonl"
 manifest3="$work/manifest-sql.jsonl"
@@ -108,8 +109,9 @@ manifest4="$work/manifest-subagent.jsonl"
 manifest5="$work/manifest-skill.jsonl"
 manifest6="$work/manifest-mcp.jsonl"
 manifest7="$work/manifest-codex.jsonl"
+manifest8="$work/manifest-failmode.jsonl"
 db="$work/e2e.db"
-mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7"
+mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8"
 
 # The SQL basket's agent reads a seeded database and its verifier reads the golden; both
 # live here in the work dir, OUTSIDE every cell's per-cell workspace — the documented
@@ -139,6 +141,7 @@ copy_artifacts() {
 	cp -f "$manifest5" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest6" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest7" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest8" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
@@ -1117,12 +1120,124 @@ PY
 	echo "  [info] codex main-vs-candidate: overall_verdict=$(verdict_of "$artifacts/regress-codex.json") (informational — n=3 on a new runtime, calibration data only)"
 fi
 
+echo "== x. bench e2e-failmode basket — --fail-fast (\$0) + --error-delta (near-\$0 Haiku) =="
+# basket-failmode.yaml declares its `prefail` variant FIRST, and bench's cell
+# expansion is rep-major (rep 1 x every task x every variant, in declaration
+# order) — so under --fail-fast this call executes ONLY rep 1's prefail cell
+# (failmode.sh: FAILMODE=prefail exits 1 BEFORE any claude invocation) and stops
+# right there: a single manifest entry, true $0, regardless of `reps`. A
+# follow-up --resume call over the same manifest then executes the remaining 8
+# cells: 2 more $0 prefail retries (harmless noise — bench does not propagate a
+# single cell's failure into its own exit code without --fail-fast, see the
+# hermetic 81-failmode.sh non-vacuity check) plus the 3 clean + 3 errseed live
+# Haiku cells `regress --error-delta` needs.
+run_json 1 "$work/failmode-prefail.out" \
+	"bench failmode --fail-fast stops after the first (prefail) cell" -- \
+	catacomb bench basket-failmode.yaml --runs-dir "$runs8" --manifest "$manifest8" --fail-fast
+rc=0
+grep -q 'fail-fast' "$work/failmode-prefail.out.stderr" || rc=1
+record "$rc" "fail-fast error names the flag on stderr"
+rc=0
+mlines=$(wc -l <"$manifest8" | tr -d ' ')
+[ "$mlines" -eq 1 ] || rc=1
+record "$rc" "failmode manifest has exactly 1 entry after --fail-fast ($mlines/1) — \$0 stop"
+rc=0
+grep -q '"variant":"prefail"' "$manifest8" || rc=1
+grep -q '"exit_code":1' "$manifest8" || rc=1
+record "$rc" "the sole failmode manifest entry is the prefail cell, exit_code 1"
+
+echo "== x2. bench failmode --resume: the remaining toolerr cells (clean/errseed) execute live =="
+run_expect 0 "bench failmode --resume executes the remaining cells" -- \
+	catacomb bench basket-failmode.yaml --runs-dir "$runs8" --manifest "$manifest8" --resume
+rc=0
+python3 - "$manifest8" <<'PY' || rc=$?
+import json, os, sys
+
+entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+errs = []
+if len(entries) != 9:
+    errs.append(f"expected 9 cells (1 task x 3 variants x 3 reps), got {len(entries)}")
+by_variant = {"prefail": [], "clean": [], "errseed": []}
+for e in entries:
+    v = e.get("variant")
+    if v in by_variant:
+        by_variant[v].append(e)
+for e in by_variant["prefail"]:
+    if e.get("exit_code") != 1:
+        errs.append(f"{e.get('run_id')}: prefail exit_code={e.get('exit_code')} want 1")
+for v in ("clean", "errseed"):
+    for e in by_variant[v]:
+        rid = e.get("run_id", "?")
+        if e.get("exit_code") != 0:
+            errs.append(f"{rid}: exit_code={e.get('exit_code')} note={e.get('note','')}")
+        if not e.get("session_id"):
+            errs.append(f"{rid}: empty session_id note={e.get('note','')}")
+        ev = e.get("evidence_dir", "")
+        if not ev or not os.path.isdir(ev):
+            errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+if len(by_variant["clean"]) != 3 or len(by_variant["errseed"]) != 3:
+    errs.append(f"clean={len(by_variant['clean'])}/3 errseed={len(by_variant['errseed'])}/3")
+if errs:
+    print("failmode manifest assertion failures:", file=sys.stderr)
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"failmode manifest OK: {len(entries)} cells; prefail 3x exit1 (\$0), "
+      f"clean 3/3 + errseed 3/3 live cells exit0/session/evidence present")
+PY
+record "$rc" "failmode manifest: 9 cells; prefail exit1 x3, clean&errseed 3/3 exit0/session/evidence"
+
+echo "== x3. failmode seeded error-delta regression (clean vs errseed) must gate on error_rate =="
+run_json 1 "$artifacts/regress-failmode-errseed.json" \
+	"failmode seeded regression (clean vs errseed, --error-delta)" -- \
+	catacomb regress --runs-dir "$runs8" \
+	--baseline label:basket=e2e-failmode,variant=clean \
+	--candidate label:basket=e2e-failmode,variant=errseed \
+	--error-delta 0.5 --json
+rc=0
+python3 - "$artifacts/regress-failmode-errseed.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+hits = [
+    f for f in rep.get("findings", [])
+    if f.get("scope") == "total" and f.get("metric") == "error_rate"
+    and f.get("verdict") == "regression"
+]
+if not hits:
+    print("no total error_rate regression finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict", "baseline", "candidate")}, file=sys.stderr)
+    sys.exit(1)
+h = hits[0]
+print(f"decisive finding: total error_rate {h.get('baseline')} -> {h.get('candidate')} (regression, --error-delta 0.5)")
+PY
+record "$rc" "failmode errseed gate attributed to total error_rate regression"
+
+echo "== x4. failmode error tool-node synthesis: errseed carries a tool_call error node in >=1 run, clean in NONE =="
+rc=0
+err_hits=0
+for d in "$runs8"/bench-e2e-failmode-failmode-errseed-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/failmode-node-$(basename "$d").jsonl"
+	catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+	if grep -q '"status":"error"' "$snap"; then err_hits=$((err_hits + 1)); fi
+done
+[ "$err_hits" -ge 1 ] || rc=1
+for d in "$runs8"/bench-e2e-failmode-failmode-clean-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	snap="$work/failmode-node-$(basename "$d").jsonl"
+	if ! catacomb replay "$d/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1; then rc=1; continue; fi
+	if grep -q '"status":"error"' "$snap"; then rc=1; fi
+done
+record "$rc" "errseed carries a tool_call error node in >=1 run; clean carries none"
+
 echo "== w. cost report =="
-python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$artifacts/cost.txt" <<'PY'
+python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$manifest8" "$artifacts/cost.txt" <<'PY'
 import json, sys
 
 total = 0.0
-for p in sys.argv[1:7]:
+for p in sys.argv[1:8]:
     try:
         for line in open(p):
             line = line.strip()
@@ -1133,7 +1248,7 @@ for p in sys.argv[1:7]:
                 total += c
     except FileNotFoundError:
         pass
-open(sys.argv[7], "w").write(f"total live spend: ${total:.2f}\n")
+open(sys.argv[8], "w").write(f"total live spend: ${total:.2f}\n")
 print(f"total live spend: ${total:.2f}")
 PY
 # The codex leg is token-billed and codex reports NO cost_usd, so it can never be
