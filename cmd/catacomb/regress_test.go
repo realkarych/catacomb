@@ -376,6 +376,75 @@ func TestParseAnnotationFlagsErrors(t *testing.T) {
 	}
 }
 
+func runRegressCLI(t *testing.T, root string, extra ...string) (int, string, string) {
+	t.Helper()
+	args := append([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand"}, extra...)
+	var out, errBuf bytes.Buffer
+	code := run(args, &out, &errBuf)
+	return code, out.String(), errBuf.String()
+}
+
+func TestRegressFormatFlagsBound(t *testing.T) {
+	var f regressFlags
+	cmd := &cobra.Command{Use: "regress"}
+	bindRegressFlags(cmd, &f)
+	ff := cmd.Flags().Lookup("format")
+	require.NotNil(t, ff)
+	assert.Equal(t, "human", ff.DefValue)
+	jf := cmd.Flags().Lookup("json")
+	require.NotNil(t, jf)
+	assert.Equal(t, "use --format json", jf.Deprecated)
+	assert.True(t, jf.Hidden)
+}
+
+func TestRegressFormatJSONMatchesDeprecatedJSON(t *testing.T) {
+	root := evidenceRoot(t)
+	codeFormat, outFormat, _ := runRegressCLI(t, root, "--format", "json")
+	codeJSON, outJSON, errJSON := runRegressCLI(t, root, "--json")
+	assert.Equal(t, 0, codeFormat)
+	assert.Equal(t, 0, codeJSON)
+	require.NotEmpty(t, outFormat)
+	assert.Equal(t, outFormat, outJSON)
+	assert.Contains(t, errJSON, "use --format json")
+	var rep regress.Report
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &rep))
+}
+
+func TestRegressFormatHumanMatchesDefault(t *testing.T) {
+	root := evidenceRoot(t)
+	codeDefault, outDefault, _ := runRegressCLI(t, root)
+	codeHuman, outHuman, _ := runRegressCLI(t, root, "--format", "human")
+	assert.Equal(t, 0, codeDefault)
+	assert.Equal(t, 0, codeHuman)
+	require.NotEmpty(t, outDefault)
+	assert.Equal(t, outDefault, outHuman)
+}
+
+func TestRegressFormatExplicitWinsOverDeprecatedJSON(t *testing.T) {
+	root := evidenceRoot(t)
+	_, outHuman, _ := runRegressCLI(t, root)
+	code, out, _ := runRegressCLI(t, root, "--format", "human", "--json")
+	assert.Equal(t, 0, code)
+	require.NotEmpty(t, outHuman)
+	assert.Equal(t, outHuman, out)
+}
+
+func TestRegressFormatUnknownExitTwo(t *testing.T) {
+	root := evidenceRoot(t)
+	code, _, errOut := runRegressCLI(t, root, "--format", "bogus")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errOut, `regress --format: unknown format "bogus" (want human|json|markdown)`)
+}
+
+func TestRegressFormatMarkdownRenders(t *testing.T) {
+	root := evidenceRoot(t)
+	code, out, _ := runRegressCLI(t, root, "--format", "markdown")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "**Verdict:")
+	assert.Contains(t, out, "| Verdict | Scope | Key | Name | Metric | Baseline | Candidate | Band | Detail |")
+	assert.Contains(t, out, "|---|---|---|---|---|---|---|---|---|")
+}
+
 func TestRegressCmdWired(t *testing.T) {
 	root := newRootCmd()
 	names := make(map[string]bool)

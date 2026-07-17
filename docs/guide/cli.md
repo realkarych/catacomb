@@ -676,7 +676,8 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--candidate` | (empty) | Candidate selector (same grammar) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence dir to resolve selectors from: `label:` scans it, `name:` reads `--db`'s baselines table, `--record` appends there |
 | `--db` | `~/.catacomb/catacomb.db` | SQLite database path for `name:` baselines and `--record` |
-| `--json` | false | Emit the full report as JSON |
+| `--format` | `human` | Output format: `human`, `json` (the full report as JSON), or `markdown` (a PR-comment-ready document; see [Report formats](#report-formats)) |
+| `--json` | false | **Deprecated** alias for `--format json` (prints a deprecation notice to stderr); an explicit `--format` wins when both are given |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
 | `--project` | (empty) | Project identity stamped into the recorded history row (`project` in the record body) for fleet-level joins; requires `--record` |
@@ -932,7 +933,7 @@ phases, and steps. The human
 table prints `VERDICT SCOPE KEY NAME METRIC BASELINE CANDIDATE BAND DETAIL` with
 presence-normalized values (presence rate, not absence); the `DETAIL` column carries the
 per-finding note (raw counts such as `present a/n -> b/m` or `ones a/n -> b/m`, an
-`insufficient` reason, or a coverage-downgrade note), and is `-` when empty. `--json`
+`insufficient` reason, or a coverage-downgrade note), and is `-` when empty. `--format json`
 emits the full report (presence rows carry absence rates plus the same `detail` field). Exit codes: `0`
 pass, `1` regression (or `insufficient` with `--strict`), `2` operational error
 (invalid selector, unknown baseline, missing store, empty group, a missing pinned
@@ -940,6 +941,25 @@ evidence dir, a [stamp refusal](#baseline-version-stamps) under `--strict`, or
 `--min-support` below 1). Resolving a `name:` baseline on a store created by an older
 binary also exits `2` with a hint to run a write-path command (`baseline set`) to
 migrate the schema.
+
+### Report formats
+
+`--format` selects how the report is rendered; the comparison, verdict, and exit code
+are identical across all three:
+
+- `human` (default) — the table described above, for terminals. Its exact layout is
+  **not** a compatibility contract.
+- `json` — the full report as JSON, for scripts and dashboards. The legacy `--json`
+  flag is a **deprecated** alias for `--format json`: it still works (with a stderr
+  deprecation notice) and an explicit `--format` wins when both are given.
+- `markdown` — the same report as a markdown document sized for a PR comment: a bold
+  emoji verdict headline (`**Verdict: ❌ regression**`), a one-line run-count and
+  coverage summary, a sensitivity warning when the gate cannot fire at the current
+  support, the findings table, and a collapsible `reliability & audit` section when
+  those blocks are present. This is the body the bundled
+  [catacomb-gate GitHub Action](../../.github/actions/catacomb-gate/README.md) posts
+  as its sticky PR comment — see
+  [Gate a PR with the Action](workflows.md#gate-a-pr-with-the-action).
 
 ## Recording history
 
@@ -973,7 +993,8 @@ file.
 ```sh
 catacomb regress --baseline label:basket=checkout,variant=main \
   --candidate label:basket=checkout,variant=candidate
-catacomb regress --baseline name:golden --candidate label:variant=candidate --json
+catacomb regress --baseline name:golden --candidate label:variant=candidate --format json
+catacomb regress --baseline name:golden --candidate label:variant=candidate --format markdown
 catacomb regress --baseline name:golden --candidate label:variant=candidate --record --strict
 catacomb regress --baseline name:golden --candidate label:variant=candidate \
   --scores scores.jsonl --annotation deepeval.tool_correctness
