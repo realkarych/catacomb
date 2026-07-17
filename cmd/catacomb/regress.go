@@ -124,14 +124,14 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		return operational(err)
 	}
 	pricer := mkPricer()
-	baseGroup, baseline, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.baseline)
+	baseGroup, baseline, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.baseline, loadForAggregation)
 	if err != nil {
 		return err
 	}
 	if serr := checkBaselineStamps(errOut, baseline, f.strict); serr != nil {
 		return serr
 	}
-	candGroup, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.candidate)
+	candGroup, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.candidate, loadForAggregation)
 	if err != nil {
 		return err
 	}

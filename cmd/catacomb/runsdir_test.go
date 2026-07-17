@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/realkarych/catacomb/aggregate"
 	"github.com/realkarych/catacomb/evidence"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/regress"
@@ -74,7 +75,7 @@ func writeTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens i
 
 func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 	root := evidenceRoot(t)
-	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", loadForAggregation)
 	require.NoError(t, err)
 	require.Len(t, base, 2)
 	assert.Equal(t, "base-0", base[0].Run.ID)
@@ -83,34 +84,34 @@ func TestRunsDirResolveGroupsAndFilter(t *testing.T) {
 		assert.Equal(t, []string{"s1"}, rg.Run.SessionIDs)
 		assert.NotEmpty(t, rg.Nodes)
 	}
-	cand, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=cand")
+	cand, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=cand", loadForAggregation)
 	require.NoError(t, err)
 	assert.Len(t, cand, 2)
 }
 
 func TestRunsDirEmptyMatchNamesSelector(t *testing.T) {
 	root := evidenceRoot(t)
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=none")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=none", loadForAggregation)
 	require.ErrorIs(t, err, ErrEmptyGroup)
 	assert.Contains(t, err.Error(), "label:variant=none")
 }
 
 func TestRunsDirBadSelectorOperational(t *testing.T) {
 	root := evidenceRoot(t)
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "bogus")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "bogus", loadForAggregation)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid selector")
 }
 
 func TestRunsDirBadLabelTermOperational(t *testing.T) {
 	root := evidenceRoot(t)
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:BAD=x")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:BAD=x", loadForAggregation)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid --label")
 }
 
 func TestRunsDirScanError(t *testing.T) {
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", filepath.Join(t.TempDir(), "absent"), newPricer(), "label:variant=base")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", filepath.Join(t.TempDir(), "absent"), newPricer(), "label:variant=base", loadForAggregation)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "runs-dir")
 }
@@ -127,7 +128,7 @@ func TestRunsDirEvidenceLoadErrorPropagates(t *testing.T) {
 		MarkerEnd:   time.Unix(2, 0).UTC(),
 	}
 	require.NoError(t, evidence.Write(filepath.Join(root, "broken"), m, nil))
-	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	_, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", loadForAggregation)
 	require.Error(t, err)
 }
 
@@ -229,7 +230,7 @@ func TestRunsDirNameSelectorMissingRunDir(t *testing.T) {
 		Name: "golden", RunIDs: []string{"base-0", "ghost-99"}, RunsDir: root, Stamps: currentStamps(),
 	})
 
-	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden")
+	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden", loadForAggregation)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ghost-99")
 	assert.Contains(t, err.Error(), filepath.Join(root, "ghost-99"))
@@ -263,7 +264,7 @@ func TestRunsDirNameSelectorBrokenEvidence(t *testing.T) {
 		Name: "golden", RunIDs: []string{"broken"}, RunsDir: root, Stamps: currentStamps(),
 	})
 
-	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden")
+	_, _, err := resolveSelectorRunsDir(io.Discard, dbPath, root, newPricer(), "name:golden", loadForAggregation)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "broken")
 	var opErr *operationalError
@@ -400,7 +401,7 @@ func TestRunsDirAppliesEvidenceScores(t *testing.T) {
 	writeEvidenceRun(t, root, "base-0", "base", "session_marked.jsonl")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "base-0", "scores.jsonl"),
 		[]byte(`{"key":"verifier.pass","value":1}`+"\n"), 0o600))
-	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base")
+	base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", loadForAggregation)
 	require.NoError(t, err)
 	require.Len(t, base, 1)
 	assert.InDelta(t, 1.0, base[0].Annotations["verifier.pass"], 1e-9)
@@ -648,4 +649,83 @@ type failWriter struct{}
 
 func (failWriter) Write(_ []byte) (int, error) {
 	return 0, errors.New("write failed")
+}
+
+func countHeavyNodeData(group []aggregate.RunGraph) (payloads, attrs, sources int) {
+	for _, rg := range group {
+		for _, n := range rg.Nodes {
+			if n.Payload != nil {
+				payloads++
+			}
+			if n.Attrs != nil {
+				attrs++
+			}
+			if n.Sources != nil {
+				sources++
+			}
+		}
+	}
+	return payloads, attrs, sources
+}
+
+func TestResolveSelectorRunsDirForAggregationStripsHeavyNodeData(t *testing.T) {
+	root := evidenceRoot(t)
+	full, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", loadFullGraphs)
+	require.NoError(t, err)
+	require.NotEmpty(t, full)
+	payloads, attrs, sources := countHeavyNodeData(full)
+	require.Positive(t, payloads)
+	require.Positive(t, attrs)
+	require.Positive(t, sources)
+
+	stripped, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", loadForAggregation)
+	require.NoError(t, err)
+	require.Len(t, stripped, len(full))
+	payloads, attrs, sources = countHeavyNodeData(stripped)
+	assert.Zero(t, payloads)
+	assert.Zero(t, attrs)
+	assert.Zero(t, sources)
+}
+
+func TestRunGroupFromDirsForAggregationStripsHeavyNodeData(t *testing.T) {
+	root := evidenceRoot(t)
+	ids := []string{"base-0", "base-1"}
+	full, err := runGroupFromDirs(root, "golden", ids, newPricer(), loadFullGraphs)
+	require.NoError(t, err)
+	payloads, _, _ := countHeavyNodeData(full)
+	require.Positive(t, payloads)
+
+	stripped, err := runGroupFromDirs(root, "golden", ids, newPricer(), loadForAggregation)
+	require.NoError(t, err)
+	require.Len(t, stripped, len(full))
+	payloads, attrs, sources := countHeavyNodeData(stripped)
+	assert.Zero(t, payloads)
+	assert.Zero(t, attrs)
+	assert.Zero(t, sources)
+}
+
+func TestRegressReportUnchangedByAggregationStrip(t *testing.T) {
+	root := evidenceRoot(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "base-0", "scores.jsonl"),
+		[]byte(`{"key":"verifier.pass","value":1}`+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cand-0", "scores.jsonl"),
+		[]byte(`{"key":"verifier.pass","value":0}`+"\n"), 0o600))
+	reportJSON := func(mode runGraphLoadMode) string {
+		base, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", mode)
+		require.NoError(t, err)
+		cand, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=cand", mode)
+		require.NoError(t, err)
+		opts := aggregate.Options{AnnotationKeys: []string{"verifier.pass"}}
+		rep := regress.Compare(regress.Input{
+			Baseline:       aggregate.Aggregate(base, opts),
+			Candidate:      aggregate.Aggregate(cand, opts),
+			Annotations:    []regress.AnnotationSpec{{Key: "verifier.pass", HigherBetter: true}},
+			BaselineCells:  aggregate.Cells(base),
+			CandidateCells: aggregate.Cells(cand),
+		}, regress.DefaultThresholds())
+		b, merr := json.Marshal(rep)
+		require.NoError(t, merr)
+		return string(b)
+	}
+	assert.Equal(t, reportJSON(loadFullGraphs), reportJSON(loadForAggregation))
 }
