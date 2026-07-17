@@ -43,12 +43,21 @@ catacomb pack for external review.
 ## Returning findings
 
 Return findings as JSONL, one JSON object per line, with an audit-prefixed key
-(for example audit.clean), a numeric value, and the run id the finding applies
-to. Run-level lines require run_id:
+(for example audit.clean), a numeric value, the run id the finding applies to,
+and a tool field naming the judge that produced the line (for example the model
+or prompt identity). Optionally add tool_version and prompt_hash provenance.
+Run-level lines require run_id:
 
 ~~~json
-{"key":"audit.clean","value":1,"run_id":"<run id>"}
+{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>","tool_version":"<version>"}
 ~~~
+
+The same file serves two consumers: it gates directly through catacomb regress
+--scores, and — because each line carries tool provenance — it also feeds
+catacomb-judge agreement and catacomb-judge panel (integrations/judge) to
+calibrate the judge before its scores are trusted to gate. tool is the judge
+identity there: panel skips lines without tool, and agreement lumps them under
+the judge name unknown.
 
 Gate the findings with:
 
@@ -102,7 +111,7 @@ func runPack(out, errOut io.Writer, f packFlags, sel string) error {
 	if f.sample < 1 {
 		return operational(fmt.Errorf("pack: --sample must be > 0, got %d", f.sample))
 	}
-	group, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, newPricer(), sel)
+	group, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, newPricer(), sel, loadFullGraphs)
 	if err != nil {
 		return err
 	}

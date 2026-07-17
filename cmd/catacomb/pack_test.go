@@ -154,8 +154,13 @@ func TestPackManifestAndInstructions(t *testing.T) {
 
 	instr, err := os.ReadFile(filepath.Join(out, "INSTRUCTIONS.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(instr), `{"key":"audit.clean","value":1,"run_id":"<run id>"}`)
+	assert.Contains(t, string(instr),
+		`{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>","tool_version":"<version>"}`)
 	assert.Contains(t, string(instr), "regress --scores findings.jsonl --annotation audit.clean:higher-better")
+	assert.Contains(t, string(instr), "catacomb-judge agreement")
+	assert.Contains(t, string(instr), "catacomb-judge panel")
+	assert.Contains(t, string(instr), "prompt_hash")
+	assert.Contains(t, string(instr), "panel skips lines without tool")
 
 	entries, err := os.ReadDir(out)
 	require.NoError(t, err)

@@ -232,6 +232,14 @@ func TestRegressAuditRelDeltaRejectsNonPositive(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "--audit-rel-delta must be > 0")
 }
 
+func TestRegressProjectRequiresRecord(t *testing.T) {
+	root := evidenceRoot(t)
+	var out, errBuf bytes.Buffer
+	code := run([]string{"regress", "--runs-dir", root, "--baseline", "label:variant=base", "--candidate", "label:variant=cand", "--project", "payments-api"}, &out, &errBuf)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errBuf.String(), "--project requires --record")
+}
+
 func TestRegressAuditBlockEndToEnd(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 3; i++ {
