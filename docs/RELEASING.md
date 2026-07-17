@@ -22,6 +22,16 @@ push).
 
 ## Cutting a release
 
+One pre-tag checklist item: after a green live validation against a newer Claude
+Code or Codex CLI — the live E2E gate
+([`e2e-live.yml`](../.github/workflows/e2e-live.yml)) or an equivalent local live
+run — bump the matching tested-version ceiling (`TestedClaudeCodeVersion` /
+`TestedCodexVersion` in [`ingest/drift`](../ingest/drift/drift.go)) in the same
+PR that proved the newer CLI green, rather than trailing it as a separate chore,
+so the shipped version-watchlist warning reflects what the release was actually
+validated against. This is the one-line release-checklist item promised by
+[ADR-0025](adr/0025-capture-format-drift-detection.md).
+
 ```sh
 git tag v0.2.0
 git push origin v0.2.0

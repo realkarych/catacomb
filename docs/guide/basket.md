@@ -24,6 +24,7 @@ The top-level document is a `Basket`:
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `basket` | string | yes | — | The basket name. Charset `^[A-Za-z0-9._-]+$` (no spaces, commas, or `=`), at most 256 bytes. Becomes the `basket` label on every cell. |
+| `runtime` | string | no | `claude-code` | The agent CLI whose sessions this basket gates: `claude-code` or `codex`. Any other value fails at load with `runtime must be "claude-code" or "codex"`. A `runtime: codex` basket works with both entry points: [`bench`](cli.md#bench) drives cells whose `cmd` emits the `codex exec --json` stream, and [`catacomb import`](cli.md#import) ingests sessions you ran yourself. See [Runtimes](ingestion.md#runtimes). |
 | `reps` | int | yes | — | Repetitions per cell. Must be `>= 1`; a missing or `< 1` value fails at load with `reps must be >= 1`. |
 | `tasks` | list | yes (≥1) | — | One or more [tasks](#task). |
 | `variants` | list | yes (≥1) | — | One or more [variants](#variant). A single variant runs and records evidence, but `regress` needs ≥2 variants to gate — see [What happens if](#what-happens-if). |
@@ -39,7 +40,7 @@ Each entry of `tasks` is a `Task`: the agent command and how to run and check it
 | Field | Type | Required | Default | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | yes | — | Unique within `tasks`. Charset `^[A-Za-z0-9._-]+$`, at most 256 bytes. |
-| `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell) with the cell's working directory as its cwd. `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element is left as-is and resolves against that working directory at exec time (stage the script under `dir`). The command must emit stream-json so the runner can read the session id. `cmd` drives [`bench`](cli.md#bench) only — [`catacomb import`](cli.md#import) ingests a session you ran yourself and ignores `cmd`. |
+| `cmd` | list of strings | yes | — | The agent command, run as a plain `exec` (argv, no shell) with the cell's working directory as its cwd. `argv[0]` as a bare word is resolved on `PATH`; a `./`- or `../`-prefixed element is left as-is and resolves against that working directory at exec time (stage the script under `dir`). The command must emit stream-json so the runner can read the session id (under [`runtime: codex`](#top-level-fields), the `codex exec --json` stream and its thread id). `cmd` drives [`bench`](cli.md#bench) only — [`catacomb import`](cli.md#import) ingests a session you ran yourself and ignores `cmd`. |
 | `dir` | string | no | the process working directory (where you run `catacomb`) | Working directory for the cell. A relative value resolves against the basket file's directory. Mutually exclusive with `workspace`. |
 | `env` | map string→string | no | — | Extra environment for the agent child. A variant's `env` wins per key. |
 | `checkpoints` | list of strings | no | — | Phase names the agent is expected to mark itself. Charset `^[A-Za-z0-9._:-]+$` (colon allowed here), at most 256 bytes, unique within the task; may not equal the reserved `task:<id>` marker. Declaring a checkpoint does not make the agent emit it — wire the marker tool (`--mcp-config` pointing at the catacomb `mcp` server, plus a CLAUDE.md instruction to call `mcp__catacomb__mark`); see [Placing markers](workflows.md#placing-markers). |
@@ -154,6 +155,9 @@ verifier needs to read again.
 - **A task declares both `dir` and `workspace`?** Rejected at load with
   `dir and workspace are mutually exclusive` (likewise a variant `workspace` alongside
   any task `dir`).
+- **You run `bench` on a `runtime: codex` basket?** It runs like any other: each
+  cell's `cmd` must emit the `codex exec --json` stream, and the cell's rollout
+  resolves under `--sessions-dir` — see [the `bench` command](cli.md#bench).
 - **You declare a single variant?** `bench` runs and records evidence normally, but
   `regress` needs at least two variants to gate — with one variant there is nothing to
   compare, and `bench` prints an advisory saying so.

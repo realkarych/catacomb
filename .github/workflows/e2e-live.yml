@@ -11,6 +11,9 @@
 # Trigger it manually (workflow_dispatch) or let the weekly schedule run it; the guard
 # step fails fast with a clear message when neither is set so a fork or an unconfigured
 # repo does not burn a confusing red run.
+# An OPTIONAL codex leg (6 live `codex exec` cells on gpt-5.4-mini, ~$0.05 extra when
+# enabled) runs when the `CODEX_API_KEY` secret is set; without it (or without the codex
+# CLI) run.sh's auth probe fails and the leg SKIPS cleanly — never a red run.
 name: E2E Live Gate
 
 on:
@@ -70,6 +73,11 @@ jobs:
         # dispatch on the new version.
         run: npm install -g @anthropic-ai/claude-code@2.1.207 # zizmor: ignore[adhoc-packages] version-pinned
 
+      - name: Install Codex CLI (optional codex leg)
+        # Pinned like the claude CLI. Install failure must never fail the claude gate:
+        # run.sh's codex gate simply skips when the binary is missing.
+        run: npm install -g @openai/codex@0.144.5 || echo "::warning::codex CLI install failed; the optional codex leg will skip" # zizmor: ignore[adhoc-packages] version-pinned
+
       - name: Build catacomb
         run: make build
 
@@ -80,6 +88,9 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # optional codex leg: exported unconditionally — when the secret is absent the
+          # var is empty, run.sh's auth probe fails, and the leg skips cleanly
+          CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
           # keep the non-interactive claude run quiet and deterministic in CI
           DISABLE_AUTOUPDATER: "1"
           DISABLE_TELEMETRY: "1"
@@ -90,6 +101,7 @@ jobs:
         run: |
           [ -n "${ANTHROPIC_API_KEY:-}" ] || unset ANTHROPIC_API_KEY
           [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || unset CLAUDE_CODE_OAUTH_TOKEN
+          [ -n "${CODEX_API_KEY:-}" ] || unset CODEX_API_KEY
           bash e2e/run.sh
 
       - name: Upload artifacts

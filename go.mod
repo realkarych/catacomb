@@ -3,6 +3,7 @@ module github.com/realkarych/catacomb
 go 1.26
 
 require (
+	github.com/klauspost/compress v1.19.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1

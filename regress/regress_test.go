@@ -22,6 +22,31 @@ func TestRecordStampsOmitzero(t *testing.T) {
 	assert.Contains(t, string(raw), `"stamps":{"catacomb_version":"v1","stepkey_scheme":"stepkey/v1"}`)
 }
 
+func TestRecordVersionBumpedForProject(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 2, RecordVersion)
+}
+
+func TestRecordProjectOmitEmpty(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(Record{V: RecordVersion})
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "project")
+
+	raw, err = json.Marshal(Record{V: RecordVersion, Project: "payments-api"})
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"project":"payments-api"`)
+}
+
+func TestRecordVersionOneWithoutProjectStillParses(t *testing.T) {
+	t.Parallel()
+	var rec Record
+	require.NoError(t, json.Unmarshal([]byte(`{"v":1,"candidate_selector":"label:x=y"}`), &rec))
+	assert.Equal(t, 1, rec.V)
+	assert.Equal(t, "label:x=y", rec.CandidateSelector)
+	assert.Empty(t, rec.Project)
+}
+
 func metric(n int, median, p25, p75 float64) aggregate.MetricStats {
 	return aggregate.MetricStats{N: n, Median: median, P25: p25, P75: p75}
 }
