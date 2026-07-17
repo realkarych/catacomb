@@ -138,7 +138,7 @@ func importEvidence(_ context.Context, stdout, stderr io.Writer, basket bench.Ba
 	g := graphFromObservations(obs, execID, newPricer(), boundary)
 	marks := graphMarkerNames(g)
 	warnMissingCheckpoints(stderr, task, marks, importRunID(f, basket.Name))
-	env := importEnvStamps(rt, g.RunsSnapshot(), sessionID, obs)
+	env := envStampsFor(rt, g.RunsSnapshot(), sessionID, nil, obs)
 	runID := importRunID(f, basket.Name)
 	meta := importMeta(runID, task.ID, f.variant, f.rep, sessionID, hash, importLabels(f, basket.Name), start, end, env)
 	dir := filepath.Join(f.runsDir, runID)

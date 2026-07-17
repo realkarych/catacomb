@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/realkarych/catacomb/ingest/codex"
 )
@@ -41,6 +42,12 @@ func resolveCodexTranscripts(sessionsRoot, threadID string) (transcriptSet, erro
 		return transcriptSet{}, err
 	}
 	return transcriptSet{Main: mains[0], Subagents: subs}, nil
+}
+
+func resolveCodexTranscriptsRetry(root, threadID string, attempts int, delay time.Duration) (transcriptSet, error) {
+	return resolveWithRetry(attempts, delay, func() (transcriptSet, error) {
+		return resolveCodexTranscripts(root, threadID)
+	})
 }
 
 func codexExactThreadMatches(paths []string, threadID string) []string {

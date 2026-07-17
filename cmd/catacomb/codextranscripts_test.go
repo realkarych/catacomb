@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/assert"
@@ -209,6 +210,36 @@ func TestResolveCodexTranscriptsSkipsUndecodableCandidates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, main, ts.Main)
 	assert.Equal(t, []string{child}, ts.Subagents)
+}
+
+func TestResolveCodexTranscriptsRetry(t *testing.T) {
+	root := t.TempDir()
+	sleeps := 0
+	old := sleepFn
+	sleepFn = func(time.Duration) {
+		sleeps++
+		if sleeps == 2 {
+			stageCodexRollout(t, root, codexMainThread, mainPayload())
+		}
+	}
+	defer func() { sleepFn = old }()
+	ts, err := resolveCodexTranscriptsRetry(root, codexMainThread, 5, time.Millisecond)
+	require.NoError(t, err)
+	require.NotEmpty(t, ts.Main)
+
+	_, err = resolveCodexTranscriptsRetry(t.TempDir(), codexMainThread, 2, time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no transcript for session "+codexMainThread)
+	assert.Equal(t, 3, sleeps)
+}
+
+func TestResolveCodexTranscriptsRetryZeroAttemptsNoFalseSuccess(t *testing.T) {
+	old := sleepFn
+	sleepFn = func(time.Duration) {}
+	defer func() { sleepFn = old }()
+	ts, err := resolveCodexTranscriptsRetry(t.TempDir(), codexMainThread, 0, time.Millisecond)
+	require.Error(t, err)
+	require.Empty(t, ts.Main)
 }
 
 func TestCodexThreadIDFromFilename(t *testing.T) {

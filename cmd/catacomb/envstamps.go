@@ -16,18 +16,18 @@ func benchEnvStamps(runs []model.Run, sessionID string, ws *bench.Workspace) *ev
 	return env
 }
 
-func codexEnvStamps(runs []model.Run, sessionID, agentVersion string) *evidence.EnvStamps {
-	env := baseEnvStamps(runs, sessionID, nil)
+func codexEnvStamps(runs []model.Run, sessionID, agentVersion string, ws *bench.Workspace) *evidence.EnvStamps {
+	env := baseEnvStamps(runs, sessionID, ws)
 	env.AgentRuntime = drift.RuntimeCodex
 	env.AgentVersion = agentVersion
 	return env
 }
 
-func importEnvStamps(rt string, runs []model.Run, sessionID string, obs []model.Observation) *evidence.EnvStamps {
+func envStampsFor(rt string, runs []model.Run, sessionID string, ws *bench.Workspace, obs []model.Observation) *evidence.EnvStamps {
 	if rt == drift.RuntimeCodex {
-		return codexEnvStamps(runs, sessionID, maxObservedVersionFor(rt, obs))
+		return codexEnvStamps(runs, sessionID, maxObservedVersionFor(rt, obs), ws)
 	}
-	return benchEnvStamps(runs, sessionID, nil)
+	return benchEnvStamps(runs, sessionID, ws)
 }
 
 func baseEnvStamps(runs []model.Run, sessionID string, ws *bench.Workspace) *evidence.EnvStamps {

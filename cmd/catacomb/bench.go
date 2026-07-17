@@ -28,7 +28,7 @@ var errBenchFailFast = errors.New("bench: stopped after a failing cell (--fail-f
 
 var errBenchOfflineDirs = errors.New("bench: --projects-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
 
-var errBenchCodexImportOnly = errors.New(`bench: runtime "codex" is import-only for now — run the session with codex exec and use catacomb import`)
+var errBenchCodexDirs = errors.New("bench: --sessions-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
 
 type benchFlags struct {
 	manifest       string
@@ -36,6 +36,7 @@ type benchFlags struct {
 	failFast       bool
 	dryRun         bool
 	projectsDir    string
+	sessionsDir    string
 	runsDir        string
 	workspacesDir  string
 	keepWorkspaces bool
@@ -57,6 +58,7 @@ func newBenchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.failFast, "fail-fast", false, "stop at the first failing cell")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "print the cell expansion and exit without executing")
 	cmd.Flags().StringVar(&f.projectsDir, "projects-dir", benchDefaultDir(home, ".claude", "projects"), "Claude projects dir holding session transcripts")
+	cmd.Flags().StringVar(&f.sessionsDir, "sessions-dir", benchDefaultDir(home, ".codex", "sessions"), "Codex sessions dir holding rollout transcripts (runtime: codex)")
 	cmd.Flags().StringVar(&f.runsDir, "runs-dir", benchDefaultDir(home, ".catacomb", "runs"), "evidence output dir for bench runs")
 	cmd.Flags().StringVar(&f.workspacesDir, "workspaces-dir", "", "base dir for per-cell workspace dirs (default: OS temp dir)")
 	cmd.Flags().BoolVar(&f.keepWorkspaces, "keep-workspaces", false, "keep per-cell workspace dirs after teardown (paths printed to stderr)")
@@ -77,9 +79,6 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, basketPath string, 
 	if err != nil {
 		return operational(err)
 	}
-	if basket.EffectiveRuntime() == drift.RuntimeCodex {
-		return operational(errBenchCodexImportOnly)
-	}
 	cells := basket.Cells()
 	if len(basket.Variants) == 1 {
 		fmt.Fprintln(stderr, "note: basket has 1 variant; bench records evidence, but regress needs >= 2 variants to gate")
@@ -88,19 +87,21 @@ func runBench(ctx context.Context, stdout, stderr io.Writer, basketPath string, 
 		printDryRun(stdout, cells)
 		return nil
 	}
-	cellFn, err := benchCellFunc(stdout, stderr, hash, f)
+	cellFn, err := benchCellFunc(stdout, stderr, hash, basket.EffectiveRuntime(), f)
 	if err != nil {
 		return operational(err)
 	}
 	return runBenchCells(ctx, stdout, basketPath, basket, cells, hash, f, cellFn)
 }
 
-func benchCellFunc(stdout, stderr io.Writer, hash string, f benchFlags) (cellRunner, error) {
-	if f.projectsDir == "" || f.runsDir == "" {
-		return nil, errBenchOfflineDirs
+func benchCellFunc(stdout, stderr io.Writer, hash, rt string, f benchFlags) (cellRunner, error) {
+	if err := benchDirsErr(rt, f); err != nil {
+		return nil, err
 	}
 	o := offlineOpts{
+		runtime:     rt,
 		projectsDir: f.projectsDir,
+		sessionsDir: f.sessionsDir,
 		runsDir:     f.runsDir,
 		pricer:      newPricer(),
 		workspace:   workspaceOpts{baseDir: f.workspacesDir, keep: f.keepWorkspaces},
@@ -108,6 +109,19 @@ func benchCellFunc(stdout, stderr io.Writer, hash string, f benchFlags) (cellRun
 	return func(ctx context.Context, cell bench.Cell, ambient map[string]string) (bench.ManifestEntry, bool, bool) {
 		return runBenchCellOffline(ctx, stdout, stderr, cell, hash, ambient, o)
 	}, nil
+}
+
+func benchDirsErr(rt string, f benchFlags) error {
+	if rt == drift.RuntimeCodex {
+		if f.sessionsDir == "" || f.runsDir == "" {
+			return errBenchCodexDirs
+		}
+		return nil
+	}
+	if f.projectsDir == "" || f.runsDir == "" {
+		return errBenchOfflineDirs
+	}
+	return nil
 }
 
 func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, basket bench.Basket, cells []bench.Cell, hash string, f benchFlags, cellFn cellRunner) error {
@@ -164,10 +178,19 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 }
 
 type offlineOpts struct {
+	runtime     string
 	projectsDir string
+	sessionsDir string
 	runsDir     string
 	pricer      reduce.Pricer
 	workspace   workspaceOpts
+}
+
+func offlineRuntime(o offlineOpts) string {
+	if o.runtime == "" {
+		return drift.RuntimeClaudeCode
+	}
+	return o.runtime
 }
 
 func runBenchCellOffline(ctx context.Context, stdout, stderr io.Writer, cell bench.Cell, hash string, ambient map[string]string, o offlineOpts) (bench.ManifestEntry, bool, bool) {
@@ -222,14 +245,14 @@ func runBenchCellInWorkdir(ctx context.Context, stdout, stderr io.Writer, cell b
 		return true, false
 	}
 	merged := model.MergeLabels(cloneLabels(ambient), cell.Labels)
-	peek := &streamPeek{}
+	peek := newPeeker(o.runtime)
 	start := nowFn()
 	err := runChildLocal(ctx, stdout, stderr, cell.Task.Cmd, workdir, offlineEnv(cell, merged), peek.onLine)
 	end := nowFn()
 	code, ok := exitInfo(err)
 	entry.ExitCode = code
-	entry.SessionID = peek.sessionID
-	entry.CostUSD = peek.costUSD
+	entry.SessionID = peek.session()
+	entry.CostUSD = peek.cost()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		entry.Note = appendNote(entry.Note, ctxNote(ctxErr))
 	}
@@ -263,32 +286,42 @@ func offlineChildFailed(stderr io.Writer, cell bench.Cell, err error, entry *ben
 }
 
 func recordOfflineEvidence(ctx context.Context, stderr io.Writer, cell bench.Cell, o offlineOpts, labels map[string]string, start, end time.Time, workdir string, entry *bench.ManifestEntry) bool {
-	ts, err := resolveTranscriptsRetry(o.projectsDir, entry.SessionID, 6, 500*time.Millisecond)
+	rt := offlineRuntime(o)
+	ts, err := resolveBenchTranscripts(rt, o, entry.SessionID)
 	if err != nil {
 		entry.Note = appendNote(entry.Note, "transcripts not found: "+err.Error())
 		entry.FinishedAt = nowFn()
 		return false
 	}
-	boundary := boundaryObservations(entry.SessionID, "task:"+cell.Task.ID, start, end)
-	g, err := loadGraphOffline(ts.Main, ts.Subagents, newExecutionID(), o.pricer, boundary)
+	execID := newExecutionID()
+	obs, err := parseTranscriptsFor(rt, ts.Main, ts.Subagents, entry.SessionID, execID)
 	if err != nil {
 		entry.Note = appendNote(entry.Note, "graph: "+err.Error())
 		entry.FinishedAt = nowFn()
 		return false
 	}
+	boundary := boundaryObservations(entry.SessionID, "task:"+cell.Task.ID, start, end)
+	g := graphFromObservations(obs, execID, o.pricer, boundary)
 	marks := graphMarkerNames(g)
 	_, entry.Marked = marks["task:"+cell.Task.ID]
 	verified := verifyCheckpointsOffline(stderr, cell, marks, entry)
 	finishedAt := nowFn()
 	entry.FinishedAt = finishedAt
 	dir := filepath.Join(o.runsDir, cell.RunID)
-	env := benchEnvStamps(g.RunsSnapshot(), entry.SessionID, cell.EffectiveWorkspace())
-	writeOfflineEvidence(dir, offlineMeta(*entry, labels, start, end, finishedAt, env), ts, entry)
+	env := envStampsFor(rt, g.RunsSnapshot(), entry.SessionID, cell.EffectiveWorkspace(), obs)
+	writeOfflineEvidence(dir, offlineMeta(*entry, labels, start, end, finishedAt, env), rt, ts, entry)
 	if entry.EvidenceDir != "" {
 		captureArtifactsOffline(stderr, cell, dir, workdir, entry)
 		verifyCellOffline(ctx, stderr, cell, dir, workdir, entry)
 	}
 	return verified
+}
+
+func resolveBenchTranscripts(rt string, o offlineOpts, sessionID string) (transcriptSet, error) {
+	if rt == drift.RuntimeCodex {
+		return resolveCodexTranscriptsRetry(o.sessionsDir, sessionID, 6, 500*time.Millisecond)
+	}
+	return resolveTranscriptsRetry(o.projectsDir, sessionID, 6, 500*time.Millisecond)
 }
 
 func captureArtifactsOffline(stderr io.Writer, cell bench.Cell, dir, workdir string, entry *bench.ManifestEntry) {
@@ -361,8 +394,8 @@ func verifyCheckpointsOffline(stderr io.Writer, cell bench.Cell, marks map[strin
 	return true
 }
 
-func writeOfflineEvidence(dir string, meta evidence.Meta, ts transcriptSet, entry *bench.ManifestEntry) {
-	if err := evidence.Write(dir, meta, offlineFiles(ts)); err != nil {
+func writeOfflineEvidence(dir string, meta evidence.Meta, rt string, ts transcriptSet, entry *bench.ManifestEntry) {
+	if err := evidence.Write(dir, meta, offlineFilesFor(rt, ts)); err != nil {
 		entry.Note = appendNote(entry.Note, "evidence write: "+err.Error())
 		return
 	}
