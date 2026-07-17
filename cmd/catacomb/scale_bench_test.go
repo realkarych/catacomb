@@ -127,7 +127,7 @@ func BenchmarkResolveRunsDirGroup(b *testing.B) {
 			var group []aggregate.RunGraph
 			for b.Loop() {
 				var err error
-				group, _, err = resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", m.mode)
+				group, _, err = resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=base", m.mode)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -147,7 +147,7 @@ func BenchmarkRegressGate(b *testing.B) {
 		candidate:  "label:variant=cand",
 		thresholds: regress.DefaultThresholds(),
 	}
-	group, _, err := resolveSelectorRunsDir(io.Discard, "", root, newPricer(), "label:variant=base", loadForAggregation)
+	group, _, err := resolveSelectorRunsDir(io.Discard, "regress", "", root, newPricer(), "label:variant=base", loadForAggregation)
 	if err != nil {
 		b.Fatal(err)
 	}

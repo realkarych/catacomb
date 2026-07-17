@@ -37,6 +37,7 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0031](0031-multi-runtime-ingestion-codex.md) | Multi-runtime transcript ingestion, Codex CLI first | Accepted |
 | [0032](0032-baseline-bundle.md) | Baseline bundles: one verifiable artifact for CI restore | Accepted |
 | [0033](0033-github-action.md) | First-class GitHub Action with PR-comment verdicts | Accepted |
+| [0034](0034-gate-self-check.md) | Gate self-check: offline A/A drift and influence audit (`catacomb calibrate`) | Accepted |
 | [0035](0035-wilcoxon-signed-rank.md) | Opt-in exact Wilcoxon signed-rank on the paired axis | Accepted |
 
 Design spec: [`../internal/specs/2026-06-20-catacomb-design.md`](../internal/specs/2026-06-20-catacomb-design.md).

@@ -28,6 +28,7 @@ Run 'catacomb <command> --help' for details on any command.`,
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newVerifyCmd())
 	root.AddCommand(newRegressCmd())
+	root.AddCommand(newCalibrateCmd())
 	root.AddCommand(newBaselineCmd())
 	root.AddCommand(newTrendsCmd())
 	root.AddCommand(newDiffCmd())
