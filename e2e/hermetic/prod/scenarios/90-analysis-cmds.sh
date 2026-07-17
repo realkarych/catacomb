@@ -81,6 +81,38 @@ print("diff: unscoped added=[InCore,Outside]; --phase core narrows to added=[InC
 PY
 record "$rc" "diff --json reports both extras; --phase core narrows added to the in-phase step; A-vs-A empty"
 
+echo "== prod.90 diff: asymmetric per-side scoping (--a-phase/--b-from/--b-to) =="
+# --b-from X --b-to X (same checkpoint on both range endpoints) collapses side B to a
+# ZERO-WIDTH window: RangeWindow scopes [from.start, to.start) (subgraph/spec.go's
+# RangeWindow: `end := to.Start`, never `to.End`), so identical from/to selectors always
+# yield an empty side, regardless of --phase core's real (non-empty) duration. This is
+# the SAME catacomb invocation + SAME python assertion as e2e/run.sh's live diff smoke
+# (step g2) — the $0 mirror for that live-leg proof.
+run_json 0 "$w/diff-asym.json" "diff A B --a-phase core --b-from core --b-to core --json (asymmetric per-side scoping)" -- \
+  catacomb diff "$w/a.jsonl" "$w/b.jsonl" --a-phase core --b-from core --b-to core --json
+rc=0; python3 - "$w/diff-scoped.json" "$w/diff-asym.json" <<'PY' || rc=$?
+import json, sys
+sym = json.load(open(sys.argv[1]))
+asym = json.load(open(sys.argv[2]))
+errs = []
+if asym["added"] or asym["changed"] or asym["unchanged"]:
+    errs.append("asymmetric diff (side B force-emptied by --b-from/--b-to core) should have no "
+                f"added/changed/unchanged: added={len(asym['added'])} changed={len(asym['changed'])} "
+                f"unchanged={len(asym['unchanged'])}")
+sym_a_total = len(sym["removed"]) + len(sym["changed"]) + len(sym["unchanged"])
+if len(asym["removed"]) != sym_a_total:
+    errs.append(f"asymmetric removed={len(asym['removed'])} want {sym_a_total} (every side-A item the "
+                "symmetric --phase core diff scoped; --b-from/--b-to core collapses side B to the empty "
+                "zero-width range, so nothing can match)")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"asymmetric --a-phase core --b-from/--b-to core: side A matches the symmetric --phase core scoping "
+      f"({sym_a_total} items), side B collapses to empty -> all {len(asym['removed'])} unmatched")
+PY
+record "$rc" "diff --a-phase/--b-from/--b-to: side A matches symmetric --phase scoping, side B correctly collapses to the empty range"
+
 echo "== prod.90 export: standalone export emits a step_key'd, typed graph snapshot =="
 sed 's/__SESSION_ID__/prod90-range/g' "$PROD/fixtures/90-range.jsonl.tmpl" > "$w/range.jsonl"
 run_json 0 "$w/export.out" "export range fixture --to jsonl --out" -- \
@@ -141,6 +173,38 @@ if errs:
 print(f"subgraph range: {len(sub)} nodes (RangeStepA+B, no C) < full {len(full)} nodes (has C)")
 PY
 record "$rc" "subgraph --from/--to returns the in-range subset (RangeStepA+B, no C), narrower than full"
+
+echo "== prod.90 subgraph: --from X --to X (same checkpoint) is a well-formed EMPTY range, narrower than --phase X =="
+# Same RangeWindow collapse as the diff mirror above: --from gamma --to gamma resolves
+# BOTH endpoints to gamma's own start (subgraph/spec.go's RangeWindow uses `to.Start`,
+# never `to.End`), producing a zero-width, empty window — NOT the same window as
+# `--phase gamma` (which spans gamma's real start-to-end duration). gamma carries an
+# explicit end mark in the range fixture (unlike alpha/beta, which stay open to the
+# session's own end), so its phase window is a clean, non-degenerate contrast. This is
+# the SAME catacomb invocation + SAME python assertion as e2e/run.sh's live subgraph
+# smoke (step g2).
+run_json 0 "$w/sub-degenerate.json" "subgraph range --from gamma --to gamma --json (zero-width range)" -- \
+  catacomb subgraph "$w/range.jsonl" --from gamma --to gamma --json
+run_json 0 "$w/sub-phase-gamma.json" "subgraph --phase gamma --json (reference window)" -- \
+  catacomb subgraph "$w/range.jsonl" --phase gamma --json
+rc=0; python3 - "$w/sub-degenerate.json" "$w/sub-phase-gamma.json" <<'PY' || rc=$?
+import json, sys
+deg = json.load(open(sys.argv[1])).get("nodes") or []
+phase = json.load(open(sys.argv[2])).get("nodes") or []
+errs = []
+if len(deg) != 0:
+    errs.append(f"--from gamma --to gamma returned {len(deg)} nodes, want 0 (zero-width range: from.start == to.start)")
+if len(phase) == 0:
+    errs.append("--phase gamma returned 0 nodes on the same fixture (should be non-empty)")
+if not (len(deg) < len(phase)):
+    errs.append(f"--from/--to gamma ({len(deg)}) not strictly narrower than --phase gamma ({len(phase)})")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"subgraph --from gamma --to gamma: {len(deg)} nodes (zero-width), strictly narrower than --phase gamma's {len(phase)} nodes")
+PY
+record "$rc" "subgraph --from/--to (same checkpoint) is well-formed and empty, strictly narrower than --phase"
 
 echo "== prod.90 verify: bench a verify-hook basket, then standalone offline re-verify =="
 v="$w/verify"; mkdir -p "$v/cellwork" "$v/runs"

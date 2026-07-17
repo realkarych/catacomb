@@ -1083,6 +1083,104 @@ else
 	failrec "bench-time checkpoint verification and offline phase resolution diverged (positional phase-key split or evidence loss) — investigate (verified haiku baseline cells=${#verified_dirs[@]}, none resolved the verify phase offline)"
 fi
 
+echo "== g2. subgraph --from/--to range mode + diff asymmetric per-side scoping (live evidence, \$0 incremental) =="
+# Reuses step g's bench-verified, phase-resolving haiku cell(s) (chosen/d_a/d_b) and its
+# subgraph --phase verify --json artifact — no new bench cells, no new spend.
+#
+# subgraph --from X --to X is NOT the same window as --phase X: RangeWindow scopes
+# [from.start, to.start) (subgraph/spec.go's RangeWindow: `end := to.Start`, never
+# `to.End`), so identical from/to selectors always collapse to a ZERO-WIDTH window,
+# regardless of the phase's real (non-empty) duration — confirmed against
+# subgraph/spec.go and subgraph/spec_test.go (which only exercises distinct from/to
+# names). The same collapse applies to diff's --b-from/--b-to when pointed at the same
+# checkpoint on side B. The assertions below are the mathematically correct contrast: a
+# well-formed, EMPTY, strictly-narrower-than-`--phase verify` result on one side, not an
+# equal one — deterministic given the evidence exists, per the LIVE-FLAKINESS rule.
+if [ "${#resolved_dirs[@]}" -ge 1 ]; then
+	run_json 0 "$artifacts/subgraph-range-verify.json" \
+		"subgraph --from verify --to verify --json (zero-width range on the phase-resolving haiku cell)" -- \
+		catacomb subgraph "$chosen/session.jsonl" --from verify --to verify --json
+	rc=0
+	python3 - "$artifacts/subgraph-verify.json" "$artifacts/subgraph-range-verify.json" <<'PY' || rc=$?
+import json, sys
+
+phase = json.load(open(sys.argv[1]))
+rng = json.load(open(sys.argv[2]))
+pn = len(phase.get("nodes") or [])
+rn = len(rng.get("nodes") or [])
+errs = []
+if rn != 0:
+    errs.append(f"--from verify --to verify returned {rn} nodes, want 0 (zero-width range: from.start == to.start)")
+if pn == 0:
+    errs.append("--phase verify returned 0 nodes on the same cell (step g's non-vacuity check should have caught this)")
+if not (rn < pn):
+    errs.append(f"--from/--to verify ({rn}) is not strictly narrower than --phase verify ({pn})")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"subgraph --from verify --to verify: {rn} nodes (zero-width range), strictly narrower than --phase verify's {pn} nodes")
+PY
+	record "$rc" "subgraph --from/--to verify is well-formed and empty, strictly narrower than --phase verify (range-mode plumbing reaches the CLI on live evidence)"
+else
+	skip "subgraph --from/--to range-mode smoke (no phase-resolving haiku cell — see step g's failure above)"
+fi
+
+if [ "${#resolved_dirs[@]}" -ge 2 ]; then
+	run_json 0 "$artifacts/diff-haiku-unscoped.json" \
+		"diff --json on the two bench-verified haiku sessions (unscoped, parses)" -- \
+		catacomb diff "$d_a/session.jsonl" "$d_b/session.jsonl" --json
+	rc=0
+	python3 - "$artifacts/diff-haiku-unscoped.json" <<'PY' || rc=$?
+import json, sys
+
+d = json.load(open(sys.argv[1]))
+missing = [k for k in ("unchanged", "changed", "added", "removed") if k not in d]
+if missing:
+    print(f"diff --json missing keys: {missing}", file=sys.stderr)
+    sys.exit(1)
+print(f"diff --json parses: unchanged={len(d['unchanged'])} changed={len(d['changed'])} "
+      f"added={len(d['added'])} removed={len(d['removed'])}")
+PY
+	record "$rc" "diff --json output parses with the four delta buckets present"
+
+	run_json 0 "$artifacts/diff-haiku-phase-verify.json" \
+		"diff --phase verify --json (symmetric scoping, both sides narrowed to the verify window)" -- \
+		catacomb diff "$d_a/session.jsonl" "$d_b/session.jsonl" --phase verify --json
+
+	run_json 0 "$artifacts/diff-haiku-asym-verify.json" \
+		"diff --a-phase verify --b-from verify --b-to verify --json (asymmetric per-side scoping)" -- \
+		catacomb diff "$d_a/session.jsonl" "$d_b/session.jsonl" \
+		--a-phase verify --b-from verify --b-to verify --json
+	rc=0
+	python3 - "$artifacts/diff-haiku-phase-verify.json" "$artifacts/diff-haiku-asym-verify.json" <<'PY' || rc=$?
+import json, sys
+
+sym = json.load(open(sys.argv[1]))
+asym = json.load(open(sys.argv[2]))
+errs = []
+if asym["added"] or asym["changed"] or asym["unchanged"]:
+    errs.append("asymmetric diff (side B force-emptied by --b-from/--b-to verify) should have no "
+                f"added/changed/unchanged: added={len(asym['added'])} changed={len(asym['changed'])} "
+                f"unchanged={len(asym['unchanged'])}")
+sym_a_total = len(sym["removed"]) + len(sym["changed"]) + len(sym["unchanged"])
+if len(asym["removed"]) != sym_a_total:
+    errs.append(f"asymmetric removed={len(asym['removed'])} want {sym_a_total} (every side-A item the "
+                "symmetric --phase verify diff scoped; --b-from/--b-to verify collapses side B to the "
+                "empty zero-width range, so nothing can match)")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"asymmetric --a-phase verify --b-from/--b-to verify: side A matches the symmetric --phase verify "
+      f"scoping ({sym_a_total} items), side B collapses to empty -> all {len(asym['removed'])} unmatched "
+      "(--a-phase and --b-from/--b-to independently reach the CLI's per-side scoping layer)")
+PY
+	record "$rc" "diff --a-phase/--b-from/--b-to: side A matches symmetric --phase verify scoping, side B correctly collapses to the empty range"
+else
+	skip "diff asymmetric-scoping smoke (need 2 phase-resolving haiku cells, have ${#resolved_dirs[@]})"
+fi
+
 # export (step axis): an echo baseline cell — the guaranteed Bash step_key node.
 echo_base_dir="$(python3 - "$manifest1" <<'PY'
 import json, sys
@@ -1112,6 +1210,125 @@ if [ -n "$echo_base_dir" ]; then
 else
 	failrec "no echo baseline evidence dir found for the export smoke"
 fi
+
+echo "== g3. export transcript-file branch + replay node/edge summary + mcp protocol smoke (live evidence, \$0 incremental) =="
+# export accepts either an evidence dir (loadExportDir, exercised above) or a bare
+# transcript file (loadExportInput's non-dir branch -> loadGraphOffline); both paths
+# reduce the SAME underlying session.jsonl, so their step_key content must agree even
+# though the dir branch additionally carries bench/verify metadata the bare-transcript
+# branch does not synthesize.
+if [ -n "$echo_base_dir" ]; then
+	run_expect 0 "export echo baseline session.jsonl directly (transcript-file branch)" -- \
+		catacomb export "$echo_base_dir/session.jsonl" --to jsonl --out "$work/export-transcript.jsonl"
+	rc=0
+	python3 - "$work/export.jsonl" "$work/export-transcript.jsonl" <<'PY' || rc=$?
+import json, sys
+
+def step_keys(path):
+    keys = set()
+    for line in open(path):
+        line = line.strip()
+        if not line:
+            continue
+        o = json.loads(line)
+        if o.get("kind") == "node":
+            sk = o.get("step_key")
+            if sk:
+                keys.add(sk)
+    return keys
+
+dir_keys = step_keys(sys.argv[1])
+file_keys = step_keys(sys.argv[2])
+errs = []
+if not dir_keys:
+    errs.append("evidence-dir export (export.jsonl) carries no step_key at all")
+if dir_keys != file_keys:
+    errs.append(f"step_key sets differ: evidence-dir={sorted(dir_keys)} transcript-file={sorted(file_keys)}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"export transcript-file branch and evidence-dir branch agree on step_key content: {sorted(dir_keys)}")
+PY
+	record "$rc" "export <session.jsonl> (transcript-file branch) carries the SAME step_key content as export <evidence-dir>"
+else
+	skip "export transcript-file-branch smoke (no echo baseline evidence dir — see step g's failure above)"
+fi
+
+if [ "${#resolved_dirs[@]}" -ge 1 ]; then
+	run_json 0 "$artifacts/replay-haiku.out" "replay one live session (node/edge summary)" -- \
+		catacomb replay "$chosen/session.jsonl"
+	rc=0
+	python3 - "$artifacts/replay-haiku.out" <<'PY' || rc=$?
+import re, sys
+
+text = open(sys.argv[1]).read().strip()
+m = re.search(r"-> (\d+) nodes, (\d+) edges\s*$", text)
+if not m:
+    print(f"replay stdout does not match the expected node/edge summary: {text!r}", file=sys.stderr)
+    sys.exit(1)
+nodes, edges = int(m.group(1)), int(m.group(2))
+errs = []
+if nodes <= 0:
+    errs.append(f"replay reported {nodes} nodes, want > 0 for a real session carrying a verify checkpoint")
+if edges < 0:
+    errs.append(f"replay reported a negative edge count: {edges}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"replay summary: {nodes} nodes, {edges} edges")
+PY
+	record "$rc" "replay prints an explicit node/edge summary with a positive node count"
+else
+	skip "replay node/edge-summary smoke (no phase-resolving haiku cell — see step g's failure above)"
+fi
+
+echo "== g4. mcp protocol smoke: initialize over catacomb mcp stdio (live-leg binary, \$0) =="
+# Mirrors e2e/hermetic/prod/scenarios/10-mcp-protocol.sh's protocol-conformance contract
+# and hermetic run.sh step 19: the server answers one newline-delimited JSON-RPC
+# response per request and exits 0 on stdin EOF, so a fixed single-request script is
+# fully deterministic (Go sorts map keys when marshaling; mcp/server.go's
+# initializeResult echoes the caller's protocolVersion and always reports
+# serverInfo.name "catacomb").
+printf '%s\n' \
+	'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}}' \
+	>"$work/mcp-initialize-request.jsonl"
+run_json 0 "$artifacts/mcp-initialize.out" "catacomb mcp: pipe one initialize request, exit 0 on stdin EOF" -- \
+	catacomb mcp <"$work/mcp-initialize-request.jsonl"
+rc=0
+python3 - "$artifacts/mcp-initialize.out" <<'PY' || rc=$?
+import json, sys
+
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+errs = []
+if len(lines) != 1:
+    errs.append(f"want exactly 1 response line, got {len(lines)}")
+resp = None
+if lines:
+    try:
+        resp = json.loads(lines[0])
+    except ValueError as e:
+        errs.append(f"response is not JSON: {e}")
+if resp is not None:
+    if resp.get("jsonrpc") != "2.0" or resp.get("id") != 1:
+        errs.append(f"jsonrpc={resp.get('jsonrpc')!r} id={resp.get('id')!r} want 2.0/1")
+    if "error" in resp or "result" not in resp:
+        errs.append(f"error={resp.get('error')!r}, result present: {'result' in resp}")
+    result = resp.get("result") or {}
+    if result.get("protocolVersion") != "2024-11-05":
+        errs.append(f"protocolVersion={result.get('protocolVersion')!r} want the client's 2024-11-05")
+    if (result.get("serverInfo") or {}).get("name") != "catacomb":
+        errs.append(f"serverInfo={result.get('serverInfo')!r} want name 'catacomb'")
+    if "tools" not in (result.get("capabilities") or {}):
+        errs.append(f"capabilities={result.get('capabilities')!r} lack tools")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("mcp initialize: well-formed JSON-RPC response (jsonrpc 2.0, id 1, result present, protocolVersion echoed, serverInfo catacomb)")
+PY
+record "$rc" "catacomb mcp initialize smoke: well-formed JSON-RPC response over stdio"
 
 echo "== h. external-scores plumbing on live evidence =="
 # The echo task's baseline and baseline2 cells each run a guaranteed `echo
