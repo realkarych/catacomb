@@ -23,6 +23,7 @@ func TestDefaultThresholds(t *testing.T) {
 		AnnotationRateDelta: 0.1,
 		PairedAlpha:         0.05,
 		PairedMinTasks:      5,
+		PairedTest:          PairedTestSign,
 		AuditIQRFactor:      3.0,
 		AuditRelDelta:       0.5,
 	}, th)

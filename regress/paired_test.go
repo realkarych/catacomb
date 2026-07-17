@@ -266,6 +266,158 @@ func TestPairedFindingsUnsupportedMetric(t *testing.T) {
 	}
 }
 
+func wilcoxonThresholds() Thresholds {
+	th := DefaultThresholds()
+	th.PairedTest = PairedTestWilcoxon
+	return th
+}
+
+func TestWilcoxonPValues(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		deltas     []float64
+		wantWPlus  float64
+		wantWTotal float64
+		wantPReg   float64
+		wantPImp   float64
+	}{
+		{"empty", nil, 0, 0, 1, 1},
+		{"single_positive", []float64{3}, 1, 1, 0.5, 1},
+		{"n6_rank1_discordant", []float64{-1, 2, 3, 4, 5, 6}, 20, 21, 0.03125, 0.984375},
+		{"n6_rank2_discordant", []float64{1, -2, 3, 4, 5, 6}, 19, 21, 0.046875, 0.96875},
+		{"n5_unanimous_positive", []float64{1, 2, 3, 4, 5}, 15, 15, 0.03125, 1},
+		{"n5_unanimous_negative", []float64{-1, -2, -3, -4, -5}, 0, 15, 1, 0.03125},
+		{"n6_midrank_tie_at_smallest", []float64{-5, 5, 10, 20, 30, 40}, 19.5, 21, 0.046875, 0.984375},
+		{"n4_midrank_tie", []float64{5, 5, -3, 8}, 9, 10, 0.125, 0.9375},
+		{"n3_all_tied_magnitudes", []float64{3, 3, -3}, 4, 6, 0.5, 0.875},
+		{"n6_mixed", []float64{1, -2, 3, -4, 5, -6}, 9, 21, 0.65625, 0.421875},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			wPlus, wTotal, pReg, pImp := wilcoxonPValues(tc.deltas)
+			assert.InDelta(t, tc.wantWPlus, wPlus, 1e-12)
+			assert.InDelta(t, tc.wantWTotal, wTotal, 1e-12)
+			assert.InDelta(t, tc.wantPReg, pReg, 1e-12)
+			assert.InDelta(t, tc.wantPImp, pImp, 1e-12)
+		})
+	}
+}
+
+func TestWilcoxonFindingVerdicts(t *testing.T) {
+	t.Parallel()
+	oneTask := DefaultThresholds()
+	oneTask.PairedMinTasks = 1
+	cases := []struct {
+		name        string
+		deltas      []float64
+		matched     int
+		th          Thresholds
+		wantVerdict Verdict
+		wantDetail  string
+	}{
+		{"insufficient", []float64{1, 2, 3}, 3, DefaultThresholds(), VerdictInsufficient, "matched 3 tasks below paired min 5"},
+		{"insufficient_singular", []float64{1}, 1, DefaultThresholds(), VerdictInsufficient, "matched 1 task below paired min 5"},
+		{"regression_lone_small_discordant", []float64{-1, 2, 3, 4, 5, 6}, 6, DefaultThresholds(), VerdictRegression, "W+ 20/21 over 6 tasks, p=0.03125"},
+		{"regression_rank2_discordant", []float64{1, -2, 3, 4, 5, 6}, 6, DefaultThresholds(), VerdictRegression, "W+ 19/21 over 6 tasks, p=0.04688"},
+		{"regression_midrank_tie", []float64{-5, 5, 10, 20, 30, 40}, 6, DefaultThresholds(), VerdictRegression, "W+ 19.5/21 over 6 tasks, p=0.04688"},
+		{"regression_unanimous", []float64{1, 2, 3, 4, 5}, 5, DefaultThresholds(), VerdictRegression, "W+ 15/15 over 5 tasks, p=0.03125"},
+		{"improvement_unanimous", []float64{-1, -2, -3, -4, -5}, 5, DefaultThresholds(), VerdictImprovement, "W+ 0/15 over 5 tasks, p=0.03125"},
+		{"ok_mixed", []float64{1, -2, 3, -4, 5, -6}, 6, DefaultThresholds(), VerdictOK, "W+ 9/21 over 6 tasks, p=0.6562"},
+		{"ok_zeros_discarded", []float64{1, 2, 3, 4}, 5, DefaultThresholds(), VerdictOK, "W+ 10/10 over 4 tasks, p=0.0625"},
+		{"ok_no_nonzero_deltas", nil, 6, DefaultThresholds(), VerdictOK, "W+ 0/0 over 0 tasks, p=1"},
+		{"ok_single_task", []float64{3}, 1, oneTask, VerdictOK, "W+ 1/1 over 1 task, p=0.5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := wilcoxonFinding("duration_ms", tc.deltas, tc.matched, tc.th)
+			assert.Equal(t, "paired", f.Scope)
+			assert.Equal(t, "duration_ms", f.Metric)
+			assert.Equal(t, tc.wantVerdict, f.Verdict)
+			assert.Equal(t, tc.wantDetail, f.Detail)
+		})
+	}
+}
+
+func sixTaskReports() (aggregate.Report, aggregate.Report) {
+	var b, c []aggregate.TaskStats
+	for i, delta := range []float64{-1, 2, 3, 4, 5, 6} {
+		id := string(rune('a' + i))
+		b = append(b, metricTask(id, 5, 1000))
+		c = append(c, metricTask(id, 5, 1000+delta))
+	}
+	return aggregate.Report{Tasks: b}, aggregate.Report{Tasks: c}
+}
+
+func TestWilcoxonOutpowersSignAtSixTasks(t *testing.T) {
+	t.Parallel()
+	b, c := sixTaskReports()
+
+	signDur := findMetricFinding(t, pairedFindings(b, c, DefaultThresholds()), "duration_ms")
+	assert.Equal(t, VerdictOK, signDur.Verdict)
+	assert.Equal(t, "+5/6 tasks, p=0.1094", signDur.Detail)
+
+	fs := pairedFindings(b, c, wilcoxonThresholds())
+	require.Len(t, fs, 4)
+	dur := findMetricFinding(t, fs, "duration_ms")
+	assert.Equal(t, VerdictRegression, dur.Verdict)
+	assert.Equal(t, "W+ 20/21 over 6 tasks, p=0.03125", dur.Detail)
+	cost := findMetricFinding(t, fs, "cost_usd")
+	assert.Equal(t, VerdictOK, cost.Verdict)
+	assert.Equal(t, "W+ 0/0 over 0 tasks, p=1", cost.Detail)
+}
+
+func TestPairedFindingsTestSelection(t *testing.T) {
+	t.Parallel()
+	var b, c []aggregate.TaskStats
+	for i := 0; i < 5; i++ {
+		id := string(rune('a' + i))
+		b = append(b, metricTask(id, 5, 1000))
+		c = append(c, metricTask(id, 5, 1100))
+	}
+	br := aggregate.Report{Tasks: b}
+	cr := aggregate.Report{Tasks: c}
+
+	for _, name := range []string{"", PairedTestSign} {
+		th := DefaultThresholds()
+		th.PairedTest = name
+		f := findMetricFinding(t, pairedFindings(br, cr, th), "duration_ms")
+		assert.Equal(t, VerdictRegression, f.Verdict, "test %q", name)
+		assert.Equal(t, "+5/5 tasks, p=0.03125", f.Detail, "test %q", name)
+	}
+
+	f := findMetricFinding(t, pairedFindings(br, cr, wilcoxonThresholds()), "duration_ms")
+	assert.Equal(t, VerdictRegression, f.Verdict)
+	assert.Equal(t, "W+ 15/15 over 5 tasks, p=0.03125", f.Detail)
+}
+
+func TestPairedFindingsWilcoxonDormant(t *testing.T) {
+	t.Parallel()
+	with := aggregate.Report{Tasks: []aggregate.TaskStats{metricTask("a", 5, 1000)}}
+	assert.Nil(t, pairedFindings(aggregate.Report{}, with, wilcoxonThresholds()))
+	assert.Nil(t, pairedFindings(with, aggregate.Report{}, wilcoxonThresholds()))
+}
+
+func TestPairedFindingsWilcoxonDeterministic(t *testing.T) {
+	t.Parallel()
+	b, c := sixTaskReports()
+	first := pairedFindings(b, c, wilcoxonThresholds())
+	second := pairedFindings(b, c, wilcoxonThresholds())
+	assert.Equal(t, first, second)
+}
+
+func TestPairedSensitivityUnchangedUnderWilcoxon(t *testing.T) {
+	t.Parallel()
+	b, c := sixTaskReports()
+	sign := pairedSensitivity(b, c, DefaultThresholds())
+	wilcoxon := pairedSensitivity(b, c, wilcoxonThresholds())
+	require.NotNil(t, sign)
+	require.NotNil(t, wilcoxon)
+	assert.Equal(t, sign, wilcoxon)
+}
+
 func TestPairedSensitivity(t *testing.T) {
 	t.Parallel()
 	th := DefaultThresholds()

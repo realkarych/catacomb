@@ -53,6 +53,16 @@ func evidenceRoot(t *testing.T) string {
 
 func writeTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens int) {
 	t.Helper()
+	writeLabeledTokenEvidenceRun(t, root, id, variant, inputTokens, map[string]string{"variant": variant})
+}
+
+func writeTaskTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens int) {
+	t.Helper()
+	writeLabeledTokenEvidenceRun(t, root, id, variant, inputTokens, map[string]string{"variant": variant, "task": "t1"})
+}
+
+func writeLabeledTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens int, labels map[string]string) {
+	t.Helper()
 	transcript := fmt.Sprintf(`{"type":"assistant","uuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"msg_1","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":%d,"output_tokens":5}}}
 {"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}
 `, inputTokens)
@@ -64,7 +74,7 @@ func writeTokenEvidenceRun(t *testing.T, root, id, variant string, inputTokens i
 		Variant:     variant,
 		Rep:         1,
 		SessionID:   "s1",
-		Labels:      map[string]string{"variant": variant},
+		Labels:      labels,
 		MarkerName:  "task:t1",
 		MarkerStart: time.Unix(100, 0).UTC(),
 		MarkerEnd:   time.Unix(200, 0).UTC(),
