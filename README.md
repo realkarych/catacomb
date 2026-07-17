@@ -166,7 +166,10 @@ Or clone the repo and `make build`.
 Download the pre-built archive from the
 **[Releases](https://github.com/realkarych/catacomb/releases)** page, unpack it, and
 add the binary to your `PATH`. On Windows, you may need `Unblock-File .\catacomb.exe`
-before first run.
+before first run. The Windows binary is smoke-tested end-to-end in CI: a
+`windows-latest` job builds `catacomb.exe` and drives a real
+`bench → verify → regress` loop on every PR — see
+[platform support](docs/guide/troubleshooting.md#platform-support).
 
 </details>
 
