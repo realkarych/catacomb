@@ -53,7 +53,7 @@ func TestCostPrefixFamilyFallbackEstimated(t *testing.T) {
 
 func TestCostUnknownFamilyYieldsNothing(t *testing.T) {
 	e := New()
-	_, ok := e.Cost(Inputs{ModelID: "gpt-5-turbo", TokensIn: 10})
+	_, ok := e.Cost(Inputs{ModelID: "grok-4", TokensIn: 10})
 	assert.False(t, ok)
 }
 
@@ -148,4 +148,141 @@ func TestCostShortNumericSuffixNotStripped(t *testing.T) {
 	e := newEngineWithFamilies(testTable(), nil)
 	_, ok := e.Cost(Inputs{ModelID: "model-x-1234567", TokensIn: 10})
 	assert.False(t, ok)
+}
+
+func rateUSD(t *testing.T, e *Engine, in Inputs) float64 {
+	t.Helper()
+	r, ok := e.Cost(in)
+	require.True(t, ok)
+	assert.Equal(t, "estimated", r.Source)
+	return r.USD
+}
+
+func TestCostOpenAIExactTableRates(t *testing.T) {
+	cases := []struct {
+		modelID    string
+		in         float64
+		cacheRead  float64
+		out        float64
+		cacheWrite float64
+	}{
+		{modelID: "gpt-5.6-sol", in: 5.00, cacheRead: 0.50, out: 30.00, cacheWrite: 6.25},
+		{modelID: "gpt-5.6-terra", in: 2.50, cacheRead: 0.25, out: 15.00, cacheWrite: 3.125},
+		{modelID: "gpt-5.6-luna", in: 1.00, cacheRead: 0.10, out: 6.00, cacheWrite: 1.25},
+		{modelID: "gpt-5.5", in: 5.00, cacheRead: 0.50, out: 30.00, cacheWrite: 0},
+		{modelID: "gpt-5.5-pro", in: 30.00, cacheRead: 0, out: 180.00, cacheWrite: 0},
+		{modelID: "gpt-5.5-cyber", in: 12.50, cacheRead: 1.25, out: 75.00, cacheWrite: 0},
+		{modelID: "gpt-5.4", in: 2.50, cacheRead: 0.25, out: 15.00, cacheWrite: 0},
+		{modelID: "gpt-5.4-mini", in: 0.75, cacheRead: 0.075, out: 4.50, cacheWrite: 0},
+		{modelID: "gpt-5.4-nano", in: 0.20, cacheRead: 0.02, out: 1.25, cacheWrite: 0},
+		{modelID: "gpt-5.4-pro", in: 30.00, cacheRead: 0, out: 180.00, cacheWrite: 0},
+		{modelID: "gpt-5.2", in: 1.75, cacheRead: 0.175, out: 14.00, cacheWrite: 0},
+		{modelID: "gpt-5.2-pro", in: 21.00, cacheRead: 0, out: 168.00, cacheWrite: 0},
+		{modelID: "gpt-5.1", in: 1.25, cacheRead: 0.125, out: 10.00, cacheWrite: 0},
+		{modelID: "gpt-5", in: 1.25, cacheRead: 0.125, out: 10.00, cacheWrite: 0},
+		{modelID: "gpt-5-mini", in: 0.25, cacheRead: 0.025, out: 2.00, cacheWrite: 0},
+		{modelID: "gpt-5-nano", in: 0.05, cacheRead: 0.005, out: 0.40, cacheWrite: 0},
+		{modelID: "gpt-5-pro", in: 15.00, cacheRead: 0, out: 120.00, cacheWrite: 0},
+		{modelID: "gpt-5.3-codex", in: 1.75, cacheRead: 0.175, out: 14.00, cacheWrite: 0},
+		{modelID: "gpt-5.2-codex", in: 1.75, cacheRead: 0.175, out: 14.00, cacheWrite: 0},
+		{modelID: "gpt-5.1-codex-max", in: 1.25, cacheRead: 0.125, out: 10.00, cacheWrite: 0},
+		{modelID: "gpt-5.1-codex", in: 1.25, cacheRead: 0.125, out: 10.00, cacheWrite: 0},
+		{modelID: "gpt-5-codex", in: 1.25, cacheRead: 0.125, out: 10.00, cacheWrite: 0},
+		{modelID: "gpt-5.1-codex-mini", in: 0.25, cacheRead: 0.025, out: 2.00, cacheWrite: 0},
+		{modelID: "codex-mini-latest", in: 1.50, cacheRead: 0.375, out: 6.00, cacheWrite: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.modelID, func(t *testing.T) {
+			e := newEngineWithFamilies(defaultTable(), nil)
+			assert.InDelta(t, tc.in, rateUSD(t, e, Inputs{ModelID: tc.modelID, TokensIn: 1_000_000}), 1e-9)
+			assert.InDelta(t, tc.cacheRead, rateUSD(t, e, Inputs{ModelID: tc.modelID, CacheReadIn: 1_000_000}), 1e-9)
+			assert.InDelta(t, tc.out, rateUSD(t, e, Inputs{ModelID: tc.modelID, TokensOut: 1_000_000}), 1e-9)
+			assert.InDelta(t, tc.cacheWrite, rateUSD(t, e, Inputs{ModelID: tc.modelID, CacheWrite: 1_000_000}), 1e-9)
+		})
+	}
+}
+
+func TestCostOpenAIHandCheckedVectors(t *testing.T) {
+	cases := []struct {
+		name    string
+		inputs  Inputs
+		wantUSD float64
+	}{
+		{
+			name:    "gpt-5.4-mini cached bulk",
+			inputs:  Inputs{ModelID: "gpt-5.4-mini", TokensIn: 6159, CacheReadIn: 5504, TokensOut: 16},
+			wantUSD: 0.00510405,
+		},
+		{
+			name:    "gpt-5.6-sol all four token kinds",
+			inputs:  Inputs{ModelID: "gpt-5.6-sol", TokensIn: 1000, TokensOut: 100, CacheReadIn: 2000, CacheWrite: 500},
+			wantUSD: 0.012125,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.InDelta(t, tc.wantUSD, rateUSD(t, New(), tc.inputs), 1e-9)
+		})
+	}
+}
+
+func TestCostOpenAIDatedSnapshotFallsToFamilyTier(t *testing.T) {
+	cases := []struct {
+		modelID string
+		wantUSD float64
+	}{
+		{modelID: "gpt-5.6-sol-2026-05-12", wantUSD: 5.00},
+		{modelID: "gpt-5.6-terra-2026-05-12", wantUSD: 2.50},
+		{modelID: "gpt-5.6-luna-2026-05-12", wantUSD: 1.00},
+		{modelID: "gpt-5.5-2026-04-23", wantUSD: 5.00},
+		{modelID: "gpt-5.4-mini-2026-03-17", wantUSD: 0.75},
+		{modelID: "gpt-5.4-nano-2026-03-17", wantUSD: 0.20},
+		{modelID: "gpt-5.4-2026-03-17", wantUSD: 2.50},
+		{modelID: "gpt-5.3-codex-2026-02-05", wantUSD: 1.75},
+		{modelID: "gpt-5.2-codex-2025-12-11", wantUSD: 1.75},
+		{modelID: "gpt-5.2-2025-12-11", wantUSD: 1.75},
+		{modelID: "gpt-5.1-codex-max-2025-11-19", wantUSD: 1.25},
+		{modelID: "gpt-5.1-codex-mini-2025-11-13", wantUSD: 0.25},
+		{modelID: "gpt-5.1-codex-2025-11-13", wantUSD: 1.25},
+		{modelID: "gpt-5.1-2025-11-13", wantUSD: 1.25},
+		{modelID: "gpt-5-codex-2025-09-15", wantUSD: 1.25},
+		{modelID: "gpt-5-mini-2025-08-07", wantUSD: 0.25},
+		{modelID: "gpt-5-nano-2025-08-07", wantUSD: 0.05},
+		{modelID: "gpt-5-2025-08-07", wantUSD: 1.25},
+	}
+	for _, tc := range cases {
+		t.Run(tc.modelID, func(t *testing.T) {
+			assert.InDelta(t, tc.wantUSD, rateUSD(t, New(), Inputs{ModelID: tc.modelID, TokensIn: 1_000_000}), 1e-9)
+		})
+	}
+}
+
+func TestCostOpenAIFamilyClaimsByLongestPrefix(t *testing.T) {
+	cases := []struct {
+		name    string
+		modelID string
+		wantUSD float64
+	}{
+		{name: "codex-mini variant beats gpt-5.1-codex prefix", modelID: "gpt-5.1-codex-mini-x", wantUSD: 0.25},
+		{name: "gpt-5 fallback claims unknown variant", modelID: "gpt-5-turbo", wantUSD: 1.25},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.InDelta(t, tc.wantUSD, rateUSD(t, New(), Inputs{ModelID: tc.modelID, TokensIn: 1_000_000}), 1e-9)
+		})
+	}
+}
+
+func TestCostOpenAIDeliberatelyUnpricedIDs(t *testing.T) {
+	for _, modelID := range []string{"codex-auto-review", "gpt-5.3-codex-spark"} {
+		t.Run(modelID, func(t *testing.T) {
+			e := New()
+			_, ok := e.Cost(Inputs{ModelID: modelID, TokensIn: 1_000_000})
+			assert.False(t, ok)
+		})
+	}
+}
+
+func TestCostGPT54CyberUnpricedUpstreamStillFallsToGPT54FamilyTradeoff(t *testing.T) {
+	assert.InDelta(t, 2.50, rateUSD(t, New(), Inputs{ModelID: "gpt-5.4-cyber", TokensIn: 1_000_000}), 1e-9)
 }
