@@ -1,0 +1,43 @@
+# Live Codex skill-substitute basket: Codex has NO skill-invocation event — a
+# SKILL.md is discovered and read via an ordinary file-read/exec_command plus
+# system-prompt injection, indistinguishable in the rollout from any other file
+# read (see docs/internal/plans/2026-07-17-full-live-validation.md Task 13 and
+# the codex-capabilities research it cites: reduce/skill.go's isSkill() only
+# recognizes the Claude tool names "Skill"/"SlashCommand", so a codex
+# exec_command can never synthesize a "skill" graph node). This basket does NOT
+# assert any structural skill node — it verifies the WORK ARTIFACT only
+# (out/result.csv via verify_emit.py) plus an OPTIONAL SOFT grep of the
+# rollout's function_call/exec_command arguments for the SKILL.md read, which is
+# LOGGED but never gated. This is a documented Codex platform limitation, not a
+# catacomb gap — see the hermetic mirror (59-codex-skill) for the graph-level
+# proof that no "type":"skill" node is ever produced for a codex rollout.
+#
+# 1 task x 3 variants x 3 reps = 9 live `codex exec` cells. The workspace stages
+# the real e2e-emit skill dir into the cell's .agents/skills/ (Codex's discovery
+# path — mirrors .claude/skills/ for Claude in basket-skill.yaml) plus this
+# wrapper + verify_emit.py copied in from E2E_DIR, same anti-gaming layout as
+# basket-skill/basket-subagent so out/result.csv cannot survive from one cell to
+# the next. baseline/baseline2 instruct the model to use the e2e-emit skill;
+# degraded writes the SAME token directly with no skill mention, so verify
+# stays green on both — there is no structural signal to lose here on purpose,
+# only the (logged, never gated) soft grep can distinguish them.
+basket: e2e-codex-skill
+runtime: codex
+reps: 3
+tasks:
+  - id: skill
+    cmd: ["./codex-skill-live.sh"]
+    workspace:
+      cmd: ["sh", "-c", "mkdir -p .agents/skills && cp -R \"$E2E_DIR\"/skills/e2e-emit .agents/skills/ && cp \"$E2E_DIR\"/codex-skill-live.sh \"$E2E_DIR\"/verify_emit.py ."]
+    timeout: 180s
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_emit.py"]
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { SKILL_INSTRUCTION: "Use the e2e-emit skill (see .agents/skills/e2e-emit/SKILL.md) to produce out/result.csv." }
+  - id: degraded
+    env: { SKILL_INSTRUCTION: "Do NOT read or use any skill. Write exactly the text CATACOMB-SKILL-OK to out/result.csv yourself, without consulting any SKILL.md file." }
+  - id: baseline2
+    env: { SKILL_INSTRUCTION: "Use the e2e-emit skill (see .agents/skills/e2e-emit/SKILL.md) to produce out/result.csv." }
