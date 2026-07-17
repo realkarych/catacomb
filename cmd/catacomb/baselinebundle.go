@@ -21,17 +21,20 @@ import (
 )
 
 const (
-	bundleVersion      = 1
-	bundleManifestName = "bundle.json"
-	bundleRunsPrefix   = "runs"
+	bundleVersion          = 1
+	bundleManifestName     = "bundle.json"
+	bundleRunsPrefix       = "runs"
+	maxBundleManifestBytes = 64 << 20
 )
 
 var (
-	errBundleVersion   = errors.New("baseline bundle: format version newer than this catacomb supports")
-	errBundleEntry     = errors.New("baseline bundle: entry escapes bundle root or is not a regular file")
-	errBundleRunID     = errors.New("baseline bundle: run id is not a clean local name")
-	errBundleHash      = errors.New("baseline bundle: file hash mismatch")
-	errBundleCollision = errors.New("baseline bundle: run dir exists with different content")
+	errBundleVersion          = errors.New("baseline bundle: format version newer than this catacomb supports")
+	errBundleEntry            = errors.New("baseline bundle: entry escapes bundle root or is not a regular file")
+	errBundleRunID            = errors.New("baseline bundle: run id is not a clean local name")
+	errBundleHash             = errors.New("baseline bundle: file hash mismatch")
+	errBundleCollision        = errors.New("baseline bundle: run dir exists with different content")
+	errBundleManifestTooLarge = errors.New("baseline bundle: manifest too large")
+	errBundleRunSet           = errors.New("baseline bundle: run ids do not match bundled files")
 )
 
 func validBundleRunID(id string) bool {
@@ -186,9 +189,12 @@ func readBundleManifest(tr *tar.Reader) (bundleManifest, error) {
 	if hdr.Name != bundleManifestName || hdr.Typeflag != tar.TypeReg {
 		return bundleManifest{}, fmt.Errorf("baseline bundle: first entry %q is not %s: %w", hdr.Name, bundleManifestName, errBundleEntry)
 	}
-	data, err := io.ReadAll(tr)
+	data, err := io.ReadAll(io.LimitReader(tr, maxBundleManifestBytes+1))
 	if err != nil {
 		return bundleManifest{}, fmt.Errorf("baseline bundle: read manifest: %w", err)
+	}
+	if len(data) > maxBundleManifestBytes {
+		return bundleManifest{}, fmt.Errorf("baseline bundle: manifest exceeds %d bytes: %w", maxBundleManifestBytes, errBundleManifestTooLarge)
 	}
 	var manifest bundleManifest
 	if uerr := json.Unmarshal(data, &manifest); uerr != nil {

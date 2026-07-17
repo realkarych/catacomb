@@ -370,9 +370,42 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 			func(t *testing.T) []byte {
 				t.Helper()
 				link := bundleTarEntry{name: "runs/r1/link", typeflag: tar.TypeSymlink, linkname: "../../etc/passwd"}
-				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("r1"), map[string]string{}), link)
+				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline(), map[string]string{}), link)
 			},
 			"not a regular file",
+		},
+		{
+			"declared run id with no bundled files",
+			func(t *testing.T) []byte {
+				t.Helper()
+				files := baseFiles()
+				entries := append([]bundleTarEntry{importManifestEntry(t, importTestBaseline("r1", "r2"), importHashes(files))}, importFileEntries(files)...)
+				return gzipTarBundle(t, entries...)
+			},
+			"run ids do not match bundled files",
+		},
+		{
+			"bundled file under undeclared run id",
+			func(t *testing.T) []byte {
+				t.Helper()
+				files := baseFiles()
+				files["runs/r2/session.jsonl"] = []byte("stray\n")
+				entries := append([]bundleTarEntry{importManifestEntry(t, importTestBaseline("r1"), importHashes(files))}, importFileEntries(files)...)
+				return gzipTarBundle(t, entries...)
+			},
+			"run ids do not match bundled files",
+		},
+		{
+			"manifest file key outside runs",
+			func(t *testing.T) []byte {
+				t.Helper()
+				files := baseFiles()
+				hashes := importHashes(files)
+				hashes["notes/readme.txt"] = bundleSHA("x\n")
+				entries := append([]bundleTarEntry{importManifestEntry(t, importTestBaseline("r1"), hashes)}, importFileEntries(files)...)
+				return gzipTarBundle(t, entries...)
+			},
+			"run ids do not match bundled files",
 		},
 		{
 			"run id path traversal",
@@ -462,6 +495,15 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 			"unexpected EOF",
 		},
 		{
+			"oversized manifest",
+			func(t *testing.T) []byte {
+				t.Helper()
+				data := append([]byte(`{"version":1}`), bytes.Repeat([]byte(" "), maxBundleManifestBytes)...)
+				return gzipTarBundle(t, bundleTarEntry{name: bundleManifestName, typeflag: tar.TypeReg, data: data})
+			},
+			"manifest too large",
+		},
+		{
 			"garbage gzip",
 			func(t *testing.T) []byte {
 				t.Helper()
@@ -496,6 +538,17 @@ func TestBaselineImportHostileRunIDSentinel(t *testing.T) {
 			require.ErrorAs(t, err, &opErr)
 		})
 	}
+}
+
+func TestBaselineImportRunSetMismatchSentinel(t *testing.T) {
+	files := map[string][]byte{"runs/r1/session.jsonl": []byte("payload\n")}
+	entries := append([]bundleTarEntry{importManifestEntry(t, importTestBaseline("r1", "r2"), importHashes(files))}, importFileEntries(files)...)
+	bundle := writeImportBundle(t, gzipTarBundle(t, entries...))
+
+	err := runBaselineImport(io.Discard, store.OpenSQLite, emptyStoreDB(t), bundle, filepath.Join(t.TempDir(), "runs"))
+	require.ErrorIs(t, err, errBundleRunSet)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
 }
 
 func TestBaselineImportMissingDiskFileIsReadErrorNotCollision(t *testing.T) {

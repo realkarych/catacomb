@@ -440,6 +440,34 @@ func TestReadBundleManifestNotJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "decode manifest")
 }
 
+func TestReadBundleManifestTooLarge(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"valid json padded past the cap", append([]byte(`{"version":1}`), bytes.Repeat([]byte(" "), maxBundleManifestBytes)...)},
+		{"garbage past the cap", bytes.Repeat([]byte("x"), maxBundleManifestBytes+1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := gzipTarBundle(t, bundleTarEntry{name: bundleManifestName, typeflag: tar.TypeReg, data: tc.data})
+			_, err := readBundle(bytes.NewReader(bundle), discardBundleFile)
+			require.ErrorIs(t, err, errBundleManifestTooLarge)
+			assert.NotContains(t, err.Error(), "decode manifest")
+		})
+	}
+}
+
+func TestReadBundleManifestAtCapAccepted(t *testing.T) {
+	manifest := []byte(`{"version":1,"files":{}}`)
+	manifest = append(manifest, bytes.Repeat([]byte(" "), maxBundleManifestBytes-len(manifest))...)
+	require.Len(t, manifest, maxBundleManifestBytes)
+	bundle := gzipTarBundle(t, bundleTarEntry{name: bundleManifestName, typeflag: tar.TypeReg, data: manifest})
+	m, err := readBundle(bytes.NewReader(bundle), discardBundleFile)
+	require.NoError(t, err)
+	assert.Equal(t, bundleVersion, m.Version)
+}
+
 func TestReadBundleVersionTooNew(t *testing.T) {
 	bundle := gzipTarBundle(t, bundleManifestEntry(t, 2))
 	_, err := readBundle(bytes.NewReader(bundle), discardBundleFile)
@@ -505,7 +533,7 @@ func TestReadBundleCallbackError(t *testing.T) {
 }
 
 func TestBundleSentinelsDistinct(t *testing.T) {
-	sentinels := []error{errBundleVersion, errBundleEntry, errBundleHash, errBundleCollision}
+	sentinels := []error{errBundleVersion, errBundleEntry, errBundleHash, errBundleCollision, errBundleManifestTooLarge, errBundleRunSet}
 	for i, first := range sentinels {
 		require.Error(t, first)
 		for j, second := range sentinels {

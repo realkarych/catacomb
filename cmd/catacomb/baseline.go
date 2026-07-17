@@ -271,6 +271,9 @@ func (imp *bundleImporter) bindManifest(m bundleManifest) error {
 	if err := validateBundleRunIDs(m.Baseline.RunIDs); err != nil {
 		return err
 	}
+	if err := validateBundleRunSet(m.Baseline.RunIDs, m.Files); err != nil {
+		return err
+	}
 	imp.manifest = m
 	return nil
 }
@@ -280,6 +283,25 @@ func validateBundleRunIDs(ids []string) error {
 		if !validBundleRunID(id) {
 			return fmt.Errorf("run id %q: %w", id, errBundleRunID)
 		}
+	}
+	return nil
+}
+
+func validateBundleRunSet(runIDs []string, files map[string]string) error {
+	declared := make(map[string]bool, len(runIDs))
+	for _, id := range runIDs {
+		declared[id] = true
+	}
+	bundled := make(map[string]bool, len(declared))
+	for p := range files {
+		parts := strings.SplitN(p, "/", 3)
+		if len(parts) != 3 || parts[0] != bundleRunsPrefix {
+			return fmt.Errorf("manifest file %q is not under %s/<run>/: %w", p, bundleRunsPrefix, errBundleRunSet)
+		}
+		bundled[parts[1]] = true
+	}
+	if !maps.Equal(declared, bundled) {
+		return errBundleRunSet
 	}
 	return nil
 }
