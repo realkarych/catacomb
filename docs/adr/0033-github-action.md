@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-17
 - **Deciders:** @realkarych
-- **Related:** [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md) (the product is a CI verdict — "runs in CI with nothing but the binary"); [ADR-0022](0022-regression-detection-over-repeated-runs.md) (the `regress` gate and its exit codes); [ADR-0032](0032-baseline-bundle.md) (baseline bundles, the recommended CI restore path this Action consumes); CLI and `--json` compatibility surfaces ([VERSIONING.md](../VERSIONING.md) #1)
+- **Related:** [ADR-0026](0026-form-factor-pivot-offline-eval-gate.md) (the product is a CI verdict — "runs in CI with nothing but the binary"); [ADR-0022](0022-regression-detection-over-repeated-runs.md) (the `regress` gate and its exit codes); ADR-0032 (baseline bundles, the recommended CI restore path this Action consumes — lands in its own branch); CLI and `--json` compatibility surfaces ([VERSIONING.md](../VERSIONING.md) #1)
 
 ## Context
 
