@@ -1,7 +1,8 @@
 # CLI reference
 
 Catacomb is a single offline binary. Every command reads local files — Claude Code
-transcripts under `~/.claude/projects`, [`bench`](#bench) evidence directories, or the
+transcripts under `~/.claude/projects` (or Codex rollouts under `~/.codex/sessions`;
+see [Runtimes](ingestion.md#runtimes)), [`bench`](#bench) evidence directories, or the
 local SQLite store — and no command opens a network connection. Most read commands
 accept `--json` for machine-readable output. For task-oriented recipes see
 [workflows.md](workflows.md).
@@ -13,7 +14,7 @@ The command set:
 | [`bench`](#bench) | Run a benchmark basket and record redacted evidence per cell |
 | [`verify`](#verify) | Re-run a basket's verifiers offline over recorded evidence dirs |
 | [`import`](#import) | Ingest an already-finished session transcript as an evidence dir |
-| [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`) |
+| [`baseline`](#baseline-set) | Manage named baselines (`set`, `list`, `rm`, `export`, `import`) |
 | [`regress`](#regress) | Compare a candidate run group against a baseline and gate |
 | [`trends`](#trends) | Replay a baseline's recorded regression history |
 | [`diff`](#diff) | Diff two session transcripts by `step_key` |
@@ -30,8 +31,9 @@ missing files, store problems).
 
 Any command that parses transcripts (`bench`, `import`, `regress`, `diff`, `subgraph`,
 `export`, `replay`) may print up to two advisory lines to **stderr**: a format-drift count for
-records it did not recognize, and a version-ceiling notice when a transcript's Claude
-Code version is newer than the release this binary was tested against (for example
+records it did not recognize, and a version-ceiling notice when a transcript's agent CLI
+version — Claude Code or Codex, each with its own ceiling — is newer than the release
+this binary was tested against (for example
 `warning: transcript Claude Code version 2.2.0 is newer than tested 2.1.199`). Both are
 diagnostic only — `stdout`/`--json` stay clean and neither changes the exit code. See
 [Format drift](privacy-and-operations.md#format-drift) for what they mean and what to do.
@@ -55,6 +57,7 @@ catacomb bench <basket.yaml> [flags]
 | `--fail-fast` | false | Stop at the first failing cell |
 | `--dry-run` | false | Print the cell expansion table and exit without executing |
 | `--projects-dir` | `~/.claude/projects` | Claude projects directory holding session transcripts |
+| `--sessions-dir` | `~/.codex/sessions` (or `$CODEX_HOME/sessions` when set) | Codex sessions directory holding rollout transcripts (for a [`runtime: codex`](basket.md#top-level-fields) basket) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory for bench runs |
 | `--workspaces-dir` | OS temp dir | Base directory for per-cell workspace dirs (see [Workspace isolation](#workspace-isolation)) |
 | `--keep-workspaces` | false | Keep per-cell workspace dirs after teardown; kept paths are printed to stderr |
@@ -84,6 +87,20 @@ the runner resolves the session's transcripts under
 retrying for up to ~3 s while the file lands; a session id matching no transcript (or
 more than one) records the reason in the cell's manifest `note` and skips verification
 and evidence for that cell.
+
+Under a [`runtime: codex`](basket.md#top-level-fields) basket the same contract shifts
+vocabularies: the cell's `cmd` must emit the Codex exec JSON stream
+(`codex exec --json <prompt>`), where the runner peeks the first `thread.started` event for the
+session's **thread id**; after the child exits it resolves the rollout — plus any
+subagent rollouts linked by `parent_thread_id` — under `--sessions-dir` instead of
+`--projects-dir` (see [Codex sessions](#codex-sessions-runtime-codex)). In a wrapper
+script, redirect stdin away (`codex exec --json "$PROMPT" < /dev/null`): when stdin is
+not a tty, `codex` reads the prompt from it instead of argv. Codex emits no terminal
+cost event, so the cell's manifest and `meta.json` carry no reported `cost_usd` —
+exactly like an [imported](#codex-sessions-runtime-codex) Codex session; the
+token-derived `cost_usd` *metric* still prices through the built-in OpenAI tiers.
+Everything else — run-ids, labels, checkpoints, evidence shape, the epilogue — is
+unchanged.
 
 A task's optional `timeout:` — a Go duration string such as `30s` or `5m` — puts a
 per-cell deadline on the whole cell: the variant's `setup:` commands and the child
@@ -157,8 +174,9 @@ A failing cell is recorded and the basket continues (deciding whether a change
 regressed is `catacomb regress`'s job, not the runner's). Exit codes: `0` every cell
 ran (even if some cells failed), `1` `--fail-fast` stopped at a failing cell, `2`
 operational error (bad basket, a non-fresh manifest, manifest I/O, a resume hash
-mismatch, or an unresolvable home directory — set `--projects-dir` and `--runs-dir`
-explicitly). On success the runner prints a `marked <n>/<total> cells` summary, the
+mismatch, or an unresolvable home directory — set `--projects-dir` (or `--sessions-dir`
+for a `runtime: codex` basket) and `--runs-dir` explicitly). On success the runner prints a
+`marked <n>/<total> cells` summary, the
 checkpoint rollup, and a copy-pasteable epilogue: with two or more variants, a
 [`regress --runs-dir`](#regress) comparing the first two. Append `,task=<id>` to the
 epilogue's `label:` selectors to narrow the comparison to a single task. When the
@@ -333,11 +351,12 @@ catacomb import <basket.yaml> --task <id> --variant <id> \
 | --- | --- | --- |
 | `--task` | **required** | Task id in the basket — selects its `verify`, `checkpoints`, and labels |
 | `--variant` | **required** | Variant id in the basket |
-| `--session-id` | (none) | Session UUID resolved under `--projects-dir`; mutually exclusive with `--transcript` (exactly one required) |
-| `--transcript` | (none) | Direct path to a main session `.jsonl`; mutually exclusive with `--session-id` |
+| `--session-id` | (none) | Session UUID resolved under `--projects-dir` (for a `runtime: codex` basket: the thread id, resolved under `--sessions-dir`); mutually exclusive with `--transcript` (exactly one required) |
+| `--transcript` | (none) | Direct path to a main session `.jsonl` (for `runtime: codex`: a rollout `.jsonl` or `.jsonl.zst`); mutually exclusive with `--session-id` |
 | `--rep` | `1` | Repetition index, recorded as the `rep` label |
 | `--run-id` | `import-<basket>-<task>-<variant>-r<rep>` | Evidence dir name under `--runs-dir` |
 | `--projects-dir` | `~/.claude/projects` | Claude projects dir holding session transcripts (for `--session-id`) |
+| `--sessions-dir` | `~/.codex/sessions` (or `$CODEX_HOME/sessions` when set) | Codex sessions dir holding rollout transcripts (for `--session-id` under `runtime: codex`) |
 | `--runs-dir` | `~/.catacomb/runs` | Evidence output directory |
 | `--label` | (none) | Extra ambient labels merged under the cell labels (`k=v`, comma-separated) |
 
@@ -356,6 +375,10 @@ Two input modes select the transcript, and **exactly one is required**:
   transcripts are read from `<transcript-dir>/<session>/subagents/agent-*.jsonl`). Reach
   for it when the session id is unknown — the newest file under
   `~/.claude/projects/<encoded-cwd>/` is the session you just ran.
+
+Under a [`runtime: codex`](basket.md#top-level-fields) basket both modes exist but
+resolve against Codex's rollout files instead — see
+[Codex sessions](#codex-sessions-runtime-codex) below.
 
 `import` writes `<runs-dir>/<run-id>/` — `session.jsonl`, `subagents/agent-*.jsonl` when
 present, and a `meta.json` — secret-redacted and shaped like a bench cell's evidence dir.
@@ -384,7 +407,9 @@ no terminal `total_cost_usd` for `import` to read, so the field is left unset an
 appears in the file. The token-derived `cost_usd` *metric*
 still works — it is priced from the transcript's token counts through the built-in pricing
 table — so cost gating in [`regress`](#regress) stays comparable between imported and
-bench-recorded runs.
+bench-recorded runs. The table carries OpenAI GPT-5-family tiers alongside the Anthropic
+ones, so this holds for Codex sessions too — with one long-context caveat; see
+[Codex sessions](#codex-sessions-runtime-codex).
 
 Verification stays a **separate step**: `import` only records evidence. Run
 [`verify`](#verify) afterward to score the task's `verify:` block over it, then
@@ -395,6 +420,61 @@ Exit codes: `0` the evidence dir was written, `2` operational error (a bad baske
 unknown `--task` or `--variant`, neither or both of `--session-id`/`--transcript`, an
 unresolvable transcript, a transcript with no timestamped records, or an evidence-write
 failure).
+
+### Codex sessions (`runtime: codex`)
+
+When the basket declares [`runtime: codex`](basket.md#top-level-fields), `import`
+ingests OpenAI Codex CLI sessions. Codex persists each session as a **rollout** —
+`~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl`, zstd-compressed
+to `.jsonl.zst` when cold; catacomb reads both forms (see
+[Runtimes](ingestion.md#runtimes)). The two input modes become:
+
+- `--session-id <thread-id>` resolves the rollout under `--sessions-dir` (default
+  `~/.codex/sessions`, or `$CODEX_HOME/sessions` when set). The session id here is
+  Codex's **thread id**: `codex exec --json` announces it as the first
+  `thread.started` event on stdout, and it is the
+  trailing UUID of the rollout filename. Subagent rollouts are discovered anywhere
+  under `--sessions-dir` by the `parent_thread_id` recorded in each child's first line
+  — transitively, so nested subagents come along — and land in evidence as
+  `subagents/agent-<thread-id>.jsonl`.
+- `--transcript <path>` points straight at a rollout file (`.jsonl` or `.jsonl.zst`);
+  the thread id is derived from the filename, so the file must keep its
+  `rollout-<timestamp>-<thread-id>.jsonl[.zst]` name. Subagent children are discovered
+  under the transcript's own directory — the day directory — so a session whose
+  subagents span midnight into the next day's directory needs `--session-id` mode
+  instead.
+
+Checkpoints work exactly as under Claude Code: register the catacomb [`mcp`](#mcp)
+server in Codex's config (`~/.codex/config.toml`),
+
+```toml
+[mcp_servers.catacomb]
+command = "catacomb"
+args = ["mcp"]
+```
+
+and the agent's `mcp__catacomb__mark` calls ride the rollout as MCP tool-call records,
+reducing to the same marker nodes and honoring the task's `checkpoints:`.
+
+Cost semantics keep one Codex-specific wrinkle: rollouts report token usage but no
+dollar cost, so the *reported* `cost_usd` in `meta.json` stays absent — there is nothing
+to read. The token-derived `cost_usd` *metric* is estimated, though: the built-in
+pricing table carries OpenAI GPT-5-family tiers
+([ADR-0031](../adr/0031-multi-runtime-ingestion-codex.md) stage 2) — `gpt-5.4-mini`
+prices at $0.75 input / $0.075 cache-read / $4.50 output per MTok, for example — and
+model ids without a published price, such as `codex-auto-review`, stay unpriced rather
+than guessed. One caveat: OpenAI bills prompts past 272K input tokens on its 1M-context
+models at 2× input / 1.5× output, which catacomb's flat estimate does not model, so
+long-context requests are undercounted. Token metrics follow Claude Code semantics:
+`tokens_in` counts **uncached** input (the rollout's `input_tokens` minus
+`cached_input_tokens`), cached input is tracked separately and priced at the cache-read
+rate, and a cache write maps through whenever the rollout reports one. `tokens_in`,
+`tokens_out`, and `duration_ms` are first-class and gate normally.
+
+Everything else is unchanged: the evidence dir has the same shape — with the runtime
+and the rollout's CLI version stamped into `meta.json`'s `env` block as
+`agent_runtime`/`agent_version` — and [`verify`](#verify) and [`regress`](#regress)
+consume it with no special case.
 
 ### Recommended workflow
 
@@ -450,7 +530,9 @@ whitespace; at least one `--label` is required. Errors when the selector matches
 runs. Re-running with the same name replaces the stored baseline. The evidence dirs are
 not copied — [`regress`](#regress) re-reads the pinned runs from disk and warns when
 pointed at a different directory. A saved baseline is referenced by `regress` as
-`name:<baseline>`, so a golden group survives later label churn.
+`name:<baseline>`, so a golden group survives later label churn. To move a baseline —
+row and pinned evidence together — to another machine or an ephemeral CI runner, see
+[`baseline export`](#baseline-export) / [`baseline import`](#baseline-import).
 
 ```sh
 catacomb baseline set golden --label basket=checkout --label variant=main
@@ -506,6 +588,78 @@ catacomb baseline rm golden
 
 ---
 
+## baseline export
+
+Export a baseline and its pinned evidence runs as one portable, verifiable bundle.
+
+```sh
+catacomb baseline export <name> --out <bundle.tar.gz> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--out` | **required** | Bundle output file (`.tar.gz`); must not already exist |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence dir holding the baseline's pinned runs |
+
+The bundle is a gzipped tar: `bundle.json` first (bundle format version, the stored
+baseline record including its version stamps, and a SHA-256 per packed file), then every
+file of every pinned run under `runs/<run-id>/...`. Export is **byte-deterministic** —
+entries are sorted, tar metadata is normalized, and gzip carries no timestamp — so
+exporting the same baseline twice yields identical bytes, and a bundle can be
+content-addressed, cached, or diffed by hash. The bundle is written atomically and an
+existing `--out` file is never overwritten. Evidence enters the bundle exactly as the
+runs dir holds it — already redacted at rest — so exporting adds no new exposure
+surface.
+
+Exit codes: `0` on success; `2` when the baseline does not exist, a pinned run has no
+evidence dir under `--runs-dir`, `--out` is missing, or the `--out` file already exists.
+
+```sh
+catacomb baseline export golden --out golden.tar.gz
+catacomb baseline export golden --db catacomb.db --runs-dir runs --out dist/golden.tar.gz
+```
+
+---
+
+## baseline import
+
+Import a baseline bundle: verify every file hash, land the runs, upsert the baseline row.
+
+```sh
+catacomb baseline import <bundle.tar.gz> [flags]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--db` | `~/.catacomb/catacomb.db` | SQLite database path for the baselines table |
+| `--runs-dir` | `~/.catacomb/runs` | Evidence dir to land the bundle's runs into |
+
+The archive is streamed and treated as untrusted input: every file must hash-match the
+manifest (and every manifest file must be present), entries must be clean relative paths
+under `runs/` — symlinks and irregular entries are rejected, and run ids must be clean
+single-segment names — and a bundle whose format version is newer than this binary
+supports is refused. Nothing is committed until the whole archive verifies: a truncated
+or tampered bundle is rejected with the runs dir and the store untouched.
+
+The imported baseline's `runs_dir` is rewritten to the local `--runs-dir` (resolved to
+an absolute path), so a follow-up `regress --baseline name:<name>` against that same
+directory resolves without a runs-dir warning. Import is **idempotent and
+collision-safe**: a run dir that already exists locally is accepted only when its
+content matches the bundle exactly (hash-for-hash, with no extra files) and is then left
+in place; any difference is a hard error, never an overwrite.
+
+Exit codes: `0` on success (including a no-op re-import over identical runs); `2` on a
+missing or corrupt bundle, a hash mismatch, a run-dir collision, a hostile entry or run
+id, or a too-new bundle format version.
+
+```sh
+catacomb baseline import golden.tar.gz
+catacomb baseline import golden.tar.gz --db catacomb.db --runs-dir runs
+```
+
+---
+
 ## regress
 
 Compare a candidate run group against a baseline and gate on the verdict.
@@ -523,14 +677,16 @@ catacomb regress --baseline <selector> --candidate <selector> [flags]
 | `--json` | false | Emit the full report as JSON |
 | `--strict` | false | Treat an insufficient-data verdict as a failure (exit `1`); refuse a stampless or stamp-mismatched `name:` baseline (exit `2`). A basket with fewer tasks than `--paired-min-tasks` always carries paired `insufficient` findings, so with every other axis clean it reports `insufficient` — never `ok` — and fails `--strict` structurally: more repetitions cannot fix it; add tasks, or lower `--paired-min-tasks` deliberately |
 | `--record` | false | Append this comparison to the baseline's history for [`trends`](#trends) (requires `--baseline name:<x>`) |
+| `--project` | (empty) | Project identity stamped into the recorded history row (`project` in the record body) for fleet-level joins; requires `--record` |
 | `--annotation` | (none) | Numeric annotation to gate on: `owner.key[:higher-better\|lower-better]` (repeatable) |
 | `--scores` | (none) | JSONL file of external scores applied as node annotations before comparison (see [Gating on external scores](#gating-on-external-scores)) |
 | `--min-support` | 3 | Minimum runs per group for a trusted comparison (must be ≥ 1) |
 | `--presence-delta` | 0.2 | Presence-rate delta threshold |
 | `--error-delta` | 0.1 | Error-rate delta threshold |
 | `--annotation-rate-delta` | 0.1 | Rate delta threshold for run-level binary annotations (e.g. `verifier.pass`; must be > 0) |
-| `--paired-alpha` | 0.05 | Significance level for the paired per-task sign test (must be in (0,1)) |
-| `--paired-min-tasks` | 5 | Minimum matched tasks before the paired sign test can gate (must be > 0) |
+| `--paired-alpha` | 0.05 | Significance level for the paired per-task test (must be in (0,1)) |
+| `--paired-min-tasks` | 5 | Minimum matched tasks before the paired test can gate (must be > 0) |
+| `--paired-test` | `sign` | Paired per-task test: `sign` (exact sign test) or `wilcoxon` (exact Wilcoxon signed-rank; see the sign-vs-wilcoxon note below) |
 | `--metric-rel-delta` | 0.25 | Relative metric delta threshold |
 | `--iqr-factor` | 1.5 | IQR band factor for the metric noise band |
 | `--audit-iqr-factor` | 3.0 | IQR band factor for [per-cell outlier audit](#per-cell-outlier-audit) flags (must be > 0) |
@@ -552,6 +708,11 @@ directories under `--runs-dir`:
   and dir. A baseline records the runs dir it was resolved from; when the `--runs-dir`
   flag names a different directory, a stderr warning notes the recorded dir and the
   flag wins.
+
+Both loaders strip node payloads before the groups are held for aggregation — the
+gate never reads them — so `regress` memory scales with graph structure, not
+transcript size; see [Scale](privacy-and-operations.md#scale) for the measured
+envelope.
 
 Groups are aggregated and compared per
 [ADR-0022](../adr/0022-regression-detection-over-repeated-runs.md) §4:
@@ -592,6 +753,17 @@ Groups are aggregated and compared per
   `sensitivity:` note names the smallest task count at which a unanimous shift would
   gate. An `ok` paired row is omitted from the findings like any non-total row. See
   [when the paired test fires](workflows.md#catching-drift-below-the-band-the-paired-sign-test).
+  **Sign vs wilcoxon:** `--paired-test wilcoxon` swaps in an exact Wilcoxon
+  signed-rank test per metric — it *replaces* the sign test rather than running
+  alongside it, so the paired family stays those same four metrics. Where the sign
+  test only counts delta directions, Wilcoxon ranks the delta magnitudes (mid-ranks
+  on ties; zero deltas still dropped) and computes the exact null distribution by a
+  deterministic, RNG-free dynamic program — no asymptotic approximation. That buys
+  real power in 6–10-task baskets: one small-magnitude discordant task among six
+  fires at p=0.031 (detail `W+ 20/21 over 6 tasks, p=0.03125`) where the sign test's
+  5/6 stalls at p=0.109. The reachability floor is unchanged (a unanimous shift has
+  p=2^-n under both tests), so the `sensitivity:` note reads the same; the default
+  remains `sign`.
 - **Alignment coverage** (fraction of baseline steps matched in the candidate) is
   always reported; below `--coverage-floor` step-level regressions are downgraded to
   `notable` and the checkpoint (phase) level carries the verdict (under
@@ -783,7 +955,10 @@ The store must already exist: `--record` requires a `name:` baseline, and resolv
 against an absent store fails first (exit `2`), so the store is created by
 [`baseline set`](#baseline-set), never by `--record`. Each record carries the version
 stamps of the recording binary (catacomb version and step-key scheme) in its body
-alongside the report.
+alongside the report. With `--project <id>` the body also carries a stable project
+identity, so histories exported from many repositories can be joined fleet-side; see
+[Roll up a fleet](workflows.md#roll-up-a-fleet). `--project` without `--record` is an
+operational error (exit `2`) — the stamp has nowhere to land.
 
 Sequence numbers are assigned atomically in a single statement, so a record is never
 silently overwritten. But concurrent `--record` writers against one store file — a
@@ -845,12 +1020,15 @@ a spliced history is never read as a continuous one.
 
 `--json` emits the raw stored history verbatim as `[{"seq":N,"record":<stored bytes>}]`:
 each `record` is the exact JSON body that was written, byte-for-byte, not a
-re-encoding. A body carries a schema version field `v` (currently `1`), the candidate
-selector, thresholds, annotation specs, the report, its own `created_at` (RFC3339 UTC),
-a `baseline_created_at` stamp mirroring the baseline's `created_at` at record time, and
+re-encoding. A body carries a schema version field `v` (currently `2`; the schema is
+additive-only, and every version from `1` through the current one still renders), the
+candidate selector, the `project` identity when recorded with
+[`--project`](#regress) (records written without it lack the field), thresholds,
+annotation specs, the report, its own `created_at` (RFC3339 UTC), a
+`baseline_created_at` stamp mirroring the baseline's `created_at` at record time, and
 the recording binary's version `stamps` (catacomb version and step-key scheme; records
 written before stamps existed lack the field) — ready for dashboards or diffing
-scripts. A record whose `v` is not understood by this binary is an exit-`2` error
+scripts. A record whose `v` is newer than this binary understands is an exit-`2` error
 naming the sequence and version (upgrade catacomb).
 
 ### Accuracy-vs-cost Pareto
@@ -1035,14 +1213,16 @@ so review them before shipping a pack to an external service. Alongside the run 
   `--sample` value), `runs` (the sampled IDs), and `created_at`.
 - `INSTRUCTIONS.md` — a fixed template for the external inspector: what the bundle
   contains, what to look for (shortcuts, gaming, tool misuse, fabricated results), and
-  the exact scores-JSONL contract for returning findings.
+  the exact scores-JSONL contract for returning findings, provenance included.
 
 The return loop is the existing scores boundary — nothing new to integrate. The
 inspector (a human, or an LLM driven outside catacomb — the judge prompt and spend are
-the user's business) writes one JSONL line per run-level finding:
+the user's business) writes one JSONL line per run-level finding, stamped with a
+`tool` field naming the judge that produced it (optional `tool_version` and
+`prompt_hash` refine the provenance):
 
 ```json
-{"key":"audit.clean","value":1,"run_id":"<run id>"}
+{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>"}
 ```
 
 and the findings gate like any other [run-level score](#run-level-scores):
@@ -1051,7 +1231,10 @@ and the findings gate like any other [run-level score](#run-level-scores):
 catacomb regress --scores findings.jsonl --annotation audit.clean:higher-better ...
 ```
 
-(`:lower-better` when a higher value is worse). See
+(`:lower-better` when a higher value is worse). The gate ignores the provenance
+fields, but they let the same file feed `catacomb-judge agreement` and
+`catacomb-judge panel` first — calibrating or aggregating the judge before its
+scores gate (see [Calibrating a judge](workflows.md#calibrating-a-judge)). See
 [Auditing cells](workflows.md#auditing-cells) for the full loop.
 
 Exit codes: `0` success (stdout reports `packed N of M runs into <out>`), `2`

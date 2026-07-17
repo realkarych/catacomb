@@ -109,6 +109,41 @@ func TestTrendsRecordAnnotationsRoundTrip(t *testing.T) {
 	assert.Equal(t, []regress.AnnotationSpec{{Key: "deepeval.tool_correctness", HigherBetter: true}}, entries[0].Record.Annotations)
 }
 
+func TestTrendsJSONSurfacesProject(t *testing.T) {
+	root := trendsRunsDir(t)
+	dbPath := emptyStoreDB(t)
+	pinBaselineNow(t)
+	require.NoError(t, runBaselineSet(io.Discard, store.OpenSQLite, dbPath, "golden", []string{"variant=base"}, root))
+
+	var out, errBuf bytes.Buffer
+	require.Equal(t, 0, run([]string{"regress", "--record", "--project", "payments-api", "--runs-dir", root, "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf), errBuf.String())
+	out.Reset()
+	errBuf.Reset()
+	require.Equal(t, 0, run([]string{"regress", "--record", "--runs-dir", root, "--db", dbPath, "--baseline", "name:golden", "--candidate", "label:variant=cand1"}, &out, &errBuf), errBuf.String())
+
+	out.Reset()
+	errBuf.Reset()
+	code := run([]string{"trends", "golden", "--db", dbPath, "--json"}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+
+	var raw []struct {
+		Seq    int             `json:"seq"`
+		Record json.RawMessage `json:"record"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &raw))
+	require.Len(t, raw, 2)
+	var withProject, withoutProject map[string]any
+	require.NoError(t, json.Unmarshal(raw[0].Record, &withProject))
+	require.NoError(t, json.Unmarshal(raw[1].Record, &withoutProject))
+	assert.Equal(t, "payments-api", withProject["project"])
+	assert.NotContains(t, withoutProject, "project")
+
+	var entries []trendsEntry
+	require.NoError(t, json.Unmarshal(out.Bytes(), &entries))
+	assert.Equal(t, "payments-api", entries[0].Record.Project)
+	assert.Empty(t, entries[1].Record.Project)
+}
+
 func TestTrendsNarrowedTable(t *testing.T) {
 	dbPath, _ := recordedTrendsDB(t)
 
@@ -173,15 +208,30 @@ func TestTrendsUnsupportedVersionEndToEnd(t *testing.T) {
 	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
 	s, err := store.OpenSQLite(dbPath)
 	require.NoError(t, err)
-	_, err = s.AppendRegressResult("golden", json.RawMessage(`{"v":2,"created_at":"2026-01-01T00:00:00Z"}`))
+	_, err = s.AppendRegressResult("golden", json.RawMessage(`{"v":3,"created_at":"2026-01-01T00:00:00Z"}`))
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errBuf.String(), "version 2")
+	assert.Contains(t, errBuf.String(), "version 3")
 	assert.Contains(t, errBuf.String(), "upgrade catacomb")
+}
+
+func TestTrendsOlderRecordVersionEndToEnd(t *testing.T) {
+	dbPath := emptyStoreDB(t)
+	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}, Stamps: currentStamps()})
+	s, err := store.OpenSQLite(dbPath)
+	require.NoError(t, err)
+	_, err = s.AppendRegressResult("golden", json.RawMessage(`{"v":1,"candidate_selector":"label:variant=old","created_at":"2026-01-01T00:00:00Z","baseline_created_at":"2026-01-01T00:00:00Z"}`))
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
+	require.Equal(t, 0, code, errBuf.String())
+	assert.Contains(t, out.String(), "label:variant=old")
 }
 
 func TestTrendsMarksSplicedBaseline(t *testing.T) {
@@ -363,10 +413,28 @@ func TestDecodeRecordsRoundTrip(t *testing.T) {
 }
 
 func TestDecodeRecordsRejectsUnsupportedVersion(t *testing.T) {
-	body := json.RawMessage(`{"v":2,"candidate_selector":"label:x=y"}`)
+	body := json.RawMessage(`{"v":3,"candidate_selector":"label:x=y"}`)
 	_, err := decodeRecords([]model.RegressResult{{Baseline: "g", Seq: 4, Body: body}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "seq 4")
-	assert.Contains(t, err.Error(), "version 2")
+	assert.Contains(t, err.Error(), "version 3")
 	assert.Contains(t, err.Error(), "upgrade catacomb")
+}
+
+func TestDecodeRecordsAcceptsOlderVersion(t *testing.T) {
+	body := json.RawMessage(`{"v":1,"candidate_selector":"label:x=y"}`)
+	out, err := decodeRecords([]model.RegressResult{{Baseline: "g", Seq: 3, Body: body}})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, 1, out[0].rec.V)
+	assert.Empty(t, out[0].rec.Project)
+}
+
+func TestDecodeRecordsRejectsVersionBelowOne(t *testing.T) {
+	body := json.RawMessage(`{"candidate_selector":"label:x=y"}`)
+	_, err := decodeRecords([]model.RegressResult{{Baseline: "g", Seq: 9, Body: body}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "seq 9")
+	assert.Contains(t, err.Error(), "version 0")
+	assert.NotContains(t, err.Error(), "upgrade catacomb")
 }

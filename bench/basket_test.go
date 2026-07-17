@@ -678,6 +678,49 @@ variants:
 	assert.NotContains(t, err.Error(), "!!str")
 }
 
+func writeRuntimeBasket(t *testing.T, runtimeLine string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "b.yaml")
+	body := "basket: c\n" + runtimeLine + "reps: 1\ntasks:\n  - id: t\n    cmd: [\"agent\"]\nvariants:\n  - id: v\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
+}
+
+func TestLoadRuntimeCodex(t *testing.T) {
+	b, _, err := bench.Load(writeRuntimeBasket(t, "runtime: codex\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "codex", b.Runtime)
+	assert.Equal(t, "codex", b.EffectiveRuntime())
+}
+
+func TestLoadRuntimeExplicitClaudeCode(t *testing.T) {
+	b, _, err := bench.LoadOffline(writeRuntimeBasket(t, "runtime: claude-code\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", b.Runtime)
+	assert.Equal(t, "claude-code", b.EffectiveRuntime())
+}
+
+func TestLoadRuntimeDefaultsToClaudeCode(t *testing.T) {
+	b, _, err := bench.Load(writeRuntimeBasket(t, ""))
+	require.NoError(t, err)
+	assert.Empty(t, b.Runtime)
+	assert.Equal(t, "claude-code", b.EffectiveRuntime())
+}
+
+func TestLoadRuntimeUnknownRejected(t *testing.T) {
+	_, _, err := bench.Load(writeRuntimeBasket(t, "runtime: gemini\n"))
+	require.ErrorIs(t, err, bench.ErrBasketRuntime)
+	assert.Contains(t, err.Error(), "gemini")
+}
+
+func TestLoadRuntimeChangesHash(t *testing.T) {
+	_, h1, err := bench.Load(writeRuntimeBasket(t, ""))
+	require.NoError(t, err)
+	_, h2, err := bench.Load(writeRuntimeBasket(t, "runtime: codex\n"))
+	require.NoError(t, err)
+	assert.NotEqual(t, h1, h2)
+}
+
 func TestLoadValidationErrorNotDoubled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "b.yaml")

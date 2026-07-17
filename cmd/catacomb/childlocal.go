@@ -8,11 +8,26 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"github.com/realkarych/catacomb/ingest/drift"
 )
 
 var execCommandContext = exec.CommandContext
 
 const maxObserverBuffer = 1 << 20
+
+type peeker interface {
+	onLine(line []byte)
+	session() string
+	cost() *float64
+}
+
+func newPeeker(rt string) peeker {
+	if rt == drift.RuntimeCodex {
+		return &codexPeek{}
+	}
+	return &streamPeek{}
+}
 
 type streamPeek struct {
 	sessionID string
@@ -35,6 +50,31 @@ func (p *streamPeek) onLine(line []byte) {
 		p.costUSD = e.TotalCostUSD
 	}
 }
+
+func (p *streamPeek) session() string { return p.sessionID }
+
+func (p *streamPeek) cost() *float64 { return p.costUSD }
+
+type codexPeek struct {
+	threadID string
+}
+
+func (p *codexPeek) onLine(line []byte) {
+	var e struct {
+		Type     string `json:"type"`
+		ThreadID string `json:"thread_id"`
+	}
+	if json.Unmarshal(line, &e) != nil {
+		return
+	}
+	if p.threadID == "" && e.Type == "thread.started" && e.ThreadID != "" {
+		p.threadID = e.ThreadID
+	}
+}
+
+func (p *codexPeek) session() string { return p.threadID }
+
+func (p *codexPeek) cost() *float64 { return nil }
 
 type lineObserver struct {
 	buf     []byte

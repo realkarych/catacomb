@@ -25,7 +25,8 @@
 #   vs pooled baseline+degraded scores; kappa gate both directions incl. the exact
 #   ties-pass boundary) -> 16 SP5 judge panel (three-judge fixture -> byte-exact
 #   mean/vote streams; the vote stream gates through regress --scores).
-#   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/rm -> 19 mcp stdio.
+#   Then CLI-wiring coverage: 17 replay determinism -> 18 baseline list/bundle
+#   round-trip/rm -> 19 mcp stdio.
 #   Then 20 SP-W workspace isolation + patch-free offline verify (its own basket +
 #   runs dirs, nothing earlier touched). Last, 21 import path: a step-2 session
 #   ingested into a fresh evidence dir and driven through offline verify + regress
@@ -55,7 +56,11 @@
 # Steps 17-19 are CLI wiring coverage (renumbered after the SP4/SP5 additions): step
 # 17 replays the fixture transcript (fixed session id, so stdout must be byte-identical
 # across two runs), step 18 does a baseline list/rm roundtrip on the step-11 trends
-# store (so it must run after 11 and after the SP4/SP5 steps that read baselines), and
+# store (so it must run after 11 and after the SP4/SP5 steps that read baselines) and,
+# between list and rm, proves the baseline bundle hand-off: export twice
+# (byte-identical), import into a fresh db + runs dir, identical regress verdicts
+# there with no runs-dir warning, and a flipped-byte bundle refused with nothing
+# landed; and
 # step 19 drives the `catacomb mcp` stdio JSON-RPC server with a fixed 3-request script.
 # Step 20 is SP-W and mutates none of the earlier evidence: a separate 3-rep workspace
 # basket benched into fresh runs dirs proves per-cell dir isolation (the agent exits 7
@@ -642,11 +647,12 @@ record "$rc" "INSTRUCTIONS.md present in the bundle"
 
 echo "== 14. SP4 round-trip: external audit.clean score surfaces as a finding =="
 # Closes the pack loop through the built binary: a hand-written scores line — the
-# exact dialect INSTRUCTIONS.md asks an external auditor to return — lands on a packed
+# exact dialect INSTRUCTIONS.md asks an external auditor to return, tool provenance
+# included (the gate ignores it; catacomb-judge consumes it) — lands on a packed
 # run (baseline r1, index 0 of the step-13 sample) via --scores, and --annotation
 # gates it. Only one baseline run carries the key, so the deterministic outcome is the
 # annotation-absent-in-candidate insufficient finding; exit stays 0 (nothing gates).
-printf '{"key":"audit.clean","value":1,"run_id":"%s"}\n' "$base1" >"$work/audit-clean.scores"
+printf '{"key":"audit.clean","value":1,"run_id":"%s","tool":"hermetic-auditor"}\n' "$base1" >"$work/audit-clean.scores"
 run_json 0 "$work/regress-audit.json" \
 	"A-vs-A with the returned audit.clean score (exit 0)" -- \
 	catacomb regress --runs-dir "$runs" \
@@ -872,11 +878,19 @@ rc=0
 cmp -s "$work/replay1.out" "$work/replay2.out" || rc=1
 record "$rc" "replay stdout byte-identical across two runs"
 
-echo "== 18. baseline list/rm roundtrip on the step-11 trends store =="
+echo "== 18. baseline list -> bundle round-trip -> rm on the step-11 trends store =="
 # Reuses $work/trends.db, where step 11 pinned the hermetic-trends baseline over the
-# 5 baseline-variant cells. list --json must show exactly that baseline, rm must
-# delete it, and the follow-up list must come back empty (the store encodes an empty
-# baselines table as JSON null, so the assertion accepts null or []).
+# 5 baseline-variant cells. list --json must show exactly that baseline; then the
+# bundle round-trip proves the CI hand-off story before rm tears the source down:
+# export twice (byte-identical bundles), import into a FRESH db + runs dir (the
+# ephemeral-runner simulation; import rewrites the baseline's RunsDir to the fresh
+# dir, so regress there must NOT warn about a recorded runs-dir), copy the candidate
+# cells over (the runner benches its own candidate; here the recorded cells stand in),
+# and re-run the step-11 comparisons against the imported baseline — same verdicts,
+# same finding set. A one-byte flip in a bundle copy must be refused (exit 2) with
+# nothing landed. Finally rm deletes the source baseline, the follow-up list must
+# come back empty (the store encodes an empty baselines table as JSON null, so the
+# assertion accepts null or []), and the imported copy must survive the source rm.
 run_json 0 "$work/baseline-list.json" "baseline list --json (trends store)" -- \
 	catacomb baseline list --db "$work/trends.db" --json
 rc=0
@@ -901,6 +915,86 @@ if errs:
 print("baseline list: hermetic-trends, 5 runs, selector basket=hermetic-sql,variant=baseline")
 PY
 record "$rc" "baseline list shows hermetic-trends (5 runs, recorded selector)"
+bundle_dir="$work/bundle"
+fresh="$work/fresh"
+mkdir -p "$bundle_dir" "$fresh"
+run_expect 0 "baseline export hermetic-trends (bundle 1)" -- \
+	catacomb baseline export hermetic-trends --db "$work/trends.db" \
+	--runs-dir "$runs" --out "$bundle_dir/golden.tar.gz"
+run_expect 0 "baseline export hermetic-trends (bundle 2)" -- \
+	catacomb baseline export hermetic-trends --db "$work/trends.db" \
+	--runs-dir "$runs" --out "$bundle_dir/golden2.tar.gz"
+rc=0
+cmp -s "$bundle_dir/golden.tar.gz" "$bundle_dir/golden2.tar.gz" || rc=1
+record "$rc" "two exports of the same baseline are byte-identical"
+run_json 0 "$work/bundle-import.out" "baseline import into a fresh db + runs dir" -- \
+	catacomb baseline import "$bundle_dir/golden.tar.gz" \
+	--db "$fresh/trends.db" --runs-dir "$fresh/runs"
+rc=0
+grep -q "imported baseline hermetic-trends: 5 runs" "$work/bundle-import.out" || rc=1
+record "$rc" "import lands the 5 pinned baseline cells"
+cp -R "$runs"/bench-hermetic-sql-sql-degraded-r? \
+	"$runs"/bench-hermetic-sql-sql-baseline2-r? "$fresh/runs/"
+run_json 1 "$work/fresh-degraded.json" \
+	"imported baseline still gates degraded (exit 1)" -- \
+	catacomb regress --runs-dir "$fresh/runs" --db "$fresh/trends.db" \
+	--baseline name:hermetic-trends \
+	--candidate label:basket=hermetic-sql,variant=degraded --json
+run_json 0 "$work/fresh-AvA.json" \
+	"imported baseline keeps A-vs-A clean (exit 0)" -- \
+	catacomb regress --runs-dir "$fresh/runs" --db "$fresh/trends.db" \
+	--baseline name:hermetic-trends \
+	--candidate label:basket=hermetic-sql,variant=baseline2 \
+	--metric-rel-delta 0.5 --json
+rc=0
+! grep -q "recorded runs-dir" "$work/fresh-degraded.json.stderr" "$work/fresh-AvA.json.stderr" || rc=1
+record "$rc" "no runs-dir mismatch warning (import rewrote RunsDir to the fresh dir)"
+rc=0
+python3 - "$work/record-degraded.json" "$work/fresh-degraded.json" \
+	"$work/record-AvA.json" "$work/fresh-AvA.json" <<'PY' || rc=$?
+import json, sys
+
+def proj(p):
+    r = json.load(open(p))
+    return (r.get("overall_verdict"), r.get("regressions"),
+            sorted((f.get("scope"), f.get("metric"), f.get("verdict"))
+                   for f in r.get("findings", [])))
+
+errs = []
+for what, src_p, fresh_p in (("degraded", sys.argv[1], sys.argv[2]),
+                             ("A-vs-A", sys.argv[3], sys.argv[4])):
+    src, fresh = proj(src_p), proj(fresh_p)
+    if src != fresh:
+        errs.append(f"{what}: source {src} != fresh {fresh}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print("verdict parity: fresh-import reports match the step-11 source reports")
+PY
+record "$rc" "fresh-import verdicts + findings match the source-store reports"
+cp "$bundle_dir/golden.tar.gz" "$bundle_dir/tampered.tar.gz"
+python3 - "$bundle_dir/tampered.tar.gz" <<'PY'
+import sys
+
+with open(sys.argv[1], "r+b") as f:
+    f.seek(0, 2)
+    mid = f.tell() // 2
+    f.seek(mid)
+    b = f.read(1)[0]
+    f.seek(mid)
+    f.write(bytes([b ^ 0xFF]))
+PY
+run_expect 2 "tampered bundle refused (one flipped byte, exit 2)" -- \
+	catacomb baseline import "$bundle_dir/tampered.tar.gz" \
+	--db "$fresh/tamper.db" --runs-dir "$fresh/tamper-runs"
+rc=0
+if [ -e "$fresh/tamper.db" ]; then
+	tamper_rows="$(sqlite3 "$fresh/tamper.db" 'SELECT count(*) FROM baselines;' 2>/dev/null || echo 0)"
+	[ "$tamper_rows" = "0" ] || rc=1
+fi
+[ -z "$(find "$fresh/tamper-runs" -mindepth 1 2>/dev/null)" ] || rc=1
+record "$rc" "tampered import lands no baseline row and no runs"
 run_expect 0 "baseline rm hermetic-trends" -- \
 	catacomb baseline rm hermetic-trends --db "$work/trends.db"
 run_json 0 "$work/baseline-list2.json" "baseline list --json after rm" -- \
@@ -908,6 +1002,11 @@ run_json 0 "$work/baseline-list2.json" "baseline list --json after rm" -- \
 rc=0
 python3 -c 'import json,sys; sys.exit(0 if not json.load(open(sys.argv[1])) else 1)' "$work/baseline-list2.json" || rc=$?
 record "$rc" "baseline list no longer shows hermetic-trends after rm"
+run_json 0 "$work/baseline-list-fresh.json" "baseline list --json (fresh store, after source rm)" -- \
+	catacomb baseline list --db "$fresh/trends.db" --json
+rc=0
+python3 -c 'import json,sys; bs=json.load(open(sys.argv[1])) or []; sys.exit(0 if [b.get("name") for b in bs]==["hermetic-trends"] else 1)' "$work/baseline-list-fresh.json" || rc=$?
+record "$rc" "imported baseline survives the source-store rm"
 
 echo "== 19. mcp stdio session: initialize, tools/list, tools/call mark =="
 # The server answers one newline-delimited JSON-RPC response per request and exits 0

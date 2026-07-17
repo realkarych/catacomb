@@ -35,6 +35,7 @@ type regressFlags struct {
 	asJSON      bool
 	strict      bool
 	record      bool
+	project     string
 	annotations []string
 	scores      string
 	thresholds  regress.Thresholds
@@ -68,6 +69,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().BoolVar(&f.asJSON, "json", false, "output JSON")
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "fail on insufficient data (exit 1); also refuse baselines with missing or mismatched version stamps (exit 2)")
 	cmd.Flags().BoolVar(&f.record, "record", false, "append this result to the baseline's longitudinal history (requires --baseline name:<x>)")
+	cmd.Flags().StringVar(&f.project, "project", "", "project identity stamped into the recorded history row for fleet-level joins (requires --record)")
 	cmd.Flags().StringArrayVar(&f.annotations, "annotation", nil, "numeric annotation to gate on: owner.key[:higher-better|lower-better] (repeatable)")
 	cmd.Flags().StringVar(&f.scores, "scores", "", "JSONL file of external scores applied as node annotations before comparison; one {\"step_key\",\"key\",\"value\"[,\"run_id\"]} object per line")
 	cmd.Flags().IntVar(&f.thresholds.MinSupport, "min-support", def.MinSupport, "minimum runs per group for a trusted comparison")
@@ -80,6 +82,7 @@ func bindRegressFlags(cmd *cobra.Command, f *regressFlags) {
 	cmd.Flags().Float64Var(&f.thresholds.AnnotationRateDelta, "annotation-rate-delta", def.AnnotationRateDelta, "run-level binary annotation rate delta threshold (e.g. verifier.pass)")
 	cmd.Flags().Float64Var(&f.thresholds.PairedAlpha, "paired-alpha", def.PairedAlpha, "paired sign-test significance level for per-task median deltas (0,1)")
 	cmd.Flags().IntVar(&f.thresholds.PairedMinTasks, "paired-min-tasks", def.PairedMinTasks, "minimum matched tasks before the paired sign test gates")
+	cmd.Flags().StringVar(&f.thresholds.PairedTest, "paired-test", def.PairedTest, "paired per-task test: sign (exact sign test) or wilcoxon (exact signed-rank; weighs delta magnitudes via ranks)")
 	cmd.Flags().Float64Var(&f.thresholds.AuditIQRFactor, "audit-iqr-factor", def.AuditIQRFactor, "per-cell audit IQR band factor for outlier flags")
 	cmd.Flags().Float64Var(&f.thresholds.AuditRelDelta, "audit-rel-delta", def.AuditRelDelta, "per-cell audit relative delta floor for outlier flags")
 	cmd.Flags().BoolVar(&f.thresholds.FailOnNotable, "fail-on-notable", def.FailOnNotable, "count notable findings toward the gate (exit 1)")
@@ -101,11 +104,17 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 	if f.thresholds.PairedMinTasks < 1 {
 		return operational(fmt.Errorf("regress: --paired-min-tasks must be > 0, got %d", f.thresholds.PairedMinTasks))
 	}
+	if f.thresholds.PairedTest != regress.PairedTestSign && f.thresholds.PairedTest != regress.PairedTestWilcoxon {
+		return operational(fmt.Errorf("regress --paired-test: unknown test %q (want sign or wilcoxon)", f.thresholds.PairedTest))
+	}
 	if f.thresholds.AuditIQRFactor <= 0 {
 		return operational(fmt.Errorf("regress: --audit-iqr-factor must be > 0, got %g", f.thresholds.AuditIQRFactor))
 	}
 	if f.thresholds.AuditRelDelta <= 0 {
 		return operational(fmt.Errorf("regress: --audit-rel-delta must be > 0, got %g", f.thresholds.AuditRelDelta))
+	}
+	if f.project != "" && !f.record {
+		return operational(fmt.Errorf("regress: --project requires --record, got --project %q without it", f.project))
 	}
 	if f.runsDir == "" {
 		return operational(errRegressNoRunsDir)
@@ -119,14 +128,14 @@ func runRegress(out, errOut io.Writer, open storeOpener, mkPricer func() reduce.
 		return operational(err)
 	}
 	pricer := mkPricer()
-	baseGroup, baseline, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.baseline)
+	baseGroup, baseline, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.baseline, loadForAggregation)
 	if err != nil {
 		return err
 	}
 	if serr := checkBaselineStamps(errOut, baseline, f.strict); serr != nil {
 		return serr
 	}
-	candGroup, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.candidate)
+	candGroup, _, err := resolveSelectorRunsDir(errOut, f.dbPath, f.runsDir, pricer, f.candidate, loadForAggregation)
 	if err != nil {
 		return err
 	}
@@ -217,6 +226,7 @@ func recordBaselineName(f regressFlags) (string, error) {
 func appendRecord(s store.Store, baselineName string, baselineCreatedAt time.Time, f regressFlags, specs []regress.AnnotationSpec, rep regress.Report) error {
 	body, err := marshalRecord(regress.Record{
 		V:                 regress.RecordVersion,
+		Project:           f.project,
 		CandidateSelector: f.candidate,
 		Thresholds:        f.thresholds,
 		Annotations:       specs,

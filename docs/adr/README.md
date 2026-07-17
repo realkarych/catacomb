@@ -34,6 +34,9 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0028](0028-per-cell-workspace-isolation.md) | Per-cell workspace isolation (fresh workdir, patch handover, teardown) | Accepted |
 | [0029](0029-basket-relative-path-resolution.md) | Basket-relative path resolution for dir and ./ argv | Accepted |
 | [0030](0030-interactive-session-import.md) | Interactive session import (`catacomb import`, evidence-only second entry point) | Accepted |
+| [0031](0031-multi-runtime-ingestion-codex.md) | Multi-runtime transcript ingestion, Codex CLI first | Accepted |
+| [0032](0032-baseline-bundle.md) | Baseline bundles: one verifiable artifact for CI restore | Accepted |
+| [0035](0035-wilcoxon-signed-rank.md) | Opt-in exact Wilcoxon signed-rank on the paired axis | Accepted |
 
 Design spec: [`../internal/specs/2026-06-20-catacomb-design.md`](../internal/specs/2026-06-20-catacomb-design.md).
 
