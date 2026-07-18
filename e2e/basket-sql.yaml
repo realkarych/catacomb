@@ -11,10 +11,14 @@
 #
 # `workspace` — every cell runs in a fresh per-cell temp dir; the setup cmd copies the
 # wrapper and the verify hook in from E2E_DIR (the e2e/ source dir, exported by the
-# driver, e2e/run.sh), so `./sql-live.sh` and the verify cmd `./verify_sql.py` resolve
-# inside the cell's own workspace and out/result.csv cannot survive from one cell to
-# the next (under the old shared `dir: .` contract it lingered in e2e/ from rep to
-# rep). Two env vars are supplied by the driver, not this file, because both point into
+# driver, e2e/run.sh), so `./sql-live.sh` resolves inside the cell's own workspace
+# (anti-gaming) and out/result.csv cannot survive from one cell to the next (under the
+# old shared `dir: .` contract it lingered in e2e/ from rep to rep). The verifier,
+# however, is invoked from $E2E_DIR: standalone offline `catacomb verify` runs the
+# verify cmd with CWD = the evidence dir, not the ephemeral workspace, so a
+# workspace-relative `./verify_sql.py` would never resolve there. verify_sql.py is
+# still copied into the workspace by the setup cmd (harmless; keeps the i2 assertion
+# green). Two env vars are supplied by the driver, not this file, because both point into
 # the driver's per-run work dir: SQL_DB (the seeded database the agent reads) and
 # GOLDEN (the expected table the verifier reads). Keeping the golden in the driver's
 # work dir rather than the cell's workspace is the documented anti-gaming layout — the
@@ -29,7 +33,7 @@ tasks:
     timeout: 120s
     artifacts: ["out/result.csv"]
     verify:
-      cmd: ["python3", "./verify_sql.py"]
+      cmd: ["sh", "-c", "python3 \"$E2E_DIR\"/verify_sql.py"]
       timeout: 30s
     # The SQL + CSV-header instruction is multi-step, and claude-haiku-4-5 (CLI 2.1.x)
     # follows multi-step tool instructions only ~60-80% (the presence checkpoint task
