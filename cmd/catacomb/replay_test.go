@@ -77,6 +77,42 @@ func TestReplayScrubsSecrets(t *testing.T) {
 	assert.NotContains(t, string(blob), "kesha_dev_password")
 }
 
+func TestRunReplayExportIsDeterministicallySorted(t *testing.T) {
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "two.jsonl")
+	lines := `{"type":"user","uuid":"u1","sessionId":"sB","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"hi"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"sB","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"msg_b","model":"m","content":[{"type":"tool_use","id":"tb","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","uuid":"u2","sessionId":"sA","timestamp":"2026-06-20T10:00:02Z","message":{"role":"user","content":"hi"}}
+{"type":"assistant","uuid":"a2","parentUuid":"u2","sessionId":"sA","timestamp":"2026-06-20T10:00:03Z","message":{"role":"assistant","id":"msg_a","model":"m","content":[{"type":"tool_use","id":"ta","name":"Bash","input":{"command":"ls"}}]}}
+`
+	require.NoError(t, os.WriteFile(transcript, []byte(lines), 0o600))
+	exportPath := filepath.Join(dir, "g.jsonl")
+
+	_, err := runReplay(replayArgs{input: transcript, exportPath: exportPath})
+	require.NoError(t, err)
+
+	blob, err := os.ReadFile(exportPath)
+	require.NoError(t, err)
+
+	var nodeIDs, edgeIDs, runIDs []string
+	for _, l := range decodeSnapshotLines(t, string(blob)) {
+		id, _ := l["id"].(string)
+		switch l["kind"] {
+		case "node":
+			nodeIDs = append(nodeIDs, id)
+		case "edge":
+			edgeIDs = append(edgeIDs, id)
+		case "run":
+			runIDs = append(runIDs, id)
+		}
+	}
+	require.Greater(t, len(nodeIDs), 1)
+	require.Greater(t, len(edgeIDs), 1)
+	assert.Equal(t, []string{"sA", "sB"}, runIDs)
+	assert.IsIncreasing(t, nodeIDs)
+	assert.IsIncreasing(t, edgeIDs)
+}
+
 func TestReplayCommandWiring(t *testing.T) {
 	root := newRootCmd()
 	root.SetArgs([]string{"replay", "testdata/session.jsonl"})

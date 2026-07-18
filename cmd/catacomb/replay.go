@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
@@ -66,7 +67,8 @@ func export(path string, g *reduce.Graph) error {
 	}
 	defer func() { _ = out.Close() }()
 
-	nodes, edges := g.Snapshot()
+	nodes, edges := sortedGraphSnapshot(g)
 	runs := g.RunsSnapshot()
+	sort.Slice(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
 	return xjsonl.Snapshot(out, nodes, edges, runs)
 }
