@@ -210,6 +210,19 @@ func TestCopyArtifactIOErrors(t *testing.T) {
 	}
 }
 
+func TestCaptureArtifactsOverlappingGlobsDedup(t *testing.T) {
+	work := t.TempDir()
+	writeFile(t, filepath.Join(work, "results", "final.csv"), []byte{0, 1, 2, 3})
+	dir := filepath.Join(t.TempDir(), "run")
+
+	globs := []string{filepath.Join("results", "*.csv"), filepath.Join("results", "final.csv")}
+	metas, note, err := captureArtifacts(dir, work, globs, bigCap, int64(4))
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	assert.Empty(t, note)
+	assert.Equal(t, filepath.Join("results", "final.csv"), metas[0].Rel)
+}
+
 func TestCaptureArtifactsMultipleFiles(t *testing.T) {
 	work := t.TempDir()
 	writeFile(t, filepath.Join(work, "a.txt"), []byte("aaa\n"))
