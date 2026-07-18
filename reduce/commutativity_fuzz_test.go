@@ -2,6 +2,7 @@ package reduce
 
 import (
 	"math/rand/v2"
+	"strconv"
 	"testing"
 	"time"
 
@@ -25,6 +26,39 @@ func commutativityCorpus() []model.Observation {
 		toolObs("e1", "s1", "t4", "Read", string(model.StatusOK), 11),
 		unknownKindObs("e1", "s1", "checkpoint", 12),
 		unknownKindObs("e1", "s1", "diagnostic", 13),
+		corpusMarkerUse("e1", "s1", "tm", t0.Add(2*time.Second), 14),
+		corpusMarkerResult("e1", "s1", "tm", t0.Add(3*time.Second), 15),
+	}
+}
+
+func corpusMarkerUse(exec, runID, toolUseID string, ts time.Time, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID:       "o" + strconv.FormatUint(seq, 10),
+		RunID:       runID,
+		ExecutionID: exec,
+		Source:      model.SourceHook,
+		Kind:        "assistant_tool_use",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUseID},
+		Attrs:       map[string]any{"name": "mcp__catacomb__mark"},
+		Payload:     &model.Payload{Input: []byte(`{"name":"phase1","boundary":"start"}`)},
+		EventTime:   ts,
+		ObservedAt:  ts,
+		Seq:         seq,
+	}
+}
+
+func corpusMarkerResult(exec, runID, toolUseID string, ts time.Time, seq uint64) model.Observation {
+	return model.Observation{
+		ObsID:       "o" + strconv.FormatUint(seq, 10),
+		RunID:       runID,
+		ExecutionID: exec,
+		Source:      model.SourceJSONL,
+		Kind:        "tool_result",
+		Correlation: model.Correlation{SessionID: runID, ToolUseID: toolUseID},
+		Attrs:       map[string]any{"status": string(model.StatusOK)},
+		EventTime:   ts,
+		ObservedAt:  ts,
+		Seq:         seq,
 	}
 }
 
