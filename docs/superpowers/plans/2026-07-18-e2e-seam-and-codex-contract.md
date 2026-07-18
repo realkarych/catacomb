@@ -44,6 +44,7 @@ F2 and F1 both touch `e2e/hermetic/prod/` and `e2e/hermetic/run.sh`, so they are
 ## Task 1: Codex fixture contract test + version sync (F2)
 
 **Files:**
+
 - Create: `ingest/codex/contract_test.go`
 - Modify: `ingest/codex/testdata/basic.jsonl`, `child.jsonl`, `tools.jsonl`, `mcp.jsonl`
 - Modify: `e2e/hermetic/prod/fixtures/55-codex-main.jsonl.tmpl`, `55-codex-degraded.jsonl.tmpl`, `55-codex-child.jsonl.tmpl`, `56-codex-main.jsonl.tmpl`, `56-codex-degraded.jsonl.tmpl`, `57-codex-mcp-baseline.jsonl.tmpl`, `57-codex-mcp-degraded.jsonl.tmpl`, `58-codex-main.jsonl.tmpl`, `58-codex-degraded.jsonl.tmpl`, `58-codex-degraded-noplant.jsonl.tmpl`, `58-codex-child.jsonl.tmpl`
@@ -51,6 +52,7 @@ F2 and F1 both touch `e2e/hermetic/prod/` and `e2e/hermetic/run.sh`, so they are
 - Modify: `ingest/codex/codex_test.go`
 
 **Interfaces:**
+
 - Consumes: `github.com/realkarych/catacomb/ingest/drift.TestedCodexVersion` (const `"0.144.5"`).
 - Produces: nothing importable (test-only).
 
@@ -199,11 +201,13 @@ git commit -m "test(codex): pin fake-fixture record shape + cli_version to 0.144
 ## Task 2: deepeval seam — Level A hermetic author-mode scenario (F1)
 
 **Files:**
+
 - Create: `integrations/deepeval/tests/testdata/seam_session.jsonl`
 - Create: `e2e/hermetic/prod/scenarios/85-deepeval-seam.sh`
 - Modify: `e2e/hermetic/run.sh` (line 190 — the `PYTHONPATH` export)
 
 **Interfaces:**
+
 - Consumes: `catacomb export <transcript> --to jsonl --out <file>`; `python3 -m catacomb_deepeval <file>` (author mode: no `--expected`, zero deps, prints `{"input","actual_output","tools_called":[{"name",...}],"expected_tools":[]}`).
 - Produces: the shared fixture `integrations/deepeval/tests/testdata/seam_session.jsonl`, reused by Task 3.
 
@@ -285,11 +289,13 @@ git commit -m "test(e2e): hermetic author-mode export->deepeval seam (scenario 8
 ## Task 3: deepeval seam — Level B full-metric CI job (F1)
 
 **Files:**
+
 - Create: `integrations/deepeval/tests/testdata/seam_expected_pass.json`
 - Create: `integrations/deepeval/tests/testdata/seam_expected_fail.json`
 - Modify: `.github/workflows/python-deepeval.yml`
 
 **Interfaces:**
+
 - Consumes: the Task 2 fixture; `catacomb-deepeval <export> --expected <file>` (exit 0 = PASS, exit 1 = FAIL) running the real `ToolCorrectnessMetric` (name-match, keyless).
 - Produces: a CI job `seam`.
 
@@ -381,6 +387,7 @@ git commit -m "test(ci): full export->deepeval metric seam job (ToolCorrectness 
 ## Self-review
 
 **Spec coverage:**
+
 - F1 Level A (per-PR hermetic author-mode) → Task 2. ✓
 - F1 Level B (full metric in `python-deepeval.yml`) → Task 3. ✓
 - F1 shared fixture + expected files → Task 2 (fixture) + Task 3 (expected). ✓
