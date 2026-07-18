@@ -50,6 +50,7 @@ func captureArtifacts(dir, workdir string, globs []string, perFileCap, totalCap 
 		total int64
 		root  *os.Root
 	)
+	seen := make(map[string]struct{})
 	defer func() {
 		if root != nil {
 			_ = root.Close()
@@ -81,6 +82,10 @@ capture:
 				notes = append(notes, fmt.Sprintf("skipped %q: escapes workdir", g))
 				continue
 			}
+			if _, dup := seen[realSrc]; dup {
+				continue
+			}
+			seen[realSrc] = struct{}{}
 			info, serr := os.Lstat(src)
 			if serr != nil || !info.Mode().IsRegular() {
 				notes = append(notes, fmt.Sprintf("skipped %q: not a regular file", rel))
