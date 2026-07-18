@@ -1,0 +1,33 @@
+# Live Codex MCP basket: a real stdio MCP server (e2e/mcp-e2ekit/server.py)
+# handshakes with `codex exec` via per-invocation `-c mcp_servers.*` config
+# (codex-mcp-live.sh) — the same server + wire protocol the Claude live-MCP
+# basket (basket-mcp.yaml) already exercises, now proven against the codex
+# runtime's MCP support. 1 task x 3 variants x 3 reps = 9 live cells. The
+# workspace stages the server + verify_emit.py from E2E_DIR (exported by
+# run.sh, same anchor basket-mcp.yaml uses); baseline/baseline2 instruct the
+# model to call mcp__e2ekit__record (mcp__e2ekit__record node present; the
+# server writes out/result.csv, verifier.pass ~3/3); degraded uses no tool (no
+# MCP node — seeded STEP regression, mirroring basket-mcp.yaml's degraded arm).
+# E2EKIT_OUT points the server at the cell's own out/result.csv so the
+# artifact is verifiable. reps 3 (not basket-mcp.yaml's 5): a newer runtime
+# leg, same calibration-data posture as the other live codex baskets.
+basket: e2e-codex-mcp
+runtime: codex
+reps: 3
+tasks:
+  - id: mcp
+    cmd: ["./codex-mcp-live.sh"]
+    workspace:
+      cmd: ["sh", "-c", "cp -R \"$E2E_DIR\"/mcp-e2ekit . && cp \"$E2E_DIR\"/codex-mcp-live.sh \"$E2E_DIR\"/verify_emit.py ."]
+    timeout: 180s
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_emit.py"]
+      timeout: 30s
+variants:
+  - id: baseline
+    env: { MCP_INSTRUCTION: "Call the mcp__e2ekit__record tool with value set to exactly CATACOMB-SKILL-OK. Use only that tool, then reply done." }
+  - id: degraded
+    env: { MCP_INSTRUCTION: "Do not use any tools. Just reply done." }
+  - id: baseline2
+    env: { MCP_INSTRUCTION: "Call the mcp__e2ekit__record tool with value set to exactly CATACOMB-SKILL-OK. Use only that tool, then reply done." }
