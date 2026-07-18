@@ -92,6 +92,38 @@ repo="$(cd "$e2e_dir/.." && pwd)"
 	fatal "verifier SDK not found at integrations/verifier/src (PYTHONPATH source for the SQL verify hook)"
 export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 
+# --- model-policy guardrail (Task 10) -----------------------------------------
+# The mixed Haiku+Sonnet policy is DELIBERATE, not incidental: the five
+# delegation-sensitive baskets — presence (the haiku checkpoint-mark task), sql,
+# subagent, skill, and mcp — pin CHILD_MODEL: claude-sonnet-5 because
+# claude-haiku-4-5 no longer reliably follows their mark / multi-step / delegation
+# instructions (each basket's own comment records the measured baseline failure).
+# A silent blanket-Haiku swap would re-introduce those failures and quietly defang
+# the gate, so this $0 static check over the REAL basket files fails loudly and
+# early if any sensitive basket loses its Sonnet pin. The cheap baskets —
+# continuous, the presence `echo` step task, and failmode — stay on the default
+# Haiku, and are asserted to NOT pin Sonnet. Runs on every invocation, before any
+# spend; no fixtures, no auth, no network.
+sonnet_pin='CHILD_MODEL: claude-sonnet-5'
+for b in basket-presence.yaml basket-sql.yaml basket-subagent.yaml basket-skill.yaml basket-mcp.yaml; do
+	grep -q "$sonnet_pin" "$e2e_dir/$b" ||
+		fatal "model-policy guardrail: $b lost its Sonnet pin ('$sonnet_pin') — a delegation-sensitive basket must NOT default to Haiku (a blanket-Haiku swap would re-introduce the measured mark/sql/delegation failures)"
+done
+# presence pins Sonnet on the haiku checkpoint-mark task ONLY — exactly one pin
+# line — so the `echo` step task is left on the default Haiku.
+presence_pins="$(grep -c "$sonnet_pin" "$e2e_dir/basket-presence.yaml" || true)"
+[ "$presence_pins" -eq 1 ] ||
+	fatal "model-policy guardrail: basket-presence.yaml has $presence_pins Sonnet pins (want exactly 1 — the haiku checkpoint-mark task; the echo step task must stay on Haiku)"
+# The cheap baskets must NOT pin Sonnet (they default to Haiku).
+for b in basket-continuous.yaml basket-failmode.yaml; do
+	if grep -q "$sonnet_pin" "$e2e_dir/$b"; then
+		fatal "model-policy guardrail: $b pins Sonnet ('$sonnet_pin') but must stay on the default Haiku (the mixed-model policy keeps Sonnet off the cheap baskets)"
+	fi
+done
+# failmode.sh's live cells default to Haiku when CHILD_MODEL is unset (its basket sets none).
+grep -q 'CHILD_MODEL:-claude-haiku-4-5' "$e2e_dir/failmode.sh" ||
+	fatal "model-policy guardrail: failmode.sh no longer defaults to claude-haiku-4-5 (expected \${CHILD_MODEL:-claude-haiku-4-5})"
+
 # --- workspace ----------------------------------------------------------------
 work="$(mktemp -d)"
 runs1="$work/runs-presence"
