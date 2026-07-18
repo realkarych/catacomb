@@ -134,6 +134,9 @@ runs5="$work/runs-skill"
 runs6="$work/runs-mcp"
 runs7="$work/runs-codex"
 runs8="$work/runs-failmode"
+runs9="$work/runs-codex-mcp"
+runs10="$work/runs-codex-subagent"
+runs11="$work/runs-codex-skill"
 manifest1="$work/manifest-presence.jsonl"
 manifest2="$work/manifest-continuous.jsonl"
 manifest3="$work/manifest-sql.jsonl"
@@ -142,8 +145,12 @@ manifest5="$work/manifest-skill.jsonl"
 manifest6="$work/manifest-mcp.jsonl"
 manifest7="$work/manifest-codex.jsonl"
 manifest8="$work/manifest-failmode.jsonl"
+manifest9="$work/manifest-codex-mcp.jsonl"
+manifest10="$work/manifest-codex-subagent.jsonl"
+manifest11="$work/manifest-codex-skill.jsonl"
 db="$work/e2e.db"
-mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8"
+mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8" \
+	"$runs9" "$runs10" "$runs11"
 
 # The SQL basket's agent reads a seeded database and its verifier reads the golden; both
 # live here in the work dir, OUTSIDE every cell's per-cell workspace — the documented
@@ -174,6 +181,9 @@ copy_artifacts() {
 	cp -f "$manifest6" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest7" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest8" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest9" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest10" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest11" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
@@ -2191,6 +2201,52 @@ echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells)
 codex_ping_probe() {
 	timeout 60 codex exec -m gpt-5.4-mini -c model_reasoning_effort=low --skip-git-repo-check --json "ping" </dev/null >/dev/null 2>&1
 }
+# Shared DETERMINISTIC structural manifest assertion for the three extra codex
+# baskets (v2/v3/v4): every cell marked, exit 0, session id + evidence dir on
+# disk, agent_runtime=codex stamped on meta, no cost_usd (codex reports none).
+# These are model-INDEPENDENT bench-completion facts — OK to hard-assert — the
+# same contract the basket-codex leg above already asserts inline. Model-
+# dependent outcomes (tool call / delegation / skill read) stay logged, per basket.
+codex_manifest_assert() { # <manifest> <expected-cell-count>
+	python3 - "$1" "$2" <<'PY'
+import json, os, sys
+
+manifest, want = sys.argv[1], int(sys.argv[2])
+entries = [json.loads(l) for l in open(manifest) if l.strip()]
+errs = []
+if len(entries) != want:
+    errs.append(f"expected {want} cells, got {len(entries)}")
+for e in entries:
+    rid = e.get("run_id", "?")
+    if not e.get("marked"):
+        errs.append(f"{rid}: not marked (thread.started peek -> rollout resolution failed) note={e.get('note','')}")
+    if e.get("exit_code") != 0:
+        errs.append(f"{rid}: exit_code={e.get('exit_code')} note={e.get('note','')}")
+    if not e.get("session_id"):
+        errs.append(f"{rid}: empty session_id note={e.get('note','')}")
+    if "cost_usd" in e:
+        errs.append(f"{rid}: cost_usd present (codex reports no dollar cost; want the key absent)")
+    ev = e.get("evidence_dir", "")
+    if not ev or not os.path.isdir(ev):
+        errs.append(f"{rid}: evidence_dir missing on disk: {ev!r}")
+        continue
+    try:
+        meta = json.load(open(os.path.join(ev, "meta.json")))
+    except (OSError, ValueError) as ex:
+        errs.append(f"{rid}: meta.json unreadable: {ex}")
+        continue
+    rt = (meta.get("env") or {}).get("agent_runtime")
+    if rt != "codex":
+        errs.append(f"{rid}: meta agent_runtime={rt!r} (want 'codex')")
+if errs:
+    print("codex manifest assertion failures:", file=sys.stderr)
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"codex manifest OK: {len(entries)} cells marked, all exit 0, session ids + "
+      f"evidence present, agent_runtime=codex stamped, no cost_usd")
+PY
+}
 codex_leg_ran=0
 codex_probe_paid=0
 if ! command -v codex >/dev/null 2>&1; then
@@ -2273,6 +2329,197 @@ PY
 		failrec "codex regress --json failed (exit $rc, want 0 or 1 with parseable json: $artifacts/regress-codex.json)"
 	fi
 	echo "  [info] codex main-vs-candidate: overall_verdict=$(verdict_of "$artifacts/regress-codex.json") (informational — n=3 on a new runtime, calibration data only)"
+
+	echo "== v2. codex MCP basket (basket-codex-mcp.yaml — 9 live codex exec cells over a real stdio MCP server) =="
+	# The same e2ekit stdio MCP server + wire protocol the Claude live-MCP basket
+	# (step s) drives, now over the codex runtime's per-invocation `-c mcp_servers.*`
+	# config (codex-mcp-live.sh). 1 task x 3 variants x 3 reps = 9 cells; rollouts
+	# land under the DEFAULT --sessions-dir (~/.codex/sessions), the same
+	# default-sessions contract basket-codex.yaml above relies on. VERDICT POSTURE:
+	# only the DETERMINISTIC structural facts are hard-asserted (manifest 9/9 marked +
+	# agent_runtime=codex + no cost_usd). The baseline-vs-degraded GATE (dropped
+	# mcp__e2ekit__record node + verifier.pass drop) SHOULD fire, but whether
+	# gpt-5.4-mini actually CALLS the tool at low reasoning effort is model-
+	# discretionary — so the gate is soft (flag accepted + --json parses + LOGGED) and
+	# the baseline tool-call rate is a logged observation. The deterministic hard gate
+	# proof lives in hermetic 57-codex-mcp.sh, whose invocation shapes this mirrors.
+	run_expect 0 "bench codex MCP basket (9 live codex exec cells)" -- \
+		catacomb bench basket-codex-mcp.yaml --runs-dir "$runs9" --manifest "$manifest9"
+	rc=0
+	codex_manifest_assert "$manifest9" 9 || rc=$?
+	record "$rc" "codex MCP manifest: 9/9 marked, exit 0, session+evidence present, agent_runtime=codex, no cost_usd"
+
+	echo "-- codex MCP regress (baseline vs degraded): flag accepted + --json parses; dropped-node/verifier gate LOGGED (tool-call is model-discretionary) --"
+	rc=0
+	catacomb regress --runs-dir "$runs9" \
+		--baseline label:basket=e2e-codex-mcp,variant=baseline \
+		--candidate label:basket=e2e-codex-mcp,variant=degraded --json \
+		>"$artifacts/regress-codex-mcp.json" 2>"$artifacts/regress-codex-mcp.json.stderr" || rc=$?
+	if [ "$rc" -le 1 ]; then
+		pass "codex MCP regress (baseline vs degraded): flag accepted (exit $rc; 0 or 1 both acceptable)"
+	else
+		failrec "codex MCP regress errored (exit $rc, want 0 or 1; report: $artifacts/regress-codex-mcp.json.stderr)"
+		sed 's/^/        stderr: /' "$artifacts/regress-codex-mcp.json.stderr" >&2 || true
+	fi
+	rc=0
+	python3 - "$artifacts/regress-codex-mcp.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+f = rep.get("findings", [])
+step = any(
+    x.get("scope") == "step" and x.get("metric") == "presence"
+    and "e2ekit" in str(x.get("name", "")).lower()
+    for x in f
+)
+ann = any(x.get("metric") == "ann:verifier.pass" and x.get("verdict") == "regression" for x in f)
+print(f"codex MCP baseline-vs-degraded: overall_verdict={rep.get('overall_verdict')!r} "
+      f"regressions={rep.get('regressions')} dropped-mcp-node={step} verifier.pass-drop={ann} "
+      f"(logged, not gated -- deterministic gate proof in hermetic 57-codex-mcp.sh)")
+PY
+	record "$rc" "codex MCP regress --json parses; whether the dropped mcp__e2ekit__record node + verifier.pass drop gated is LOGGED (needs the live model to call the tool; hard proof in hermetic 57-codex-mcp.sh)"
+	mcp_base_calls=0
+	for d in "$runs9"/bench-e2e-codex-mcp-mcp-baseline-r*; do
+		[ -d "$d" ] || continue
+		snap="$work/codex-mcp-node-$(basename "$d").jsonl"
+		catacomb export "$d" --out "$snap" >/dev/null 2>&1 || continue
+		if grep -q '"type":"mcp_call"' "$snap"; then mcp_base_calls=$((mcp_base_calls + 1)); fi
+	done
+	echo "  [info] codex MCP baseline tool-call rate: $mcp_base_calls/3 baseline reps carry an mcp_call node (>=2/3 desired; logged, not gated — deterministic dropped-node gate proven in hermetic 57-codex-mcp.sh)"
+
+	echo "-- codex MCP A-vs-A (baseline vs baseline2, widened continuous band): flag accepted + --json parses; verdict LOGGED --"
+	rc=0
+	catacomb regress --runs-dir "$runs9" \
+		--baseline label:basket=e2e-codex-mcp,variant=baseline \
+		--candidate label:basket=e2e-codex-mcp,variant=baseline2 \
+		--metric-rel-delta "$ava_metric_band" --json \
+		>"$artifacts/regress-codex-mcp-AvA.json" 2>/dev/null || rc=$?
+	if [ "$rc" -le 1 ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$artifacts/regress-codex-mcp-AvA.json" 2>/dev/null; then
+		pass "codex MCP A-vs-A renders + --json parses (exit $rc; 0 or 1 both acceptable)"
+	else
+		failrec "codex MCP A-vs-A render/parse failed (exit $rc; json: $artifacts/regress-codex-mcp-AvA.json)"
+	fi
+	echo "  [info] codex MCP A-vs-A: overall_verdict=$(verdict_of "$artifacts/regress-codex-mcp-AvA.json") (logged — non-vacuity hard-proven in hermetic 57-codex-mcp.sh)"
+
+	echo "== v3. codex subagent basket (basket-codex-subagent.yaml — 15 live codex exec cells; delegation is prompt-discretionary) =="
+	# Does asking a real `codex exec` to delegate produce a child rollout catacomb
+	# reduces into a "type":"subagent" node? 1 task x 3 variants x 5 reps = 15 cells
+	# (reps 5 for base-rate headroom on a discretionary signal). VERDICT POSTURE
+	# (LOGGED/soft, per basket-codex-subagent.yaml's header): delegation in Codex is
+	# prompt-discretionary, not flag-forced — a live run may spawn 0/5 on baseline if
+	# gpt-5.4-mini under-follows at low reasoning effort. So only the manifest
+	# structural facts are hard-asserted (15/15 marked + agent_runtime=codex + no
+	# cost_usd); the baseline-vs-degraded verdict is LOGGED: regress must RENDER +
+	# --json must parse (exit 0 or 1 both fine), and only regress ITSELF erroring
+	# (exit 2) fails the leg. spawn_agent firing is NEVER hard-asserted. The
+	# documented lever if the live spawn rate proves too low is bumping reasoning
+	# effort to `medium` (codex-subagent-live.sh). The deterministic reduce/regress
+	# gate is hard-asserted hermetically over fixed fixtures in 58-codex-subagent.sh.
+	run_expect 0 "bench codex subagent basket (15 live codex exec cells)" -- \
+		catacomb bench basket-codex-subagent.yaml --runs-dir "$runs10" --manifest "$manifest10"
+	rc=0
+	codex_manifest_assert "$manifest10" 15 || rc=$?
+	record "$rc" "codex subagent manifest: 15/15 marked, exit 0, session+evidence present, agent_runtime=codex, no cost_usd"
+
+	echo "-- codex subagent regress (baseline vs degraded): must render + --json must parse; verdict LOGGED (only exit 2 fails the leg) --"
+	rc=0
+	catacomb regress --runs-dir "$runs10" \
+		--baseline label:basket=e2e-codex-subagent,variant=baseline \
+		--candidate label:basket=e2e-codex-subagent,variant=degraded --json \
+		>"$artifacts/regress-codex-subagent.json" 2>"$artifacts/regress-codex-subagent.json.stderr" || rc=$?
+	if [ "$rc" -le 1 ]; then
+		pass "codex subagent regress (baseline vs degraded): renders (exit $rc; 0 or 1 both acceptable)"
+	else
+		failrec "codex subagent regress errored (exit $rc, want 0 or 1; report: $artifacts/regress-codex-subagent.json.stderr)"
+		sed 's/^/        stderr: /' "$artifacts/regress-codex-subagent.json.stderr" >&2 || true
+	fi
+	rc=0
+	python3 - "$artifacts/regress-codex-subagent.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+f = rep.get("findings", [])
+sub = any(
+    x.get("scope") == "step" and x.get("metric") == "presence" and x.get("name") is None
+    for x in f
+)
+print(f"codex subagent baseline-vs-degraded: overall_verdict={rep.get('overall_verdict')!r} "
+      f"regressions={rep.get('regressions')} subagent-stepkey-presence-finding={sub} "
+      f"(logged, not gated -- delegation is prompt-discretionary; hard gate in hermetic 58-codex-subagent.sh)")
+PY
+	record "$rc" "codex subagent regress --json parses; baseline-vs-degraded verdict is LOGGED (delegation is prompt-discretionary; hard gate in hermetic 58-codex-subagent.sh)"
+	sub_spawns=0
+	for d in "$runs10"/bench-e2e-codex-subagent-delegate-baseline-r*; do
+		[ -d "$d" ] || continue
+		snap="$work/codex-subagent-node-$(basename "$d").jsonl"
+		catacomb export "$d" --out "$snap" >/dev/null 2>&1 || continue
+		if grep -q '"type":"subagent"' "$snap"; then sub_spawns=$((sub_spawns + 1)); fi
+	done
+	echo "  [info] codex subagent spawn rate: $sub_spawns/5 baseline reps produced a subagent node (prompt-discretionary; logged, NEVER gated — lever: bump reasoning effort to medium in codex-subagent-live.sh)"
+
+	echo "== v4. codex skill artifact-substitute basket (basket-codex-skill.yaml — 9 live codex exec cells; NO skill-invocation event) =="
+	# Codex has no dedicated skill-invocation event — a SKILL.md is read via an
+	# ordinary file-read/exec_command, indistinguishable in the rollout from any other
+	# file read, so reduce/skill.go's isSkill() (which only matches the Claude
+	# "Skill"/"SlashCommand" tool names) can NEVER synthesize a "type":"skill" node for
+	# a codex rollout. 1 task x 3 variants x 3 reps = 9 cells. VERDICT POSTURE: the
+	# manifest structural facts are hard-asserted (9/9 marked + agent_runtime=codex +
+	# no cost_usd) AND the negative-space claim — NO skill node in any codex skill
+	# graph — is hard-asserted (deterministic, model-independent; mirrors hermetic
+	# 59-codex-skill.sh). The baseline-vs-degraded regress is SOFT: this basket's
+	# degraded arm writes the SAME token DIRECTLY (verify stays green on BOTH by
+	# design), so the live regress is NOT expected to gate on verifier.pass — the
+	# artifact-gate mechanic (degraded with NO artifact -> gate) is proven ONLY
+	# hermetically in 59-codex-skill.sh. The SKILL.md-read soft grep is LOGGED, never
+	# gated — it is the only signal that distinguishes baseline from degraded live,
+	# and Codex offers no structural handle on it.
+	run_expect 0 "bench codex skill basket (9 live codex exec cells)" -- \
+		catacomb bench basket-codex-skill.yaml --runs-dir "$runs11" --manifest "$manifest11"
+	rc=0
+	codex_manifest_assert "$manifest11" 9 || rc=$?
+	record "$rc" "codex skill manifest: 9/9 marked, exit 0, session+evidence present, agent_runtime=codex, no cost_usd"
+
+	echo "-- codex skill regress (baseline vs degraded): flag accepted + --json parses; verdict LOGGED (degraded also writes the artifact by design -> no live gate expected) --"
+	rc=0
+	catacomb regress --runs-dir "$runs11" \
+		--baseline label:basket=e2e-codex-skill,variant=baseline \
+		--candidate label:basket=e2e-codex-skill,variant=degraded --json \
+		>"$artifacts/regress-codex-skill.json" 2>"$artifacts/regress-codex-skill.json.stderr" || rc=$?
+	if [ "$rc" -le 1 ]; then
+		pass "codex skill regress (baseline vs degraded): flag accepted (exit $rc; 0 or 1 both acceptable)"
+	else
+		failrec "codex skill regress errored (exit $rc, want 0 or 1; report: $artifacts/regress-codex-skill.json.stderr)"
+		sed 's/^/        stderr: /' "$artifacts/regress-codex-skill.json.stderr" >&2 || true
+	fi
+	rc=0
+	python3 - "$artifacts/regress-codex-skill.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+ann = any(
+    x.get("metric") == "ann:verifier.pass" and x.get("verdict") == "regression"
+    for x in rep.get("findings", [])
+)
+print(f"codex skill baseline-vs-degraded: overall_verdict={rep.get('overall_verdict')!r} "
+      f"regressions={rep.get('regressions')} verifier.pass-drop={ann} "
+      f"(logged, not gated -- degraded writes the artifact too by design; artifact-gate proof in hermetic 59-codex-skill.sh)")
+PY
+	record "$rc" "codex skill regress --json parses; verifier.pass verdict is LOGGED (degraded writes the artifact too by design; artifact-gate proof in hermetic 59-codex-skill.sh)"
+	skill_md_reads=0
+	for d in "$runs11"/bench-e2e-codex-skill-skill-baseline-r*; do
+		[ -f "$d/session.jsonl" ] || continue
+		if grep -q '\.agents/skills/e2e-emit/SKILL\.md' "$d/session.jsonl"; then skill_md_reads=$((skill_md_reads + 1)); fi
+	done
+	echo "  [info] codex skill soft-grep: $skill_md_reads/3 baseline reps reference .agents/skills/e2e-emit/SKILL.md in the rollout (logged, NEVER gated — Codex has no skill-invocation event)"
+	rc=0
+	skill_node_found=""
+	for d in "$runs11"/bench-e2e-codex-skill-skill-*-r*; do
+		[ -d "$d" ] || continue
+		snap="$work/codex-skill-node-$(basename "$d").jsonl"
+		catacomb export "$d" --out "$snap" >/dev/null 2>&1 || continue
+		if grep -q '"type":"skill"' "$snap"; then rc=1; skill_node_found="$skill_node_found $(basename "$d")"; fi
+	done
+	record "$rc" "no \"type\":\"skill\" node in any codex skill-basket graph (Codex has no skill-invocation event; artifact + soft grep are the documented substitute)${skill_node_found:+ -- found in:$skill_node_found}"
 fi
 
 echo "== x. bench e2e-failmode basket — --fail-fast (\$0) + --error-delta (near-\$0 Haiku) =="
