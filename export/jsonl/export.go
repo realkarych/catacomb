@@ -30,7 +30,7 @@ func Snapshot(w io.Writer, nodes []*model.Node, edges []*model.Edge, runs []mode
 		if err := enc.Encode(struct {
 			Kind string `json:"kind"`
 			model.Run
-		}{"run", r}); err != nil {
+		}{"run", redact.Run(r)}); err != nil {
 			return err
 		}
 	}

@@ -120,6 +120,27 @@ func TestSnapshotRedactsPayloadOutput(t *testing.T) {
 	assert.Contains(t, buf.String(), "‹redacted:", "redaction marker must appear in jsonl output")
 }
 
+func TestSnapshotRedactsRunLabelsAndCwd(t *testing.T) {
+	labelSecret := "sk-live_ABC123DEF456GHI789JKL"
+	cwdSecret := "AKIAIOSFODNN7EXAMPLE"
+	runs := []model.Run{
+		{
+			ID:     "s1",
+			Status: model.StatusOK,
+			Labels: map[string]string{"token": labelSecret},
+			Repro:  &model.ReproMeta{Cwd: "/deploy/" + cwdSecret + "/build"},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, Snapshot(&buf, nil, nil, runs))
+
+	assert.NotContains(t, buf.String(), labelSecret, "raw label secret must not appear in jsonl output")
+	assert.NotContains(t, buf.String(), cwdSecret, "raw cwd secret must not appear in jsonl output")
+	assert.Contains(t, buf.String(), "‹redacted:", "redaction marker must appear in jsonl output")
+	assert.Equal(t, labelSecret, runs[0].Labels["token"], "original run labels must be unchanged after Snapshot")
+	assert.Equal(t, "/deploy/"+cwdSecret+"/build", runs[0].Repro.Cwd, "original run cwd must be unchanged after Snapshot")
+}
+
 func TestSnapshotAllKindsOrdered(t *testing.T) {
 	nodes := []*model.Node{{ID: "n1", RunID: "s1", Type: model.NodeSession}}
 	edges := []*model.Edge{{ID: "e1", RunID: "s1", Type: model.EdgeParentChild, Src: "n1", Dst: "n2"}}
