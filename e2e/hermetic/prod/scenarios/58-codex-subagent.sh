@@ -142,7 +142,7 @@ for r in range(1, 6):
     sid = "019f6b85-58c0-7be3-81dc-ae856386020%d" % r
     checks = {
         "agent_runtime=codex": env.get("agent_runtime") == "codex",
-        "agent_version from cli_version": env.get("agent_version") == "0.144.4",
+        "agent_version from cli_version": env.get("agent_version") == "0.144.5",
         "task label": m.get("task") == "delegate",
         "variant label": m.get("variant") == "baseline",
         "session id is the thread id": m.get("session_id") == sid,
@@ -152,7 +152,7 @@ if bad:
     print("meta.json checks failed: %s" % ", ".join(bad), file=sys.stderr)
     sys.exit(1)
 PY
-record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.4 and carries cell labels, across all 5 baseline reps"
+record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.5 and carries cell labels, across all 5 baseline reps"
 
 echo "== prod.58 codex-subagent: export -> subagent node present (baseline) / absent (degraded) =="
 basesnap="$w/export-baseline.snap.jsonl"
