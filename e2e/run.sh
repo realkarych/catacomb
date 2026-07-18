@@ -1444,6 +1444,77 @@ done
 [ "$ws_count" -eq 15 ] || rc=1
 record "$rc" "sql --keep-workspaces: $ws_count/15 per-cell workspace dirs kept, each holding sql-live.sh + verify_sql.py"
 
+echo "== i3. pack label:basket=e2e-sql,variant=baseline --sample 3: audit bundle over real evidence =="
+# Structural assertions ONLY (LIVE-FLAKINESS): run-dir/manifest-file shape and that a
+# sampled session.jsonl carries real Claude Code stream-json, never model-content
+# specifics. pack's --runs-dir is required for every selector kind (cmd/catacomb/pack.go
+# runPack); the label: selector here scans $runs3 directly (no --db needed).
+pack_sql_out="$work/pack-sql"
+run_json 0 "$work/pack-sql.out" \
+	"pack label:basket=e2e-sql,variant=baseline --sample 3" -- \
+	catacomb pack label:basket=e2e-sql,variant=baseline --runs-dir "$runs3" --out "$pack_sql_out" --sample 3
+rc=0
+grep -Fqx "packed 3 of 5 runs into $pack_sql_out" "$work/pack-sql.out" || rc=1
+record "$rc" "pack-sql stdout reports packed 3 of 5 sql-baseline runs"
+rc=0
+[ -f "$pack_sql_out/pack.json" ] || rc=1
+[ -s "$pack_sql_out/INSTRUCTIONS.md" ] || rc=1
+pack_sql_dircount=$(find "$pack_sql_out" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+[ "$pack_sql_dircount" -eq 3 ] || rc=1
+record "$rc" "pack-sql bundle: pack.json + INSTRUCTIONS.md present, $pack_sql_dircount/3 sampled run dirs"
+rc=0
+python3 -c 'import json,sys
+m=json.load(open(sys.argv[1]))
+sys.exit(0 if m.get("selector")=="label:basket=e2e-sql,variant=baseline" and len(m.get("runs") or [])==3 else 1)' \
+	"$pack_sql_out/pack.json" || rc=1
+record "$rc" "pack-sql pack.json records the label: selector + 3 sampled run ids"
+rc=0
+pack_sql_session=""
+for d in "$pack_sql_out"/*/; do
+	[ -f "${d}session.jsonl" ] || continue
+	pack_sql_session="${d}session.jsonl"
+	break
+done
+[ -n "$pack_sql_session" ] || rc=1
+[ -n "$pack_sql_session" ] && grep -q '"type":"assistant"' "$pack_sql_session" || rc=1
+record "$rc" "a sampled pack-sql session.jsonl (${pack_sql_session:-none}) carries real stream-json (\"type\":\"assistant\")"
+
+echo "== i4. pack name:e2e-presence-main --db \"\$db\": the --db-backed selector (pinned at step e) produces the same bundle shape =="
+# Reuses the e2e-presence-main baseline pinned at step e (name:, not label:) — the ONLY
+# other pack-selector kind (cmd/catacomb/runsdir.go resolveSelectorRunsDir). ORDERING:
+# this MUST run before step y's "baseline rm e2e-presence-main" (the LAST consumer of
+# $db) tears the baseline down; placing it here, in the step-i region, is far enough
+# upstream that the ordering constraint can never be violated by a later edit.
+pack_presence_out="$work/pack-presence"
+run_json 0 "$work/pack-presence.out" \
+	"pack name:e2e-presence-main --db \$db --sample 3" -- \
+	catacomb pack name:e2e-presence-main --db "$db" --runs-dir "$runs1" --out "$pack_presence_out" --sample 3
+rc=0
+grep -Fqx "packed 3 of 5 runs into $pack_presence_out" "$work/pack-presence.out" || rc=1
+record "$rc" "pack-presence (--db selector) stdout reports packed 3 of 5 pinned runs"
+rc=0
+[ -f "$pack_presence_out/pack.json" ] || rc=1
+[ -s "$pack_presence_out/INSTRUCTIONS.md" ] || rc=1
+pack_presence_dircount=$(find "$pack_presence_out" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+[ "$pack_presence_dircount" -eq 3 ] || rc=1
+record "$rc" "pack-presence bundle: pack.json + INSTRUCTIONS.md present, $pack_presence_dircount/3 sampled run dirs"
+rc=0
+python3 -c 'import json,sys
+m=json.load(open(sys.argv[1]))
+sys.exit(0 if m.get("selector")=="name:e2e-presence-main" and len(m.get("runs") or [])==3 else 1)' \
+	"$pack_presence_out/pack.json" || rc=1
+record "$rc" "pack-presence pack.json records the name: selector (proves the --db baseline lookup resolved) + 3 sampled run ids"
+rc=0
+pack_presence_session=""
+for d in "$pack_presence_out"/*/; do
+	[ -f "${d}session.jsonl" ] || continue
+	pack_presence_session="${d}session.jsonl"
+	break
+done
+[ -n "$pack_presence_session" ] || rc=1
+[ -n "$pack_presence_session" ] && grep -q '"type":"assistant"' "$pack_presence_session" || rc=1
+record "$rc" "a sampled pack-presence session.jsonl (${pack_presence_session:-none}) carries real stream-json (\"type\":\"assistant\")"
+
 echo "== j. sql manifest + verifier.pass calibration assertions =="
 # Verified in the manifest means the verify hook RAN cleanly, not that it passed — the
 # pass/fail lands in each cell's scores.jsonl (verifier.pass 1/0). Baseline/baseline2
@@ -1726,6 +1797,93 @@ echo "== o2. subagent A-vs-A delegation specificity: baseline2 also delegates in
 rc=0
 [ "$subagent_base2_hits" -ge 3 ] || rc=1
 record "$rc" "subagent A-vs-A: baseline2 also delegates in a majority ($subagent_base2_hits/$subagent_base2_total >=3), no spurious separation"
+
+echo "== o3. import --session-id: a subagent baseline cell imports and reduces to the SAME subagent-node presence bench captured =="
+# Structural/determinism assertion ONLY (LIVE-FLAKINESS): the imported evidence must
+# reduce to the SAME subagent-node presence the bench evidence for the SAME session
+# already carries -- same underlying transcripts in, same reduction out, a claim about
+# the pipeline's determinism, not a live-content guess. count_subagent_nodes (step n)
+# counts across a whole variant; this checks ONE specific session (bench-side vs
+# re-imported) so the comparison is apples-to-apples on identical transcripts.
+subagent_node_in_dir() { # <evidence-dir> -> exit 0 iff session.jsonl + subagents/agent-*.jsonl reduce a "type":"subagent" node
+	local d="$1" comb snap sf
+	comb="$work/subagent-presence-$(basename "$d").jsonl"
+	: >"$comb"
+	[ -f "$d/session.jsonl" ] && cat "$d/session.jsonl" >>"$comb"
+	for sf in "$d"/subagents/agent-*.jsonl; do
+		[ -f "$sf" ] && cat "$sf" >>"$comb"
+	done
+	snap="$work/subagent-presence-$(basename "$d").snap.jsonl"
+	catacomb replay "$comb" --export-jsonl "$snap" >/dev/null 2>&1 || return 1
+	grep -q '"type":"subagent"' "$snap"
+}
+
+rc=0
+read -r subagent_import_sid subagent_import_benchdir <<<"$(python3 - "$manifest4" <<'PY'
+import json, sys
+
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    e = json.loads(line)
+    if e.get("task") == "subagent" and e.get("variant") == "baseline":
+        print(e.get("session_id", ""), e.get("evidence_dir", ""))
+        break
+PY
+)"
+{ [ -n "$subagent_import_sid" ] && [ -n "$subagent_import_benchdir" ]; } || rc=1
+record "$rc" "picked a subagent baseline cell session_id + bench evidence_dir from manifest4"
+
+subagent_import_runs="$work/import-runs-subagent"
+subagent_bench_present=""
+if [ -n "$subagent_import_sid" ] && [ -n "$subagent_import_benchdir" ]; then
+	run_json 0 "$work/import-subagent-sid.out" \
+		"import basket-subagent.yaml --task subagent --variant baseline --session-id (manifest4 cell)" -- \
+		catacomb import basket-subagent.yaml --task subagent --variant baseline \
+		--session-id "$subagent_import_sid" --projects-dir "$HOME/.claude/projects" \
+		--runs-dir "$subagent_import_runs" --rep 1
+	import_sid_dir="$subagent_import_runs/import-e2e-subagent-subagent-baseline-r1"
+	rc=0
+	[ -f "$import_sid_dir/session.jsonl" ] || rc=1
+	record "$rc" "import --session-id wrote a bench-cell evidence dir (session.jsonl present)"
+
+	if subagent_node_in_dir "$subagent_import_benchdir"; then subagent_bench_present=1; else subagent_bench_present=0; fi
+	if subagent_node_in_dir "$import_sid_dir"; then subagent_import_sid_present=1; else subagent_import_sid_present=0; fi
+	rc=0
+	[ "$subagent_bench_present" -eq "$subagent_import_sid_present" ] || rc=1
+	record "$rc" "import --session-id reduces to the SAME subagent-node presence bench captured for this session (bench=$subagent_bench_present import=$subagent_import_sid_present)"
+else
+	failrec "import --session-id: no subagent baseline cell resolved from manifest4, skipping the session-id import"
+fi
+
+echo "== o4. import --transcript: repeat against the resolved .jsonl (direct-path branch + subagents/agent-*.jsonl glob) =="
+if [ -n "$subagent_import_sid" ] && [ -n "$subagent_bench_present" ]; then
+	subagent_import_main=$(find "$HOME/.claude/projects" -mindepth 2 -maxdepth 2 -type f \
+		-name "${subagent_import_sid}.jsonl" 2>/dev/null | head -n1)
+	rc=0
+	[ -n "$subagent_import_main" ] && [ -f "$subagent_import_main" ] || rc=1
+	record "$rc" "resolved the main transcript .jsonl for session $subagent_import_sid under \$HOME/.claude/projects"
+	if [ -n "$subagent_import_main" ]; then
+		run_json 0 "$work/import-subagent-transcript.out" \
+			"import basket-subagent.yaml --task subagent --variant baseline --transcript (resolved .jsonl)" -- \
+			catacomb import basket-subagent.yaml --task subagent --variant baseline \
+			--transcript "$subagent_import_main" --runs-dir "$subagent_import_runs" --rep 2
+		import_transcript_dir="$subagent_import_runs/import-e2e-subagent-subagent-baseline-r2"
+		rc=0
+		[ -f "$import_transcript_dir/session.jsonl" ] || rc=1
+		record "$rc" "import --transcript wrote a bench-cell evidence dir (session.jsonl present)"
+
+		if subagent_node_in_dir "$import_transcript_dir"; then subagent_import_transcript_present=1; else subagent_import_transcript_present=0; fi
+		rc=0
+		[ "$subagent_import_transcript_present" -eq "$subagent_bench_present" ] || rc=1
+		record "$rc" "import --transcript (direct-path + subagents/agent-*.jsonl glob) reduces to the SAME subagent-node presence bench captured (bench=$subagent_bench_present import_transcript=$subagent_import_transcript_present)"
+	else
+		failrec "import --transcript: cannot resolve the main .jsonl for session $subagent_import_sid under \$HOME/.claude/projects"
+	fi
+else
+	failrec "import --transcript: skipped (step o3 did not resolve a session to repeat against)"
+fi
 
 echo "== p. bench e2e-skill basket (15 live claude -p cells) — Skill delegation =="
 # baseline/baseline2 invoke the real project-scoped e2e-emit skill (the Skill tool ->
