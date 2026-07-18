@@ -2307,7 +2307,19 @@ print(f"codex manifest OK: {len(entries)} cells marked, all exit 0, session ids 
 PY
 	record "$rc" "codex manifest: 6/6 marked, exit 0, session+evidence present, every meta stamps agent_runtime=codex"
 
-	echo "-- codex regress (main vs candidate): must render + --json must parse; verdict logged, NOT asserted --"
+	# VERDICT POSTURE (strengthened-but-still-LOGGED — a deliberate, documented deviation
+	# from plan Task 15's literal "switch tokens_out logged->asserted", per the
+	# orchestrator's flake-safety decision): the main-vs-candidate tokens_out verdict is
+	# NOT hard-gated. There is no accumulated LIVE codex calibration data yet (codex cannot
+	# run in the dev session), and hard-asserting an uncalibrated n=3 stochastic tokens_out
+	# gate is exactly the live-flakiness pattern a prior Opus review rejected across the
+	# k3/q3/x3/f4/f5 siblings. So the STRUCTURAL facts stay hard-asserted (regress renders +
+	# --json parses) and the tokens_out verdict is LOGGED prominently below (candidate
+	# verbose vs main terse). The hard `run_json 1` / verdict=="regression" gate is DEFERRED
+	# until accumulated live calibration justifies it — matching this leg's own "gather
+	# calibration data first" posture. The deterministic tokens_out gate IS hard-asserted
+	# hermetically over fixed fixtures in 56-codex-bench.sh.
+	echo "-- codex regress (main vs candidate): render + --json parse hard-asserted; tokens_out verdict LOGGED, hard gate DEFERRED (see comment) --"
 	rc=0
 	catacomb regress --runs-dir "$runs7" \
 		--baseline label:basket=e2e-codex,variant=main \
@@ -2328,7 +2340,26 @@ PY
 	else
 		failrec "codex regress --json failed (exit $rc, want 0 or 1 with parseable json: $artifacts/regress-codex.json)"
 	fi
-	echo "  [info] codex main-vs-candidate: overall_verdict=$(verdict_of "$artifacts/regress-codex.json") (informational — n=3 on a new runtime, calibration data only)"
+	codex_tok_log="$(python3 - "$artifacts/regress-codex.json" <<'PY'
+import json, sys
+
+try:
+    rep = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    print(f"(regress json unreadable: {e})")
+    sys.exit(0)
+tok = next((f for f in rep.get("findings", [])
+            if f.get("scope") == "total" and f.get("metric") == "tokens_out"), None)
+if tok is None:
+    print(f"overall_verdict={rep.get('overall_verdict')!r}; no total tokens_out finding surfaced "
+          f"(n=3 may sit below min support)")
+else:
+    print(f"overall_verdict={rep.get('overall_verdict')!r} | tokens_out verdict={tok.get('verdict')!r} "
+          f"baseline(main)={tok.get('baseline')} candidate={tok.get('candidate')} delta={tok.get('delta')} "
+          f"| {tok.get('detail')!r}")
+PY
+)"
+	echo "  [info] codex main-vs-candidate tokens_out [LOGGED — candidate verbose vs main terse; hard gate DEFERRED pending live calibration]: $codex_tok_log"
 
 	echo "== v2. codex MCP basket (basket-codex-mcp.yaml — 9 live codex exec cells over a real stdio MCP server) =="
 	# The same e2ekit stdio MCP server + wire protocol the Claude live-MCP basket
@@ -2520,6 +2551,290 @@ PY
 		if grep -q '"type":"skill"' "$snap"; then rc=1; skill_node_found="$skill_node_found $(basename "$d")"; fi
 	done
 	record "$rc" "no \"type\":\"skill\" node in any codex skill-basket graph (Codex has no skill-invocation event; artifact + soft grep are the documented substitute)${skill_node_found:+ -- found in:$skill_node_found}"
+
+	echo "== v5. codex offline-transform coverage (Task 15 Part A) — the Phase-1 offline contracts re-run over the REAL codex evidence this leg just produced =="
+	# Every transform below is the SAME command + assertion idiom as its Claude Phase-1
+	# sibling (verify j2, regress k2/f2/l2, pack i3, calibrate f6/f7, import o3/o4,
+	# export/replay/diff/subgraph g2/g3), now over codex-reduced evidence — proving the
+	# offline pipeline is runtime-agnostic. Only model-INDEPENDENT structural facts are
+	# hard-asserted; any verdict a stochastic codex run could swing is LOGGED. The codex
+	# reduce path these consume is the one hermetic 55/56 prove end-to-end, and the offline
+	# transforms themselves are mirrored over fabricated codex evidence in 55/56 (Part A).
+
+	echo "-- v5a. codex standalone verify (offline re-verify over the MCP evidence) --"
+	# Mirrors j2: `verify` re-runs the verify hook offline over every recorded cell and
+	# prints one "verify <run_id>: ok" line per cell whose hook ran to completion —
+	# independent of pass/fail (a codex degraded cell with no artifact still re-verifies
+	# "ok", verify_emit.py catches the missing artifact and re-records verifier.pass=0). The
+	# relative ./verify_emit.py resolves against the basket dir (e2e/), so all 9 cells
+	# re-verify; --label variant=baseline narrows to the 3 baseline cells — a deterministic,
+	# model-independent count.
+	run_json 0 "$work/verify-codex-mcp-all.out" \
+		"codex verify MCP basket standalone (all 9 cells)" -- \
+		catacomb verify basket-codex-mcp.yaml --runs-dir "$runs9"
+	rc=0
+	cx_ok_all=$(grep -c ': ok$' "$work/verify-codex-mcp-all.out" || true)
+	[ "$cx_ok_all" -eq 9 ] || rc=1
+	record "$rc" "codex verify MCP standalone: $cx_ok_all/9 cells re-verified ok"
+	run_json 0 "$work/verify-codex-mcp-baseline.out" \
+		"codex verify MCP basket --label variant=baseline (3 cells)" -- \
+		catacomb verify basket-codex-mcp.yaml --runs-dir "$runs9" --label variant=baseline
+	rc=0
+	cx_ok_base=$(grep -c ': ok$' "$work/verify-codex-mcp-baseline.out" || true)
+	[ "$cx_ok_base" -eq 3 ] || rc=1
+	record "$rc" "codex verify MCP --label variant=baseline: $cx_ok_base/3 cells re-verified ok"
+
+	echo "-- v5b. codex regress --format markdown (baseline vs degraded): the markdown shape is verdict-independent --"
+	# Mirrors k2: RenderMarkdown always emits a bold "**Verdict: <emoji> <verdict>**" header
+	# and the findings-table header row regardless of verdict, so those two lines are
+	# hard-asserted; whether a codex regression ROW appears is model-dependent (unlike k2's
+	# SEEDED claude gate) and only LOGGED.
+	catacomb regress --runs-dir "$runs9" \
+		--baseline label:basket=e2e-codex-mcp,variant=baseline \
+		--candidate label:basket=e2e-codex-mcp,variant=degraded \
+		--format markdown >"$work/regress-codex-mcp.md" 2>/dev/null || true
+	rc=0
+	grep -q '^\*\*Verdict: ' "$work/regress-codex-mcp.md" || rc=1
+	grep -q '^| Verdict | Scope | Key | Name | Metric | Baseline | Candidate | Band | Detail |$' "$work/regress-codex-mcp.md" || rc=1
+	record "$rc" "codex regress --format markdown renders the bold Verdict header + findings-table header (verdict-independent shape)"
+	echo "  [info] codex MCP markdown verdict: $(grep -m1 '^\*\*Verdict: ' "$work/regress-codex-mcp.md" 2>/dev/null || echo '(none)') (logged, not gated)"
+
+	echo "-- v5c. codex regress --min-support 6 --strict (A-vs-A): 3 reps/group is below the floor -> insufficient (exit 1) --"
+	# Mirrors f2: --min-support 6 pushes both 3-rep codex groups below the trusted floor, so
+	# overall_verdict downgrades to insufficient and --strict maps that to exit 1
+	# (errRegressionDetected, NOT operational 2). Deterministic — driven by the fixed rep
+	# count, not model output.
+	run_json 1 "$work/regress-codex-mcp-minsupport.json" \
+		"codex regress --min-support 6 --strict: MCP A-vs-A insufficient (exit 1)" -- \
+		catacomb regress --runs-dir "$runs9" \
+		--baseline label:basket=e2e-codex-mcp,variant=baseline \
+		--candidate label:basket=e2e-codex-mcp,variant=baseline2 \
+		--min-support 6 --strict --json
+	rc=0
+	python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["overall_verdict"]=="insufficient" else 1)' \
+		"$work/regress-codex-mcp-minsupport.json" || rc=$?
+	record "$rc" "codex --min-support 6 flips MCP A-vs-A to overall_verdict=insufficient (exit 1 under --strict)"
+
+	echo "-- v5d. codex regress --z 3.0 (A-vs-A): flag accepted + --json parses; regression count LOGGED (non-flip smoke) --"
+	# Mirrors l2 but SOFT: l2 hard-asserts zero regressions on a claude sql A-vs-A; on a
+	# brand-new codex runtime the A-vs-A regression count is stochastic, so only render +
+	# parse are asserted and the count is logged (the deterministic A-vs-A non-vacuity proof
+	# is hermetic 55).
+	rc=0
+	catacomb regress --runs-dir "$runs9" \
+		--baseline label:basket=e2e-codex-mcp,variant=baseline \
+		--candidate label:basket=e2e-codex-mcp,variant=baseline2 \
+		--z 3.0 --json >"$work/regress-codex-mcp-z.json" 2>/dev/null || rc=$?
+	if [ "$rc" -le 1 ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$work/regress-codex-mcp-z.json" 2>/dev/null; then
+		pass "codex regress --z 3.0 renders + --json parses (exit $rc; 0 or 1 both acceptable)"
+	else
+		failrec "codex regress --z 3.0 render/parse failed (exit $rc; json: $work/regress-codex-mcp-z.json)"
+	fi
+	echo "  [info] codex MCP A-vs-A @ --z 3.0: regressions=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("regressions","?"))' "$work/regress-codex-mcp-z.json" 2>/dev/null || echo '?') verdict=$(verdict_of "$work/regress-codex-mcp-z.json") (logged, not gated)"
+
+	echo "-- v6a. codex pack (audit bundle over the MCP baseline evidence) --"
+	# Mirrors i3: structural bundle shape only — pack.json records the selector + sampled
+	# run ids, INSTRUCTIONS.md is written, N run dirs are sampled. The sampled session.jsonl
+	# is a raw codex rollout (not claude stream-json), so only its presence is asserted,
+	# never claude-specific content.
+	pack_codex_out="$work/pack-codex-mcp"
+	run_json 0 "$work/pack-codex.out" \
+		"codex pack label:basket=e2e-codex-mcp,variant=baseline --sample 2" -- \
+		catacomb pack label:basket=e2e-codex-mcp,variant=baseline --runs-dir "$runs9" --out "$pack_codex_out" --sample 2
+	rc=0
+	grep -Fqx "packed 2 of 3 runs into $pack_codex_out" "$work/pack-codex.out" || rc=1
+	record "$rc" "codex pack stdout reports packed 2 of 3 MCP-baseline runs"
+	rc=0
+	[ -f "$pack_codex_out/pack.json" ] || rc=1
+	[ -s "$pack_codex_out/INSTRUCTIONS.md" ] || rc=1
+	pack_codex_dircount=$(find "$pack_codex_out" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+	[ "$pack_codex_dircount" -eq 2 ] || rc=1
+	record "$rc" "codex pack bundle: pack.json + INSTRUCTIONS.md present, $pack_codex_dircount/2 sampled run dirs"
+	rc=0
+	python3 -c 'import json,sys
+m=json.load(open(sys.argv[1]))
+sys.exit(0 if m.get("selector")=="label:basket=e2e-codex-mcp,variant=baseline" and len(m.get("runs") or [])==2 else 1)' \
+		"$pack_codex_out/pack.json" || rc=1
+	record "$rc" "codex pack.json records the label: selector + 2 sampled run ids"
+
+	echo "-- v6b. codex calibrate self-check over the subagent baseline evidence (5 reps) --"
+	# Mirrors f6/f7: calibrate runs its own logic to completion and returns a rendered
+	# report (exit 0) or an operational error (exit 2) — never the regress gate path.
+	# Default min-support 3 needs 2*3=6 runs, so the 5-rep baseline group is deterministically
+	# sufficient=false (no split); --min-support 2 drops the floor to 2*2=4 <= 5, flipping
+	# sufficient=true with a populated A/A split — proof the threshold flag threads through.
+	# The split VERDICT is stochastic, so it is LOGGED, never asserted.
+	rc=0
+	catacomb calibrate --runs-dir "$runs10" \
+		--group label:basket=e2e-codex-subagent,variant=baseline --format json \
+		>"$work/calibrate-codex.json" 2>"$work/calibrate-codex.json.stderr" || rc=$?
+	if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+		pass "codex calibrate subagent baseline: exit $rc (0 or 1, never operational-error 2)"
+	else
+		failrec "codex calibrate subagent baseline: exit $rc (want 0 or 1, never operational-error 2)"
+		sed 's/^/        stderr: /' "$work/calibrate-codex.json.stderr" >&2 || true
+	fi
+	rc=0
+	python3 - "$work/calibrate-codex.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+errs = []
+for field in ("runs", "min_support", "sufficient", "thresholds"):
+    if field not in rep:
+        errs.append(f"missing top-level field {field!r}")
+if rep.get("runs") != 5:
+    errs.append(f"runs={rep.get('runs')!r} want 5 (basket-codex-subagent.yaml reps=5, variant=baseline)")
+if rep.get("sufficient") is not False:
+    errs.append(f"sufficient={rep.get('sufficient')!r} want False (5 runs < default need 2*min_support=6)")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"codex calibrate subagent baseline: runs={rep['runs']} sufficient={rep['sufficient']} "
+      f"(report renders/parses; below the default self-check floor at 5 reps)")
+PY
+	record "$rc" "codex calibrate subagent baseline --json parses; report renders (runs/min_support/sufficient/thresholds), sufficient=false below the default floor"
+	rc=0
+	catacomb calibrate --runs-dir "$runs10" \
+		--group label:basket=e2e-codex-subagent,variant=baseline --format json --min-support 2 \
+		>"$work/calibrate-codex-minsupport.json" 2>/dev/null || rc=$?
+	python3 - "$work/calibrate-codex-minsupport.json" <<'PY' || rc=$?
+import json, sys
+
+rep = json.load(open(sys.argv[1]))
+errs = []
+if rep.get("min_support") != 2:
+    errs.append(f"min_support={rep.get('min_support')!r} want 2 (--min-support flag passthrough)")
+if rep.get("sufficient") is not True:
+    errs.append(f"sufficient={rep.get('sufficient')!r} want True (5 runs >= need 2*min_support=4)")
+split = rep.get("split")
+known = {"ok", "regression", "notable", "insufficient"}
+if split is None:
+    errs.append("split missing on a sufficient report")
+elif split.get("verdict") not in known:
+    errs.append(f"split.verdict={split.get('verdict')!r} not one of {sorted(known)}")
+if errs:
+    for x in errs:
+        print("  -", x, file=sys.stderr)
+    sys.exit(1)
+print(f"codex calibrate --min-support 2: sufficient=True, split renders verdict={split.get('verdict')!r} "
+      f"(LOGGED only, stochastic model output)")
+PY
+	record "$rc" "codex calibrate --min-support 2: threshold passthrough flips sufficient=true; split.verdict renders as a known enum (logged, not gated)"
+
+	echo "-- v7. codex import over the DEFAULT sessions tree (~/.codex/sessions): --session-id AND --transcript branches --"
+	# Mirrors o3/o4 + hermetic 55: a session_id from the codex basket manifest re-imports by
+	# --session-id against the default ~/.codex/sessions tree (where live codex exec writes)
+	# AND by --transcript against the resolved rollout file; both must write a bench-cell
+	# evidence dir whose meta stamps agent_runtime=codex (the codex dispatch key). The
+	# basket's runtime:codex selects the codex reduce for both branches. Structural /
+	# determinism only — same transcript in, same codex meta out.
+	codex_import_sid="$(python3 - "$manifest7" <<'PY'
+import json, sys
+
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    e = json.loads(line)
+    if e.get("variant") == "main" and e.get("session_id"):
+        print(e["session_id"])
+        break
+PY
+)"
+	codex_import_runs="$work/import-runs-codex"
+	if [ -n "$codex_import_sid" ]; then
+		run_json 0 "$work/import-codex-sid.out" \
+			"codex import basket-codex.yaml --session-id (manifest7 main cell) --sessions-dir ~/.codex/sessions" -- \
+			catacomb import basket-codex.yaml --task answer --variant main \
+			--session-id "$codex_import_sid" --sessions-dir "$HOME/.codex/sessions" \
+			--runs-dir "$codex_import_runs" --rep 1
+		import_sid_dir="$codex_import_runs/import-e2e-codex-answer-main-r1"
+		rc=0
+		[ -f "$import_sid_dir/session.jsonl" ] || rc=1
+		python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(0 if (m.get("env") or {}).get("agent_runtime")=="codex" else 1)' \
+			"$import_sid_dir/meta.json" 2>/dev/null || rc=1
+		record "$rc" "codex import --session-id wrote a bench-cell evidence dir (session.jsonl) stamping agent_runtime=codex"
+		codex_import_roll=$(find "$HOME/.codex/sessions" -type f -name "rollout-*-$codex_import_sid.jsonl" 2>/dev/null | head -n1)
+		rc=0
+		{ [ -n "$codex_import_roll" ] && [ -f "$codex_import_roll" ]; } || rc=1
+		record "$rc" "resolved the codex rollout .jsonl for thread $codex_import_sid under ~/.codex/sessions"
+		if [ -n "$codex_import_roll" ]; then
+			run_json 0 "$work/import-codex-transcript.out" \
+				"codex import basket-codex.yaml --transcript (resolved rollout path)" -- \
+				catacomb import basket-codex.yaml --task answer --variant main \
+				--transcript "$codex_import_roll" --runs-dir "$codex_import_runs" --rep 2
+			import_transcript_dir="$codex_import_runs/import-e2e-codex-answer-main-r2"
+			rc=0
+			[ -f "$import_transcript_dir/session.jsonl" ] || rc=1
+			python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(0 if (m.get("env") or {}).get("agent_runtime")=="codex" else 1)' \
+				"$import_transcript_dir/meta.json" 2>/dev/null || rc=1
+			record "$rc" "codex import --transcript (direct rollout path) wrote a bench-cell evidence dir stamping agent_runtime=codex"
+		else
+			failrec "codex import --transcript: could not resolve the rollout .jsonl for thread $codex_import_sid"
+		fi
+	else
+		failrec "codex import: no main cell session_id resolved from manifest7"
+	fi
+
+	echo "-- v8. codex offline graph smokes: export reduces the evidence dir (codex-correct); replay/diff/subgraph plumb over codex transcripts --"
+	# export <evidence-dir> is the ONE offline reduce path that dispatches the codex parser
+	# (loadExportDir reads meta.json's agent_runtime); it is hard-asserted to yield a
+	# non-empty graph carrying a session node — the same codex reduce hermetic 55/56 prove.
+	# replay/subgraph/diff take a BARE transcript, whose reduce hardcodes the claude parser
+	# (offline.go loadGraphOffline -> RuntimeClaudeCode), so over a codex rollout they are
+	# RENDER/PARSE smokes only (the CLI accepts the codex evidence path + emits well-formed
+	# output / the deterministic selector guard fires); node COUNTS are logged, never
+	# asserted — the codex-correct reduce is the export-dir path above.
+	codex_smoke_dir="$runs9/bench-e2e-codex-mcp-mcp-baseline-r1"
+	codex_smoke_dir2="$runs9/bench-e2e-codex-mcp-mcp-baseline-r2"
+	if [ -d "$codex_smoke_dir" ]; then
+		run_expect 0 "codex export <evidence-dir> --to jsonl (codex meta-stamp dispatch)" -- \
+			catacomb export "$codex_smoke_dir" --to jsonl --out "$work/export-codex-mcp.snap"
+		rc=0
+		[ -s "$work/export-codex-mcp.snap" ] || rc=1
+		grep -q '"type":"session"' "$work/export-codex-mcp.snap" || rc=1
+		record "$rc" "codex export reduces the evidence dir to a non-empty graph carrying a session node (codex parser dispatched from meta.json)"
+		echo "  [info] codex export node types: $(grep -o '"type":"[a-z_]*"' "$work/export-codex-mcp.snap" 2>/dev/null | sort | uniq -c | tr '\n' ' ')"
+
+		run_json 0 "$work/replay-codex.out" \
+			"codex replay <session.jsonl> (bare transcript; default-parser RENDER smoke)" -- \
+			catacomb replay "$codex_smoke_dir/session.jsonl"
+		rc=0
+		grep -Eq -- '-> [0-9]+ nodes, [0-9]+ edges' "$work/replay-codex.out" || rc=1
+		record "$rc" "codex replay renders a node/edge summary line (bare-transcript reduce is claude-default; codex-correct reduce is the export-dir path above)"
+		echo "  [info] codex replay summary: $(grep -Eo -- '-> [0-9]+ nodes, [0-9]+ edges' "$work/replay-codex.out" 2>/dev/null || echo '(none)') (logged; default-parser count)"
+
+		sg_rc=0
+		catacomb subgraph "$codex_smoke_dir/session.jsonl" >/dev/null 2>"$work/subgraph-codex.err" || sg_rc=$?
+		rc=0
+		[ "$sg_rc" -ne 0 ] || rc=1
+		grep -q 'provide --phase or --from/--to' "$work/subgraph-codex.err" || rc=1
+		record "$rc" "codex subgraph with no window hits the deterministic invalid-selector guard (codex baskets declare no checkpoints; range mode proven on claude evidence at g2)"
+
+		if [ -d "$codex_smoke_dir2" ]; then
+			run_json 0 "$work/diff-codex.json" \
+				"codex diff <A> <B> --json (bare transcripts; PARSE smoke)" -- \
+				catacomb diff "$codex_smoke_dir/session.jsonl" "$codex_smoke_dir2/session.jsonl" --json
+			rc=0
+			python3 - "$work/diff-codex.json" <<'PY' || rc=$?
+import json, sys
+
+d = json.load(open(sys.argv[1]))
+missing = [k for k in ("unchanged", "changed", "added", "removed") if k not in d]
+if missing:
+    print(f"diff --json missing keys: {missing}", file=sys.stderr)
+    sys.exit(1)
+print("codex diff --json parses: " + " ".join(f"{k}={len(d[k])}" for k in ("unchanged", "changed", "added", "removed")))
+PY
+			record "$rc" "codex diff --json parses with the four delta buckets present (bare-transcript reduce is claude-default; counts logged, not asserted)"
+		else
+			skip "codex diff smoke (need a 2nd MCP baseline cell dir at $codex_smoke_dir2)"
+		fi
+	else
+		skip "codex offline graph smokes (no MCP baseline r1 evidence dir at $codex_smoke_dir)"
+	fi
 fi
 
 echo "== x. bench e2e-failmode basket — --fail-fast (\$0) + --error-delta (near-\$0 Haiku) =="
