@@ -1,19 +1,25 @@
 # E2E Live Gate — runs the PV-6b calibration methodology against the real
-# `claude -p` CLI in CI (see docs/reviews/2026-07-08-pv6b-live-calibration.md and
-# e2e/run.sh). It is deliberately NOT part of the per-PR CI: it spends real API
-# budget (~$3–7 per run — 105 live bench cells (adds subagent/skill/mcp production
-# baskets on sonnet; subagent cells spawn child agents so per-cell cost is higher —
-# treat as an estimate to confirm on the first dispatch); see e2e/run.sh's header for
-# the authoritative cost/scope figures) and needs
+# `claude -p` CLI in CI (see docs/internal/reviews/2026-07-08-pv6b-live-calibration.md
+# and e2e/run.sh). Expanded (ADR-0036) to validate catacomb's full functional surface
+# on real evidence for both runtimes. It is deliberately NOT part of the per-PR CI: it
+# spends real API budget (~$3–7 per run — 114 live bench cells: the
+# presence/continuous/sql + subagent/skill/mcp production baskets (105 cells, the
+# sensitive ones on sonnet; subagent cells spawn child agents so per-cell cost is
+# higher) plus the failmode basket, whose 6 live Haiku clean/errseed cells add a few
+# cents (its 3 prefail cells are $0); treat as an estimate to confirm on the first
+# dispatch; see e2e/run.sh's header for the authoritative cost/scope figures) and needs
 # an Anthropic auth secret: either `ANTHROPIC_API_KEY` (API billing) or
 # `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
 # `claude setup-token`). When both are set the API key takes precedence (API billing).
 # Trigger it manually (workflow_dispatch) or let the twice-weekly schedule run it; the guard
 # step fails fast with a clear message when neither is set so a fork or an unconfigured
 # repo does not burn a confusing red run.
-# An OPTIONAL codex leg (6 live `codex exec` cells on gpt-5.4-mini, ~$0.05 extra when
-# enabled) runs when the `CODEX_API_KEY` secret is set; without it (or without the codex
-# CLI) run.sh's auth probe fails and the leg SKIPS cleanly — never a red run.
+# An OPTIONAL codex leg runs when the `CODEX_API_KEY` secret is set (without it, or
+# without the codex CLI, run.sh's auth probe fails and the leg SKIPS cleanly — never a
+# red run). It now benches the existing basket-codex PLUS three new gpt-5.4-mini
+# baskets — MCP (9 cells), subagent (15), skill (9) — for 39 codex cells total at
+# ~cents of extra token spend; codex reports no dollar cost, so the leg never adds to
+# the dollar total.
 name: E2E Live Gate
 
 on:

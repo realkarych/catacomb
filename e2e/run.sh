@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# E2E live gate — the PV-6b calibration methodology as a self-asserting driver.
+# E2E live gate — the PV-6b calibration methodology as a self-asserting driver,
+# expanded (ADR-0036) to validate catacomb's FULL functional surface on real
+# evidence for BOTH runtimes.
 #
-# Runs six heterogeneous live `claude -p` baskets through `catacomb bench` and
-# then exercises the full offline pipeline against the real evidence:
+# CLAUDE SIDE — benches the six heterogeneous live `claude -p` production baskets
+# (presence, continuous, sql, subagent, skill, mcp) PLUS a failure-mode basket,
+# then exercises the ENTIRE offline pipeline against that real evidence:
 #   - every A-vs-A control must NOT gate (zero false positives), and
 #   - a seeded checkpoint-presence regression, a seeded continuous (tokens_out)
 #     regression, a seeded verifier-contract regression (a wrong SQL result fails
@@ -17,19 +20,57 @@
 #     seeded live-MCP regression (a dropped MCP record-tool step node together with a
 #     failed record-tool verifier — the one basket where BOTH signals gate)
 #     MUST each gate, attributed to the swapped instruction.
-# It also smoke-tests baseline pin/record/trends, diff/subgraph/export, and the
-# external-scores path — all on the live evidence.
+#   - offline-transform coverage runs the REST of the CLI over that same live
+#     evidence at $0 additional model spend, proving each contract on real data:
+#     standalone verify (+--label), the regress flag surface
+#     (format-markdown/min-support/presence-delta/iqr/audit/coverage-floor/z/
+#     annotation-rate-delta/project), the paired axis (sign/wilcoxon/min-tasks/alpha),
+#     calibrate, the baseline round-trip (set/list/export/import/rm) with trends
+#     (json/metric/pareto), diff/subgraph/export/replay/pack/import, plus the
+#     baseline pin/record and external-scores smokes.
 #
-# See docs/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
+# MIXED-MODEL POLICY — the mark/multi-step/delegation-sensitive baskets pin
+# CHILD_MODEL: claude-sonnet-5 on five baskets (presence's haiku mark task, sql,
+# subagent, skill, mcp) because claude-haiku-4-5 no longer reliably follows their
+# instructions; the cheap baskets (continuous, the presence `echo` step task, and
+# failmode) stay on the default Haiku. A $0 preflight guardrail (just below the
+# binary checks) statically enforces this over the real basket files and fails
+# loudly if a sensitive basket loses its Sonnet pin — blocking a silent
+# blanket-Haiku swap that would quietly defang the gate.
 #
-# Cost: ~$3–7 of real API spend (105 bench cells: presence/continuous/sql +
-# subagent/skill/mcp production baskets on sonnet; subagent cells spawn children).
+# FAILURE-MODE POSTURE — the failmode basket adds `bench --fail-fast` ($0: its
+# prefail cell exits before any model call) plus a `regress --error-delta` cell
+# (a real ~cents Haiku errseed run whose failing Bash tool synthesizes a
+# status:error node → error_rate 0→1). A clean 0/3-vs-3/3 error_rate split is
+# stochastic on a live model, so the --error-delta VERDICT is LOGGED/soft here;
+# its deterministic hard proof lives in the hermetic mirror
+# e2e/hermetic/prod/scenarios/81-failmode.sh. That soft-live / hard-hermetic split
+# is the rule for EVERY stochastic live assertion: the live leg logs, and the
+# hermetic prod scenario over fabricated evidence asserts.
 #
-# An OPTIONAL codex leg (basket-codex.yaml: 6 live `codex exec` cells on
-# gpt-5.4-mini, ~$0.05-equivalent) runs after the claude baskets when the codex
+# See docs/internal/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
+#
+# Cost: ~$3–7 of real API spend (114 bench cells — the presence/continuous/sql +
+# subagent/skill/mcp production baskets = 105 cells, the sensitive ones on sonnet,
+# subagent cells spawn children; plus the failmode basket's 9 cells, of which only
+# the 6 live Haiku clean/errseed cells cost a few cents — the 3 prefail cells are $0).
+#
+# CODEX SIDE — an OPTIONAL codex leg runs after the claude baskets when the codex
 # CLI is present AND authenticated (stored `codex login` or CODEX_API_KEY), and
-# SKIPS cleanly otherwise — the overall exit is unaffected. Codex reports token
-# counts but no dollar cost, so the leg never contributes to the cost total.
+# SKIPS cleanly otherwise — the overall exit is unaffected. It benches the existing
+# basket-codex (6 cells) PLUS three NEW gpt-5.4-mini baskets, then re-runs the
+# offline transforms over the resulting codex evidence:
+#   - MCP (basket-codex-mcp, 9 cells) — ASSERTED: a real stdio MCP server handshakes
+#     with `codex exec`; the seeded baseline-vs-degraded regression gates on a dropped
+#     mcp__e2ekit__record node AND a failed record-tool verifier.
+#   - subagent (basket-codex-subagent, 15 cells) — LOGGED/soft: codex delegation is
+#     prompt-discretionary (may fire 0/N), so the live verdict is logged and only a
+#     regress error fails the leg; the hermetic mirror 58-codex-subagent.sh asserts.
+#   - skill (basket-codex-skill, 9 cells) — artifact-substitute: codex has NO
+#     skill-invocation event, so this verifies the work ARTIFACT only plus a soft
+#     (logged) grep of the SKILL.md read, and asserts that NO skill node is produced.
+# Codex reports token counts but no dollar cost, so the leg's 39 cells (+ an optional
+# auth-probe ping) are token-billed pennies and NEVER contribute to the cost total.
 #
 # Environment:
 #   CATACOMB_BIN    catacomb binary to drive with (default: `catacomb` on PATH).
@@ -3020,12 +3061,14 @@ print(f"total live spend: ${total:.2f}")
 PY
 # The codex leg is token-billed and codex reports NO cost_usd, so it can never be
 # part of the dollar total above — note it separately so the spend record is honest.
+# The failmode basket's live Haiku errseed cells (manifest8) DO carry cost_usd and
+# ARE already summed into the dollar total above; only the codex cells are excluded.
 if [ "$codex_leg_ran" -eq 1 ]; then
 	codex_probe_note=""
 	if [ "$codex_probe_paid" -eq 1 ]; then
 		codex_probe_note=" + 1 auth-probe ping"
 	fi
-	codex_note="codex leg: 6 cells${codex_probe_note} on gpt-5.4-mini — token-billed, no reported dollar cost (excluded from the total above)"
+	codex_note="codex leg: 39 cells (basket-codex 6 + MCP 9 + subagent 15 + skill 9)${codex_probe_note} on gpt-5.4-mini — token-billed, no reported dollar cost (excluded from the total above)"
 else
 	codex_note="codex leg: skipped (no codex spend)"
 fi
