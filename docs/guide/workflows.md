@@ -933,9 +933,11 @@ attributed to the swapped instruction. It also smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
 Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
-The checkpoint (mark) and SQL (verifier) tasks run on Sonnet for instruction-following
-reliability while the step and continuous tasks stay on Haiku, which also exercises
-multi-model pricing. An optional Codex leg runs after the Claude baskets when a
+The five delegation-sensitive baskets — checkpoint (mark), SQL (verifier), subagent,
+skill, and MCP — run on Sonnet for instruction-following and delegation reliability,
+while the continuous, echo (step), and failure-mode tasks stay on Haiku (which also
+exercises multi-model pricing); a `$0` preflight guardrail enforces this mixed-model
+policy so a blanket-Haiku swap fails the run early. An optional Codex leg runs after the Claude baskets when a
 signed-in `codex` CLI is on the runner's PATH and is skipped otherwise, leaving the
 overall exit unaffected. Beyond the original `e2e/basket-codex.yaml` (six live
 `codex exec --json` cells on `gpt-5.4-mini`), it benches three more `gpt-5.4-mini`
@@ -951,8 +953,9 @@ re-runs the offline transforms over the resulting codex evidence. Codex reports 
 counts but no dollar cost, so these cells are token-billed pennies and never contribute
 to the run's cost total.
 
-Because it spends real API budget (~$1.7 per run), it is not part of per-PR CI: trigger it
-by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
+Because it spends real API budget (~$3–7 per run), it is not part of per-PR CI: trigger it
+by hand from the Actions tab (`workflow_dispatch`) or let the twice-weekly (Mon+Thu)
+schedule run it. It
 needs either the `ANTHROPIC_API_KEY` repository secret (API billing) or
 `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
 `claude setup-token`); when both are set the API key wins. It fails fast with a clear
