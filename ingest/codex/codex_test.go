@@ -130,7 +130,7 @@ func TestParse(t *testing.T) {
 					assert.Equal(t, "exec-C", o.ExecutionID)
 					assert.Equal(t, model.SourceJSONL, o.Source)
 					assert.Equal(t, "codex", o.Attrs["agent_runtime"])
-					assert.Equal(t, "0.144.4", o.Attrs["codex_version"])
+					assert.Equal(t, "0.144.5", o.Attrs["codex_version"])
 					assert.Equal(t, "/work/codex-probe", o.Attrs["cwd"])
 					assert.Equal(t, uint64(i), o.Seq)
 					assert.Equal(t, o.EventTime, o.ObservedAt)
@@ -266,7 +266,7 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name: "mainRunID pins run id",
-			input: `{"type":"session_meta","payload":{"session_id":"child-1","cli_version":"0.144.4","cwd":"/w"}}` + "\n" +
+			input: `{"type":"session_meta","payload":{"session_id":"child-1","cli_version":"0.144.5","cwd":"/w"}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}` + "\n",
 			mainRunID: "main-9",
 			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
@@ -591,7 +591,7 @@ func TestParse(t *testing.T) {
 				assert.Equal(t, "subagent_stop", stop.Kind)
 				assert.Equal(t, "explorer", stop.Attrs["subagent_type"])
 				assert.Equal(t, "codex", stop.Attrs["agent_runtime"])
-				assert.Equal(t, "0.144.4", stop.Attrs["codex_version"])
+				assert.Equal(t, "0.144.5", stop.Attrs["codex_version"])
 				assert.Equal(t, "/work/codex-probe", stop.Attrs["cwd"])
 				assert.Nil(t, stop.Payload)
 				assert.Equal(t, time.Date(2026, 7, 16, 15, 40, 2, 200000000, time.UTC), stop.EventTime)

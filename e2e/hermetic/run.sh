@@ -187,7 +187,7 @@ mkdir -p "$work/wslog"
 export HERMETIC_DB="$work/e2e.db"
 export HERMETIC_PROJECTS="$work/projects"
 export HERMETIC_TDIR="$work"
-export PYTHONPATH="$repo/integrations/verifier/src:$repo/integrations/judge/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$repo/integrations/verifier/src:$repo/integrations/judge/src:$repo/integrations/deepeval/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Run ids are deterministic: bench-<basket>-<task>-<variant>-r<rep>.
 base1="bench-hermetic-sql-sql-baseline-r1"

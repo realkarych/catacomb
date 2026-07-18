@@ -58,7 +58,7 @@ for v in ("baseline", "degraded"):
         env = m.get("env") or {}
         if env.get("agent_runtime") != "codex":
             bad.append("%s: agent_runtime=%r" % (cell, env.get("agent_runtime")))
-        if env.get("agent_version") != "0.144.4":
+        if env.get("agent_version") != "0.144.5":
             bad.append("%s: agent_version=%r" % (cell, env.get("agent_version")))
         if "cost_usd" in m:
             bad.append("%s: cost_usd present in meta.json" % cell)
@@ -71,7 +71,7 @@ if bad:
     print("\n".join(bad), file=sys.stderr)
     sys.exit(1)
 PY
-record "$rc" "all 6 cells stamp agent_runtime=codex + agent_version=0.144.4, omit cost_usd, and carry distinct thread ids"
+record "$rc" "all 6 cells stamp agent_runtime=codex + agent_version=0.144.5, omit cost_usd, and carry distinct thread ids"
 rc=0; python3 - "$w/m.jsonl" <<'PY' || rc=$?
 import json, sys
 entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]

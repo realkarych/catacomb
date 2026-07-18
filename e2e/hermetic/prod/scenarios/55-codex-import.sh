@@ -80,7 +80,7 @@ m = json.load(open(sys.argv[1]))
 env = m.get("env") or {}
 checks = {
     "agent_runtime=codex": env.get("agent_runtime") == "codex",
-    "agent_version from cli_version": env.get("agent_version") == "0.144.4",
+    "agent_version from cli_version": env.get("agent_version") == "0.144.5",
     "task label": m.get("task") == "probe",
     "variant label": m.get("variant") == "baseline",
     "session id is the thread id": m.get("session_id") == "019f6b85-c0de-7be3-81dc-ae8563860201",
@@ -90,7 +90,7 @@ if bad:
     print("meta.json checks failed: %s" % ", ".join(bad), file=sys.stderr)
     sys.exit(1)
 PY
-record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.4 and carries cell labels"
+record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.5 and carries cell labels"
 
 echo "== prod.55 codex-import: export the imported evidence -> subagent + plan marker nodes =="
 snap="$w/export.snap.jsonl"
