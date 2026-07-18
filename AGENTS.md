@@ -55,8 +55,10 @@ This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy)
 
 ## Workflow
 
+- **Issue-first.** Every task starts with a GitHub issue — open one (`bug_report`/`feature_request` template) before branching. Automated (Dependabot) and emergency-hotfix PRs are exempt.
 - Every change goes through a feature branch and PR: `git checkout -b <type>/<short-desc>` from `master`. No direct commits to `master` (the initial scaffold aside).
 - One PR = one logical change. CI must be green before merge. Merge is **squash** (linear `master`).
+- **Link the issue.** The PR description references its issue with a closing keyword — `Closes #N` (or `Fixes #N`) so it auto-closes on squash-merge; use a plain `#N` when the PR should not close the issue.
 - No `--no-verify`; no force-push to `master` (only to your own feature branch).
 - Never commit `.env`, `*.pem`, `*.key`, or any secret.
 
