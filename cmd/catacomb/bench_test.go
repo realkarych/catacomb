@@ -158,6 +158,25 @@ func TestRunBenchCellsFailFastStops(t *testing.T) {
 	assert.Equal(t, "bench-bord-t1-v1-r1", entries[0].RunID)
 }
 
+func TestRunBenchCellsStopsOnContextCancel(t *testing.T) {
+	basket, hash, cells := loadBasket(t, twoVariantBasket)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancelFn := func(_ context.Context, cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
+		cancel()
+		return manifestFor(cell, hash, true), false, false
+	}
+
+	err := runBenchCells(ctx, io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, cancelFn)
+	require.ErrorIs(t, err, errBenchInterrupted)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+
+	entries := readManifest(t, manifest)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "bench-bord-t1-v1-r1", entries[0].RunID)
+}
+
 func TestRunBenchCellsCompletedReadError(t *testing.T) {
 	basket, hash, cells := loadBasket(t, twoVariantBasket)
 	manifestDir := filepath.Join(t.TempDir(), "manifest-is-a-dir")
