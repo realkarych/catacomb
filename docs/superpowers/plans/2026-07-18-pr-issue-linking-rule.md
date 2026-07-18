@@ -20,12 +20,14 @@
 ### Task 1: Document the rule across the three files
 
 **Files:**
+
 - Modify: `AGENTS.md` (the `## Workflow` section, currently lines 56–62)
 - Modify: `.github/PULL_REQUEST_TEMPLATE.md`
 - Modify: `CONTRIBUTING.md`
 - Verify: `markdownlint` over the three changed files
 
 **Interfaces:**
+
 - Consumes: nothing (leaf change).
 - Produces: nothing other consumed by later tasks (single-task plan).
 
