@@ -128,6 +128,16 @@ func (g *Graph) upsertEdge(executionID, runID, src, dst string, seq uint64) {
 	}
 }
 
+func (g *Graph) removeToolArtifacts(id string) {
+	delete(g.Nodes, id)
+	delete(g.stamps, id)
+	for eid, e := range g.Edges {
+		if e.Src == id || e.Dst == id {
+			delete(g.Edges, eid)
+		}
+	}
+}
+
 func (g *Graph) clearSynthMarkers() {
 	for id := range g.synthMarkerNodes {
 		delete(g.Nodes, id)
