@@ -114,7 +114,9 @@ jobs:
         run: catacomb-deepeval seam.jsonl --expected integrations/deepeval/tests/testdata/seam_expected_pass.json
       - name: FAIL — an expected tool was never called (exit 1)
         run: |
-          if catacomb-deepeval seam.jsonl --expected integrations/deepeval/tests/testdata/seam_expected_fail.json; then
-            echo "::error::expected a FAIL (exit 1) from catacomb-deepeval but it exited 0" >&2
+          rc=0
+          catacomb-deepeval seam.jsonl --expected integrations/deepeval/tests/testdata/seam_expected_fail.json || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected catacomb-deepeval to FAIL with exit 1 (score below threshold) but got exit $rc" >&2
             exit 1
           fi

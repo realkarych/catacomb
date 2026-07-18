@@ -74,9 +74,10 @@ with no API spend and no package install.
 
 A new job `seam` in `.github/workflows/python-deepeval.yml`:
 
-1. `actions/setup-go` (from `go.mod`) + `make build` + put `bin/` on `PATH`;
-2. `actions/setup-python` 3.12 + `pip install -e '.[test-full]'` (same install the
-   existing `test-deepeval` job uses; brings in `deepeval`);
+1. `actions/setup-go` (from `go.mod`) + `make build`, calling `bin/catacomb` directly
+   (no `PATH` step);
+2. `actions/setup-python` 3.12 + `pip install -e 'integrations/deepeval[deepeval]'`
+   from the repo root (brings in `deepeval`);
 3. `catacomb export …/seam_session.jsonl --to jsonl --out s.jsonl`;
 4. `catacomb-deepeval s.jsonl --expected seam_expected_pass.json` → assert **exit 0**;
 5. `catacomb-deepeval s.jsonl --expected seam_expected_fail.json` → assert **exit 1**.

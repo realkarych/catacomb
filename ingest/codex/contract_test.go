@@ -78,6 +78,7 @@ func TestCodexFixtureContract(t *testing.T) {
 	for _, f := range fixtures {
 		pairs, versions := contractScan(t, f, true)
 		require.NotEmptyf(t, pairs, "fixture %s produced no records", f)
+		require.NotEmptyf(t, versions, "fixture %s has no session_meta cli_version to anchor", f)
 		for k := range pairs {
 			seen[k] = true
 			assert.Truef(t, canon[k], "fixture %s emits record/payload type %v absent from ingest/codex/testdata canon", f, k)

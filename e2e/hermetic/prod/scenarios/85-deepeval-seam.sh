@@ -8,6 +8,7 @@ run_json 0 "$w/export.out" "export seam transcript -> jsonl snapshot" -- \
   catacomb export "$fixture" --to jsonl --out "$snap"
 rc=0
 python3 -m catacomb_deepeval "$snap" >"$w/adapter.json" 2>"$w/adapter.err" || rc=$?
+[ "$rc" -eq 0 ] || sed 's/^/        stderr: /' "$w/adapter.err" >&2 || true
 record "$rc" "catacomb-deepeval author mode reads the export (exit 0)"
 rc=0; python3 - "$w/adapter.json" <<'PY' || rc=$?
 import json, sys
