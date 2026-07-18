@@ -90,6 +90,7 @@ func (g *Graph) applyTool(o model.Observation) {
 		}
 		if o.Correlation.ToolUseID != "" {
 			s.markerTools[o.Correlation.ToolUseID] = true
+			g.removeToolArtifacts(model.ToolCallID(o.ExecutionID, o.Correlation.ToolUseID))
 		}
 		return
 	}
