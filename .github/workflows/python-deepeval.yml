@@ -85,3 +85,38 @@ jobs:
         run: pip install -e '.[test]'
       - name: Run tests
         run: pytest -q
+
+  seam:
+    name: export→deepeval seam (Go build + real metric)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Build catacomb
+        run: make build
+      - name: Install catacomb-deepeval with the deepeval extra
+        run: pip install -e 'integrations/deepeval[deepeval]'
+      - name: Export the seam fixture to a JSONL snapshot
+        run: bin/catacomb export integrations/deepeval/tests/testdata/seam_session.jsonl --to jsonl --out seam.jsonl
+      - name: PASS — every expected tool was called (exit 0)
+        run: catacomb-deepeval seam.jsonl --expected integrations/deepeval/tests/testdata/seam_expected_pass.json
+      - name: FAIL — an expected tool was never called (exit 1)
+        run: |
+          rc=0
+          catacomb-deepeval seam.jsonl --expected integrations/deepeval/tests/testdata/seam_expected_fail.json || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected catacomb-deepeval to FAIL with exit 1 (score below threshold) but got exit $rc" >&2
+            exit 1
+          fi

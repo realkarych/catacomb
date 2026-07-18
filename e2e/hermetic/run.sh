@@ -182,12 +182,13 @@ sed "s|__WORK__|$work|g" "$here/ws-basket.yaml.tmpl" >"$work/ws-basket.yaml"
 sed 's|cmd: \[.*CATACOMB_PATCH.*\]|cmd: ["sh", "-c", "exit 3"]|' \
 	"$work/ws-basket.yaml" >"$work/ws-basket-fail.yaml"
 cp "$here/fix.patch" "$here/verify_ws.py" "$here/agent_ws.sh" "$work/"
+export WS_VERIFIER_DIR="$work"
 chmod +x "$work/agent_ws.sh"
 mkdir -p "$work/wslog"
 export HERMETIC_DB="$work/e2e.db"
 export HERMETIC_PROJECTS="$work/projects"
 export HERMETIC_TDIR="$work"
-export PYTHONPATH="$repo/integrations/verifier/src:$repo/integrations/judge/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$repo/integrations/verifier/src:$repo/integrations/judge/src:$repo/integrations/deepeval/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Run ids are deterministic: bench-<basket>-<task>-<variant>-r<rep>.
 base1="bench-hermetic-sql-sql-baseline-r1"

@@ -7,6 +7,8 @@ into the guide.
   configuration, ingestion, privacy and operations.
 - **[Basket schema](guide/basket.md)** — every field you can put in a basket file.
 - **[Troubleshooting](guide/troubleshooting.md)** — symptoms and fixes.
+- **[Glossary](glossary.md)** — formal A–Z definitions of every term (gates,
+  graph model, identity, evidence, CLI, versioning).
 - **[Architecture decisions](adr/README.md)** — the ADR log.
 - **[Evaluation brief](PITCH.md)** — the case for a statistical gate: science,
   methodology, competitive landscape, roadmap (for technical leadership).

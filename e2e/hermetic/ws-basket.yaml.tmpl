@@ -11,7 +11,7 @@ tasks:
       rev: seed-r1
       teardown: ["sh", "-c", "echo torn >> __WORK__/wslog/teardown.log"]
     verify:
-      cmd: ["python3", "__WORK__/verify_ws.py"]
+      cmd: ["sh", "-c", "python3 \"$WS_VERIFIER_DIR\"/verify_ws.py"]
       timeout: 30s
 variants:
   - id: only

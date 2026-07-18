@@ -80,7 +80,7 @@ m = json.load(open(sys.argv[1]))
 env = m.get("env") or {}
 checks = {
     "agent_runtime=codex": env.get("agent_runtime") == "codex",
-    "agent_version from cli_version": env.get("agent_version") == "0.144.4",
+    "agent_version from cli_version": env.get("agent_version") == "0.144.5",
     "task label": m.get("task") == "probe",
     "variant label": m.get("variant") == "baseline",
     "session id is the thread id": m.get("session_id") == "019f6b85-c0de-7be3-81dc-ae8563860201",
@@ -90,7 +90,7 @@ if bad:
     print("meta.json checks failed: %s" % ", ".join(bad), file=sys.stderr)
     sys.exit(1)
 PY
-record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.4 and carries cell labels"
+record "$rc" "meta.json stamps agent_runtime=codex + agent_version=0.144.5 and carries cell labels"
 
 echo "== prod.55 codex-import: export the imported evidence -> subagent + plan marker nodes =="
 snap="$w/export.snap.jsonl"
@@ -140,3 +140,21 @@ run_json 0 "$w/ava.json" "A-vs-A (baseline vs baseline2, same rollouts) must NOT
   --candidate label:basket=prod-codex-import,variant=baseline2 --fail-on-notable --json
 rc=0; python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and not [f for f in r.get("findings", []) if f.get("verdict")=="notable"] else 1)' "$w/ava.json" || rc=$?
 record "$rc" "A-vs-A reports zero regressions and no notable findings (the gate would pass at exit 0 without the plant)"
+
+echo "== prod.55 codex-import: --transcript branch (direct rollout path) writes the SAME codex-stamped evidence =="
+# Task-15 Part-A mirror: run.sh's codex leg imports a live thread by BOTH --session-id
+# (proven above) and --transcript (the direct rollout-file path). Here the baseline-r1
+# rollout this scenario staged is re-imported by --transcript into a fresh runs-dir; the
+# basket's runtime:codex selects the codex reduce, so meta.json must stamp agent_runtime=codex
+# exactly as the --session-id branch did. Structural / determinism only.
+roll="$day/rollout-2026-07-16T15-40-00-$(base_uuid 1).jsonl"
+rc=0; [ -f "$roll" ] || rc=1
+record "$rc" "resolved the baseline r1 rollout file for the --transcript import"
+run_json 0 "$w/import-transcript.out" "import baseline r1 by --transcript (direct rollout path)" -- \
+  catacomb import "$w/basket.yaml" --task probe --variant baseline --rep 9 \
+  --transcript "$roll" --runs-dir "$w/runs-transcript"
+tdir="$w/runs-transcript/import-prod-codex-import-probe-baseline-r9"
+rc=0; { [ -f "$tdir/meta.json" ] && [ -f "$tdir/session.jsonl" ]; } || rc=1
+record "$rc" "import --transcript wrote a bench-cell evidence dir (meta.json + session.jsonl)"
+rc=0; python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); env=m.get("env") or {}; sys.exit(0 if env.get("agent_runtime")=="codex" else 1)' "$tdir/meta.json" || rc=1
+record "$rc" "import --transcript meta.json stamps agent_runtime=codex (the codex dispatch key)"

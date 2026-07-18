@@ -933,16 +933,29 @@ attributed to the swapped instruction. It also smoke-tests baseline
 pin/record/trends, diff/subgraph/export, and the external-scores path on the live runs.
 Each bench cell invokes `claude -p` with `--setting-sources project` and a strict MCP
 config, isolating child runs from user-scope hooks and plugins so a local run matches CI.
-The checkpoint (mark) and SQL (verifier) tasks run on Sonnet for instruction-following
-reliability while the step and continuous tasks stay on Haiku, which also exercises
-multi-model pricing. An optional Codex leg (`e2e/basket-codex.yaml`, six live
-`codex exec --json` cells on `gpt-5.4-mini`) runs after the Claude baskets when a
-signed-in `codex` CLI is on the runner's PATH and is skipped otherwise; it asserts
-rollout resolution and evidence parity but only logs its `regress` verdict —
-advisory, because A-vs-A calibration for the Codex runtime has not accumulated yet.
+The five delegation-sensitive baskets — checkpoint (mark), SQL (verifier), subagent,
+skill, and MCP — run on Sonnet for instruction-following and delegation reliability,
+while the continuous, echo (step), and failure-mode tasks stay on Haiku (which also
+exercises multi-model pricing); a `$0` preflight guardrail enforces this mixed-model
+policy so a blanket-Haiku swap fails the run early. An optional Codex leg runs after the Claude baskets when a
+signed-in `codex` CLI is on the runner's PATH and is skipped otherwise, leaving the
+overall exit unaffected. Beyond the original `e2e/basket-codex.yaml` (six live
+`codex exec --json` cells on `gpt-5.4-mini`), it benches three more `gpt-5.4-mini`
+baskets — MCP (`basket-codex-mcp`, **asserted**: a real stdio MCP server handshakes
+with `codex exec`, and the seeded baseline-vs-degraded regression gates on a dropped
+`mcp__e2ekit__record` node plus a failed verifier), subagent
+(`basket-codex-subagent`, logged/soft, since codex delegation is prompt-discretionary
+so the live verdict is logged and only a `regress` error fails the leg), and skill
+(`basket-codex-skill`, artifact-substitute: codex emits no skill-invocation event, so
+it verifies the work artifact plus a soft `SKILL.md`-read grep and asserts that **no**
+structural skill node is produced — a documented Codex platform limitation) — then
+re-runs the offline transforms over the resulting codex evidence. Codex reports token
+counts but no dollar cost, so these cells are token-billed pennies and never contribute
+to the run's cost total.
 
-Because it spends real API budget (~$1.7 per run), it is not part of per-PR CI: trigger it
-by hand from the Actions tab (`workflow_dispatch`) or let the weekly schedule run it. It
+Because it spends real API budget (~$3–7 per run), it is not part of per-PR CI: trigger it
+by hand from the Actions tab (`workflow_dispatch`) or let the twice-weekly (Mon+Thu)
+schedule run it. It
 needs either the `ANTHROPIC_API_KEY` repository secret (API billing) or
 `CLAUDE_CODE_OAUTH_TOKEN` (a Claude Pro/Max subscription; generate it with
 `claude setup-token`); when both are set the API key wins. It fails fast with a clear

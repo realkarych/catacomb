@@ -1,0 +1,41 @@
+# Failure-mode basket: --fail-fast ($0, no model call) + --error-delta (near-$0
+# Haiku) coverage. 1 task x 3 variants x 3 reps = 9 cells. No CHILD_MODEL sonnet
+# pin (Task 10, mixed-model policy): this is a cheap basket, failmode.sh defaults
+# to claude-haiku-4-5.
+#
+# The three variants are declared in this exact order because `bench.Cells()`
+# enumerates rep-major, task, then variant: with `prefail` declared FIRST, a
+# `bench basket-failmode.yaml --fail-fast` invocation executes ONLY rep 1's
+# prefail cell (FAILMODE=prefail exits 1 before any model call) and stops right
+# there — a single manifest entry, true $0, regardless of `reps`. A follow-up
+# `--resume` call over the same manifest then executes the remaining 8 cells:
+# prefail reps 2-3 ($0 retries of the same exit-1 branch, harmless noise) plus
+# the 3 `clean` + 3 `errseed` live Haiku cells that `regress --error-delta`
+# needs.
+#   - clean:   a real claude -p (Haiku) runs a succeeding Bash tool
+#              (sh -c 'exit 0') — the error-delta baseline (error_rate 0).
+#   - errseed: a real claude -p (Haiku) runs a FAILING Bash tool
+#              (sh -c 'exit 3'); claude -p itself still exits 0 (only the tool
+#              result is an error), so the reduced graph carries a tool_call
+#              node with status "error" — the error-delta candidate
+#              (error_rate 1). `regress --baseline variant=clean --candidate
+#              variant=errseed --error-delta` gates on that total error_rate
+#              axis (0 -> 1).
+basket: e2e-failmode
+reps: 3
+tasks:
+  - id: failmode
+    cmd: ["./failmode.sh"]
+    workspace:
+      cmd: ["sh", "-c", "cp \"$E2E_DIR\"/failmode.sh ."]
+    timeout: 120s
+variants:
+  - id: prefail
+    env:
+      FAILMODE: prefail
+  - id: clean
+    env:
+      FAILMODE: clean
+  - id: errseed
+    env:
+      FAILMODE: toolerr

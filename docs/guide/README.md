@@ -16,3 +16,6 @@ Reading order:
 6. [Privacy and operations](privacy-and-operations.md) — redaction, evidence dirs,
    and troubleshooting
 7. [Troubleshooting](troubleshooting.md) — symptoms and fixes for common errors
+
+Keep the [Glossary](../glossary.md) open alongside — formal A–Z definitions of
+every term used across these pages.

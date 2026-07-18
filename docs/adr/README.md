@@ -39,6 +39,7 @@ Catacomb records consequential architecture decisions as ADRs (MADR-lite). Each 
 | [0033](0033-github-action.md) | First-class GitHub Action with PR-comment verdicts | Accepted |
 | [0034](0034-gate-self-check.md) | Gate self-check: offline A/A drift and influence audit (`catacomb calibrate`) | Accepted |
 | [0035](0035-wilcoxon-signed-rank.md) | Opt-in exact Wilcoxon signed-rank on the paired axis | Accepted |
+| [0036](0036-full-live-validation.md) | Full live validation: 100% functional coverage on real evidence, both runtimes | Accepted |
 
 Design spec: [`../internal/specs/2026-06-20-catacomb-design.md`](../internal/specs/2026-06-20-catacomb-design.md).
 
