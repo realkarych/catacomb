@@ -7,7 +7,11 @@
 # spawn_agent/wait_agent function_call pair around a shared exec_command step)
 # + 5 matching child rollouts (each child's session_meta.parent_thread_id points
 # at its own baseline rep's thread) + 5 degraded main rollouts (same shared
-# exec_command step but failing, no spawn_agent call, no child rollout at all).
+# exec_command step but failing, no spawn_agent call, no child rollout at all)
+# + 5 degraded-noplant main rollouts (degraded's SHAPE — no spawn_agent, no
+# child rollout, so the subagent node and delegation steps drop — but a PASSING
+# exec_command and baseline's token counts, so it carries NO total-scope plant;
+# used by (4b) below to make --fail-on-notable genuinely load-bearing).
 # Everything enters through `catacomb import --session-id <thread-id>
 # --sessions-dir <root>` and is gated by `catacomb regress`. What is asserted:
 #   (1) resolution: every baseline thread id resolves to its rollout AND gains
@@ -41,26 +45,39 @@
 #       tokens_out (100->300). regress gates on total tokens_out and total
 #       error_rate exactly as 55 does — the aggregate verdict — while (3) above
 #       already hard-asserts the structural subagent claim directly;
-#   (4b) the gate tied DIRECTLY to the subagent signal (mirroring 70's
-#       Glob-drop idiom): a SECOND regress call, --fail-on-notable, is
-#       hard-asserted to gate (exit 1) specifically via the subagent stepkey's
-#       OWN step-scope presence finding (the unnamed step, "present 5/5 ->
-#       0/5") — not via the orthogonal exec_command tokens_out/error_rate
-#       plant (4) fires on. This closes the gap where the subagent-presence
-#       claim was only a non-gating "notable" alongside a gate that actually
-#       fires through a shared step;
+#   (4b) --fail-on-notable GENUINELY load-bearing on the subagent signal, a
+#       true mirror of 70's Glob-drop idiom (which (4) above is NOT: (4)'s exit
+#       1 is over-determined by the tokens_out/error_rate plant, so on that
+#       comparison the flag would be inert — regress's overallVerdict returns
+#       "regression" on regressions>0 BEFORE --fail-on-notable is consulted).
+#       This isolates it with a THIRD variant, degraded-noplant, that carries
+#       NO plant: degraded's SHAPE (no spawn_agent / wait_agent / child rollout,
+#       so the subagent node and delegation steps drop) but a PASSING
+#       exec_command (exit 0) and baseline's token counts (tokens_out 100), so
+#       the total-scope metrics stay flat. baseline-vs-degraded-noplant thus has
+#       NO hard total-scope regression, and a pair of regress calls proves the
+#       flag does the work: at DEFAULT thresholds it does NOT gate (exit 0) —
+#       step-alignment coverage falls below the floor, so the dropped subagent
+#       stepkey (and spawn_agent) surface as gating-ELIGIBLE "notable" presence
+#       findings, not regressions; re-run with --fail-on-notable and the SAME
+#       comparison NOW gates (exit 1), tipped by those notables — the subagent
+#       stepkey's OWN presence finding (the unnamed step, "present 5/5 -> 0/5",
+#       the child-discovery-sensitive signal, exactly as 70 keys on the sub-only
+#       Glob) among them. The exit flips 0 -> 1 solely on the flag, tying the
+#       gate to the subagent-presence signal itself, not to any orthogonal plant;
 #   (5) NON-VACUITY: the same 5 baseline rollouts imported again as variant
 #       baseline2 (A-vs-A) do NOT gate — exit 0, zero regressions, zero
-#       notables — so (4)/(4b) fire on the planted degradation, not on
+#       notables — so (4)/(4b) fire on the planted delegation drop, not on
 #       codex-import noise. 5 reps per variant clear regress's MinSupport.
 # Sourced by run.sh with lib.sh loaded and PROD/WORK/HERMETIC_* exported.
 set -euo pipefail
-echo "== prod.58 codex-subagent: stage a fake codex sessions tree (5 baseline+child + 5 degraded) =="
+echo "== prod.58 codex-subagent: stage a fake codex sessions tree (5 baseline+child + 5 degraded + 5 degraded-noplant) =="
 w="$WORK/codex-subagent"; mkdir -p "$w/runs"
 day="$w/sessions/2026/07/16"; mkdir -p "$day"
 base_uuid() { printf '019f6b85-58c0-7be3-81dc-ae856386020%s' "$1"; }
 deg_uuid() { printf '019f6b85-58de-7be3-81dc-ae856386030%s' "$1"; }
 child_uuid() { printf '019f6b85-58c4-7be3-81dc-ae856386040%s' "$1"; }
+noplant_uuid() { printf '019f6b85-58f0-7be3-81dc-ae856386050%s' "$1"; }
 for r in 1 2 3 4 5; do
   sed -e "s/__THREAD_ID__/$(base_uuid "$r")/g" -e "s/__CHILD_THREAD_ID__/$(child_uuid "$r")/g" \
     "$PROD/fixtures/58-codex-main.jsonl.tmpl" > "$day/rollout-2026-07-16T15-40-00-$(base_uuid "$r").jsonl"
@@ -68,6 +85,8 @@ for r in 1 2 3 4 5; do
     "$PROD/fixtures/58-codex-child.jsonl.tmpl" > "$day/rollout-2026-07-16T15-40-03-$(child_uuid "$r").jsonl"
   sed "s/__THREAD_ID__/$(deg_uuid "$r")/g" \
     "$PROD/fixtures/58-codex-degraded.jsonl.tmpl" > "$day/rollout-2026-07-16T15-40-00-$(deg_uuid "$r").jsonl"
+  sed "s/__THREAD_ID__/$(noplant_uuid "$r")/g" \
+    "$PROD/fixtures/58-codex-degraded-noplant.jsonl.tmpl" > "$day/rollout-2026-07-16T15-40-00-$(noplant_uuid "$r").jsonl"
 done
 cp "$PROD/fixtures/58-codex.basket.yaml.tmpl" "$w/basket.yaml"
 
@@ -75,7 +94,7 @@ run_json 0 "$w/import.out" "import baseline r1 by --session-id against the stage
   catacomb import "$w/basket.yaml" --task delegate --variant baseline --rep 1 \
   --session-id "$(base_uuid 1)" --sessions-dir "$w/sessions" --runs-dir "$w/runs"
 
-echo "== prod.58 codex-subagent: 5 reps per variant (baseline / degraded / baseline2) =="
+echo "== prod.58 codex-subagent: 5 reps per variant (baseline / degraded / baseline2 / degraded-noplant) =="
 rc=0
 for r in 2 3 4 5; do
   catacomb import "$w/basket.yaml" --task delegate --variant baseline --rep "$r" \
@@ -86,8 +105,10 @@ for r in 1 2 3 4 5; do
     --session-id "$(deg_uuid "$r")" --sessions-dir "$w/sessions" --runs-dir "$w/runs" >/dev/null 2>&1 || rc=1
   catacomb import "$w/basket.yaml" --task delegate --variant baseline2 --rep "$r" \
     --session-id "$(base_uuid "$r")" --sessions-dir "$w/sessions" --runs-dir "$w/runs" >/dev/null 2>&1 || rc=1
+  catacomb import "$w/basket.yaml" --task delegate --variant degraded-noplant --rep "$r" \
+    --session-id "$(noplant_uuid "$r")" --sessions-dir "$w/sessions" --runs-dir "$w/runs" >/dev/null 2>&1 || rc=1
 done
-record "$rc" "imported 5 reps each of baseline (spawn_agent+child), degraded (no spawn_agent, no child), baseline2 (A-vs-A twin)"
+record "$rc" "imported 5 reps each of baseline (spawn_agent+child), degraded (no spawn_agent, no child, plant), baseline2 (A-vs-A twin), degraded-noplant (degraded shape, no plant)"
 
 rundir="$w/runs/import-prod-codex-subagent-delegate-baseline-r1"
 rc=0; { [ -f "$rundir/meta.json" ] && [ -f "$rundir/session.jsonl" ]; } || rc=1
@@ -104,6 +125,11 @@ for r in 1 2 3 4 5; do
   [ ! -d "$w/runs/import-prod-codex-subagent-delegate-degraded-r$r/subagents" ] || rc=1
 done
 record "$rc" "all 5 degraded reps have no subagents dir (no spawn_agent call, no child rollout planted)"
+rc=0
+for r in 1 2 3 4 5; do
+  [ ! -d "$w/runs/import-prod-codex-subagent-delegate-degraded-noplant-r$r/subagents" ] || rc=1
+done
+record "$rc" "all 5 degraded-noplant reps have no subagents dir (degraded shape: no spawn_agent, no child rollout)"
 
 rc=0; python3 - "$w/runs" <<'PY' || rc=$?
 import json, os, sys
@@ -187,34 +213,79 @@ print("gate fires on total tokens_out (100->300) and total error_rate (0->1); su
 PY
 record "$rc" "regress gates on total tokens_out (100->300) and total error_rate (0->1); subagent presence drop logged as notable"
 
-echo "== prod.58 codex-subagent: gate ties DIRECTLY to the subagent-presence signal (--fail-on-notable) =="
-run_json 1 "$w/regress-notable.json" "baseline vs degraded --fail-on-notable -> gates via the subagent stepkey's own presence finding" -- \
+echo "== prod.58 codex-subagent: --fail-on-notable is load-bearing on the subagent signal (baseline vs degraded-noplant) =="
+# degraded-noplant carries NO total-scope plant (passing exec_command, baseline's
+# token counts), so unlike degraded it produces NO hard regression -- proving the
+# --fail-on-notable exit below flips solely on the flag, not on a shared-step plant.
+# First: at DEFAULT thresholds the SAME comparison does NOT gate (exit 0). Step
+# alignment coverage is below the floor (degraded-noplant drops spawn_agent /
+# wait_agent / the subagent node), so regress downgrades those presence deltas from
+# "regression" to gating-eligible "notable" rather than gating on them.
+run_json 0 "$w/regress-noplant.json" "baseline vs degraded-noplant (no plant) at DEFAULT thresholds must NOT gate" -- \
   catacomb regress --runs-dir "$w/runs" \
   --baseline label:basket=prod-codex-subagent,variant=baseline \
-  --candidate label:basket=prod-codex-subagent,variant=degraded --fail-on-notable --json
-rc=0; python3 - "$w/regress-notable.json" <<'PY' || rc=$?
+  --candidate label:basket=prod-codex-subagent,variant=degraded-noplant --json
+rc=0; python3 - "$w/regress-noplant.json" <<'PY' || rc=$?
 import json, sys
 rep = json.load(open(sys.argv[1]))
 f = rep.get("findings", [])
-# Same idiom as 70's Glob-drop check, but pinned on the subagent node's OWN
-# stepkey rather than an orthogonal step: it is a step-scope presence finding
-# with NO "name" (distinct from the named spawn_agent/wait_agent tool-call
-# steps) whose detail records the delegation split going from present in every
-# baseline rep to present in none of the degraded reps.
-subagent_finding = [
-    x for x in f
-    if x.get("scope") == "step" and x.get("metric") == "presence"
-    and x.get("verdict") in ("regression", "notable") and x.get("name") is None
-    and "present 5/5 -> 0/5" in str(x.get("detail", ""))
-]
-if not subagent_finding:
-    print("expected --fail-on-notable to surface the subagent stepkey's own presence finding (unnamed step, 5/5 -> 0/5)", file=sys.stderr)
+# No plant -> zero hard regressions (the exec_command passes and tokens_out stays
+# 100, so no total-scope tokens_out/error_rate regression as in degraded).
+if rep.get("regressions", 0) != 0:
+    print("expected zero regressions for the no-plant comparison, got %d" % rep.get("regressions"), file=sys.stderr)
     for x in f:
         print("  ", {k: x.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
     sys.exit(1)
-print("regress --fail-on-notable gates (exit 1) with the subagent stepkey's presence finding present:", subagent_finding[0])
+# The subagent node's OWN stepkey (distinct from the named spawn_agent/wait_agent
+# tool-call steps) carries no "name"; below the coverage floor its presence drop
+# is downgraded to a gating-eligible "notable", NOT a regression.
+subagent_notable = [
+    x for x in f
+    if x.get("scope") == "step" and x.get("metric") == "presence" and x.get("verdict") == "notable"
+    and x.get("name") is None and "present 5/5 -> 0/5" in str(x.get("detail", ""))
+    and "below floor" in str(x.get("detail", ""))
+]
+if not subagent_notable:
+    print("expected the subagent stepkey (unnamed step, 5/5 -> 0/5) to surface as a below-floor NOTABLE, not a regression", file=sys.stderr)
+    for x in f:
+        print("  ", {k: x.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print("no-plant comparison does not gate at default thresholds; subagent stepkey presence is a below-floor notable:", subagent_notable[0])
 PY
-record "$rc" "regress --fail-on-notable gates DIRECTLY on the subagent stepkey's own presence finding (unnamed step, 5/5 -> 0/5) -- ties the gate to the subagent signal itself, not just the orthogonal exec_command tokens_out/error_rate plant"
+record "$rc" "baseline vs degraded-noplant at DEFAULT thresholds does NOT gate (exit 0, zero regressions) -- the subagent stepkey presence drop is a gating-eligible below-floor notable, not a hard regression"
+
+# Now: the SAME comparison WITH --fail-on-notable gates (exit 1). The exit flips
+# 0 -> 1 solely on the flag, and the subagent stepkey's OWN presence notable (the
+# child-discovery-sensitive signal, exactly as 70 keys on the sub-only Glob) is
+# among the gating-eligible notables that tip it -- so the gate ties to the
+# subagent-presence signal itself, not to any orthogonal plant.
+run_json 1 "$w/regress-noplant-notable.json" "baseline vs degraded-noplant --fail-on-notable NOW gates via the subagent stepkey's own presence notable" -- \
+  catacomb regress --runs-dir "$w/runs" \
+  --baseline label:basket=prod-codex-subagent,variant=baseline \
+  --candidate label:basket=prod-codex-subagent,variant=degraded-noplant --fail-on-notable --json
+rc=0; python3 - "$w/regress-noplant-notable.json" <<'PY' || rc=$?
+import json, sys
+rep = json.load(open(sys.argv[1]))
+f = rep.get("findings", [])
+# With no plant, the exit-1 can ONLY be driven by --fail-on-notable firing on the
+# notable presence findings (regressions is still 0). The subagent stepkey's own
+# presence notable -- unnamed step, 5/5 -> 0/5 -- must be present among them.
+if rep.get("regressions", 0) != 0:
+    print("expected zero hard regressions (the gate must fire via --fail-on-notable, not a plant), got %d" % rep.get("regressions"), file=sys.stderr)
+    sys.exit(1)
+subagent_finding = [
+    x for x in f
+    if x.get("scope") == "step" and x.get("metric") == "presence" and x.get("verdict") == "notable"
+    and x.get("name") is None and "present 5/5 -> 0/5" in str(x.get("detail", ""))
+]
+if rep.get("notables", 0) < 1 or not subagent_finding:
+    print("expected --fail-on-notable to gate on notables including the subagent stepkey's own presence notable (unnamed step, 5/5 -> 0/5)", file=sys.stderr)
+    for x in f:
+        print("  ", {k: x.get(k) for k in ("scope", "name", "metric", "verdict", "detail")}, file=sys.stderr)
+    sys.exit(1)
+print("regress --fail-on-notable gates (exit 1) with zero regressions -- the flag is load-bearing; subagent stepkey notable present:", subagent_finding[0])
+PY
+record "$rc" "regress --fail-on-notable gates (exit 1) on the no-plant comparison with zero hard regressions -- the flag is GENUINELY load-bearing (default was exit 0), tipped by notables including the subagent stepkey's own presence finding (unnamed step, 5/5 -> 0/5)"
 
 echo "== prod.58 codex-subagent: A-vs-A must NOT gate (non-vacuity) =="
 run_json 0 "$w/ava.json" "A-vs-A (baseline vs baseline2, same rollouts) must NOT gate" -- \
