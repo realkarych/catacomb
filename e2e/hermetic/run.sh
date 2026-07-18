@@ -182,6 +182,7 @@ sed "s|__WORK__|$work|g" "$here/ws-basket.yaml.tmpl" >"$work/ws-basket.yaml"
 sed 's|cmd: \[.*CATACOMB_PATCH.*\]|cmd: ["sh", "-c", "exit 3"]|' \
 	"$work/ws-basket.yaml" >"$work/ws-basket-fail.yaml"
 cp "$here/fix.patch" "$here/verify_ws.py" "$here/agent_ws.sh" "$work/"
+export WS_VERIFIER_DIR="$work"
 chmod +x "$work/agent_ws.sh"
 mkdir -p "$work/wslog"
 export HERMETIC_DB="$work/e2e.db"

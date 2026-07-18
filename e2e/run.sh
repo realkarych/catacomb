@@ -2297,8 +2297,8 @@ elif codex login status >/dev/null 2>&1; then
 	codex_leg_ran=1
 elif [ -n "${CODEX_API_KEY:-}" ] && ! command -v timeout >/dev/null 2>&1; then
 	skip "codex live leg: timeout(1) unavailable — refusing to run the paid CODEX_API_KEY ping uncapped — leg not run, overall exit unaffected"
-elif [ -n "${CODEX_API_KEY:-}" ] && codex_ping_probe; then
-	echo "  [info] codex auth: CODEX_API_KEY verified via one live exec ping (token-billed, counted in the spend note)"
+elif [ -n "${CODEX_API_KEY:-}" ] && printf '%s' "$CODEX_API_KEY" | timeout 60 codex login --with-api-key >/dev/null 2>&1 && codex_ping_probe; then
+	echo "  [info] codex auth: CODEX_API_KEY stored via 'codex login --with-api-key' then verified with one live exec ping (token-billed, counted in the spend note)"
 	codex_leg_ran=1
 	codex_probe_paid=1
 else
