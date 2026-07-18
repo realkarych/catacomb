@@ -139,26 +139,44 @@ func (g *Graph) synthesizeExecMarkers(execID string, s *execState) {
 				starts = append(starts, b)
 			}
 		}
-		pairs := pairPhaseEnds(bounds, starts)
+		occs := assignOccurrences(starts)
+		pairs := pairPhaseEnds(bounds, starts, occs)
 		for i, start := range starts {
-			occ := i
-			if start.occ >= 0 {
-				occ = start.occ
-			}
 			end, hasEnd := pairs[i]
-			g.buildMarker(execID, sessNode, name, occ, start, end, hasEnd)
+			g.buildMarker(execID, sessNode, name, occs[i], start, end, hasEnd)
 		}
 	}
 }
 
-func pairPhaseEnds(bounds, starts []markerBound) map[int]markerBound {
-	startByOcc := make(map[int]int, len(starts))
+func assignOccurrences(starts []markerBound) []int {
+	occs := make([]int, len(starts))
+	claimed := make(map[int]bool, len(starts))
 	for i, s := range starts {
-		occ := i
-		if s.occ >= 0 {
-			occ = s.occ
+		if s.occ >= 0 && !claimed[s.occ] {
+			claimed[s.occ] = true
+			occs[i] = s.occ
+			continue
 		}
-		startByOcc[occ] = i
+		occs[i] = -1
+	}
+	for i := range starts {
+		if occs[i] >= 0 {
+			continue
+		}
+		want := i
+		for claimed[want] {
+			want++
+		}
+		claimed[want] = true
+		occs[i] = want
+	}
+	return occs
+}
+
+func pairPhaseEnds(bounds, starts []markerBound, occs []int) map[int]markerBound {
+	startByOcc := make(map[int]int, len(starts))
+	for i := range starts {
+		startByOcc[occs[i]] = i
 	}
 	pairs := make(map[int]markerBound, len(starts))
 	claimed := make([]bool, len(starts))

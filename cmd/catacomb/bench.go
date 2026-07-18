@@ -26,6 +26,8 @@ var errBenchRerun = errors.New("bench: manifest already has entries: pass --resu
 
 var errBenchFailFast = errors.New("bench: stopped after a failing cell (--fail-fast)")
 
+var errBenchInterrupted = errors.New("bench: interrupted before all cells ran")
+
 var errBenchOfflineDirs = errors.New("bench: --projects-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
 
 var errBenchCodexDirs = errors.New("bench: --sessions-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
@@ -153,6 +155,9 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 	vstats := newVerifyStats()
 	executed, marked := 0, 0
 	for _, cell := range cells {
+		if ctx.Err() != nil {
+			break
+		}
 		if _, done := completed[cell.RunID]; f.resume && done {
 			fmt.Fprintf(stdout, "skip %s (already completed)\n", cell.RunID)
 			continue
@@ -174,6 +179,9 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 		if failed && f.failFast {
 			return errBenchFailFast
 		}
+	}
+	if ctx.Err() != nil {
+		return operational(errBenchInterrupted)
 	}
 	if executed > 0 {
 		fmt.Fprintf(stdout, "marked %d/%d cells\n", marked, executed)

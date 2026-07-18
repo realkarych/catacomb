@@ -784,6 +784,68 @@ func TestOverlappingSameNamePhasesNotRecoveredWithoutOccurrence(t *testing.T) {
 	assert.Equal(t, t3, *nodeMap[id1].TEnd, "without explicit occurrence LIFO reads bounds as nested; overlapping [t2,t4] is not recovered")
 }
 
+func TestExplicitOccurrenceCollidingWithImplicitIndexKeepsBoth(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(1 * time.Second)
+	t2 := t0.Add(2 * time.Second)
+	t3 := t0.Add(3 * time.Second)
+	t4 := t0.Add(4 * time.Second)
+	occ1 := 1
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("s0", "p", "start", "", &occ1, t1, 2))
+	g.Apply(markerToolUse("s1", "p", "start", "", nil, t2, 3))
+	g.Apply(markerToolUse("e0", "p", "end", "", &occ1, t3, 4))
+	g.Apply(markerToolUse("e1", "p", "end", "", nil, t4, 5))
+
+	nodes, _ := g.Snapshot()
+
+	var markers []*model.Node
+	phaseKeys := map[string]bool{}
+	for _, n := range nodes {
+		if n.Type == model.NodeMarker && n.Name == "p" {
+			markers = append(markers, n)
+			phaseKeys[n.PhaseKey] = true
+		}
+	}
+
+	require.Len(t, markers, 2, "explicit occ=1 must not overwrite the implicit index-1 start")
+	assert.Len(t, phaseKeys, 2, "the two phases must have distinct phase keys")
+
+	explicitID := model.PhaseMarkerID(execID, "p", 1)
+	require.NotNil(t, findNode(nodes, explicitID), "explicit occurrence=1 marker must survive")
+}
+
+func TestDuplicateExplicitOccurrenceKeepsBoth(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(1 * time.Second)
+	t2 := t0.Add(2 * time.Second)
+	occ0 := 0
+
+	g := NewGraph()
+	g.Apply(sessionStart(t0))
+	g.Apply(markerToolUse("s0", "p", "start", "", &occ0, t1, 2))
+	g.Apply(markerToolUse("s1", "p", "start", "", &occ0, t2, 3))
+
+	nodes, _ := g.Snapshot()
+
+	var markers []*model.Node
+	phaseKeys := map[string]bool{}
+	ids := map[string]bool{}
+	for _, n := range nodes {
+		if n.Type == model.NodeMarker && n.Name == "p" {
+			markers = append(markers, n)
+			phaseKeys[n.PhaseKey] = true
+			ids[n.ID] = true
+		}
+	}
+
+	require.Len(t, markers, 2, "two starts sharing explicit occ=0 must not collapse into one node")
+	assert.Len(t, phaseKeys, 2, "the two phases must have distinct phase keys")
+	assert.Len(t, ids, 2, "the two phases must have distinct node ids")
+}
+
 func TestExplicitPairingSurvivesStrayEndInCleanup(t *testing.T) {
 	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	tStray := t0.Add(1 * time.Second)
