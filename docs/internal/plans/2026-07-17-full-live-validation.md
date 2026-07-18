@@ -126,8 +126,8 @@ Each task appends assertions after the cited step and reuses that basket's runs-
 
 **Steps:**
 
-- [ ] `diff --json` on step g's two haiku sessions (parses); `diff --phase verify` (both sides, narrower/empty); `diff --a-phase verify --b-from verify --b-to verify` → assert it matches the symmetric `--phase verify` diff (per-side plumbing).
-- [ ] `subgraph "$chosen/session.jsonl" --from verify --to verify --json` → assert SAME node count as the `--phase verify` smoke.
+- [ ] `diff --json` on step g's two haiku sessions (parses); `diff --phase verify` (both sides, narrower/empty); `diff --a-phase verify --b-from verify --b-to verify` → assert side A matches the symmetric `--phase verify` scoping while side B's `--from/--to verify` collapses to the empty zero-width range (so every side-A item is unmatched → all `removed`), proving per-side plumbing.
+- [ ] `subgraph "$chosen/session.jsonl" --from verify --to verify --json` → assert a well-formed but EMPTY, zero-width window (RangeWindow scopes `[from.start, to.start)`, so `--from X --to X` is empty), strictly narrower than the non-empty `--phase verify` smoke — range mode is NOT equal to phase mode.
 - [ ] `export "$echo_base_dir/session.jsonl"` (transcript-file branch) → assert same `step_key` content as the evidence-dir export.
 - [ ] `run_expect 0 "replay one live session" -- catacomb replay "$chosen/session.jsonl"` (promote the internal helper to an explicit node/edge-summary assertion).
 - [ ] `mcp` protocol smoke: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}}' | catacomb mcp` → assert a well-formed JSON-RPC response (mirror `10-mcp-protocol.sh`).

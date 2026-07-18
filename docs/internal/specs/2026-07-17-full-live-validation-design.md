@@ -80,8 +80,8 @@ Reuse existing evidence; real API jitter supplies natural per-cell spread for th
 
 ### 2.8 `diff` / `subgraph` / `export` / `replay` / `mcp` (append near step g, haiku+echo evidence)
 
-- `diff --json`; `diff --phase verify` (both sides); `diff --a-phase verify --b-from verify --b-to verify` (asymmetric per-side scoping resolving the same window) → matches the symmetric `--phase verify` diff.
-- `subgraph --from verify --to verify --json` → SAME node count as the `--phase verify` smoke (range mode == phase mode on live evidence).
+- `diff --json`; `diff --phase verify` (both sides); `diff --a-phase verify --b-from verify --b-to verify` (asymmetric per-side scoping) → side A matches the symmetric `--phase verify` scoping, but side B's `--from/--to verify` is a zero-width empty window, so every side-A item is unmatched (all `removed`) — the asymmetric diff does NOT equal the symmetric one.
+- `subgraph --from verify --to verify --json` → a well-formed but EMPTY, zero-width window (RangeWindow scopes `[from.start, to.start)`, so `--from X --to X` is empty), strictly narrower than the non-empty `--phase verify` smoke — range mode is NOT equal to phase mode on live evidence.
 - `export "$echo_base_dir/session.jsonl"` (transcript-file branch) → same `step_key` content as the evidence-dir export.
 - `replay "$chosen/session.jsonl"` → promote the existing internal helper to an explicit node/edge-summary assertion.
 - `mcp`: an explicit protocol smoke — `echo '{"jsonrpc":"2.0","id":1,"method":"initialize",…}' | catacomb mcp` — confirming the same binary that served the live presence cells. **$0.**

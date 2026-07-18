@@ -293,7 +293,7 @@ rc=0
 [ -n "$(find "$runs1" -mindepth 1 -maxdepth 1 2>/dev/null)" ] && rc=1
 record "$rc" "dry-run wrote no manifest ($manifest1) and created no evidence under \$runs1"
 
-echo "== a. bench presence basket (15 live claude -p cells) =="
+echo "== a. bench presence basket (30 live claude -p cells) =="
 run_expect 0 "bench presence basket" -- \
 	catacomb bench basket-presence.yaml --runs-dir "$runs1" --manifest "$manifest1"
 
