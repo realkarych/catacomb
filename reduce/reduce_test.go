@@ -421,6 +421,29 @@ func TestRunOpensOnFirstObs(t *testing.T) {
 	assert.Equal(t, []string{"s1"}, r.SessionIDs)
 }
 
+func TestRunStartedAtSkipsZeroEventTime(t *testing.T) {
+	g := NewGraph()
+	timeless := toolObs("e1", "s1", "t1", "Bash", "running", 1)
+	timeless.EventTime = time.Time{}
+	g.Apply(timeless)
+	r := g.Runs["s1"]
+	require.NotNil(t, r)
+	assert.Nil(t, r.StartedAt)
+
+	g.Apply(toolObs("e1", "s1", "t2", "Bash", "running", 2))
+	require.NotNil(t, r.StartedAt)
+	assert.Equal(t, time.Unix(2, 0).UTC(), *r.StartedAt)
+}
+
+func TestRunStartedAtKeepsFirstNonZeroEventTime(t *testing.T) {
+	g := NewGraph()
+	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 5))
+	g.Apply(toolObs("e1", "s1", "t2", "Bash", "running", 9))
+	r := g.Runs["s1"]
+	require.NotNil(t, r.StartedAt)
+	assert.Equal(t, time.Unix(5, 0).UTC(), *r.StartedAt)
+}
+
 func TestRunLastSeqTracksMaxIgnoringOutOfOrder(t *testing.T) {
 	g := NewGraph()
 	g.ApplyAll([]model.Observation{

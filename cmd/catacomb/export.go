@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,16 +44,18 @@ func runExport(out io.Writer, a exportArgs) error {
 	if err != nil {
 		return err
 	}
-	w := out
 	if a.out != "" {
 		f, cerr := os.Create(a.out)
 		if cerr != nil {
 			return fmt.Errorf("export create: %w", cerr)
 		}
-		defer func() { _ = f.Close() }()
-		w = f
+		return snapshotAndClose(f, nodes, edges, runs)
 	}
-	return xjsonl.Snapshot(w, nodes, edges, runs)
+	return xjsonl.Snapshot(out, nodes, edges, runs)
+}
+
+func snapshotAndClose(w io.WriteCloser, nodes []*model.Node, edges []*model.Edge, runs []model.Run) error {
+	return errors.Join(xjsonl.Snapshot(w, nodes, edges, runs), w.Close())
 }
 
 func loadExportInput(input string) ([]*model.Node, []*model.Edge, []model.Run, error) {

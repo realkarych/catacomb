@@ -133,6 +133,24 @@ func metaRuntime(m evidence.Meta) string {
 	return drift.RuntimeClaudeCode
 }
 
+func appendUniqueString(dst []string, v string) []string {
+	for _, existing := range dst {
+		if existing == v {
+			return dst
+		}
+	}
+	return append(dst, v)
+}
+
+func relabelRunID(nodes []*model.Node, edges []*model.Edge, runID string) {
+	for _, n := range nodes {
+		n.RunID = runID
+	}
+	for _, e := range edges {
+		e.RunID = runID
+	}
+}
+
 func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggregate.RunGraph, error) {
 	main := filepath.Join(dir, "session.jsonl")
 	subs, _ := filepath.Glob(filepath.Join(dir, "subagents", "agent-*.jsonl"))
@@ -147,12 +165,22 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 	}
 	nodes, edges := sortedGraphSnapshot(g)
 	run := model.Run{ID: m.RunID, SessionIDs: []string{m.SessionID}, Labels: m.Labels}
-	for _, sr := range g.RunsSnapshot() {
+	snapshot := g.RunsSnapshot()
+	sessionIDs := make([]string, 0, len(snapshot))
+	for _, sr := range snapshot {
+		sessionIDs = append(sessionIDs, sr.ID)
 		if sr.ID == m.SessionID {
 			run.Status = sr.Status
 			run.ModelID = sr.ModelID
-			break
 		}
+	}
+	sort.Strings(sessionIDs)
+	for _, id := range sessionIDs {
+		run.SessionIDs = appendUniqueString(run.SessionIDs, id)
+	}
+	relabelRunID(nodes, edges, m.RunID)
+	if m.ExitCode != 0 {
+		run.Status = model.StatusError
 	}
 	if !m.MarkerStart.IsZero() {
 		run.StartedAt = &m.MarkerStart

@@ -1302,6 +1302,12 @@ materialized graph as JSONL — `{"kind":"node"…}`, `{"kind":"edge"…}`, and
 `{"kind":"run"…}` records — the input format of the
 [DeepEval bridge](https://github.com/realkarych/catacomb/tree/master/integrations/deepeval).
 
+For an evidence directory the export identity contract is: the single `run` record carries
+`id` = the `run_id` from `meta.json`; every `node` and `edge` record's `run_id` equals that
+same id, so they join to the run record directly; and `session_ids` lists every transcript
+session that fed the run — the main session first, then each subagent session in sorted
+order, so the record is stable across identical invocations.
+
 ```sh
 catacomb export ~/.catacomb/runs/bench-checkout-add-item-candidate-r1 --out run.jsonl
 catacomb export ~/.claude/projects/my-project/<session>.jsonl --to jsonl
