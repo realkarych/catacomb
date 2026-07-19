@@ -367,6 +367,7 @@ func TestWriteBundleRunIDEscapes(t *testing.T) {
 			_, err := writeBundle(io.Discard, b, t.TempDir())
 			require.ErrorIs(t, err, errBundleRunID)
 			assert.Contains(t, err.Error(), fmt.Sprintf("%q", id))
+			assert.Contains(t, err.Error(), "escapes the runs dir")
 		})
 	}
 }
@@ -492,7 +493,11 @@ func TestReadBundleManifestTruncatedBody(t *testing.T) {
 	_, err := writeBundle(&buf, b, runsDir)
 	require.NoError(t, err)
 	raw := gunzipBundle(t, buf.Bytes())
-	cut := tarBlockSize + tarBlockSize/2
+	hdr, err := tar.NewReader(bytes.NewReader(raw)).Next()
+	require.NoError(t, err)
+	require.Equal(t, "bundle.json", hdr.Name)
+	require.Greater(t, hdr.Size, int64(1))
+	cut := tarBlockSize + int(hdr.Size)/2
 	require.Less(t, cut, len(raw))
 	_, err = readBundle(bytes.NewReader(gzipBytes(t, raw[:cut])), discardBundleFile)
 	require.Error(t, err)
