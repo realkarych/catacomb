@@ -480,9 +480,12 @@ func isMCP(name string) bool {
 func (g *Graph) ensureRun(o model.Observation) {
 	r, ok := g.Runs[o.RunID]
 	if !ok {
-		started := o.EventTime
-		r = &model.Run{ID: o.RunID, Status: model.StatusRunning, StartedAt: &started}
+		r = &model.Run{ID: o.RunID, Status: model.StatusRunning}
 		g.Runs[o.RunID] = r
+	}
+	if r.StartedAt == nil && !o.EventTime.IsZero() {
+		started := o.EventTime
+		r.StartedAt = &started
 	}
 	if o.Seq > r.LastSeq {
 		r.LastSeq = o.Seq
