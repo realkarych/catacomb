@@ -117,7 +117,7 @@ echo "== prod.70 subagent sub-transcript: A-vs-A must NOT gate =="
 run_json 0 "$w/ava.json" "A-vs-A must NOT gate" -- \
   catacomb regress --runs-dir "$w/runs" \
   --baseline label:basket=prod-subagent-subtranscript,variant=baseline \
-  --candidate label:basket=prod-subagent-subtranscript,variant=baseline2 --metric-rel-delta 0.5 --json
+  --candidate label:basket=prod-subagent-subtranscript,variant=baseline2 --metric-rel-delta "$PROD_AVA_METRIC_BAND" --json
 rc=0; python3 - "$w/ava.json" <<'PY' || rc=$?
 import json, sys
 r = json.load(open(sys.argv[1]))

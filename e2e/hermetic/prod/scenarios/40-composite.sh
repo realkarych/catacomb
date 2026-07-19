@@ -70,6 +70,6 @@ echo "== prod.40 composite: A-vs-A must NOT gate =="
 run_json 0 "$w/ava.json" "A-vs-A must NOT gate" -- \
   catacomb regress --runs-dir "$w/runs" \
   --baseline label:basket=prod-composite,variant=baseline \
-  --candidate label:basket=prod-composite,variant=baseline2 --metric-rel-delta 0.5 --json
+  --candidate label:basket=prod-composite,variant=baseline2 --metric-rel-delta "$PROD_AVA_METRIC_BAND" --json
 rc=0; python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and not [f for f in r.get("findings", []) if f.get("verdict")=="notable"] else 1)' "$w/ava.json" || rc=$?
 record "$rc" "A-vs-A reports zero regressions and no notable findings"

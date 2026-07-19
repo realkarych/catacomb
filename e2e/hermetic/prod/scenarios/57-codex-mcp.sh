@@ -134,6 +134,6 @@ echo "== prod.57 codex-mcp: A-vs-A must NOT gate (non-vacuity) =="
 run_json 0 "$w/ava.json" "A-vs-A (baseline vs baseline2, same rollouts + artifact) must NOT gate" -- \
   catacomb regress --runs-dir "$w/runs" \
   --baseline label:basket=prod-codex-mcp,variant=baseline \
-  --candidate label:basket=prod-codex-mcp,variant=baseline2 --metric-rel-delta 0.5 --json
+  --candidate label:basket=prod-codex-mcp,variant=baseline2 --metric-rel-delta "$PROD_AVA_METRIC_BAND" --json
 rc=0; python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and not [f for f in r.get("findings", []) if f.get("verdict")=="notable"] else 1)' "$w/ava.json" || rc=$?
 record "$rc" "A-vs-A reports zero regressions and no notable findings (the gate would pass at exit 0 without the plant)"

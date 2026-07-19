@@ -2,6 +2,17 @@
 # Shared assertion bookkeeping for the hermetic production scenarios. Sourced by
 # the dispatcher (run.sh) and each scenarios/*.sh. Mirrors the pass/failrec/
 # record/run_json helpers in e2e/hermetic/run.sh so scenario code reads the same.
+
+# Continuous-metric band for the A-vs-A controls below, mirroring ava_metric_band in
+# e2e/run.sh. Calibration saw duration ~2x between identical batches (inter-batch
+# latency), so a tighter band false-flags wall-clock jitter as a regression: these
+# fixtures are byte-identical, and duration_ms is the only axis that can differ at
+# all. --metric-rel-delta touches continuous metrics ONLY — presence, annotation and
+# error-rate stay at default sensitivity, so a real presence false positive still
+# fails the control, which is the property A-vs-A exists to protect.
+# shellcheck disable=SC2034  # read by the scenarios/*.sh that run.sh sources
+PROD_AVA_METRIC_BAND="2.0"
+
 PROD_FAILURES=()
 pass() { printf '  PASS  %s\n' "$1"; }
 failrec() { printf '  FAIL  %s\n' "$1"; PROD_FAILURES+=("$1"); }
