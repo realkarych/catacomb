@@ -23,6 +23,9 @@ func TestPromptKind(t *testing.T) {
 		{"Hello there", "human"},
 		{"", "human"},
 		{"  <system-reminder>with leading space", "system"},
+		{"please read <system-reminder> in the middle", "human"},
+		{"<system-reminder", "human"},
+		{"<unknown-marker>foo", "human"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, PromptKind(c.text), "input: %q", c.text)
