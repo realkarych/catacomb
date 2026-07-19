@@ -76,7 +76,7 @@ func collectBundleFiles(runsDir string, runIDs []string) ([]bundleFile, error) {
 	files := []bundleFile{}
 	for _, id := range ids {
 		if !validBundleRunID(id) {
-			return nil, fmt.Errorf("baseline bundle: run id %q escapes the runs dir", id)
+			return nil, fmt.Errorf("baseline bundle: run id %q escapes the runs dir: %w", id, errBundleRunID)
 		}
 		runDir := filepath.Join(runsDir, id)
 		walkErr := filepath.WalkDir(runDir, func(p string, d fs.DirEntry, err error) error {

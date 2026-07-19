@@ -1,6 +1,7 @@
 package stepkey
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -55,17 +56,62 @@ func TestComputeAssignsKeyToEligibleAndSkipsRest(t *testing.T) {
 	assert.NotContains(t, got, "p1")
 }
 
-func TestStepKeyEqualAcrossRunsDistinctPerStep(t *testing.T) {
+func noisyPipeline(prefix string, baseSec int64) ([]*model.Node, []*model.Edge) {
+	nodes := []*model.Node{
+		tnode(prefix+"sess", model.NodeSession, "", baseSec, ""),
+		tnode(prefix+"p", model.NodeUserPrompt, "", baseSec+1, ""),
+		tnode(prefix+"turn", model.NodeAssistantTurn, "", baseSec+2, ""),
+		tnode(prefix+"bash", model.NodeToolCall, "Bash", baseSec+3,
+			"{  \"description\" : \"list files\" ,\n  \"command\"  :  \"ls\"  }"),
+		tnode(prefix+"read", model.NodeToolCall, "Read", baseSec+4,
+			"{ \"limit\": 40 ,\n \"file_path\" : \"x\" }"),
+	}
+	edges := []*model.Edge{
+		edge(prefix+"sess", prefix+"p"),
+		edge(prefix+"p", prefix+"turn"),
+		edge(prefix+"turn", prefix+"bash"),
+		edge(prefix+"turn", prefix+"read"),
+	}
+	return nodes, edges
+}
+
+func TestStepKeyIgnoresNodeIDsTimestampsArgOrderWhitespaceAndVolatileArgs(t *testing.T) {
 	na, ea := pipeline("A:", 1000)
-	nb, eb := pipeline("B:", 9000)
+	nb, eb := noisyPipeline("B:", 9000)
 	ka := Compute(na, ea)
 	kb := Compute(nb, eb)
-	assert.Equal(t, ka["A:bash"].Key, kb["B:bash"].Key)
-	assert.Equal(t, ka["A:read"].Key, kb["B:read"].Key)
-	assert.NotEqual(t, ka["A:bash"].Key, ka["A:read"].Key)
-	assert.Len(t, ka["A:bash"].Key, 32)
-	assert.NotContains(t, ka["A:bash"].Key, "A:")
-	assert.NotContains(t, ka["A:bash"].Key, "B:")
+
+	require.Contains(t, ka, "A:bash")
+	require.Contains(t, kb, "B:bash")
+	assert.Equal(t, ka["A:bash"].Key, kb["B:bash"].Key,
+		"same logical Bash step must key identically across runs")
+	assert.Equal(t, ka["A:read"].Key, kb["B:read"].Key,
+		"same logical Read step must key identically across runs")
+	assert.Equal(t, ka["A:bash"].PathKey, kb["B:bash"].PathKey)
+	assert.Equal(t, ka["A:bash"].Content, kb["B:bash"].Content)
+}
+
+func TestStepKeyDistinguishesToolIdentityArgumentsAndPosition(t *testing.T) {
+	na, ea := pipeline("A:", 1000)
+	ka := Compute(na, ea)
+
+	differentTool := ka["A:read"].Key
+	assert.NotEqual(t, ka["A:bash"].Key, differentTool,
+		"different tools at different sibling slots must not share a key")
+
+	changedArgs := Compute([]*model.Node{
+		tnode("sess", model.NodeSession, "", 1000, ""),
+		tnode("p", model.NodeUserPrompt, "", 1001, ""),
+		tnode("turn", model.NodeAssistantTurn, "", 1002, ""),
+		tnode("bash", model.NodeToolCall, "Bash", 1003, `{"command":"pwd"}`),
+		tnode("read", model.NodeToolCall, "Read", 1004, `{"file_path":"x"}`),
+	}, []*model.Edge{
+		edge("sess", "p"), edge("p", "turn"), edge("turn", "bash"), edge("turn", "read"),
+	})
+	assert.NotEqual(t, ka["A:bash"].Key, changedArgs["bash"].Key,
+		"a changed salient argument must change the step key")
+	assert.Equal(t, ka["A:read"].Key, changedArgs["read"].Key,
+		"an unrelated sibling must keep its key when another sibling's arguments change")
 }
 
 func one(name, input string) Key {
@@ -233,27 +279,42 @@ func TestKeyIndependentOfTier(t *testing.T) {
 	assert.Equal(t, ka["A:bash"].Key, kb["B:bash"].Key)
 }
 
-func TestCycleGuardSelfLoop(t *testing.T) {
+func TestSelfLoopKeysAsIfTheNodeHadNoParent(t *testing.T) {
 	n := tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
 	selfLoop := &model.Edge{Type: model.EdgeParentChild, Src: "t", Dst: "t"}
-	got := Compute([]*model.Node{n}, []*model.Edge{selfLoop})
-	require.Contains(t, got, "t")
-	assert.Len(t, got["t"].Key, 32)
-	assert.NotEmpty(t, got["t"].Key)
+
+	looped := Compute([]*model.Node{n}, []*model.Edge{selfLoop})
+	rootless := Compute([]*model.Node{tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)}, nil)
+
+	require.Contains(t, looped, "t")
+	assert.Equal(t, rootless["t"].Key, looped["t"].Key)
+	assert.Equal(t, rootless["t"].PathKey, looped["t"].PathKey)
 }
 
-func TestCycleGuardTwoCycle(t *testing.T) {
+func TestTwoCycleKeysAsIfTheAncestorChainStoppedAtTheRepeatedNode(t *testing.T) {
 	n := tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
 	p := tnode("p", model.NodeUserPrompt, "", 0, "")
-	e1 := &model.Edge{Type: model.EdgeParentChild, Src: "p", Dst: "t"}
-	e2 := &model.Edge{Type: model.EdgeParentChild, Src: "t", Dst: "p"}
-	got := Compute([]*model.Node{n, p}, []*model.Edge{e1, e2})
-	require.Contains(t, got, "t")
-	assert.Len(t, got["t"].Key, 32)
-	assert.NotEmpty(t, got["t"].Key)
+	cyclic := Compute(
+		[]*model.Node{n, p},
+		[]*model.Edge{edge("p", "t"), edge("t", "p")},
+	)
+
+	acyclic := Compute(
+		[]*model.Node{
+			tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`),
+			tnode("p", model.NodeUserPrompt, "", 0, ""),
+		},
+		[]*model.Edge{edge("p", "t")},
+	)
+
+	require.Contains(t, cyclic, "t")
+	assert.Equal(t, acyclic["t"].Key, cyclic["t"].Key)
+	assert.Equal(t, acyclic["t"].PathKey, cyclic["t"].PathKey)
+	assert.NotEqual(t, cyclic["t"].Key, Compute([]*model.Node{n}, nil)["t"].Key,
+		"the one traversable ancestor level must still be in the key")
 }
 
-func TestStepKeyGolden(t *testing.T) {
+func TestStepKeyGoldenPinsSchemeV1WireValuesSoStoredBaselinesStayComparable(t *testing.T) {
 	sess := tnode("sess", model.NodeSession, "", 0, "")
 	prompt := tnode("p", model.NodeUserPrompt, "", 1, "")
 	bash := tnode("bash", model.NodeToolCall, "Bash", 2, `{"command":"ls"}`)
@@ -271,91 +332,130 @@ func TestStepKeyGolden(t *testing.T) {
 	assert.Equal(t, "f4486f779c383f76a7d29bea5db1d67c", gotA)
 	assert.Equal(t, "75fe18f669fb537dd5dabb172bea6f76", gotB)
 	assert.Equal(t, "208ef93d998f6095eb697f436432b036", gotC)
-	assert.Len(t, gotA, 32)
-	assert.Len(t, gotB, 32)
-	assert.Len(t, gotC, 32)
 }
 
-func TestProjectInvalidJSON(t *testing.T) {
-	assert.Equal(t, "", project([]byte("not-json"), "key"))
+func TestToolNameMatchIgnoresCaseAndSurroundingWhitespace(t *testing.T) {
+	spaced := one("  bAsH  ", `{"command":"ls","description":"first"}`)
+	spacedOther := one("  bAsH  ", `{"command":"ls","description":"second"}`)
+	assert.Equal(t, spaced.Key, spacedOther.Key,
+		"a padded, mixed-case Bash must still project only the command")
+
+	unmatched := one("Bash!", `{"command":"ls","description":"first"}`)
+	unmatchedOther := one("Bash!", `{"command":"ls","description":"second"}`)
+	assert.NotEqual(t, unmatched.Key, unmatchedOther.Key,
+		"a name the salient table does not know must fall back to whole-input canonicalisation")
 }
 
-func TestProjectNonObject(t *testing.T) {
-	assert.Equal(t, "", project([]byte(`"string"`), "key"))
-}
-
-func TestProjectMissingKey(t *testing.T) {
-	assert.Equal(t, "", project([]byte(`{"other":"val"}`), "key"))
-}
-
-func TestCanonInvalidJSON(t *testing.T) {
-	raw := []byte("not-json")
-	assert.Equal(t, "not-json", canon(raw))
-}
-
-func TestNormTool(t *testing.T) {
-	assert.Equal(t, "bash", normTool("  Bash  "))
-	assert.Equal(t, "edit", normTool("Edit"))
-}
-
-func TestEligibleTypes(t *testing.T) {
-	assert.True(t, eligible(model.NodeToolCall))
-	assert.True(t, eligible(model.NodeMCPCall))
-	assert.True(t, eligible(model.NodeSkill))
-	assert.True(t, eligible(model.NodeSubagent))
-	assert.False(t, eligible(model.NodeSession))
-	assert.False(t, eligible(model.NodeUserPrompt))
-	assert.False(t, eligible(model.NodeAssistantTurn))
-}
-
-func TestComputeNilEdges(t *testing.T) {
-	n := tnode("t", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
-	got := Compute([]*model.Node{n}, nil)
-	assert.Contains(t, got, "t")
-	assert.Len(t, got["t"].Key, 32)
-}
-
-func TestLessSiblingBothNilTimestamp(t *testing.T) {
-	b := &builder{
-		byID:     map[string]*model.Node{},
-		parentOf: map[string]string{},
-		children: map[string][]string{},
-		terms:    map[string]string{},
+func TestOnlyToolMCPSkillAndSubagentNodesReceiveKeys(t *testing.T) {
+	sub := tnode("subagent", model.NodeSubagent, "", 5, "")
+	sub.SubagentType = "Explore"
+	nodes := []*model.Node{
+		tnode("sess", model.NodeSession, "", 0, ""),
+		tnode("prompt", model.NodeUserPrompt, "", 1, ""),
+		tnode("turn", model.NodeAssistantTurn, "", 2, ""),
+		tnode("marker", model.NodeMarker, "plan", 3, ""),
+		tnode("tool", model.NodeToolCall, "Bash", 4, `{"command":"ls"}`),
+		sub,
+		tnode("mcp", model.NodeMCPCall, "mcp__fs__read", 6, `{"file_path":"a.go"}`),
+		tnode("skill", model.NodeSkill, "brainstorm", 7, `{"x":1}`),
 	}
-	a := &model.Node{ID: "a", Type: model.NodeToolCall, Name: "Bash"}
-	c := &model.Node{ID: "c", Type: model.NodeToolCall, Name: "Read"}
-	b.terms["a"] = "term-a"
-	b.terms["c"] = "term-c"
-	result := b.lessSibling(a, c)
-	assert.True(t, result)
+	edges := []*model.Edge{
+		edge("sess", "prompt"), edge("prompt", "turn"),
+		edge("sess", "marker"), edge("turn", "tool"),
+		edge("turn", "subagent"), edge("turn", "mcp"), edge("turn", "skill"),
+	}
+
+	got := Compute(nodes, edges)
+
+	keyed := make([]string, 0, len(got))
+	for id := range got {
+		keyed = append(keyed, id)
+	}
+	sort.Strings(keyed)
+	assert.Equal(t, []string{"mcp", "skill", "subagent", "tool"}, keyed)
+
+	distinct := map[string]string{}
+	for id, k := range got {
+		require.NotContains(t, distinct, k.Key, "keys must be distinct across node types")
+		distinct[k.Key] = id
+	}
 }
 
-func TestLessSiblingANilTimestamp(t *testing.T) {
-	b := &builder{
-		byID:     map[string]*model.Node{},
-		parentOf: map[string]string{},
-		children: map[string][]string{},
-		terms:    map[string]string{},
-	}
-	ts := time.Unix(1, 0).UTC()
-	a := &model.Node{ID: "a", Type: model.NodeToolCall}
-	c := &model.Node{ID: "c", Type: model.NodeToolCall, TStart: &ts}
-	result := b.lessSibling(a, c)
-	assert.False(t, result)
+func TestComputeWithoutEdgesKeysEveryEligibleNodeAtTheRoot(t *testing.T) {
+	a := tnode("a", model.NodeToolCall, "Bash", 1, `{"command":"ls"}`)
+	b := tnode("b", model.NodeToolCall, "Bash", 2, `{"command":"ls"}`)
+	c := tnode("c", model.NodeToolCall, "Bash", 3, `{"command":"pwd"}`)
+
+	got := Compute([]*model.Node{a, b, c}, nil)
+
+	require.Len(t, got, 3)
+	assert.Equal(t, got["a"].Key, got["b"].Key,
+		"parentless nodes have an empty path, so identical content collapses to one key")
+	assert.NotEqual(t, got["a"].Key, got["c"].Key)
+	assert.Equal(t, got["a"].PathKey, got["c"].PathKey,
+		"parentless nodes share the empty path key")
 }
 
-func TestLessSiblingCNilTimestamp(t *testing.T) {
-	b := &builder{
-		byID:     map[string]*model.Node{},
-		parentOf: map[string]string{},
-		children: map[string][]string{},
-		terms:    map[string]string{},
-	}
-	ts := time.Unix(1, 0).UTC()
-	a := &model.Node{ID: "a", Type: model.NodeToolCall, TStart: &ts}
-	c := &model.Node{ID: "c", Type: model.NodeToolCall}
-	result := b.lessSibling(a, c)
-	assert.True(t, result)
+func untimedTool(id, name, input string) *model.Node {
+	n := &model.Node{ID: id, Type: model.NodeToolCall, Name: name, Status: model.StatusOK}
+	n.Payload = &model.Payload{Input: []byte(input)}
+	return n
+}
+
+func TestSiblingsWithoutTimestampsAreOrderedDeterministicallyBySignatureThenID(t *testing.T) {
+	parent := tnode("p", model.NodeUserPrompt, "", 0, "")
+	bash := untimedTool("z-bash", "Bash", `{"command":"ls"}`)
+	read := untimedTool("a-read", "Read", `{"file_path":"x"}`)
+
+	forward := Compute(
+		[]*model.Node{parent, bash, read},
+		[]*model.Edge{edge("p", "z-bash"), edge("p", "a-read")},
+	)
+	reversed := Compute(
+		[]*model.Node{read, bash, parent},
+		[]*model.Edge{edge("p", "a-read"), edge("p", "z-bash")},
+	)
+
+	require.Contains(t, forward, "z-bash")
+	require.Contains(t, forward, "a-read")
+	assert.Equal(t, forward["z-bash"].Key, reversed["z-bash"].Key,
+		"sibling order for timestamp-less nodes must not depend on input order")
+	assert.Equal(t, forward["a-read"].Key, reversed["a-read"].Key)
+	assert.NotEqual(t, forward["z-bash"].Key, forward["a-read"].Key)
+	assert.NotEqual(t, forward["z-bash"].PathKey, forward["a-read"].PathKey,
+		"tied siblings must occupy distinct sibling slots")
+}
+
+func TestTimestampedSiblingSortsBeforeSiblingWithoutTimestamp(t *testing.T) {
+	parent := tnode("p", model.NodeUserPrompt, "", 0, "")
+	timed := tnode("timed", model.NodeToolCall, "Bash", 5, `{"command":"ls"}`)
+	untimed := untimedTool("untimed", "Read", `{"file_path":"x"}`)
+
+	together := Compute(
+		[]*model.Node{parent, timed, untimed},
+		[]*model.Edge{edge("p", "timed"), edge("p", "untimed")},
+	)
+	togetherReversed := Compute(
+		[]*model.Node{parent, untimed, timed},
+		[]*model.Edge{edge("p", "untimed"), edge("p", "timed")},
+	)
+	timedAlone := Compute(
+		[]*model.Node{tnode("p", model.NodeUserPrompt, "", 0, ""), timed},
+		[]*model.Edge{edge("p", "timed")},
+	)
+	untimedAlone := Compute(
+		[]*model.Node{tnode("p", model.NodeUserPrompt, "", 0, ""), untimed},
+		[]*model.Edge{edge("p", "untimed")},
+	)
+
+	assert.Equal(t, timedAlone["timed"].PathKey, together["timed"].PathKey,
+		"the timestamped sibling keeps slot 0 when an untimed sibling joins")
+	assert.NotEqual(t, untimedAlone["untimed"].PathKey, together["untimed"].PathKey,
+		"the untimed sibling must be pushed to slot 1 behind the timestamped one")
+
+	assert.Equal(t, together["timed"].PathKey, togetherReversed["timed"].PathKey,
+		"the timestamped sibling wins slot 0 regardless of which sibling is compared first")
+	assert.Equal(t, together["untimed"].PathKey, togetherReversed["untimed"].PathKey)
 }
 
 func TestComputeEdgeNonParentChild(t *testing.T) {
@@ -365,7 +465,7 @@ func TestComputeEdgeNonParentChild(t *testing.T) {
 	assert.Contains(t, got, "t")
 }
 
-func TestLiveIndexTargetNotFound(t *testing.T) {
+func TestLiveIndexFallbackForATargetThatIsNotItsParentsChildIsUnreachableFromCompute(t *testing.T) {
 	ts1 := time.Unix(1, 0).UTC()
 	ts2 := time.Unix(2, 0).UTC()
 	child1 := &model.Node{ID: "c1", Type: model.NodeToolCall, Status: model.StatusOK, TStart: &ts1}
@@ -396,13 +496,6 @@ func TestReadWithPathKey(t *testing.T) {
 	ka := one("Read", `{"path":"x"}`)
 	kb := one("Read", `{"path":"x"}`)
 	assert.Equal(t, ka.Key, kb.Key)
-}
-
-func TestMCPCallEligible(t *testing.T) {
-	n := tnode("m", model.NodeMCPCall, "mcp__fs__read", 1, `{"file_path":"a.go"}`)
-	got := Compute([]*model.Node{n}, nil)
-	assert.Contains(t, got, "m")
-	assert.Len(t, got["m"].Key, 32)
 }
 
 func TestComputeEmitsContentAndPathKeys(t *testing.T) {

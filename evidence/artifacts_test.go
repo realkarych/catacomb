@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,9 +169,12 @@ func TestCaptureArtifactsRootOpenError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ArtifactsDirName), []byte("x"), 0o600))
 
-	_, _, err := CaptureArtifacts(dir, work, []string{"keep.txt"})
+	metas, note, err := CaptureArtifacts(dir, work, []string{"keep.txt"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "CaptureArtifacts")
+	var pathErr *fs.PathError
+	require.ErrorAs(t, err, &pathErr, "the underlying filesystem error must stay inspectable through the wrap")
+	assert.Nil(t, metas, "a failed capture must not report artifacts it did not write")
+	assert.Empty(t, note)
 }
 
 func TestCaptureArtifactsWriteError(t *testing.T) {
@@ -179,9 +183,12 @@ func TestCaptureArtifactsWriteError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "run")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ArtifactsDirName, "keep.txt"), 0o700))
 
-	_, _, err := CaptureArtifacts(dir, work, []string{"keep.txt"})
+	metas, note, err := CaptureArtifacts(dir, work, []string{"keep.txt"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "CaptureArtifacts")
+	var pathErr *fs.PathError
+	require.ErrorAs(t, err, &pathErr)
+	assert.Nil(t, metas, "a failed capture must not report artifacts it did not write")
+	assert.Empty(t, note)
 }
 
 func TestCopyArtifactIOErrors(t *testing.T) {
@@ -205,8 +212,12 @@ func TestCopyArtifactIOErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, cerr := copyArtifact(root, tc.rel, tc.src)
+			n, sum, cerr := copyArtifact(root, tc.rel, tc.src)
 			require.Error(t, cerr)
+			var pathErr *fs.PathError
+			require.ErrorAs(t, cerr, &pathErr)
+			assert.Zero(t, n, "a failed copy must not report bytes written")
+			assert.Empty(t, sum, "a failed copy must not report a checksum")
 		})
 	}
 }
@@ -233,10 +244,14 @@ func TestCaptureArtifactsMultipleFiles(t *testing.T) {
 	metas, note, err := CaptureArtifacts(dir, work, []string{"*.txt"})
 	require.NoError(t, err)
 	require.Empty(t, note)
-	require.Len(t, metas, 2)
+	require.Equal(t, []ArtifactMeta{
+		{Rel: "a.txt", SHA256: sha([]byte("aaa\n")), Bytes: 4},
+		{Rel: "b.txt", SHA256: sha([]byte("bbb\n")), Bytes: 4},
+	}, metas, "the manifest must be deterministic: one entry per match, in glob order")
 	for _, m := range metas {
-		_, serr := os.Stat(filepath.Join(dir, ArtifactsDirName, m.Rel))
-		require.NoError(t, serr)
+		written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, m.Rel))
+		require.NoError(t, rerr)
+		assert.Equal(t, m.SHA256, sha(written), "each manifest checksum must match the bytes actually on disk")
 	}
 }
 
@@ -422,7 +437,10 @@ func rawMetaEnv(t *testing.T, dir string) json.RawMessage {
 }
 
 func TestStampArtifactsReadMetaError(t *testing.T) {
-	err := StampArtifacts(t.TempDir(), nil, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "evidence.StampArtifacts")
+	dir := t.TempDir()
+	err := StampArtifacts(dir, nil, "")
+	require.ErrorIs(t, err, os.ErrNotExist)
+	entries, rerr := os.ReadDir(dir)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "a failed stamp must not create a meta.json out of nothing")
 }

@@ -35,12 +35,20 @@ func TestCostZeroTokensKnownModel(t *testing.T) {
 	assert.InDelta(t, 0, r.USD, 1e-9)
 }
 
-func TestNewHasRealTableEntry(t *testing.T) {
+func TestNewPricesEveryAnthropicTokenKindAtTheOpusRate(t *testing.T) {
 	e := New()
-	r, ok := e.Cost(Inputs{ModelID: "claude-opus-4-8", TokensIn: 1_000_000})
+	in := Inputs{ModelID: "claude-opus-4-8"}
+	assert.InDelta(t, 5.00, rateUSD(t, e, Inputs{ModelID: in.ModelID, TokensIn: 1_000_000}), 1e-9)
+	assert.InDelta(t, 25.00, rateUSD(t, e, Inputs{ModelID: in.ModelID, TokensOut: 1_000_000}), 1e-9)
+	assert.InDelta(t, 0.50, rateUSD(t, e, Inputs{ModelID: in.ModelID, CacheReadIn: 1_000_000}), 1e-9)
+	assert.InDelta(t, 6.25, rateUSD(t, e, Inputs{ModelID: in.ModelID, CacheWrite: 1_000_000}), 1e-9)
+}
+
+func TestCostSumsAllFourTokenKindsProportionally(t *testing.T) {
+	e := newEngineWithFamilies(testTable(), nil)
+	r, ok := e.Cost(Inputs{ModelID: "model-x", TokensIn: 500_000, TokensOut: 200_000, CacheReadIn: 100_000, CacheWrite: 400_000})
 	require.True(t, ok)
-	assert.Equal(t, "estimated", r.Source)
-	assert.Greater(t, r.USD, 0.0)
+	assert.InDelta(t, 0.5*1+0.2*5+0.1*0.1+0.4*1.25, r.USD, 1e-9)
 }
 
 func TestCostPrefixFamilyFallbackEstimated(t *testing.T) {
