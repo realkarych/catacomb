@@ -31,7 +31,7 @@ func Subgraph(nodes []*model.Node, edges []*model.Edge, w Window) ([]*model.Node
 		if n.Type == model.NodeMarker {
 			continue
 		}
-		if !InWindow(n, w) {
+		if n.Type != model.NodeSession && !InWindow(n, w) {
 			continue
 		}
 		included[n.ID] = true

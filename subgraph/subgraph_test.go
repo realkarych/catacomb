@@ -116,3 +116,25 @@ func ids(ns []*model.Node) []string {
 	}
 	return out
 }
+
+func TestSubgraphRetainsUnstampedSessionRoot(t *testing.T) {
+	w := Window{Start: time.Unix(100, 0).UTC(), End: ts(200)}
+	nodes := []*model.Node{
+		node("session", model.NodeSession, nil),
+		node("prompt", model.NodeUserPrompt, ts(110)),
+		node("tool", model.NodeToolCall, ts(120)),
+		node("out", model.NodeToolCall, ts(500)),
+	}
+	edges := []*model.Edge{
+		{ID: "e1", Src: "session", Dst: "prompt"},
+		{ID: "e2", Src: "prompt", Dst: "tool"},
+		{ID: "e3", Src: "session", Dst: "out"},
+	}
+
+	sn, se := Subgraph(nodes, edges, w)
+
+	assert.Contains(t, ids(sn), "session",
+		"the session root anchors path levels and must survive scoping")
+	assert.NotContains(t, ids(sn), "out")
+	assert.Len(t, se, 2)
+}
