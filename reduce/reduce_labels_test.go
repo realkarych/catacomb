@@ -24,7 +24,7 @@ func TestEnsureRunMergesLabels(t *testing.T) {
 			want:  map[string]string{"basket": "checkout", "rep": "1"},
 		},
 		{
-			name: "later observation overrides per key keeping others",
+			name: "highest seq observation wins per key keeping others",
 			attrs: []map[string]any{
 				{"catacomb.labels": "basket=checkout,rep=1"},
 				{"catacomb.labels": "rep=2"},
@@ -52,19 +52,27 @@ func TestEnsureRunMergesLabels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGraph()
 			obs := make([]model.Observation, 0, len(tt.attrs))
 			for i, a := range tt.attrs {
 				o := ob("assistant_turn", "", t0.Add(time.Duration(i)*time.Second))
 				o.Correlation.MessageID = "lbl" + strconv.Itoa(i)
 				o.Attrs = a
+				o.Seq = uint64(i) + 1
 				obs = append(obs, o)
 			}
-			g.ApplyAll(obs)
 
+			g := NewGraph()
+			g.ApplyAll(obs)
 			r := g.Runs[runID]
 			require.NotNil(t, r)
 			assert.Equal(t, tt.want, r.Labels)
+
+			for i, p := range permute(obs) {
+				pg := NewGraph()
+				pg.ApplyAll(p)
+				assert.Equal(t, tt.want, pg.Runs[runID].Labels,
+					"label resolution must not depend on arrival order (permutation %d)", i)
+			}
 		})
 	}
 }

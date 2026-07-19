@@ -66,11 +66,19 @@ func TestToolCallMergesUseAndResult(t *testing.T) {
 	assert.Equal(t, "Bash", n.Name)
 	assert.Equal(t, model.StatusOK, n.Status)
 	require.NotNil(t, n.Payload)
-	assert.NotEmpty(t, n.Payload.Input)
-	assert.NotEmpty(t, n.Payload.Output)
-	assert.Len(t, n.Sources, 2)
+	assert.JSONEq(t, `{"command":"ls"}`, string(n.Payload.Input))
+	assert.JSONEq(t, `"a.txt"`, string(n.Payload.Output))
+	assert.Equal(t, model.HashPayload(n.Payload), n.PayloadHash)
+	assert.Equal(t, []model.SourceRef{
+		{Source: model.SourceJSONL, ObsID: use.ObsID, ObservedAt: t0},
+		{Source: model.SourceJSONL, ObsID: res.ObsID, ObservedAt: t1},
+	}, n.Sources)
 	require.NotNil(t, n.TStart)
 	assert.Equal(t, t0, *n.TStart)
+	require.NotNil(t, n.TEnd)
+	assert.Equal(t, t1, *n.TEnd)
+	require.NotNil(t, n.DurationMS)
+	assert.Equal(t, int64(1000), *n.DurationMS)
 
 	require.NotNil(t, g.Edges[model.EdgeID(execID, model.EdgeParentChild, model.AssistantTurnID(execID, "msg_1"), n.ID)])
 }
@@ -137,10 +145,15 @@ func TestApplyOrderIndependentFields(t *testing.T) {
 	rev.ApplyAll([]model.Observation{res, use})
 
 	id := model.ToolCallID(execID, "toolu_1")
-	assert.Equal(t, fwd.Nodes[id].Name, rev.Nodes[id].Name)
-	assert.Equal(t, fwd.Nodes[id].Status, rev.Nodes[id].Status)
-	assert.Equal(t, *fwd.Nodes[id].TStart, *rev.Nodes[id].TStart)
-	assert.Equal(t, fwd.Nodes[id].Type, rev.Nodes[id].Type)
+	n := fwd.Nodes[id]
+	require.NotNil(t, n)
+	assert.Equal(t, "Bash", n.Name)
+	assert.Equal(t, model.StatusOK, n.Status)
+	assert.Equal(t, model.NodeToolCall, n.Type)
+	require.NotNil(t, n.TStart)
+	assert.Equal(t, t0, *n.TStart)
+	assert.Equal(t, canonGraph(fwd), canonGraph(rev),
+		"use-then-result and result-then-use must converge on every field, not just the ones spelled out above")
 }
 
 func TestApplyToolTypeUpgradeReversedOrder(t *testing.T) {
@@ -289,6 +302,7 @@ func TestSubagentStop(t *testing.T) {
 	assert.Equal(t, "a1", n.AgentID)
 	assert.Equal(t, "researcher", n.SubagentType)
 	require.NotNil(t, n.TEnd)
+	assert.Equal(t, time.Unix(0, 0).UTC(), *n.TEnd)
 	assert.Equal(t, model.StatusOK, n.Status)
 	require.NotNil(t, g.Edges[model.EdgeID(execID, model.EdgeParentChild, model.SessionNodeID(execID), n.ID)])
 }
@@ -332,8 +346,24 @@ func TestSnapshotReturnsAllNodesAndEdges(t *testing.T) {
 	g := NewGraph()
 	g.Apply(up)
 	nodes, edges := g.Snapshot()
-	assert.Len(t, nodes, 2)
-	assert.Len(t, edges, 1)
+	assert.ElementsMatch(t, []string{model.SessionNodeID(execID), model.UserPromptID(execID, "u1")}, ids(nodes))
+	assert.Equal(t, []string{model.EdgeID(execID, model.EdgeParentChild, model.SessionNodeID(execID), model.UserPromptID(execID, "u1"))}, edgeIDs(edges))
+}
+
+func ids(ns []*model.Node) []string {
+	out := make([]string, len(ns))
+	for i, n := range ns {
+		out[i] = n.ID
+	}
+	return out
+}
+
+func edgeIDs(es []*model.Edge) []string {
+	out := make([]string, len(es))
+	for i, e := range es {
+		out[i] = e.ID
+	}
+	return out
 }
 
 func TestResolveStatusGenuineLatches(t *testing.T) {
@@ -418,6 +448,8 @@ func TestRunOpensOnFirstObs(t *testing.T) {
 	require.NotNil(t, r)
 	assert.Equal(t, model.StatusRunning, r.Status)
 	require.NotNil(t, r.StartedAt)
+	assert.Equal(t, time.Unix(1, 0).UTC(), *r.StartedAt)
+	assert.Equal(t, uint64(1), r.LastSeq)
 	assert.Equal(t, []string{"s1"}, r.SessionIDs)
 }
 
@@ -435,13 +467,19 @@ func TestRunStartedAtSkipsZeroEventTime(t *testing.T) {
 	assert.Equal(t, time.Unix(2, 0).UTC(), *r.StartedAt)
 }
 
-func TestRunStartedAtKeepsFirstNonZeroEventTime(t *testing.T) {
-	g := NewGraph()
-	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 5))
-	g.Apply(toolObs("e1", "s1", "t2", "Bash", "running", 9))
-	r := g.Runs["s1"]
-	require.NotNil(t, r.StartedAt)
-	assert.Equal(t, time.Unix(5, 0).UTC(), *r.StartedAt)
+func TestRunStartedAtIsEarliestEventTimeInAnyArrivalOrder(t *testing.T) {
+	early := toolObs("e1", "s1", "t1", "Bash", "running", 5)
+	late := toolObs("e1", "s1", "t2", "Bash", "running", 9)
+	middle := toolObs("e1", "s1", "t3", "Bash", "running", 7)
+
+	for i, p := range permute([]model.Observation{early, late, middle}) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		r := g.Runs["s1"]
+		require.NotNil(t, r.StartedAt)
+		assert.Equal(t, time.Unix(5, 0).UTC(), *r.StartedAt,
+			"the run starts at its earliest observation, whatever order they arrive in (permutation %d)", i)
+	}
 }
 
 func TestRunLastSeqTracksMaxIgnoringOutOfOrder(t *testing.T) {
@@ -459,6 +497,11 @@ func TestRunsSnapshot(t *testing.T) {
 	snap := g.RunsSnapshot()
 	require.Len(t, snap, 1)
 	assert.Equal(t, "s1", snap[0].ID)
+	assert.Equal(t, *g.Runs["s1"], snap[0])
+
+	snap[0].Status = model.StatusError
+	assert.Equal(t, model.StatusRunning, g.Runs["s1"].Status,
+		"the snapshot is a copy: mutating it must not reach back into the graph")
 }
 
 func TestRunsSnapshotMultipleRuns(t *testing.T) {
@@ -466,7 +509,11 @@ func TestRunsSnapshotMultipleRuns(t *testing.T) {
 	g.Apply(toolObs("e1", "s1", "t1", "Bash", "running", 1))
 	g.Apply(toolObs("e2", "s2", "t2", "Bash", "running", 2))
 	snap := g.RunsSnapshot()
-	require.Len(t, snap, 2)
+	got := make([]string, len(snap))
+	for i, r := range snap {
+		got[i] = r.ID
+	}
+	assert.ElementsMatch(t, []string{"s1", "s2"}, got)
 }
 
 func toolObs(exec, runID, toolUseID, name, status string, seq uint64) model.Observation {
@@ -631,69 +678,67 @@ func TestReductionCommutativity(t *testing.T) {
 	}
 }
 
+func sourcesAsMultiset(refs []model.SourceRef) []model.SourceRef {
+	out := append([]model.SourceRef(nil), refs...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		if out[i].ObsID != out[j].ObsID {
+			return out[i].ObsID < out[j].ObsID
+		}
+		return out[i].ObservedAt.Before(out[j].ObservedAt)
+	})
+	return out
+}
+
+func canonNode(n *model.Node) *model.Node {
+	c := *n
+	c.Sources = sourcesAsMultiset(n.Sources)
+	c.TStart = utcPtr(n.TStart)
+	c.TEnd = utcPtr(n.TEnd)
+	return &c
+}
+
+func canonRun(r *model.Run) *model.Run {
+	c := *r
+	c.StartedAt = utcPtr(r.StartedAt)
+	c.EndedAt = utcPtr(r.EndedAt)
+	return &c
+}
+
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
 func canonGraph(g *Graph) string {
-	type nodeView struct {
-		ID          string
-		Type        model.NodeType
-		Name        string
-		Status      model.Status
-		Rev         uint64
-		TStart      string
-		TIn         string
-		TOut        string
-		Cause       string
-		PayloadHash string
+	nodes := make([]*model.Node, 0, len(g.Nodes))
+	for _, n := range g.Nodes {
+		nodes = append(nodes, canonNode(n))
 	}
-	var nv []nodeView
-	for id, n := range g.Nodes {
-		v := nodeView{ID: id, Type: n.Type, Name: n.Name, Status: n.Status, Rev: n.Rev}
-		if n.TStart != nil {
-			v.TStart = n.TStart.UTC().Format(time.RFC3339Nano)
-		}
-		if n.TokensIn != nil {
-			v.TIn = strconv.FormatInt(*n.TokensIn, 10)
-		}
-		if n.TokensOut != nil {
-			v.TOut = strconv.FormatInt(*n.TokensOut, 10)
-		}
-		if n.Attrs != nil {
-			if c, ok := n.Attrs["cancel_cause"].(string); ok {
-				v.Cause = c
-			}
-		}
-		v.PayloadHash = n.PayloadHash
-		nv = append(nv, v)
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	edges := make([]*model.Edge, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		edges = append(edges, e)
 	}
-	sort.Slice(nv, func(i, j int) bool { return nv[i].ID < nv[j].ID })
-	type edgeView struct {
-		ID  string
-		Rev uint64
+	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	runs := make([]*model.Run, 0, len(g.Runs))
+	for _, r := range g.Runs {
+		runs = append(runs, canonRun(r))
 	}
-	var ev []edgeView
-	for id, e := range g.Edges {
-		ev = append(ev, edgeView{ID: id, Rev: e.Rev})
+	sort.Slice(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
+	b, err := json.Marshal(struct {
+		Nodes []*model.Node
+		Edges []*model.Edge
+		Runs  []*model.Run
+	}{nodes, edges, runs})
+	if err != nil {
+		panic(err)
 	}
-	sort.Slice(ev, func(i, j int) bool { return ev[i].ID < ev[j].ID })
-	type runView struct {
-		ID      string
-		Status  model.Status
-		EndedAt string
-		LastSeq uint64
-	}
-	var rv []runView
-	for id, r := range g.Runs {
-		v := runView{ID: id, Status: r.Status, LastSeq: r.LastSeq}
-		if r.EndedAt != nil {
-			v.EndedAt = r.EndedAt.UTC().Format(time.RFC3339Nano)
-		}
-		rv = append(rv, v)
-	}
-	sort.Slice(rv, func(i, j int) bool { return rv[i].ID < rv[j].ID })
-	b, _ := json.Marshal(struct {
-		Nodes []nodeView
-		Edges []edgeView
-		Runs  []runView
-	}{nv, ev, rv})
 	return string(b)
 }
 
@@ -1250,21 +1295,53 @@ func TestEnsureRunPopulatesModelID(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4-6", r.ModelID)
 }
 
-func TestEnsureRunModelIDFirstNonEmptyWins(t *testing.T) {
+func TestEnsureRunModelIDLowestSeqWinsInAnyArrivalOrder(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	first := ob("assistant_turn", "", t0)
 	first.Correlation.MessageID = "mc7a"
 	first.Attrs = map[string]any{"model": "claude-opus-4-8"}
+	first.Seq = 1
 	second := ob("assistant_turn", "", t0.Add(time.Second))
 	second.Correlation.MessageID = "mc7b"
 	second.Attrs = map[string]any{"model": "claude-sonnet-4-6"}
+	second.Seq = 2
+	third := ob("assistant_turn", "", t0.Add(2*time.Second))
+	third.Correlation.MessageID = "mc7c"
+	third.Attrs = map[string]any{"model": "claude-haiku-4-5"}
+	third.Seq = 3
 
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{first, second})
+	for i, p := range permute([]model.Observation{first, second, third}) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		r := g.Runs[runID]
+		require.NotNil(t, r)
+		assert.Equal(t, "claude-opus-4-8", r.ModelID,
+			"the run model is the one on the lowest-seq observation carrying it, whatever order they arrive in (permutation %d)", i)
+	}
+}
 
-	r := g.Runs[runID]
-	require.NotNil(t, r)
-	assert.Equal(t, "claude-opus-4-8", r.ModelID)
+func TestEnsureRunReproLowestSeqWinsInAnyArrivalOrder(t *testing.T) {
+	reproObs := func(seq uint64, version, cwd string) model.Observation {
+		o := ob("assistant_turn", "", time.Unix(int64(seq), 0).UTC())
+		o.Correlation.MessageID = "mrepro" + strconv.FormatUint(seq, 10)
+		o.Attrs = map[string]any{"claude_code_version": version, "cwd": cwd}
+		o.Seq = seq
+		return o
+	}
+	obs := []model.Observation{
+		reproObs(1, "1.2.3", "/project"),
+		reproObs(2, "9.9.9", "/elsewhere"),
+		reproObs(3, "0.0.1", "/third"),
+	}
+
+	for i, p := range permute(obs) {
+		g := NewGraph()
+		g.ApplyAll(p)
+		r := g.Runs[runID]
+		require.NotNil(t, r.Repro)
+		assert.Equal(t, "1.2.3", r.Repro.ClaudeCodeVersion, "permutation %d", i)
+		assert.Equal(t, "/project", r.Repro.Cwd, "permutation %d", i)
+	}
 }
 
 func TestApplyUserPromptMergesTextPayload(t *testing.T) {
