@@ -115,6 +115,16 @@ func TestGroupFlagsSkipsTwoCellGroupsEvenWhenALoweredIQRFactorWouldOtherwiseFlag
 	assert.NotNil(t, groupFlags(tokensOutCells([]string{"r0", "r1", "r2"}, []float64{0, 0, 1e9}), th))
 }
 
+func TestGroupFlagsMinimumOfThreeCellsHoldsWhenLoweredIQRFactorWouldOtherwiseFlagTwoCells(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	th.AuditIQRFactor = 0.5
+	twoCells := groupFlags(tokensOutCells([]string{"r1", "r2"}, []float64{100, 1000}), th)
+	assert.Nil(t, twoCells)
+	threeCells := groupFlags(tokensOutCells([]string{"r1", "r2", "r3"}, []float64{100, 100, 1000}), th)
+	require.Equal(t, []CellFlag{{RunID: "r3", Metric: "tokens_out", Value: 1000, Median: 100, Band: 450}}, threeCells)
+}
+
 func TestGroupFlagsIQRZeroNeedsRelFloor(t *testing.T) {
 	t.Parallel()
 	th := DefaultThresholds()

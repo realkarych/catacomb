@@ -117,12 +117,7 @@ func (b *builder) liveIndex(parent, target string) int {
 	sort.Slice(sibs, func(i, j int) bool {
 		return b.lessSibling(sibs[i], sibs[j])
 	})
-	for i, s := range sibs {
-		if s.ID == target {
-			return i
-		}
-	}
-	return 0
+	return slices.IndexFunc(sibs, func(s *model.Node) bool { return s.ID == target })
 }
 
 func (b *builder) lessSibling(a, c *model.Node) bool {

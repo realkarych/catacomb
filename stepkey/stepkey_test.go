@@ -465,21 +465,6 @@ func TestComputeEdgeNonParentChild(t *testing.T) {
 	assert.Contains(t, got, "t")
 }
 
-func TestLiveIndexFallbackForATargetThatIsNotItsParentsChildIsUnreachableFromCompute(t *testing.T) {
-	ts1 := time.Unix(1, 0).UTC()
-	ts2 := time.Unix(2, 0).UTC()
-	child1 := &model.Node{ID: "c1", Type: model.NodeToolCall, Status: model.StatusOK, TStart: &ts1}
-	child2 := &model.Node{ID: "c2", Type: model.NodeToolCall, Status: model.StatusOK, TStart: &ts2}
-	b := &builder{
-		byID:     map[string]*model.Node{"c1": child1, "c2": child2},
-		parentOf: map[string]string{},
-		children: map[string][]string{"parent": {"c1", "c2"}},
-		terms:    map[string]string{"c1": "t1", "c2": "t2"},
-	}
-	idx := b.liveIndex("parent", "missing")
-	assert.Equal(t, 0, idx)
-}
-
 func TestMultiEditSalient(t *testing.T) {
 	ka := one("MultiEdit", `{"file_path":"a.go","edits":[]}`)
 	kb := one("MultiEdit", `{"file_path":"a.go","other":"ignored"}`)

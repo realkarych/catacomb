@@ -97,3 +97,14 @@ func TestWilsonIntervalWidensWithZAndAlwaysContainsPointEstimate(t *testing.T) {
 		}
 	}
 }
+
+func TestWilsonClampsRoundingOvershootAtDegenerateEndpointsToExactlyZeroAndOne(t *testing.T) {
+	t.Parallel()
+	z := DefaultThresholds().Z
+	allSuccessLo, allSuccessHi := wilson(24, 24, z)
+	require.Equal(t, 1.0, allSuccessHi)
+	require.Less(t, allSuccessLo, 1.0)
+	noSuccessLo, noSuccessHi := wilson(0, 9, z)
+	require.Equal(t, 0.0, noSuccessLo)
+	require.Greater(t, noSuccessHi, 0.0)
+}
