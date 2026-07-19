@@ -414,6 +414,7 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 	for _, k := range slices.Sorted(maps.Keys(obj)) {
 		v := obj[k]
 		rk, keyReasons := replaceSecretSpans(k)
+		rk = disambiguateKey(result, rk)
 		childPath := joinPath(path, rk)
 		for _, reason := range keyReasons {
 			*findings = append(*findings, Finding{Path: childPath, Reason: reason})
@@ -438,6 +439,18 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 		}
 	}
 	return result
+}
+
+func disambiguateKey(taken map[string]any, key string) string {
+	if _, clash := taken[key]; !clash {
+		return key
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s#%d", key, i)
+		if _, clash := taken[candidate]; !clash {
+			return candidate
+		}
+	}
 }
 
 func walkArray(arr []any, path string, findings *[]Finding) []any {

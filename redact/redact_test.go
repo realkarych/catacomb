@@ -776,7 +776,7 @@ func TestRedact_SecretInObjectKey(t *testing.T) {
 		input := []byte(`{"AKIAAAAAAAAAAAAAAAAA":1,"AKIABBBBBBBBBBBBBBBB":2}`)
 		r1 := redact.Redact(input)
 		assert.True(t, r1.Redacted)
-		assert.Equal(t, `{"‹redacted:aws-key›":2}`, string(r1.Data))
+		assert.Equal(t, `{"‹redacted:aws-key›":1,"‹redacted:aws-key›#2":2}`, string(r1.Data))
 		for i := 0; i < 16; i++ {
 			ri := redact.Redact(input)
 			assert.Equal(t, r1.Data, ri.Data)
@@ -1073,4 +1073,32 @@ func TestRedactPreservingBytes(t *testing.T) {
 		raw := []byte(`{"token":"AKIAIOSFODNN7EXAMPLE"}`)
 		assert.Equal(t, redact.Redact(raw), redact.RedactPreservingBytes(raw))
 	})
+}
+
+func TestRedactKeepsCollidingRedactedKeysDistinct(t *testing.T) {
+	input := []byte(`{"commits":{` +
+		`"3f7a1b2c4d5e6f708192a3b4c5d6e7f809a1b2c3":"fix auth",` +
+		`"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678":"add cache",` +
+		`"deadbeefcafebabe0123456789abcdef01234567":"bump deps"}}`)
+
+	result := redact.Redact(input)
+	require.True(t, result.Redacted)
+
+	var got map[string]map[string]string
+	require.NoError(t, json.Unmarshal(result.Data, &got))
+	assert.Len(t, got["commits"], 3, "entry count must be invariant across redaction")
+
+	values := make([]string, 0, len(got["commits"]))
+	for _, v := range got["commits"] {
+		values = append(values, v)
+	}
+	sort.Strings(values)
+	assert.Equal(t, []string{"add cache", "bump deps", "fix auth"}, values)
+	for k := range got["commits"] {
+		assert.Contains(t, k, "‹redacted:high-entropy›")
+	}
+
+	for i := 0; i < 16; i++ {
+		assert.Equal(t, string(result.Data), string(redact.Redact(input).Data))
+	}
 }
