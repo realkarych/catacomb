@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,16 +14,23 @@ import (
 	"github.com/realkarych/catacomb/model"
 )
 
-func TestRunReplayBuildsGraph(t *testing.T) {
-	dir := t.TempDir()
-	g, err := runReplay(replayArgs{
-		input:      "testdata/session.jsonl",
-		exportPath: filepath.Join(dir, "g.jsonl"),
-	})
+func TestRunReplayExportWritesEveryNodeAndEdgeOfTheGraphItReturns(t *testing.T) {
+	exportPath := filepath.Join(t.TempDir(), "g.jsonl")
+	g, err := runReplay(replayArgs{input: "testdata/session.jsonl", exportPath: exportPath})
 	require.NoError(t, err)
-	assert.NotEmpty(t, g.Nodes)
-	assert.NotEmpty(t, g.Edges)
-	assert.FileExists(t, filepath.Join(dir, "g.jsonl"))
+	require.NotEmpty(t, g.Nodes)
+	require.NotEmpty(t, g.Edges)
+
+	blob, err := os.ReadFile(exportPath)
+	require.NoError(t, err)
+	counts := map[string]int{}
+	for _, l := range decodeSnapshotLines(t, string(blob)) {
+		kind, _ := l["kind"].(string)
+		counts[kind]++
+	}
+	assert.Equal(t, len(g.Nodes), counts["node"], "every graph node must reach the snapshot")
+	assert.Equal(t, len(g.Edges), counts["edge"], "every graph edge must reach the snapshot")
+	assert.Equal(t, len(g.RunsSnapshot()), counts["run"])
 }
 
 func TestRunReplayNoExport(t *testing.T) {
@@ -113,13 +121,18 @@ func TestRunReplayExportIsDeterministicallySorted(t *testing.T) {
 	assert.IsIncreasing(t, edgeIDs)
 }
 
-func TestReplayCommandWiring(t *testing.T) {
+func TestReplayCommandSummaryReportsTheGraphSizeItActuallyBuilt(t *testing.T) {
+	g, err := runReplay(replayArgs{input: "testdata/session.jsonl"})
+	require.NoError(t, err)
+
 	root := newRootCmd()
 	root.SetArgs([]string{"replay", "testdata/session.jsonl"})
 	var buf strings.Builder
 	root.SetOut(&buf)
 	require.NoError(t, root.Execute())
-	assert.Contains(t, buf.String(), "replayed testdata/session.jsonl")
+	assert.Equal(t,
+		fmt.Sprintf("replayed testdata/session.jsonl -> %d nodes, %d edges\n", len(g.Nodes), len(g.Edges)),
+		buf.String())
 }
 
 func TestReplayCommandError(t *testing.T) {

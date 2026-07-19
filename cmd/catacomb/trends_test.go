@@ -144,20 +144,39 @@ func TestTrendsJSONSurfacesProject(t *testing.T) {
 	assert.Empty(t, entries[1].Record.Project)
 }
 
-func TestTrendsNarrowedTable(t *testing.T) {
-	dbPath, _ := recordedTrendsDB(t)
+func TestTrendsNarrowedTablePlacesEachRecordedValueInItsOwnColumn(t *testing.T) {
+	dbPath, ts := recordedTrendsDB(t)
 
 	var out, errBuf bytes.Buffer
 	code := run([]string{"trends", "golden", "--db", dbPath, "--metric", "tokens_in"}, &out, &errBuf)
 	require.Equal(t, 0, code, errBuf.String())
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	require.Len(t, lines, 3)
-	assert.Contains(t, lines[0], "BASELINE-VALUE")
-	assert.Contains(t, lines[0], "CANDIDATE-VALUE")
-	assert.Contains(t, lines[0], "BAND")
-	assert.Contains(t, lines[1], "100")
-	assert.Contains(t, lines[2], "5000")
-	assert.Contains(t, lines[2], "[")
+
+	assert.Equal(t,
+		[]string{"SEQ", "CREATED", "CANDIDATE", "VERDICT", "BASELINE-VALUE", "CANDIDATE-VALUE", "BAND"},
+		strings.Fields(lines[0]))
+
+	created := ts.UTC().Format(time.RFC3339)
+	for _, tc := range []struct {
+		line      string
+		seq       string
+		candidate string
+		verdict   string
+		baseVal   string
+		candVal   string
+	}{
+		{line: lines[1], seq: "1", candidate: "label:variant=cand1", verdict: "ok", baseVal: "100.00", candVal: "100.00"},
+		{line: lines[2], seq: "2", candidate: "label:variant=cand2", verdict: "regression", baseVal: "100.00", candVal: "5000.00"},
+	} {
+		fields := strings.Fields(tc.line)
+		require.GreaterOrEqual(t, len(fields), 7, tc.line)
+		assert.Equal(t,
+			[]string{tc.seq, created, tc.candidate, tc.verdict, tc.baseVal, tc.candVal},
+			fields[:6], tc.line)
+		band := strings.Join(fields[6:], " ")
+		assert.True(t, strings.HasPrefix(band, "[") && strings.HasSuffix(band, "]"), "band cell %q", band)
+	}
 }
 
 func TestTrendsMetricValidation(t *testing.T) {
@@ -355,15 +374,6 @@ func TestTrendsCurrentVersionMissingRegressResultsTable(t *testing.T) {
 	code := run([]string{"trends", "golden", "--db", dbPath}, &out, &errBuf)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errBuf.String(), "older than this binary")
-}
-
-func TestTrendsCmdWired(t *testing.T) {
-	root := newRootCmd()
-	names := make(map[string]bool)
-	for _, sub := range root.Commands() {
-		names[sub.Name()] = true
-	}
-	assert.True(t, names["trends"])
 }
 
 func TestTotalFindingAndMetricCandidate(t *testing.T) {

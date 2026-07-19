@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -31,6 +32,20 @@ func decodeSnapshotLines(t *testing.T, out string) []map[string]any {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+const ulidToken = `[0-9A-HJKMNP-TV-Z]{26}`
+
+var (
+	obsIDPattern       = regexp.MustCompile(`"obs_id":"` + ulidToken + `"`)
+	sessionExecutionID = regexp.MustCompile(`session:` + ulidToken + `\b`)
+	scopedExecutionID  = regexp.MustCompile(`([":]|\\u003e)` + ulidToken + `:`)
+)
+
+func withoutExecutionIDs(snapshot string) string {
+	snapshot = obsIDPattern.ReplaceAllString(snapshot, `"obs_id":"EXEC"`)
+	snapshot = sessionExecutionID.ReplaceAllString(snapshot, "session:EXEC")
+	return scopedExecutionID.ReplaceAllString(snapshot, "${1}EXEC:")
 }
 
 func countKinds(lines []map[string]any) map[string]int {
@@ -66,12 +81,20 @@ func TestExportTranscriptViaRootEmitsKindLines(t *testing.T) {
 	}
 }
 
-func TestExportTranscriptExplicitToJSONL(t *testing.T) {
-	var buf strings.Builder
-	require.NoError(t, runExport(&buf, exportArgs{input: "testdata/session.jsonl", to: "jsonl"}))
-	counts := countKinds(decodeSnapshotLines(t, buf.String()))
-	assert.Positive(t, counts["node"])
-	assert.Positive(t, counts["run"])
+func TestExportExplicitJSONLMatchesTheDefaultSinkModuloExecutionIDs(t *testing.T) {
+	var explicit strings.Builder
+	require.NoError(t, runExport(&explicit, exportArgs{input: "testdata/session.jsonl", to: "jsonl"}))
+
+	root := newRootCmd()
+	var defaulted strings.Builder
+	root.SetOut(&defaulted)
+	root.SetArgs([]string{"export", "testdata/session.jsonl"})
+	require.NoError(t, root.Execute())
+
+	counts := countKinds(decodeSnapshotLines(t, explicit.String()))
+	require.Positive(t, counts["node"])
+	require.Positive(t, counts["run"])
+	assert.Equal(t, withoutExecutionIDs(defaulted.String()), withoutExecutionIDs(explicit.String()))
 }
 
 func writeExportEvidenceDir(t *testing.T, subSessionIDs ...string) string {
@@ -191,16 +214,22 @@ func TestExportMalformedTranscript(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestExportToFileViaRoot(t *testing.T) {
+func TestExportOutFileHoldsExactlyWhatStdoutWouldHaveHeld(t *testing.T) {
+	var stdout strings.Builder
+	require.NoError(t, runExport(&stdout, exportArgs{input: "testdata/session.jsonl", to: "jsonl"}))
+	require.NotEmpty(t, stdout.String())
+
 	outPath := filepath.Join(t.TempDir(), "out.jsonl")
 	root := newRootCmd()
+	var viaRoot strings.Builder
 	root.SetArgs([]string{"export", "testdata/session.jsonl", "--to", "jsonl", "--out", outPath})
-	root.SetOut(io.Discard)
+	root.SetOut(&viaRoot)
 	require.NoError(t, root.Execute())
+
 	data, err := os.ReadFile(outPath)
 	require.NoError(t, err)
-	counts := countKinds(decodeSnapshotLines(t, string(data)))
-	assert.Positive(t, counts["node"])
+	assert.Equal(t, withoutExecutionIDs(stdout.String()), withoutExecutionIDs(string(data)))
+	assert.Empty(t, viaRoot.String(), "--out must divert the snapshot away from stdout entirely")
 }
 
 func TestExportBadOutPath(t *testing.T) {
@@ -249,15 +278,6 @@ func TestExportWarnsOnNewerVersion(t *testing.T) {
 	require.NoError(t, root.Execute())
 	assert.Contains(t, buf.String(), "9.9.9")
 	assert.Contains(t, buf.String(), "newer than tested")
-}
-
-func TestExportCmdWired(t *testing.T) {
-	root := newRootCmd()
-	names := make(map[string]bool)
-	for _, sub := range root.Commands() {
-		names[sub.Name()] = true
-	}
-	assert.True(t, names["export"])
 }
 
 type closeErrWriter struct {
