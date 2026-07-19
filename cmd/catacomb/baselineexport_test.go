@@ -122,6 +122,38 @@ func TestBaselineExportRunDirIsAFile(t *testing.T) {
 	require.ErrorAs(t, err, &opErr)
 }
 
+func TestBaselineExportRefusesRunDirWithNoFiles(t *testing.T) {
+	dbPath, runsDir := seedExportBaseline(t)
+	emptyRun := filepath.Join(runsDir, "base-1")
+	require.NoError(t, os.RemoveAll(emptyRun))
+	require.NoError(t, os.MkdirAll(filepath.Join(emptyRun, "nested"), 0o750))
+	outDir := t.TempDir()
+	out := filepath.Join(outDir, "golden.tar.gz")
+
+	err := runBaselineExport(io.Discard, store.OpenSQLiteReadOnly, dbPath, "golden", runsDir, out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"base-1"`)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+
+	_, statErr := os.Stat(out)
+	require.ErrorIs(t, statErr, fs.ErrNotExist)
+	entries, readErr := os.ReadDir(outDir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
+}
+
+func TestBaselineExportSurfacesUnwalkableRunDir(t *testing.T) {
+	dbPath, runsDir := seedExportBaseline(t)
+	require.NoError(t, os.Symlink("/etc/hosts", filepath.Join(runsDir, "base-0", "link")))
+
+	err := runBaselineExport(io.Discard, store.OpenSQLiteReadOnly, dbPath, "golden", runsDir, filepath.Join(t.TempDir(), "x.tar.gz"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"base-0"`)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+}
+
 func TestBaselineExportOutExists(t *testing.T) {
 	dbPath, runsDir := seedExportBaseline(t)
 	out := filepath.Join(t.TempDir(), "golden.tar.gz")

@@ -132,6 +132,15 @@ func runBaselineExport(out io.Writer, open storeOpener, dbPath, name, runsDir, o
 		if statErr != nil || !info.IsDir() {
 			return operational(fmt.Errorf("baseline export %q: pinned run %q has no evidence dir under %q", name, id, runsDir))
 		}
+		files, collectErr := collectBundleFiles(runsDir, []string{id})
+		if collectErr != nil {
+			return operational(fmt.Errorf("baseline export %q: pinned run %q: %w", name, id, collectErr))
+		}
+		if len(files) == 0 {
+			return operational(fmt.Errorf(
+				"baseline export %q: pinned run %q has no evidence files under %q; the bundle would be unimportable",
+				name, id, runsDir))
+		}
 	}
 	fileCount, err := writeBundleFileAtomic(outPath, b, runsDir)
 	if err != nil {
