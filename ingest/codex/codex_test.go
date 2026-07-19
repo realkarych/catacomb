@@ -2,9 +2,11 @@ package codex
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,14 @@ func openInput(t *testing.T, tc parseCase) io.Reader {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
 	return f
+}
+
+func kinds(obs []model.Observation) []string {
+	out := make([]string, 0, len(obs))
+	for _, o := range obs {
+		out = append(out, o.Kind)
+	}
+	return out
 }
 
 func byKind(obs []model.Observation, kind string) []model.Observation {
@@ -124,7 +134,7 @@ func TestParse(t *testing.T) {
 			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
 				require.Len(t, obs, 2)
 				seen := map[string]bool{}
-				for i, o := range obs {
+				for _, o := range obs {
 					assert.Equal(t, basicSessionID, o.RunID)
 					assert.Equal(t, basicSessionID, o.Correlation.SessionID)
 					assert.Equal(t, "exec-C", o.ExecutionID)
@@ -132,12 +142,53 @@ func TestParse(t *testing.T) {
 					assert.Equal(t, "codex", o.Attrs["agent_runtime"])
 					assert.Equal(t, "0.144.5", o.Attrs["codex_version"])
 					assert.Equal(t, "/work/codex-probe", o.Attrs["cwd"])
-					assert.Equal(t, uint64(i), o.Seq)
 					assert.Equal(t, o.EventTime, o.ObservedAt)
 					assert.NotEmpty(t, o.ObsID)
-					assert.False(t, seen[o.ObsID])
+					assert.False(t, seen[o.ObsID], "duplicate obs id %q", o.ObsID)
 					seen[o.ObsID] = true
 				}
+			},
+		},
+		{
+			name: "basic fixture emits prompt before the turn it answers",
+			file: basicFixture,
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				assert.Equal(t, []string{"user_prompt", "assistant_turn"}, kinds(obs))
+			},
+		},
+		{
+			name: "tools fixture interleaves each call with its own result and flushes the open turn last",
+			file: toolsFixture,
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				assert.Equal(t, []string{
+					"user_prompt",
+					"assistant_tool_use", "tool_result",
+					"assistant_tool_use", "tool_result",
+					"assistant_tool_use", "tool_result",
+					"assistant_turn",
+				}, kinds(obs))
+			},
+		},
+		{
+			name:      "child fixture appends the subagent stop after every other emission",
+			file:      childFixture,
+			mainRunID: "MAIN",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				assert.Equal(t, []string{"user_prompt", "assistant_turn", "subagent_stop"}, kinds(obs))
+			},
+		},
+		{
+			name: "subagent stop lands after a turn still open at end of transcript",
+			input: `{"type":"session_meta","payload":{"session_id":"child-9","parent_thread_id":"parent-1","agent_role":"explorer"}}` + "\n" +
+				`{"timestamp":"2026-07-16T15:40:00Z","type":"event_msg","payload":{"type":"user_message","message":"go"}}` + "\n" +
+				`{"timestamp":"2026-07-16T15:40:01Z","type":"turn_context","payload":{"turn_id":"T9","model":"m"}}` + "\n",
+			mainRunID: "MAIN",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				assert.Equal(t, []string{"user_prompt", "assistant_turn", "subagent_stop"}, kinds(obs))
+				stop := obs[2]
+				assert.Equal(t, "explorer", stop.Attrs["subagent_type"])
+				assert.Equal(t, obs[1].EventTime, stop.EventTime,
+					"the stop inherits the event time of the last real emission, so it must be appended after the flush")
 			},
 		},
 		{
@@ -546,6 +597,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "any nonzero exit header in the output marks the result failed",
+			input: `{"type":"response_item","payload":{"type":"function_call_output","call_id":"m1","output":"step one\nProcess exited with code 0\nstep two\nProcess exited with code 7"}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"m2","output":"Process exited with code 0\nmore\nProcess exited with code 0"}}` + "\n",
+			check: func(t *testing.T, obs []model.Observation, _ drift.Counts) {
+				results := byKind(obs, "tool_result")
+				require.Len(t, results, 2)
+				assert.Equal(t, "error", results[0].Attrs["status"],
+					"a later nonzero exit must not be hidden by an earlier zero exit")
+				assert.Equal(t, "ok", results[1].Attrs["status"])
+			},
+		},
+		{
 			name: "mcp end variants map error status",
 			input: `{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e1","invocation":{"server":"s","tool":"t"},"error":"boom"}}` + "\n" +
 				`{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"e2","invocation":{"server":"s","tool":"t"},"result":{"content":[],"is_error":true}}}` + "\n" +
@@ -748,6 +811,42 @@ func TestParseLineTooLongWrapsErrTooLong(t *testing.T) {
 	_, _, err := Parse(r, "", "exec-C", seqFor(t), identityObservedAt)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, bufio.ErrTooLong)
+}
+
+func TestParseAcceptsLinesFarBeyondTheDefaultScannerTokenLimit(t *testing.T) {
+	for _, promptBytes := range []int{64 * 1024, 1024 * 1024, 4 * 1024 * 1024} {
+		t.Run(strconv.Itoa(promptBytes), func(t *testing.T) {
+			prompt := strings.Repeat("x", promptBytes)
+			raw, err := json.Marshal(map[string]any{
+				"type":    "event_msg",
+				"payload": map[string]any{"type": "user_message", "message": prompt},
+			})
+			require.NoError(t, err)
+			require.Greater(t, len(raw), bufio.MaxScanTokenSize)
+			obs, _, err := Parse(strings.NewReader(string(raw)+"\n"), "", "exec-C", seqFor(t), identityObservedAt)
+			require.NoError(t, err)
+			require.Len(t, obs, 1)
+			require.NotNil(t, obs[0].Payload)
+			var got string
+			require.NoError(t, json.Unmarshal(obs[0].Payload.Input, &got))
+			assert.Equal(t, prompt, got)
+		})
+	}
+}
+
+func TestParseAcceptsFinalLineWithoutTrailingNewline(t *testing.T) {
+	in := `{"type":"event_msg","payload":{"type":"user_message","message":"first"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"last"}}`
+	assert.Len(t, byKind(parseString(t, in), "user_prompt"), 2)
+}
+
+func TestParseAbandonsEarlierObservationsWhenALaterLineIsTruncated(t *testing.T) {
+	in := `{"type":"event_msg","payload":{"type":"user_message","message":"first"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_mess`
+	obs, dc, err := Parse(strings.NewReader(in), "", "exec-C", seqFor(t), identityObservedAt)
+	require.Error(t, err)
+	assert.Nil(t, obs)
+	assert.Nil(t, dc)
 }
 
 func TestParseUsesInjectedSeqAndObservedAt(t *testing.T) {

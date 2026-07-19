@@ -34,6 +34,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+          # The action defaults to gitleaks 8.24.3, which predates condition = "AND"
+          # support in [[allowlists]] blocks — it parses such a block and silently
+          # ignores it, so the narrow allowlists in .gitleaks.toml would not apply.
+          # Pin explicitly (never "latest", which would drift) and keep this >= 8.25.0.
+          GITLEAKS_VERSION: 8.30.1
           # keep the job on contents: read — PR comments would need pull-requests: write
           GITLEAKS_ENABLE_COMMENTS: "false"
 
