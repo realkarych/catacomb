@@ -126,6 +126,16 @@ func TestRunChildLocal(t *testing.T) {
 	require.Contains(t, out.String(), "sess-h")
 }
 
+func TestRunChildLocalObservesFinalLineWithoutTrailingNewline(t *testing.T) {
+	stubChildContext(t)
+	t.Setenv("GO_HELPER_OFFLINE_NO_NEWLINE", "1")
+	var out bytes.Buffer
+	peek := &streamPeek{}
+	require.NoError(t, runChildLocal(t.Context(), &out, io.Discard, []string{"claude"}, "", nil, peek.onLine))
+	assert.Equal(t, "sess-nonl", peek.session())
+	assert.Equal(t, `{"type":"system","session_id":"sess-nonl"}`, out.String())
+}
+
 func TestRunChildLocalExitCode(t *testing.T) {
 	stubChildContext(t)
 	t.Setenv("GO_HELPER_OFFLINE_EXIT3", "1")
@@ -168,6 +178,10 @@ func TestHelperOfflineChild(t *testing.T) {
 	}
 	if os.Getenv("GO_HELPER_OFFLINE_EXIT3") == "1" {
 		os.Exit(3)
+	}
+	if os.Getenv("GO_HELPER_OFFLINE_NO_NEWLINE") == "1" {
+		fmt.Print(`{"type":"system","session_id":"sess-nonl"}`)
+		os.Exit(0)
 	}
 	fmt.Println(`{"type":"system","session_id":"sess-h"}`)
 	fmt.Println(`{"type":"result","total_cost_usd":0.25}`)

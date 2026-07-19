@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -75,12 +75,23 @@ func TestRunBenchCellsRecordsMarkedAndEpilogue(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash, f, markedCellFn(hash)))
 
-	entries := readManifest(t, manifest)
-	require.Len(t, entries, 2)
-	assert.Equal(t, "bench-bord-t1-v1-r1", entries[0].RunID)
-	assert.Equal(t, "bench-bord-t1-v2-r1", entries[1].RunID)
-	assert.Contains(t, out.String(), "marked 2/2 cells")
-	assert.Contains(t, out.String(), "catacomb regress --runs-dir /runs --baseline label:basket=bord,variant=v1 --candidate label:basket=bord,variant=v2")
+	assert.Equal(t, []string{"bench-bord-t1-v1-r1", "bench-bord-t1-v2-r1"}, manifestRunIDs(t, manifest))
+	assert.Equal(t,
+		"marked 2/2 cells\n"+
+			"Next steps:\n"+
+			"  catacomb regress --runs-dir /runs --baseline label:basket=bord,variant=v1 --candidate label:basket=bord,variant=v2\n"+
+			"  note: reps=1 limits rate-gate sensitivity; prefer reps: 5 or more\n",
+		out.String())
+}
+
+func manifestRunIDs(t *testing.T, path string) []string {
+	t.Helper()
+	entries := readManifest(t, path)
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.RunID)
+	}
+	return ids
 }
 
 func TestRunBenchCellsDefaultManifestPath(t *testing.T) {
@@ -139,8 +150,22 @@ func TestRunBenchCellsResumeHashMismatch(t *testing.T) {
 	require.NoError(t, os.WriteFile(manifest, append(raw, '\n'), 0o600))
 
 	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest, resume: true}, markedCellFn(hash))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "delete the manifest")
+	require.ErrorIs(t, err, errBenchBasketHashMismatch)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, []string{"bench-bord-t1-v1-r1"}, manifestRunIDs(t, manifest))
+}
+
+func TestRunBenchCellsResumeMatchingHashDoesNotTripMismatch(t *testing.T) {
+	basket, hash, cells := loadBasket(t, twoVariantBasket)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	done := bench.ManifestEntry{RunID: "bench-bord-t1-v1-r1", Task: "t1", Variant: "v1", Rep: 1, BasketHash: hash}
+	raw, _ := json.Marshal(done)
+	require.NoError(t, os.WriteFile(manifest, append(raw, '\n'), 0o600))
+
+	require.NoError(t, runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash,
+		benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
+	assert.Equal(t, []string{"bench-bord-t1-v1-r1", "bench-bord-t1-v2-r1"}, manifestRunIDs(t, manifest))
 }
 
 func TestRunBenchCellsFailFastStops(t *testing.T) {
@@ -202,17 +227,13 @@ func TestRunBenchCellsResumeRerunsInterruptedCell(t *testing.T) {
 	}
 	err := runBenchCells(ctx, io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, cancelFn)
 	require.ErrorIs(t, err, errBenchInterrupted)
+	require.NoFileExists(t, manifest)
 
 	var out bytes.Buffer
 	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash,
 		benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
-	assert.NotContains(t, out.String(), "skip bench-bord-t1-v1-r1")
-
-	ids := make([]string, 0, 2)
-	for _, e := range readManifest(t, manifest) {
-		ids = append(ids, e.RunID)
-	}
-	assert.Contains(t, ids, "bench-bord-t1-v1-r1")
+	assert.NotContains(t, out.String(), "skip ")
+	assert.Equal(t, []string{"bench-bord-t1-v1-r1", "bench-bord-t1-v2-r1"}, manifestRunIDs(t, manifest))
 }
 
 func TestRunBenchCellsCompletedReadError(t *testing.T) {
@@ -231,8 +252,10 @@ func TestRunBenchCellsManifestAppendError(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "no-such-dir", "m.jsonl")
 
 	err := runBenchCells(t.Context(), io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, markedCellFn(hash))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "manifest")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.NoFileExists(t, manifest)
 }
 
 func TestRunBenchCellsCheckpointSummary(t *testing.T) {
@@ -247,9 +270,27 @@ func TestRunBenchCellsCheckpointSummary(t *testing.T) {
 	}
 	var out bytes.Buffer
 	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, cpFn))
-	assert.Contains(t, out.String(), "checkpoints[t1]: plan 1/1")
-	assert.Contains(t, out.String(), "checkpoints[t1]: tests.pass 0/1")
-	assert.NotContains(t, out.String(), "checkpoints[t2]")
+	assert.Equal(t,
+		"marked 2/2 cells\n"+
+			"checkpoints[t1]: plan 1/1\n"+
+			"checkpoints[t1]: tests.pass 0/1\n"+
+			"Next steps:\n"+
+			"  note: reps=1 limits rate-gate sensitivity; prefer reps: 5 or more\n",
+		out.String())
+}
+
+func TestVerifyResumeHashReportsLowestRunIDMismatchDeterministically(t *testing.T) {
+	completed := map[string]bench.ManifestEntry{
+		"bench-b-t1-v2-r1": {RunID: "bench-b-t1-v2-r1", BasketHash: "zzz"},
+		"bench-b-t1-v1-r1": {RunID: "bench-b-t1-v1-r1", BasketHash: "aaa"},
+	}
+	err := verifyResumeHash(completed, "current")
+	require.ErrorIs(t, err, errBenchBasketHashMismatch)
+	assert.Equal(t, errBenchBasketHashMismatch.Error()+" (manifest aaa, basket current)", err.Error())
+
+	require.NoError(t, verifyResumeHash(map[string]bench.ManifestEntry{
+		"bench-b-t1-v1-r1": {RunID: "bench-b-t1-v1-r1", BasketHash: "current"},
+	}, "current"))
 }
 
 func TestAppendNote(t *testing.T) {
@@ -257,12 +298,19 @@ func TestAppendNote(t *testing.T) {
 	assert.Equal(t, "first; second", appendNote("first", "second"))
 }
 
-func TestSpawnFailure(t *testing.T) {
+func TestSpawnFailureReportsOnlyNonExitErrors(t *testing.T) {
 	assert.Empty(t, spawnFailure(nil))
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestSpawnFailureExitHelper")
 	t.Setenv("GO_SPAWN_FAILURE_EXIT", "1")
-	assert.Empty(t, spawnFailure(cmd.Run()))
-	assert.Contains(t, spawnFailure(assertErr("boom")), "spawn failed: boom")
+	exitErr := cmd.Run()
+	var ee *exec.ExitError
+	require.ErrorAs(t, exitErr, &ee)
+	require.Equal(t, 2, ee.ExitCode())
+	assert.Empty(t, spawnFailure(exitErr))
+
+	assert.Equal(t, "spawn failed: boom", spawnFailure(assertErr("boom")))
+	assert.Equal(t, "spawn failed: "+context.Canceled.Error(), spawnFailure(context.Canceled))
 }
 
 type assertErr string
@@ -334,12 +382,16 @@ func TestBenchCmdWired(t *testing.T) {
 	assert.True(t, names["bench"])
 }
 
-func TestBenchNoOfflineFlag(t *testing.T) {
-	cmd := newBenchCmd()
-	assert.Nil(t, cmd.Flags().Lookup("offline"))
-	rd := cmd.Flags().Lookup("runs-dir")
+func TestBenchRunsDirDefaultsUnderHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	rd := newBenchCmd().Flags().Lookup("runs-dir")
 	require.NotNil(t, rd)
-	assert.True(t, strings.HasSuffix(rd.DefValue, filepath.Join(".catacomb", "runs")) || rd.DefValue == "")
+	assert.Equal(t, filepath.Join(home, ".catacomb", "runs"), rd.DefValue)
+
+	pd := newBenchCmd().Flags().Lookup("projects-dir")
+	require.NotNil(t, pd)
+	assert.Equal(t, filepath.Join(home, ".claude", "projects"), pd.DefValue)
 }
 
 func TestBenchWorkspaceFlagsRegistered(t *testing.T) {

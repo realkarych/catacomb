@@ -489,18 +489,29 @@ func TestBenchOfflineEnvStampsInMeta(t *testing.T) {
 	}
 }
 
-func TestBenchOfflineVariantEnvAndEmptySetup(t *testing.T) {
+func TestBenchOfflineVariantEnvReachesChildAndBlankSetupIsSkipped(t *testing.T) {
 	projects := t.TempDir()
 	runs := t.TempDir()
-	stubBenchChild(t, "HELPER_SESSION=ve1", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
+	cap := stubBenchExecRouted(t, "claude", nil,
+		"HELPER_SESSION=ve1", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
 	cell := offlineCell("bench-b-t1-base-r1",
-		bench.Task{ID: "t1", Cmd: []string{"claude"}, Env: map[string]string{"TASKENV": "a"}},
-		bench.Variant{ID: "base", Env: map[string]string{"VARENV": "b"}, Setup: []string{""}})
-	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
-		offlineOpts{projectsDir: projects, runsDir: runs})
+		bench.Task{ID: "t1", Cmd: []string{"claude"}, Env: map[string]string{"TASKENV": "a", "SHARED": "task"}},
+		bench.Variant{ID: "base", Env: map[string]string{"VARENV": "b", "SHARED": "variant"}, Setup: []string{""}})
+	entry, failed, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h",
+		map[string]string{"basket": "b"}, offlineOpts{projectsDir: projects, runsDir: runs})
+
 	assert.False(t, failed)
 	assert.True(t, entry.Marked)
 	require.NotEmpty(t, entry.EvidenceDir)
+
+	require.Equal(t, []string{"claude"}, cap.names)
+	childEnv := cap.cmds[0].Env
+	assert.Contains(t, childEnv, "TASKENV=a")
+	assert.Contains(t, childEnv, "VARENV=b")
+	assert.Contains(t, childEnv, "SHARED=variant")
+	assert.NotContains(t, childEnv, "SHARED=task")
+	assert.Contains(t, childEnv, "CATACOMB_RUN_ID=bench-b-t1-base-r1")
+	assert.Contains(t, childEnv, "CATACOMB_LABELS=basket=b,rep=1,task=t1,variant=base")
 }
 
 func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
@@ -510,17 +521,23 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 	require.NoError(t, os.MkdirAll(subDir, 0o700))
 	data, err := os.ReadFile(fixturePath(t))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(subDir, "agent-1.jsonl"), data, 0o600))
+	subData := bytes.ReplaceAll(data, []byte(`"content":"go"`), []byte(`"content":"go, in the subagent"`))
+	require.NotEqual(t, string(data), string(subData))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "agent-1.jsonl"), subData, 0o600))
 
 	stubBenchChild(t, "HELPER_SESSION=subs1", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
 	cell := offlineCell("bench-b-t1-base-r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
 	entry, _, _ := runBenchCellOffline(t.Context(), io.Discard, io.Discard, cell, "h", nil,
 		offlineOpts{projectsDir: projects, runsDir: runs})
 	require.NotEmpty(t, entry.EvidenceDir)
-	_, err = os.Stat(filepath.Join(entry.EvidenceDir, "session.jsonl"))
+
+	gotMain, err := os.ReadFile(filepath.Join(entry.EvidenceDir, "session.jsonl"))
 	require.NoError(t, err)
-	_, err = os.Stat(filepath.Join(entry.EvidenceDir, "subagents", "agent-1.jsonl"))
+	assert.Equal(t, string(data), string(gotMain))
+
+	gotSub, err := os.ReadFile(filepath.Join(entry.EvidenceDir, "subagents", "agent-1.jsonl"))
 	require.NoError(t, err)
+	assert.Equal(t, string(subData), string(gotSub))
 }
 
 func TestBenchCodexOfflineEndToEnd(t *testing.T) {

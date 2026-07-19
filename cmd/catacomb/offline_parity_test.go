@@ -17,17 +17,22 @@ import (
 	"github.com/realkarych/catacomb/regress"
 )
 
-func TestOfflineParityFixtureCarriesMarkers(t *testing.T) {
-	g, err := loadGraphOffline(filepath.Join("testdata", "session_marked.jsonl"), nil, "exec-parity", nil, nil)
+func fixtureMarkerNames(t *testing.T, fixture string) []string {
+	t.Helper()
+	g, err := loadGraphOffline(filepath.Join("testdata", fixture), nil, "exec-parity", nil, nil)
 	require.NoError(t, err)
 	names := graphMarkerNames(g)
-	require.NotEmpty(t, names)
 	sorted := make([]string, 0, len(names))
 	for name := range names {
 		sorted = append(sorted, name)
 	}
 	sort.Strings(sorted)
-	t.Logf("markers in session_marked.jsonl: %v", sorted)
+	return sorted
+}
+
+func TestOfflineParityFixturesDifferOnlyByTheMarkedCheckpoint(t *testing.T) {
+	assert.Equal(t, []string{"plan"}, fixtureMarkerNames(t, "session_marked.jsonl"))
+	assert.Empty(t, fixtureMarkerNames(t, "session.jsonl"))
 }
 
 func writeParityEvidence(t *testing.T, root, id, variant, fixture string, rep int) {
