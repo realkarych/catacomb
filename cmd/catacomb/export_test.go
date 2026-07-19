@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +113,7 @@ func TestExportEvidenceDirSynthesizesBoundaryAndMetaRun(t *testing.T) {
 			if l["type"] == "marker" && l["name"] == "task:t1" {
 				sawMarker = true
 			}
-			if l["run_id"] == "sub1" {
+			if l["name"] == "Read" {
 				sawSubagentNode = true
 			}
 		case "run":
@@ -122,7 +123,7 @@ func TestExportEvidenceDirSynthesizesBoundaryAndMetaRun(t *testing.T) {
 				labels, ok := l["labels"].(map[string]any)
 				require.True(t, ok)
 				assert.Equal(t, "base", labels["variant"])
-				assert.Equal(t, []any{"s1"}, l["session_ids"])
+				assert.ElementsMatch(t, []any{"s1", "sub1"}, l["session_ids"])
 			}
 		}
 	}
@@ -291,4 +292,42 @@ func TestSnapshotAndCloseSucceeds(t *testing.T) {
 	w := &closeErrWriter{}
 	require.NoError(t, snapshotAndClose(w, []*model.Node{{ID: "n1"}}, nil, nil))
 	assert.Contains(t, w.buf.String(), `"n1"`)
+}
+
+func TestExportEvidenceDirNodesJoinToRunRecord(t *testing.T) {
+	dir := writeExportEvidenceDir(t)
+	var buf strings.Builder
+	require.NoError(t, runExport(&buf, exportArgs{input: dir, to: "jsonl"}))
+
+	lines := decodeSnapshotLines(t, buf.String())
+	var runIDs []string
+	var sessionIDs []any
+	nodeRunIDs := map[string]int{}
+	edgeRunIDs := map[string]int{}
+	for _, l := range lines {
+		switch l["kind"] {
+		case "node":
+			nodeRunIDs[l["run_id"].(string)]++
+		case "edge":
+			edgeRunIDs[l["run_id"].(string)]++
+		case "run":
+			runIDs = append(runIDs, l["id"].(string))
+			sessionIDs, _ = l["session_ids"].([]any)
+		}
+	}
+	require.Equal(t, []string{"run-ev1"}, runIDs)
+	require.NotEmpty(t, nodeRunIDs)
+	require.NotEmpty(t, edgeRunIDs)
+	assert.Equal(t, []string{"run-ev1"}, sortedKeys(nodeRunIDs), "every node must join the run record")
+	assert.Equal(t, []string{"run-ev1"}, sortedKeys(edgeRunIDs), "every edge must join the run record")
+	assert.ElementsMatch(t, []any{"s1", "sub1"}, sessionIDs)
+}
+
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
