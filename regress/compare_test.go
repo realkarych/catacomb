@@ -51,6 +51,27 @@ func TestCompareRateFullFlipNotableAtK3WithZ196(t *testing.T) {
 	require.Equal(t, VerdictNotable, f.Verdict)
 }
 
+func TestCompareRateWithdrawsImprovementWhenWilsonBandsOverlap(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	th.Z = 1.96
+	const bSucc, bN, cSucc, cN = 3, 3, 0, 3
+
+	bLo, bHi := wilson(bSucc, bN, th.Z)
+	cLo, cHi := wilson(cSucc, cN, th.Z)
+	require.Greater(t, cHi, bLo, "fixture must keep the two bands overlapping")
+	require.Less(t, cLo, bHi)
+	require.Greater(t, rate(bSucc, bN)-rate(cSucc, cN), th.ErrorRateDelta,
+		"fixture must clear the raw delta so only the band test can withhold the verdict")
+
+	f := compareRate("phase", "p1", "one", "error_rate", bSucc, bN, cSucc, cN, th.ErrorRateDelta, th)
+	assert.Equal(t, VerdictOK, f.Verdict)
+
+	th.Z = DefaultThresholds().Z
+	separated := compareRate("phase", "p1", "one", "error_rate", bSucc, bN, cSucc, cN, th.ErrorRateDelta, th)
+	assert.Equal(t, VerdictImprovement, separated.Verdict)
+}
+
 func TestCompareRate(t *testing.T) {
 	t.Parallel()
 	th := DefaultThresholds()
@@ -92,9 +113,13 @@ func TestCompareRateFields(t *testing.T) {
 	reg := compareRate("phase", "p1", "phase-one", "presence", 0, 5, 5, 5, th.ErrorRateDelta, th)
 	assert.InDelta(t, 0.0, reg.Baseline, 1e-9)
 	assert.InDelta(t, 1.0, reg.Candidate, 1e-9)
-	assert.InDelta(t, 0.0, reg.BandLo, 1e-3)
-	assert.InDelta(t, 0.3512, reg.BandHi, 1e-3)
+	assert.InDelta(t, 0.0, reg.BandLo, 1e-12)
+	assert.InDelta(t, wilsonUpperBoundAtZeroSuccesses(5, th.Z), reg.BandHi, 1e-12)
 	assert.Empty(t, reg.Detail)
+
+	allSucc := compareRate("phase", "p1", "phase-one", "presence", 5, 5, 0, 5, th.ErrorRateDelta, th)
+	assert.InDelta(t, wilsonLowerBoundAtAllSuccesses(5, th.Z), allSucc.BandLo, 1e-12)
+	assert.InDelta(t, 1.0, allSucc.BandHi, 1e-12)
 
 	ins := compareRate("step", "s2", "build", "error_rate", 0, 2, 3, 5, th.ErrorRateDelta, th)
 	assert.Equal(t, "baseline n=2 below min support 3", ins.Detail)

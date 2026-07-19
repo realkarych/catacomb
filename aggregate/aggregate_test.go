@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -224,23 +225,65 @@ func TestAggregateEmptyGroup(t *testing.T) {
 	assert.JSONEq(t, `{"runs":0,"steps":[],"phases":[],"totals":{"duration_ms":{"n":0,"median":0,"p25":0,"p75":0,"p90":0},"cost_usd":{"n":0,"median":0,"p25":0,"p75":0,"p90":0},"tokens_in":{"n":0,"median":0,"p25":0,"p75":0,"p90":0},"tokens_out":{"n":0,"median":0,"p25":0,"p75":0,"p90":0},"nodes":{"n":0,"median":0,"p25":0,"p75":0,"p90":0},"error_rate":0}}`, string(b))
 }
 
-func TestSeverityOrdering(t *testing.T) {
-	order := []model.Status{
-		model.StatusError,
-		model.StatusRunning,
-		model.StatusPending,
-		model.StatusOK,
+func stepRunWithNodeStatuses(runID string, statuses ...model.Status) RunGraph {
+	nodes := make([]*model.Node, 0, len(statuses))
+	for i, s := range statuses {
+		nodes = append(nodes, &model.Node{
+			ID: fmt.Sprintf("%s-n%d", runID, i), RunID: runID,
+			Type: model.NodeToolCall, Name: "search", Status: s, StepKey: "s1",
+		})
 	}
-	for i := 0; i+1 < len(order); i++ {
-		assert.Greater(t, severity(order[i]), severity(order[i+1]), "%s should outrank %s", order[i], order[i+1])
-	}
-	assert.Equal(t, 0, severity(model.Status("")))
+	return RunGraph{Run: model.Run{ID: runID, Status: model.StatusOK}, Nodes: nodes}
 }
 
-func TestWorse(t *testing.T) {
-	assert.Equal(t, model.StatusError, worse(model.StatusOK, model.StatusError))
-	assert.Equal(t, model.StatusError, worse(model.StatusError, model.StatusOK))
-	assert.Equal(t, model.StatusOK, worse(model.StatusOK, model.StatusOK))
+func TestStepStatusRateReportsTheWorstNodeStatusSeenInThatRun(t *testing.T) {
+	unknown := model.Status("")
+	cases := []struct {
+		name     string
+		statuses []model.Status
+		want     model.Status
+	}{
+		{"error beats running", []model.Status{model.StatusRunning, model.StatusError}, model.StatusError},
+		{"error beats running reversed", []model.Status{model.StatusError, model.StatusRunning}, model.StatusError},
+		{"running beats pending", []model.Status{model.StatusPending, model.StatusRunning}, model.StatusRunning},
+		{"running beats pending reversed", []model.Status{model.StatusRunning, model.StatusPending}, model.StatusRunning},
+		{"pending beats ok", []model.Status{model.StatusOK, model.StatusPending}, model.StatusPending},
+		{"pending beats ok reversed", []model.Status{model.StatusPending, model.StatusOK}, model.StatusPending},
+		{"ok beats unknown", []model.Status{unknown, model.StatusOK}, model.StatusOK},
+		{"ok beats unknown reversed", []model.Status{model.StatusOK, unknown}, model.StatusOK},
+		{"all ok stays ok", []model.Status{model.StatusOK, model.StatusOK}, model.StatusOK},
+		{"all unknown stays unknown", []model.Status{unknown, unknown}, unknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Aggregate([]RunGraph{stepRunWithNodeStatuses("r1", tc.statuses...)}, Options{})
+			require.Len(t, rep.Steps, 1)
+			assert.Equal(t, map[model.Status]float64{tc.want: 1}, rep.Steps[0].StatusRates)
+		})
+	}
+}
+
+func TestRunTotalsErrorRateCountsRunLevelAndNodeLevelErrorsIndependently(t *testing.T) {
+	clean := stepRunWithNodeStatuses("clean", model.StatusOK, model.StatusOK)
+	nodeLevel := stepRunWithNodeStatuses("node-error", model.StatusOK, model.StatusError)
+	runLevel := stepRunWithNodeStatuses("run-error", model.StatusOK, model.StatusOK)
+	runLevel.Run.Status = model.StatusError
+
+	cases := []struct {
+		name  string
+		group []RunGraph
+		want  float64
+	}{
+		{"no errors", []RunGraph{clean, clean}, 0},
+		{"node level error alone", []RunGraph{clean, nodeLevel}, 0.5},
+		{"run level error alone", []RunGraph{clean, runLevel}, 0.5},
+		{"both kinds counted once each", []RunGraph{clean, nodeLevel, runLevel}, 2.0 / 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.InDelta(t, tc.want, Aggregate(tc.group, Options{}).Totals.ErrorRate, 1e-12)
+		})
+	}
 }
 
 func twoTurnRun() RunGraph {

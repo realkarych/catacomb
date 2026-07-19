@@ -1,7 +1,10 @@
 package regress
 
 import (
+	"fmt"
 	"math"
+	"math/big"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,6 +36,41 @@ func TestBinomTailGE(t *testing.T) {
 			t.Parallel()
 			assert.InDelta(t, tc.want, binomTailGE(tc.s, tc.m), 1e-12)
 		})
+	}
+}
+
+func exactBinomialUpperTail(s, m int) *big.Rat {
+	total := new(big.Rat)
+	if s < 0 {
+		s = 0
+	}
+	for i := s; i <= m; i++ {
+		c := new(big.Int).Binomial(int64(m), int64(i))
+		total.Add(total, new(big.Rat).SetFrac(c, new(big.Int).Lsh(big.NewInt(1), uint(m))))
+	}
+	return total
+}
+
+func TestBinomTailGEMatchesExactRationalBinomialSum(t *testing.T) {
+	t.Parallel()
+	for m := 0; m <= 25; m++ {
+		for s := 0; s <= m; s++ {
+			want, _ := exactBinomialUpperTail(s, m).Float64()
+			require.InDelta(t, want, binomTailGE(s, m), 1e-12, "s=%d m=%d", s, m)
+		}
+	}
+}
+
+func TestBinomTailGEIsMonotoneAndComplementary(t *testing.T) {
+	t.Parallel()
+	const m = 20
+	prev := binomTailGE(0, m)
+	require.InDelta(t, 1.0, prev, 1e-12)
+	for s := 1; s <= m; s++ {
+		cur := binomTailGE(s, m)
+		require.Less(t, cur, prev, "s=%d", s)
+		require.InDelta(t, 1.0, cur+binomTailGE(m-s+1, m), 1e-12, "s=%d", s)
+		prev = cur
 	}
 }
 
@@ -163,6 +201,22 @@ func TestSignCountsSupportGuard(t *testing.T) {
 	pos, nonzero = signCounts(pairs[2:], durSel, 0)
 	assert.Equal(t, 0, pos)
 	assert.Equal(t, 1, nonzero)
+}
+
+func TestMetricDeltasDropsExactTiesSoRankedTestsNeverSeeAZeroDelta(t *testing.T) {
+	t.Parallel()
+	durSel := func(ts aggregate.TaskStats) aggregate.MetricStats { return ts.DurationMS }
+	pairs := []taskPair{
+		{base: metricTask("a", 5, 1000), cand: metricTask("a", 5, 1000)},
+		{base: metricTask("b", 5, 1000), cand: metricTask("b", 5, 1200)},
+		{base: metricTask("c", 5, 1000), cand: metricTask("c", 5, 1000)},
+		{base: metricTask("d", 5, 1000), cand: metricTask("d", 5, 800)},
+	}
+	deltas := metricDeltas(pairs, durSel, 3)
+	assert.Equal(t, []float64{200, -200}, deltas)
+	for _, d := range deltas {
+		assert.NotEqual(t, 0.0, d)
+	}
 }
 
 func TestPairedFindingVerdicts(t *testing.T) {
@@ -305,6 +359,115 @@ func TestWilcoxonPValues(t *testing.T) {
 	}
 }
 
+func textbookMidRanks(deltas []float64) []float64 {
+	magnitudes := make([]float64, len(deltas))
+	for i, d := range deltas {
+		magnitudes[i] = math.Abs(d)
+	}
+	sorted := append([]float64(nil), magnitudes...)
+	sort.Float64s(sorted)
+	ranks := make([]float64, len(deltas))
+	for i, m := range magnitudes {
+		lo, hi := 0, 0
+		for _, s := range sorted {
+			if s < m {
+				lo++
+			}
+			if s <= m {
+				hi++
+			}
+		}
+		ranks[i] = float64(lo+hi+1) / 2
+	}
+	return ranks
+}
+
+func bruteForceWilcoxon(deltas []float64) (wPlus, wTotal, pReg, pImp float64) {
+	ranks := textbookMidRanks(deltas)
+	for i, d := range deltas {
+		wTotal += ranks[i]
+		if d > 0 {
+			wPlus += ranks[i]
+		}
+	}
+	assignments := 1 << len(deltas)
+	for mask := 0; mask < assignments; mask++ {
+		var s float64
+		for i := range deltas {
+			if mask&(1<<i) != 0 {
+				s += ranks[i]
+			}
+		}
+		p := 1 / float64(assignments)
+		if s >= wPlus-1e-12 {
+			pReg += p
+		}
+		if s <= wPlus+1e-12 {
+			pImp += p
+		}
+	}
+	return wPlus, wTotal, pReg, pImp
+}
+
+func TestWilcoxonPValuesMatchBruteForceEnumerationOfSignAssignments(t *testing.T) {
+	t.Parallel()
+	cases := [][]float64{
+		{},
+		{3},
+		{-3},
+		{1, 2},
+		{1, -2, 3},
+		{-1, 2, 3, 4, 5, 6},
+		{1, -2, 3, -4, 5, -6},
+		{5, 5, -3, 8},
+		{-5, 5, 10, 20, 30, 40},
+		{3, 3, -3},
+		{7, 7, 7, -7, -7},
+		{-1, -2, -3, -4, -5, -6, -7},
+		{2, -2, 4, -4, 6, -6, 8},
+	}
+	for _, deltas := range cases {
+		t.Run(fmt.Sprint(deltas), func(t *testing.T) {
+			t.Parallel()
+			wantWPlus, wantWTotal, wantPReg, wantPImp := bruteForceWilcoxon(deltas)
+			wPlus, wTotal, pReg, pImp := wilcoxonPValues(deltas)
+			assert.InDelta(t, wantWPlus, wPlus, 1e-12)
+			assert.InDelta(t, wantWTotal, wTotal, 1e-12)
+			assert.InDelta(t, wantPReg, pReg, 1e-12)
+			assert.InDelta(t, wantPImp, pImp, 1e-12)
+		})
+	}
+}
+
+func TestWilcoxonTotalRankSumMatchesNTimesNPlusOneOverTwoWithoutTies(t *testing.T) {
+	t.Parallel()
+	for n := 1; n <= 12; n++ {
+		deltas := make([]float64, n)
+		for i := range deltas {
+			deltas[i] = float64(i + 1)
+		}
+		_, wTotal, pReg, _ := wilcoxonPValues(deltas)
+		require.InDelta(t, float64(n*(n+1))/2, wTotal, 1e-12, "n=%d", n)
+		require.InDelta(t, math.Ldexp(1, -n), pReg, 1e-12, "n=%d", n)
+	}
+}
+
+func TestWilcoxonPValuesAreMirroredWhenEveryDeltaFlipsSign(t *testing.T) {
+	t.Parallel()
+	for _, deltas := range [][]float64{{1, 2, 3}, {-1, 2, 3, 4, 5, 6}, {5, 5, -3, 8}, {1, -2, 3, -4, 5, -6}} {
+		flipped := make([]float64, len(deltas))
+		for i, d := range deltas {
+			flipped[i] = -d
+		}
+		wPlus, wTotal, pReg, pImp := wilcoxonPValues(deltas)
+		flipWPlus, flipWTotal, flipPReg, flipPImp := wilcoxonPValues(flipped)
+		require.InDelta(t, wTotal, flipWTotal, 1e-12)
+		require.InDelta(t, wTotal-wPlus, flipWPlus, 1e-12)
+		require.InDelta(t, pImp, flipPReg, 1e-12)
+		require.InDelta(t, pReg, flipPImp, 1e-12)
+	}
+}
+
 func TestWilcoxonFindingVerdicts(t *testing.T) {
 	t.Parallel()
 	oneTask := DefaultThresholds()
@@ -400,12 +563,25 @@ func TestPairedFindingsWilcoxonDormant(t *testing.T) {
 	assert.Nil(t, pairedFindings(with, aggregate.Report{}, wilcoxonThresholds()))
 }
 
-func TestPairedFindingsWilcoxonDeterministic(t *testing.T) {
+func TestPairedFindingsWilcoxonIsInvariantUnderTaskOrder(t *testing.T) {
 	t.Parallel()
 	b, c := sixTaskReports()
-	first := pairedFindings(b, c, wilcoxonThresholds())
-	second := pairedFindings(b, c, wilcoxonThresholds())
-	assert.Equal(t, first, second)
+	want := pairedFindings(b, c, wilcoxonThresholds())
+	require.Len(t, want, 4)
+
+	reverse := func(r aggregate.Report) aggregate.Report {
+		out := make([]aggregate.TaskStats, 0, len(r.Tasks))
+		for i := len(r.Tasks) - 1; i >= 0; i-- {
+			out = append(out, r.Tasks[i])
+		}
+		return aggregate.Report{Tasks: out}
+	}
+	assert.Equal(t, want, pairedFindings(reverse(b), reverse(c), wilcoxonThresholds()))
+
+	rotate := func(r aggregate.Report) aggregate.Report {
+		return aggregate.Report{Tasks: append(append([]aggregate.TaskStats(nil), r.Tasks[2:]...), r.Tasks[:2]...)}
+	}
+	assert.Equal(t, want, pairedFindings(rotate(b), rotate(c), wilcoxonThresholds()))
 }
 
 func TestPairedSensitivityUnchangedUnderWilcoxon(t *testing.T) {

@@ -2,6 +2,7 @@ package regress
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,9 +23,16 @@ func TestRecordStampsOmitzero(t *testing.T) {
 	assert.Contains(t, string(raw), `"stamps":{"catacomb_version":"v1","stepkey_scheme":"stepkey/v1"}`)
 }
 
-func TestRecordVersionBumpedForProject(t *testing.T) {
+func TestRecordMarshalsTheVersionItWasStampedWith(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 2, RecordVersion)
+	raw, err := json.Marshal(Record{V: RecordVersion, Project: "payments-api", CandidateSelector: "label:x=y"})
+	require.NoError(t, err)
+	var got Record
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.Equal(t, RecordVersion, got.V)
+	assert.Equal(t, 2, RecordVersion, "on-disk wire version: bumping this rejects records in older binaries, so change it deliberately")
+	assert.Equal(t, "payments-api", got.Project)
+	assert.Equal(t, "label:x=y", got.CandidateSelector)
 }
 
 func TestRecordProjectOmitEmpty(t *testing.T) {
@@ -103,6 +111,112 @@ func TestCompareCoverageEmptyBaseline(t *testing.T) {
 	assert.InDelta(t, 1.0, r.Coverage.Steps, 1e-9)
 	assert.InDelta(t, 1.0, r.Coverage.Phases, 1e-9)
 	assert.True(t, r.StepsTrusted)
+}
+
+func stepsCoverageInput(baselineSteps, matchedSteps int) Input {
+	base := make([]aggregate.Row, 0, baselineSteps)
+	cand := make([]aggregate.Row, 0, matchedSteps)
+	for i := 0; i < baselineSteps; i++ {
+		key := fmt.Sprintf("s%02d", i)
+		row := presentRow(key, key, 5)
+		base = append(base, row)
+		if i < matchedSteps {
+			slow := presentRow(key, key, 5)
+			slow.DurationMS = metric(5, 1600, 1500, 1700)
+			cand = append(cand, slow)
+		}
+	}
+	return Input{
+		Baseline:  aggregate.Report{Runs: 5, Steps: base},
+		Candidate: aggregate.Report{Runs: 5, Steps: cand},
+	}
+}
+
+func TestStepCoverageExactlyAtFloorStaysTrustedAndKeepsRegressions(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	require.InDelta(t, 0.7, th.CoverageFloor, 1e-12)
+
+	atFloor := Compare(stepsCoverageInput(10, 7), th)
+	require.InDelta(t, 0.7, atFloor.Coverage.Steps, 1e-12)
+	assert.True(t, atFloor.StepsTrusted)
+	f := findFinding(atFloor.Findings, "step", "s00", "duration_ms")
+	require.NotNil(t, f)
+	assert.Equal(t, VerdictRegression, f.Verdict)
+	assert.Empty(t, f.Detail)
+
+	justBelow := Compare(stepsCoverageInput(10, 6), th)
+	require.InDelta(t, 0.6, justBelow.Coverage.Steps, 1e-12)
+	assert.False(t, justBelow.StepsTrusted)
+	below := findFinding(justBelow.Findings, "step", "s00", "duration_ms")
+	require.NotNil(t, below)
+	assert.Equal(t, VerdictNotable, below.Verdict)
+}
+
+func TestTotalErrorCountRoundsRateTimesRunsToTheNearestWholeRun(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	totals := func(runs int, errRate float64) aggregate.RunTotals {
+		return aggregate.RunTotals{
+			DurationMS: metric(runs, 1000, 900, 1100),
+			CostUSD:    metric(runs, 0.10, 0.09, 0.11),
+			TokensIn:   metric(runs, 2000, 1900, 2100),
+			TokensOut:  metric(runs, 800, 750, 850),
+			Nodes:      metric(runs, 12, 11, 13),
+			ErrorRate:  errRate,
+		}
+	}
+	in := Input{
+		Baseline:  aggregate.Report{Runs: 3, Totals: totals(3, 0)},
+		Candidate: aggregate.Report{Runs: 3, Totals: totals(3, 1)},
+	}
+	f := findFinding(Compare(in, th).Findings, "total", "", "error_rate")
+	require.NotNil(t, f)
+	assert.InDelta(t, 1.0, f.Candidate, 1e-12)
+	assert.Equal(t, VerdictRegression, f.Verdict)
+	assert.InDelta(t, wilsonUpperBoundAtZeroSuccesses(3, th.Z), f.BandHi, 1e-12)
+
+	runs, errors := 22, 15
+	rate := float64(errors) / float64(runs)
+	require.NotEqual(t, errors, int(rate*float64(runs)),
+		"fixture must exercise a rate whose product truncates below the true error count")
+	lossy := Input{
+		Baseline:  aggregate.Report{Runs: runs, Totals: totals(runs, 0)},
+		Candidate: aggregate.Report{Runs: runs, Totals: totals(runs, rate)},
+	}
+	rounded := findFinding(Compare(lossy, th).Findings, "total", "", "error_rate")
+	require.NotNil(t, rounded)
+	assert.InDelta(t, rate, rounded.Candidate, 1e-12)
+	assert.Equal(t, VerdictRegression, rounded.Verdict)
+
+	mirrored := Input{
+		Baseline:  aggregate.Report{Runs: runs, Totals: totals(runs, rate)},
+		Candidate: aggregate.Report{Runs: runs, Totals: totals(runs, 0)},
+	}
+	improved := findFinding(Compare(mirrored, th).Findings, "total", "", "error_rate")
+	require.NotNil(t, improved)
+	assert.InDelta(t, rate, improved.Baseline, 1e-12)
+	assert.InDelta(t, -rate, improved.Delta, 1e-12)
+	assert.Equal(t, VerdictImprovement, improved.Verdict)
+}
+
+func TestRowErrorCountRoundsStatusRateTimesPresentToTheNearestWholeRun(t *testing.T) {
+	t.Parallel()
+	present, errors := 22, 15
+	rate := float64(errors) / float64(present)
+	require.NotEqual(t, errors, int(rate*float64(present)),
+		"fixture must exercise a rate whose product truncates below the true error count")
+	base := presentRow("p1", "one", present)
+	cand := presentRow("p1", "one", present)
+	cand.StatusRates = map[model.Status]float64{model.StatusError: rate}
+	in := Input{
+		Baseline:  aggregate.Report{Runs: present, Phases: []aggregate.Row{base}},
+		Candidate: aggregate.Report{Runs: present, Phases: []aggregate.Row{cand}},
+	}
+	f := findFinding(Compare(in, DefaultThresholds()).Findings, "phase", "p1", "error_rate")
+	require.NotNil(t, f)
+	assert.InDelta(t, rate, f.Candidate, 1e-12)
+	assert.InDelta(t, rate, f.Delta, 1e-12)
 }
 
 func TestCompareTotalsCostRegression(t *testing.T) {
@@ -457,31 +571,75 @@ func TestCompareAnnotationNoSpecsNoFindings(t *testing.T) {
 	}
 }
 
-func TestCompareDeterministicOrder(t *testing.T) {
-	t.Parallel()
-	build := func(phases []aggregate.Row) Input {
-		cand := presentRow("p1", "one", 5)
-		cand.DurationMS = metric(5, 1600, 1500, 1700)
-		return Input{
-			Baseline:  aggregate.Report{Runs: 5, Phases: phases},
-			Candidate: aggregate.Report{Runs: 5, Phases: []aggregate.Row{cand}},
-		}
-	}
-	forward := build([]aggregate.Row{presentRow("p1", "one", 5)})
-	r1 := Compare(forward, DefaultThresholds())
-	r2 := Compare(forward, DefaultThresholds())
-	require.Equal(t, r1.Findings, r2.Findings)
+type findingSlot struct {
+	scope  string
+	key    string
+	metric string
+}
 
-	for i := 1; i < len(r1.Findings); i++ {
-		prev, cur := r1.Findings[i-1], r1.Findings[i]
-		if scopeOrder[prev.Scope] != scopeOrder[cur.Scope] {
-			assert.Less(t, scopeOrder[prev.Scope], scopeOrder[cur.Scope])
-			continue
-		}
-		if prev.Key != cur.Key {
-			assert.Less(t, prev.Key, cur.Key)
-			continue
-		}
-		assert.LessOrEqual(t, prev.Metric, cur.Metric)
+func findingSlots(fs []Finding) []findingSlot {
+	out := make([]findingSlot, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, findingSlot{scope: f.Scope, key: f.Key, metric: f.Metric})
 	}
+	return out
+}
+
+func multiScopeInput(phases, steps []aggregate.Row, tasks []aggregate.TaskStats) Input {
+	slowStep := presentRow("s1", "step-one", 5)
+	slowStep.DurationMS = metric(5, 1600, 1500, 1700)
+	slowPhase := presentRow("pa", "alpha", 5)
+	slowPhase.DurationMS = metric(5, 1600, 1500, 1700)
+	candTasks := make([]aggregate.TaskStats, 0, len(tasks))
+	for _, ts := range tasks {
+		candTasks = append(candTasks, metricTask(ts.Task, 5, 1100))
+	}
+	return Input{
+		Baseline:  aggregate.Report{Runs: 5, Phases: phases, Steps: steps, Tasks: tasks},
+		Candidate: aggregate.Report{Runs: 5, Phases: []aggregate.Row{slowPhase}, Steps: []aggregate.Row{slowStep}, Tasks: candTasks},
+	}
+}
+
+func multiScopeBaselineParts() ([]aggregate.Row, []aggregate.Row, []aggregate.TaskStats) {
+	phases := []aggregate.Row{presentRow("pa", "alpha", 5), presentRow("pb", "beta", 5)}
+	steps := []aggregate.Row{presentRow("s1", "step-one", 5)}
+	tasks := []aggregate.TaskStats{
+		metricTask("t1", 5, 1000), metricTask("t2", 5, 1000), metricTask("t3", 5, 1000),
+		metricTask("t4", 5, 1000), metricTask("t5", 5, 1000),
+	}
+	return phases, steps, tasks
+}
+
+func TestCompareFindingsFollowTotalPairedPhaseStepThenKeyThenMetric(t *testing.T) {
+	t.Parallel()
+	phases, steps, tasks := multiScopeBaselineParts()
+	got := Compare(multiScopeInput(phases, steps, tasks), DefaultThresholds())
+	require.Equal(t, []findingSlot{
+		{"total", "", "cost_usd"},
+		{"total", "", "duration_ms"},
+		{"total", "", "error_rate"},
+		{"total", "", "nodes"},
+		{"total", "", "tokens_in"},
+		{"total", "", "tokens_out"},
+		{"paired", "", "duration_ms"},
+		{"phase", "pa", "duration_ms"},
+		{"phase", "pb", "metrics"},
+		{"phase", "pb", "presence"},
+		{"step", "s1", "duration_ms"},
+	}, findingSlots(got.Findings))
+}
+
+func TestCompareFindingOrderIsIndependentOfInputRowAndTaskOrder(t *testing.T) {
+	t.Parallel()
+	phases, steps, tasks := multiScopeBaselineParts()
+	want := Compare(multiScopeInput(phases, steps, tasks), DefaultThresholds()).Findings
+
+	reversedPhases := []aggregate.Row{phases[1], phases[0]}
+	reversedTasks := make([]aggregate.TaskStats, 0, len(tasks))
+	for i := len(tasks) - 1; i >= 0; i-- {
+		reversedTasks = append(reversedTasks, tasks[i])
+	}
+	got := Compare(multiScopeInput(reversedPhases, steps, reversedTasks), DefaultThresholds()).Findings
+
+	require.Equal(t, want, got)
 }

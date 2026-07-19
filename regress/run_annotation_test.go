@@ -79,8 +79,8 @@ func TestCompareRunAnnotationHigherBetterPassSpaceNumbers(t *testing.T) {
 	assert.InDelta(t, 1.0, f.Baseline, 1e-9)
 	assert.InDelta(t, 0.4, f.Candidate, 1e-9)
 	assert.InDelta(t, -0.6, f.Delta, 1e-9)
-	assert.InDelta(t, 1.0, f.BandHi, 1e-9)
-	assert.InDelta(t, 1-0.3511570491920283, f.BandLo, 1e-9)
+	assert.InDelta(t, 1.0, f.BandHi, 1e-12)
+	assert.InDelta(t, 1-wilsonUpperBoundAtZeroSuccesses(5, DefaultThresholds().Z), f.BandLo, 1e-12)
 	assert.Equal(t, "ones 5/5 -> 2/5", f.Detail)
 }
 
@@ -123,8 +123,8 @@ func TestCompareRunAnnotationLowerBetterSpec(t *testing.T) {
 	assert.InDelta(t, 0.0, f.Baseline, 1e-9)
 	assert.InDelta(t, 1.0, f.Candidate, 1e-9)
 	assert.InDelta(t, 1.0, f.Delta, 1e-9)
-	assert.InDelta(t, 0.0, f.BandLo, 1e-9)
-	assert.InDelta(t, 0.3511570491920283, f.BandHi, 1e-9)
+	assert.InDelta(t, 0.0, f.BandLo, 1e-12)
+	assert.InDelta(t, wilsonUpperBoundAtZeroSuccesses(5, DefaultThresholds().Z), f.BandHi, 1e-12)
 }
 
 func TestCompareRunAnnotationImprovementOnRisingPass(t *testing.T) {

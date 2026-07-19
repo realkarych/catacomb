@@ -1,6 +1,7 @@
 package calibrate
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"testing"
@@ -165,6 +166,39 @@ func TestCalibrateLeaveOneOutNamesFlippingRun(t *testing.T) {
 	}, got.Influence.FlippingRuns)
 }
 
+func TestDriftReportsNotableAlongsideRegressionAndDropsEverythingElse(t *testing.T) {
+	got := driftFindings([]regress.Finding{
+		{Scope: "total", Metric: "duration_ms", Verdict: regress.VerdictRegression, Baseline: 1, Candidate: 2, Detail: "d1"},
+		{Scope: "phase", Metric: "presence", Verdict: regress.VerdictNotable, Baseline: 3, Candidate: 4, Detail: "d2"},
+		{Scope: "total", Metric: "cost_usd", Verdict: regress.VerdictOK},
+		{Scope: "total", Metric: "tokens_in", Verdict: regress.VerdictImprovement},
+		{Scope: "step", Metric: "metrics", Verdict: regress.VerdictInsufficient},
+	})
+	assert.Equal(t, []DriftFinding{
+		{Scope: "total", Metric: "duration_ms", Verdict: regress.VerdictRegression, Baseline: 1, Candidate: 2, Detail: "d1"},
+		{Scope: "phase", Metric: "presence", Verdict: regress.VerdictNotable, Baseline: 3, Candidate: 4, Detail: "d2"},
+	}, got)
+}
+
+func TestCalibrateSurfacesDowngradedStepDriftAsNotable(t *testing.T) {
+	th := regress.DefaultThresholds()
+	th.Z = 1.96
+	group := fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000)
+	group[3].Nodes[0].StepKey = "s2"
+	group[4].Nodes[0].StepKey = "s2"
+	group[5].Nodes[0].StepKey = "s2"
+
+	got := Calibrate(group, th)
+	require.NotNil(t, got.Split)
+	var notables []DriftFinding
+	for _, d := range got.Split.Drift {
+		if d.Verdict == regress.VerdictNotable {
+			notables = append(notables, d)
+		}
+	}
+	require.NotEmpty(t, notables, "expected at least one notable drift finding, got %+v", got.Split.Drift)
+}
+
 func TestCalibrateSingleTaskInsufficientSplitCarriesNotes(t *testing.T) {
 	group := withTaskLabels(fixtureGroup(10000, 10000, 10000, 10000, 10000, 10000), "sql")
 	got := Calibrate(group, regress.DefaultThresholds())
@@ -192,9 +226,26 @@ func TestInsufficientNotesDedupesAndSkipsEmptyDetail(t *testing.T) {
 	assert.Equal(t, []string{"baseline n=2 below min support 3", "matched 1 task below paired min 5"}, notes)
 }
 
-func TestCalibrateDeterministic(t *testing.T) {
+func TestCalibrateSerializesToIdenticalBytesAcrossRepeatedCalls(t *testing.T) {
 	group := fixtureGroup(10000, 10000, 30000, 10000, 14000, 14000, 14000)
-	first := Calibrate(group, regress.DefaultThresholds())
-	second := Calibrate(group, regress.DefaultThresholds())
-	require.Equal(t, first, second)
+	th := regress.DefaultThresholds()
+	var first bytes.Buffer
+	require.NoError(t, RenderJSON(Calibrate(group, th), &first))
+	require.Contains(t, first.String(), `"flipping_runs"`)
+	for i := 0; i < 8; i++ {
+		var again bytes.Buffer
+		require.NoError(t, RenderJSON(Calibrate(group, th), &again))
+		require.Equal(t, first.String(), again.String(), "call %d", i)
+	}
+}
+
+func TestCalibrateReadsRunsInGivenOrderSoReorderingChangesTheSplit(t *testing.T) {
+	th := regress.DefaultThresholds()
+	slowLast := Calibrate(fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000), th)
+	interleaved := Calibrate(fixtureGroup(10000, 14000, 10000, 14000, 10000, 14000), th)
+	require.NotNil(t, slowLast.Split)
+	require.NotNil(t, interleaved.Split)
+	assert.Equal(t, regress.VerdictRegression, slowLast.Split.Verdict)
+	assert.Equal(t, regress.VerdictOK, interleaved.Split.Verdict)
+	assert.Equal(t, []string{"r00", "r01", "r02", "r03", "r04", "r05"}, interleaved.RunIDs)
 }
