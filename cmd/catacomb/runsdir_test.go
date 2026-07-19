@@ -360,6 +360,61 @@ func TestEvidenceRunGraphOverlaysStatusAndModel(t *testing.T) {
 	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
 }
 
+func TestEvidenceRunGraphNonZeroExitCodeMarksRunErrored(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+		want     model.Status
+	}{
+		{name: "killed", exitCode: -1, want: model.StatusError},
+		{name: "failed", exitCode: 1, want: model.StatusError},
+		{name: "clean", exitCode: 0, want: model.StatusRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			m := evidence.Meta{
+				RunID:       "r-exit",
+				SessionID:   "s1",
+				ExitCode:    tc.exitCode,
+				MarkerName:  "task:t1",
+				MarkerStart: time.Unix(100, 0).UTC(),
+				MarkerEnd:   time.Unix(200, 0).UTC(),
+			}
+			require.NoError(t, evidence.Write(filepath.Join(root, "r-exit"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session_marked.jsonl"), Rel: "session.jsonl"}}))
+			rg, err := evidenceRunGraph(filepath.Join(root, "r-exit"), m, newPricer())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, rg.Run.Status)
+		})
+	}
+}
+
+func TestEvidenceRunGraphExitCodeMarksErrorWithoutSnapshotEntry(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r-exit-empty")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), nil, 0o600))
+	m := evidence.Meta{RunID: "r-exit-empty", SessionID: "s1", ExitCode: 137}
+	rg, err := evidenceRunGraph(dir, m, newPricer())
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusError, rg.Run.Status)
+}
+
+func TestCrashedRunAggregatesToFullErrorRate(t *testing.T) {
+	root := t.TempDir()
+	m := evidence.Meta{
+		RunID:       "crashed-r1",
+		SessionID:   "s1",
+		ExitCode:    -1,
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+	}
+	require.NoError(t, evidence.Write(filepath.Join(root, "crashed-r1"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session_marked.jsonl"), Rel: "session.jsonl"}}))
+	rg, err := evidenceRunGraph(filepath.Join(root, "crashed-r1"), m, newPricer())
+	require.NoError(t, err)
+	rep := aggregate.Aggregate([]aggregate.RunGraph{rg}, aggregate.Options{})
+	assert.Equal(t, float64(1), rep.Totals.ErrorRate)
+}
+
 func TestEvidenceRunGraphEmptySnapshotLeavesRunZero(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "r4")
 	require.NoError(t, os.MkdirAll(dir, 0o700))

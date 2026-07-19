@@ -154,6 +154,9 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 			break
 		}
 	}
+	if m.ExitCode != 0 {
+		run.Status = model.StatusError
+	}
 	if !m.MarkerStart.IsZero() {
 		run.StartedAt = &m.MarkerStart
 	}
