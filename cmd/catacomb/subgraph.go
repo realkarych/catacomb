@@ -50,12 +50,15 @@ func newSubgraphCmd() *cobra.Command {
 }
 
 func runSubgraph(a subgraphArgs) ([]*model.Node, []*model.Edge, error) {
-	exec := newExecutionID()
+	return runSubgraphFor(a, newExecutionID())
+}
+
+func runSubgraphFor(a subgraphArgs, exec string) ([]*model.Node, []*model.Edge, error) {
 	g, err := loadGraph(a.input, exec)
 	if err != nil {
 		return nil, nil, fmt.Errorf("subgraph: %s: %w (%w)", a.input, err, ErrDiffInput)
 	}
-	nodes, edges := g.Snapshot()
+	nodes, edges := sortedGraphSnapshot(g)
 	spec := subgraph.Spec{Phase: a.phase, From: a.from, To: a.to}
 	if spec.Empty() {
 		return nil, nil, fmt.Errorf("subgraph: %w: provide --phase or --from/--to", subgraph.ErrInvalidSelector)
