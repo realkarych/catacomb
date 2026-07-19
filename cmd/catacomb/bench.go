@@ -163,6 +163,9 @@ func runBenchCells(ctx context.Context, stdout io.Writer, basketPath string, bas
 			continue
 		}
 		entry, failed, verified := cellFn(ctx, cell, ambient)
+		if ctx.Err() != nil {
+			break
+		}
 		if err := manifest.Append(entry); err != nil {
 			return operational(fmt.Errorf("bench: manifest: %w", err))
 		}
@@ -272,6 +275,10 @@ func runBenchCellInWorkdir(ctx context.Context, stdout, stderr io.Writer, cell b
 		entry.Note = appendNote(entry.Note, ctxNote(ctxErr))
 	}
 	if offlineChildFailed(stderr, cell, err, entry) {
+		return !ok, false
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		entry.FinishedAt = nowFn()
 		return !ok, false
 	}
 	verified := recordOfflineEvidence(ctx, stderr, cell, o, merged, start, end, workdir, entry)
