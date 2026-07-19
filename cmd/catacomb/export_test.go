@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/evidence"
+	"github.com/realkarych/catacomb/model"
 )
 
 func decodeSnapshotLines(t *testing.T, out string) []map[string]any {
@@ -251,4 +252,43 @@ func TestExportCmdWired(t *testing.T) {
 		names[sub.Name()] = true
 	}
 	assert.True(t, names["export"])
+}
+
+type closeErrWriter struct {
+	buf      bytes.Buffer
+	writeErr error
+	closeErr error
+}
+
+func (w *closeErrWriter) Write(p []byte) (int, error) {
+	if w.writeErr != nil {
+		return 0, w.writeErr
+	}
+	return w.buf.Write(p)
+}
+
+func (w *closeErrWriter) Close() error { return w.closeErr }
+
+func TestSnapshotAndCloseReportsCloseError(t *testing.T) {
+	errClose := errors.New("flush on close failed")
+	w := &closeErrWriter{closeErr: errClose}
+	err := snapshotAndClose(w, []*model.Node{{ID: "n1"}}, nil, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errClose)
+}
+
+func TestSnapshotAndCloseJoinsWriteAndCloseErrors(t *testing.T) {
+	errWrite := errors.New("write failed")
+	errClose := errors.New("close failed")
+	w := &closeErrWriter{writeErr: errWrite, closeErr: errClose}
+	err := snapshotAndClose(w, []*model.Node{{ID: "n1"}}, nil, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errWrite)
+	assert.ErrorIs(t, err, errClose)
+}
+
+func TestSnapshotAndCloseSucceeds(t *testing.T) {
+	w := &closeErrWriter{}
+	require.NoError(t, snapshotAndClose(w, []*model.Node{{ID: "n1"}}, nil, nil))
+	assert.Contains(t, w.buf.String(), `"n1"`)
 }

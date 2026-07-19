@@ -8,7 +8,6 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 
-	xjsonl "github.com/realkarych/catacomb/export/jsonl"
 	"github.com/realkarych/catacomb/reduce"
 )
 
@@ -65,10 +64,8 @@ func export(path string, g *reduce.Graph) error {
 	if err != nil {
 		return fmt.Errorf("replay export: %w", err)
 	}
-	defer func() { _ = out.Close() }()
-
 	nodes, edges := sortedGraphSnapshot(g)
 	runs := g.RunsSnapshot()
 	sort.Slice(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
-	return xjsonl.Snapshot(out, nodes, edges, runs)
+	return snapshotAndClose(out, nodes, edges, runs)
 }
