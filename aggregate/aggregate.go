@@ -236,7 +236,7 @@ func foldRunPhases(rg RunGraph) map[string]runKey {
 	}
 	acc := map[string]runKey{}
 	for _, n := range rg.Nodes {
-		if n.Type != model.NodeMarker || n.PhaseKey == "" {
+		if n.PhaseKey == "" {
 			continue
 		}
 		rk := accumulate(acc[n.PhaseKey], n)
