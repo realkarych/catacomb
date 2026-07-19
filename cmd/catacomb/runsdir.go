@@ -165,12 +165,18 @@ func evidenceRunGraph(dir string, m evidence.Meta, pricer reduce.Pricer) (aggreg
 	}
 	nodes, edges := sortedGraphSnapshot(g)
 	run := model.Run{ID: m.RunID, SessionIDs: []string{m.SessionID}, Labels: m.Labels}
-	for _, sr := range g.RunsSnapshot() {
-		run.SessionIDs = appendUniqueString(run.SessionIDs, sr.ID)
+	snapshot := g.RunsSnapshot()
+	sessionIDs := make([]string, 0, len(snapshot))
+	for _, sr := range snapshot {
+		sessionIDs = append(sessionIDs, sr.ID)
 		if sr.ID == m.SessionID {
 			run.Status = sr.Status
 			run.ModelID = sr.ModelID
 		}
+	}
+	sort.Strings(sessionIDs)
+	for _, id := range sessionIDs {
+		run.SessionIDs = appendUniqueString(run.SessionIDs, id)
 	}
 	relabelRunID(nodes, edges, m.RunID)
 	if m.ExitCode != 0 {

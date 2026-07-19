@@ -794,3 +794,37 @@ func TestRegressReportUnchangedByAggregationStrip(t *testing.T) {
 	}
 	assert.Equal(t, reportJSON(loadFullGraphs), reportJSON(loadForAggregation))
 }
+
+func writeSubagentTranscript(t *testing.T, path, sessionID string) {
+	t.Helper()
+	line := fmt.Sprintf(`{"type":"assistant","uuid":"ua-%s","sessionId":%q,"timestamp":"2026-06-20T10:00:05Z","message":{"role":"assistant","id":"msg-%s","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu-%s","name":"Read","input":{"file_path":"a.txt"}}],"usage":{"input_tokens":3,"output_tokens":2}}}`, sessionID, sessionID, sessionID, sessionID)
+	require.NoError(t, os.WriteFile(path, []byte(line+"\n"), 0o600))
+}
+
+func TestEvidenceRunGraphSessionIDsAreDeterministic(t *testing.T) {
+	src := t.TempDir()
+	files := []evidence.SourceFile{{Src: filepath.Join("testdata", "session.jsonl"), Rel: "session.jsonl"}}
+	for i, sessionID := range []string{"sub3", "sub1", "sub4", "sub2"} {
+		p := filepath.Join(src, fmt.Sprintf("agent-%03d.jsonl", i+1))
+		writeSubagentTranscript(t, p, sessionID)
+		files = append(files, evidence.SourceFile{Src: p, Rel: filepath.Join("subagents", filepath.Base(p))})
+	}
+	m := evidence.Meta{
+		RunID:       "run-det",
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": "base"},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	dir := filepath.Join(t.TempDir(), "run-det")
+	require.NoError(t, evidence.Write(dir, m, files))
+
+	want := []string{"s1", "sub1", "sub2", "sub3", "sub4"}
+	for i := 0; i < 40; i++ {
+		rg, err := evidenceRunGraph(dir, m, newPricer())
+		require.NoError(t, err)
+		require.Equal(t, want, rg.Run.SessionIDs, "session_ids must be byte-stable across identical invocations")
+	}
+}
