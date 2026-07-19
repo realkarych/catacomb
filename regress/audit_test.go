@@ -105,6 +105,16 @@ func TestGroupFlagsNeverFlagsGroupsSmallerThanThreeCellsHoweverExtreme(t *testin
 	}
 }
 
+func TestGroupFlagsSkipsTwoCellGroupsEvenWhenALoweredIQRFactorWouldOtherwiseFlagThem(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	th.AuditIQRFactor = 0.5
+	th.AuditRelDelta = 0
+	cells := tokensOutCells([]string{"r0", "r1"}, []float64{0, 1e9})
+	assert.Nil(t, groupFlags(cells, th))
+	assert.NotNil(t, groupFlags(tokensOutCells([]string{"r0", "r1", "r2"}, []float64{0, 0, 1e9}), th))
+}
+
 func TestGroupFlagsIQRZeroNeedsRelFloor(t *testing.T) {
 	t.Parallel()
 	th := DefaultThresholds()

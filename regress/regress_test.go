@@ -30,7 +30,7 @@ func TestRecordMarshalsTheVersionItWasStampedWith(t *testing.T) {
 	var got Record
 	require.NoError(t, json.Unmarshal(raw, &got))
 	assert.Equal(t, RecordVersion, got.V)
-	assert.Greater(t, RecordVersion, 1, "records carrying project must not claim the pre-project version")
+	assert.Equal(t, 2, RecordVersion, "on-disk wire version: bumping this rejects records in older binaries, so change it deliberately")
 	assert.Equal(t, "payments-api", got.Project)
 	assert.Equal(t, "label:x=y", got.CandidateSelector)
 }
