@@ -46,9 +46,10 @@ func TestRangeWindow(t *testing.T) {
 
 	w, ok := RangeWindow(nodes, exec, "plan", 0, "impl", 0)
 	require.True(t, ok)
-	assert.Equal(t, ts(100).Unix(), w.Start.Unix())
+	assert.Equal(t, *ts(100), w.Start)
 	require.NotNil(t, w.End)
-	assert.Equal(t, ts(300).Unix(), w.End.Unix())
+	assert.Equal(t, *ts(300), *w.End,
+		"a range ends where the to-phase begins, never where the from-phase ends")
 
 	_, ok = RangeWindow(nodes, exec, "plan", 0, "missing", 0)
 	assert.False(t, ok)

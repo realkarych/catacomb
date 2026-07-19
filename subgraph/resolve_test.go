@@ -34,9 +34,9 @@ func TestPhaseWindowResolvesMarker(t *testing.T) {
 
 	w, ok := PhaseWindow(nodes, exec, "plan", 0)
 	require.True(t, ok)
-	assert.Equal(t, ts(100).Unix(), w.Start.Unix())
+	assert.Equal(t, *ts(100), w.Start)
 	require.NotNil(t, w.End)
-	assert.Equal(t, ts(200).Unix(), w.End.Unix())
+	assert.Equal(t, *ts(200), *w.End)
 
 	_, ok = PhaseWindow(nodes, exec, "missing", 0)
 	assert.False(t, ok)
