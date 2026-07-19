@@ -272,6 +272,34 @@ func TestBenchOfflineEvidenceWriteFailureNote(t *testing.T) {
 	assert.Empty(t, entry.EvidenceDir)
 }
 
+func TestBenchOfflineCancelledAfterChildSkipsEvidence(t *testing.T) {
+	projects := t.TempDir()
+	runs := t.TempDir()
+	t.Setenv("GO_HELPER_BENCH", "1")
+	t.Setenv("HELPER_SESSION", "sess-cancel")
+	t.Setenv("HELPER_PROJECTS", projects)
+	t.Setenv("HELPER_FIXTURE", fixturePath(t))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	orig := execCommandContext
+	execCommandContext = func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+		cancel()
+		return exec.Command(os.Args[0], "-test.run=TestHelperBenchChild")
+	}
+	t.Cleanup(func() { execCommandContext = orig })
+
+	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
+	entry, _, verified := runBenchCellOffline(ctx, io.Discard, io.Discard, cell, "h", nil,
+		offlineOpts{projectsDir: projects, runsDir: runs})
+
+	assert.Contains(t, entry.Note, "cancelled")
+	assert.False(t, verified)
+	assert.Empty(t, entry.EvidenceDir)
+	got, err := evidence.ScanRuns(runs)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
 func TestBenchOfflineSetupFailureNote(t *testing.T) {
 	stubBenchChild(t, "HELPER_EXIT1=1")
 	cell := offlineCell("r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base", Setup: []string{"boom"}})

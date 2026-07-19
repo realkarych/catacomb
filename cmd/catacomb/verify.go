@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +20,8 @@ const verifyHashWarning = "warning: basket hash differs from recorded runs (veri
 var errVerifyNoRunsDir = errors.New("verify: --runs-dir is required (home directory could not be resolved; set it explicitly)")
 
 var errVerifyFailed = errors.New("verify: one or more cells failed re-verification")
+
+var errVerifyInterrupted = errors.New("verify: interrupted before all recorded runs were re-verified")
 
 type verifyFlags struct {
 	runsDir string
@@ -45,6 +48,11 @@ func runVerify(ctx context.Context, stdout, stderr io.Writer, basketPath string,
 	if f.runsDir == "" {
 		return operational(errVerifyNoRunsDir)
 	}
+	if f.labels != "" {
+		if verr := validateLabelTerms(strings.Split(f.labels, ",")); verr != nil {
+			return operational(verr)
+		}
+	}
 	basket, hash, err := bench.LoadOffline(basketPath)
 	if err != nil {
 		return operational(err)
@@ -63,7 +71,13 @@ func runVerify(ctx context.Context, stdout, stderr io.Writer, basketPath string,
 		want:     model.ParseLabels(f.labels),
 	}
 	for _, r := range runs {
+		if ctx.Err() != nil {
+			break
+		}
 		vf.run(ctx, r)
+	}
+	if ctx.Err() != nil {
+		return operational(errVerifyInterrupted)
 	}
 	if vf.matched == 0 {
 		return operational(fmt.Errorf("verify: %w", ErrEmptyGroup))
