@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRenderErrGeneric(t *testing.T) {
@@ -14,30 +15,40 @@ func TestRenderErrGeneric(t *testing.T) {
 	assert.Equal(t, "something went wrong", renderErr(err))
 }
 
-func TestRenderErrDiffInput(t *testing.T) {
+func TestRenderErrKeepsEveryLayerOfAWrappedChain(t *testing.T) {
 	wrapped := fmt.Errorf("diff: /path/x.jsonl: open: %w (%w)", os.ErrNotExist, ErrDiffInput)
-	assert.Equal(t, wrapped.Error(), renderErr(wrapped))
+	assert.Equal(t, "diff: /path/x.jsonl: open: file does not exist (diff: invalid input)", renderErr(wrapped))
+	assert.ErrorIs(t, wrapped, ErrDiffInput)
+	assert.ErrorIs(t, wrapped, os.ErrNotExist)
 }
 
 func TestOperationalNilPassesThrough(t *testing.T) {
 	assert.Nil(t, operational(nil))
 }
 
-func TestRenderErrOperationalKeepsMessage(t *testing.T) {
-	err := operational(fmt.Errorf("regress name:g: run %q dir %q: %w", "ghost-1", "/runs/ghost-1", os.ErrNotExist))
-	assert.Equal(t, err.Error(), renderErr(err))
+func TestOperationalWrapsWithoutHidingTheCauseOrItsMessage(t *testing.T) {
+	cause := fmt.Errorf("regress name:g: run %q dir %q: %w", "ghost-1", "/runs/ghost-1", os.ErrNotExist)
+	err := operational(cause)
+
+	assert.Equal(t, `regress name:g: run "ghost-1" dir "/runs/ghost-1": file does not exist`, renderErr(err))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, cause, errors.Unwrap(err))
 }
 
-func TestRenderErrStoreNotFound(t *testing.T) {
-	assert.Equal(t, ErrStoreNotFound.Error(), renderErr(ErrStoreNotFound))
+func TestRenderErrStoreNotFoundNamesTheRemedy(t *testing.T) {
+	rendered := renderErr(fmt.Errorf("trends: %w", ErrStoreNotFound))
+	assert.Equal(t, "trends: no catacomb store found; create one with a write-path command like 'catacomb baseline set'", rendered)
 }
 
-func TestErrStoreNotFoundIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("x: %w", ErrStoreNotFound)
-	assert.True(t, errors.Is(wrapped, ErrStoreNotFound))
-}
-
-func TestErrUnknownSinkIsCheckable(t *testing.T) {
-	wrapped := fmt.Errorf("x: %w", ErrUnknownSink)
-	assert.True(t, errors.Is(wrapped, ErrUnknownSink))
+func TestSentinelsAreCheckableThroughWrappingAndNotByMessage(t *testing.T) {
+	for _, sentinel := range []error{
+		ErrDiffInput, ErrStoreNotFound, ErrUnknownSink,
+		ErrBaselineNotFound, ErrEmptyGroup, errRegressionDetected,
+	} {
+		wrapped := fmt.Errorf("x: %w", sentinel)
+		assert.ErrorIs(t, wrapped, sentinel)
+		assert.NotErrorIs(t, wrapped, errors.New(sentinel.Error()))
+	}
 }
