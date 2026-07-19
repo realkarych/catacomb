@@ -61,8 +61,6 @@ type partial struct {
 	payload     *model.Payload
 }
 
-var nowFn = time.Now
-
 func Parse(r io.Reader, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)

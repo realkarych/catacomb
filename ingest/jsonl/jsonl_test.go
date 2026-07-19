@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,25 +71,61 @@ func byKind(obs []model.Observation, kind string) []model.Observation {
 	return out
 }
 
-func TestParseReaderShapes(t *testing.T) {
+func kinds(obs []model.Observation) []string {
+	out := make([]string, 0, len(obs))
+	for _, o := range obs {
+		out = append(out, o.Kind)
+	}
+	return out
+}
+
+func TestParseReaderEmitsKindsInTranscriptOrderWithTurnBeforeItsToolUses(t *testing.T) {
+	assert.Equal(t, []string{
+		"user_prompt",
+		"assistant_turn", "assistant_tool_use", "tool_result",
+		"assistant_turn", "assistant_tool_use", "tool_result",
+	}, kinds(parseFixture(t)))
+}
+
+func TestParseReaderEventTimesAreNonDecreasingAcrossTheTranscript(t *testing.T) {
 	obs := parseFixture(t)
+	require.NotEmpty(t, obs)
+	for i := 1; i < len(obs); i++ {
+		assert.Falsef(t, obs[i].EventTime.Before(obs[i-1].EventTime),
+			"observation %d (%s) went back in time", i, obs[i].Kind)
+	}
+	assert.Equal(t, "2026-06-20T10:00:00Z", obs[0].EventTime.Format(time.RFC3339))
+	assert.Equal(t, "2026-06-20T10:00:04Z", obs[len(obs)-1].EventTime.Format(time.RFC3339))
+}
 
-	require.Len(t, byKind(obs, "user_prompt"), 1)
-	require.Len(t, byKind(obs, "assistant_turn"), 2)
-	require.Len(t, byKind(obs, "assistant_tool_use"), 2)
-	require.Len(t, byKind(obs, "tool_result"), 2)
-
+func TestParseReaderStampsEveryObservationWithRunAndExecutionIdentity(t *testing.T) {
+	obs := parseFixture(t)
+	require.Len(t, obs, 7)
 	seen := map[string]bool{}
-	for i, o := range obs {
+	for _, o := range obs {
 		assert.Equal(t, "s1", o.RunID)
 		assert.Equal(t, "exec-T", o.ExecutionID)
 		assert.Equal(t, model.SourceJSONL, o.Source)
-		assert.Equal(t, uint64(i), o.Seq)
 		assert.Equal(t, o.EventTime, o.ObservedAt)
 		assert.NotEmpty(t, o.ObsID)
-		assert.False(t, seen[o.ObsID])
+		assert.False(t, seen[o.ObsID], "duplicate obs id %q", o.ObsID)
 		seen[o.ObsID] = true
 	}
+}
+
+func TestParseReaderSeqIsDenseAndAscendingFromTheInjectedCounter(t *testing.T) {
+	f, err := os.Open("testdata/session.jsonl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	n := uint64(100)
+	obs, _, err := Parse(f, "exec-T", func() uint64 { n++; return n }, func(ts time.Time) time.Time { return ts })
+	require.NoError(t, err)
+	require.Len(t, obs, 7)
+	var got []uint64
+	for _, o := range obs {
+		got = append(got, o.Seq)
+	}
+	assert.Equal(t, []uint64{101, 102, 103, 104, 105, 106, 107}, got)
 }
 
 func TestParseReaderUserPromptTextPayload(t *testing.T) {
@@ -97,7 +134,38 @@ func TestParseReaderUserPromptTextPayload(t *testing.T) {
 	require.NotNil(t, up[0].Payload)
 	assert.JSONEq(t, `"list files"`, string(up[0].Payload.Input))
 	assert.Empty(t, up[0].Payload.Output)
-	assert.NotEmpty(t, up[0].Payload.Hash)
+	assert.Equal(t, model.HashPayload(up[0].Payload), up[0].Payload.Hash)
+}
+
+func TestParseReaderUserPromptCorrelatesByContentHashNotByLineUUID(t *testing.T) {
+	up := byKind(parseFixture(t), "user_prompt")
+	require.Len(t, up, 1)
+	assert.Equal(t, model.PromptUUID("s1", "list files"), up[0].Correlation.UUID)
+	assert.NotEqual(t, "u1", up[0].Correlation.UUID, "the transcript line uuid must not become the prompt identity")
+	assert.Equal(t, "s1", up[0].Correlation.SessionID)
+}
+
+func TestParseReaderSamePromptInTwoSessionsGetsDistinctPromptUUIDs(t *testing.T) {
+	line := func(session string) string {
+		return `{"type":"user","uuid":"u1","sessionId":"` + session + `","message":{"role":"user","content":"same words"}}` + "\n"
+	}
+	first, err := parseReader(strings.NewReader(line("s1")), "e")
+	require.NoError(t, err)
+	second, err := parseReader(strings.NewReader(line("s2")), "e")
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	require.Len(t, second, 1)
+	assert.NotEqual(t, first[0].Correlation.UUID, second[0].Correlation.UUID)
+}
+
+func TestParseReaderSamePromptTextRepeatedInOneSessionSharesPromptUUID(t *testing.T) {
+	in := `{"type":"user","uuid":"u1","sessionId":"s1","message":{"role":"user","content":"repeat me"}}` + "\n" +
+		`{"type":"user","uuid":"u2","sessionId":"s1","message":{"role":"user","content":" repeat me "}}` + "\n"
+	obs, err := parseReader(strings.NewReader(in), "e")
+	require.NoError(t, err)
+	up := byKind(obs, "user_prompt")
+	require.Len(t, up, 2)
+	assert.Equal(t, up[0].Correlation.UUID, up[1].Correlation.UUID)
 }
 
 func TestParseReaderUserPromptEmptyTextNoPayload(t *testing.T) {
@@ -212,12 +280,6 @@ func TestParseUsesInjectedSeqAndObservedAt(t *testing.T) {
 	assert.Equal(t, at, obs[0].ObservedAt)
 	assert.Equal(t, "2026-06-22T10:00:00Z", obs[0].EventTime.Format(time.RFC3339))
 	assert.Equal(t, model.SourceJSONL, obs[0].Source)
-}
-
-func TestNowFnSeamDefaultsToTimeNow(t *testing.T) {
-	before := time.Now().Add(-time.Second)
-	got := nowFn()
-	assert.False(t, got.Before(before))
 }
 
 func TestParseThreadsParentToolUseID(t *testing.T) {
@@ -446,11 +508,9 @@ func TestSubagentTranscriptBuildsNodeAndEdge(t *testing.T) {
 	require.NoError(t, err)
 	g := reduce.NewGraph()
 	g.ApplyAll(obs)
-	_, edges := g.Snapshot()
 	require.NotNil(t, g.Nodes[model.SubagentID("e1", "agent_42")])
 	assert.Contains(t, g.Edges, model.EdgeID("e1", model.EdgeParentChild,
 		model.ToolCallID("e1", "toolu_parent"), model.ToolCallID("e1", "toolu_child")))
-	_ = edges
 }
 
 func TestParseLineTooLongWrapsErrTooLong(t *testing.T) {
@@ -460,6 +520,59 @@ func TestParseLineTooLongWrapsErrTooLong(t *testing.T) {
 	assert.ErrorIs(t, err, bufio.ErrTooLong)
 	assert.Contains(t, err.Error(), "jsonl.Parse:")
 	assert.Contains(t, err.Error(), "token too long")
+}
+
+func longPromptLine(t *testing.T, promptBytes int) (string, string) {
+	t.Helper()
+	prompt := strings.Repeat("x", promptBytes)
+	raw, err := json.Marshal(map[string]any{
+		"type":      "user",
+		"sessionId": "s1",
+		"message":   map[string]any{"role": "user", "content": prompt},
+	})
+	require.NoError(t, err)
+	return string(raw), prompt
+}
+
+func TestParseAcceptsLinesFarBeyondTheDefaultScannerTokenLimit(t *testing.T) {
+	for _, promptBytes := range []int{64 * 1024, 1024 * 1024, 4 * 1024 * 1024} {
+		t.Run(strconv.Itoa(promptBytes), func(t *testing.T) {
+			raw, prompt := longPromptLine(t, promptBytes)
+			require.Greater(t, len(raw), bufio.MaxScanTokenSize)
+			obs, err := parseReader(strings.NewReader(raw+"\n"), "exec-T")
+			require.NoError(t, err)
+			up := byKind(obs, "user_prompt")
+			require.Len(t, up, 1)
+			require.NotNil(t, up[0].Payload)
+			var got string
+			require.NoError(t, json.Unmarshal(up[0].Payload.Input, &got))
+			assert.Equal(t, prompt, got)
+		})
+	}
+}
+
+func TestParseAcceptsFinalLineWithoutTrailingNewline(t *testing.T) {
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":"first"}}` + "\n" +
+		`{"type":"user","sessionId":"s1","message":{"role":"user","content":"last"}}`
+	obs, err := parseReader(strings.NewReader(in), "exec-T")
+	require.NoError(t, err)
+	require.Len(t, byKind(obs, "user_prompt"), 2)
+}
+
+func TestParseRejectsTruncatedFinalLineRatherThanSilentlyDroppingIt(t *testing.T) {
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":"first"}}` + "\n" +
+		`{"type":"user","sessionId":"s1","message":{"role":"user","conte`
+	obs, err := parseReader(strings.NewReader(in), "exec-T")
+	require.Error(t, err)
+	assert.Nil(t, obs)
+}
+
+func TestParseAbandonsEarlierObservationsWhenALaterLineIsMalformed(t *testing.T) {
+	in := `{"type":"user","sessionId":"s1","message":{"role":"user","content":"good"}}` + "\n" +
+		"{not json}\n"
+	obs, err := parseReader(strings.NewReader(in), "exec-T")
+	require.Error(t, err)
+	assert.Nil(t, obs)
 }
 
 func TestParseInvalidUTF8InStringPayload(t *testing.T) {
