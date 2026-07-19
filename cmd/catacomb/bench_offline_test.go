@@ -521,7 +521,9 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 	require.NoError(t, os.MkdirAll(subDir, 0o700))
 	data, err := os.ReadFile(fixturePath(t))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(subDir, "agent-1.jsonl"), data, 0o600))
+	subData := bytes.ReplaceAll(data, []byte(`"content":"go"`), []byte(`"content":"go, in the subagent"`))
+	require.NotEqual(t, string(data), string(subData))
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "agent-1.jsonl"), subData, 0o600))
 
 	stubBenchChild(t, "HELPER_SESSION=subs1", "HELPER_PROJECTS="+projects, "HELPER_FIXTURE="+fixturePath(t))
 	cell := offlineCell("bench-b-t1-base-r1", bench.Task{ID: "t1", Cmd: []string{"claude"}}, bench.Variant{ID: "base"})
@@ -535,7 +537,7 @@ func TestBenchOfflineWritesSubagentEvidence(t *testing.T) {
 
 	gotSub, err := os.ReadFile(filepath.Join(entry.EvidenceDir, "subagents", "agent-1.jsonl"))
 	require.NoError(t, err)
-	assert.Equal(t, string(data), string(gotSub))
+	assert.Equal(t, string(subData), string(gotSub))
 }
 
 func TestBenchCodexOfflineEndToEnd(t *testing.T) {
