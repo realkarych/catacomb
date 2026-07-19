@@ -1,19 +1,33 @@
 package model
 
 import (
-	"strings"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPromptUUID(t *testing.T) {
+func TestPromptUUIDIsPrefixedSHA256OfSessionNULContent(t *testing.T) {
+	sum := sha256.Sum256([]byte("s1\x00list files"))
+	assert.Equal(t, "pc-"+hex.EncodeToString(sum[:]), PromptUUID("s1", "list files"))
+}
+
+func TestPromptUUIDTrimsSurroundingWhitespaceOnly(t *testing.T) {
 	a := PromptUUID("s1", "list files")
-	assert.True(t, strings.HasPrefix(a, "pc-"))
-	assert.Equal(t, a, PromptUUID("s1", "list files"))
 	assert.Equal(t, a, PromptUUID("s1", "  list files\n"))
+	assert.NotEqual(t, a, PromptUUID("s1", "list  files"))
+}
+
+func TestPromptUUIDDistinguishesContentAndSession(t *testing.T) {
+	a := PromptUUID("s1", "list files")
 	assert.NotEqual(t, a, PromptUUID("s1", "list dirs"))
 	assert.NotEqual(t, a, PromptUUID("s2", "list files"))
+}
+
+func TestPromptUUIDSeparatorPreventsSessionContentBoundaryCollision(t *testing.T) {
+	assert.NotEqual(t, PromptUUID("s1x", "y"), PromptUUID("s1", "xy"))
+	assert.NotEqual(t, PromptUUID("", "s1list files"), PromptUUID("s1", "list files"))
 }
 
 func TestCanonicalIDs(t *testing.T) {
