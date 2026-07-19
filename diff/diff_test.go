@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/stepkey"
 )
 
 func ts(sec int64) *time.Time {
@@ -181,31 +183,6 @@ func TestDiffTokensOutDelta(t *testing.T) {
 	assert.Equal(t, int64(50), result.Changed[0].Deltas.TokensOut.Delta)
 }
 
-func TestTierOfContentAndPosition(t *testing.T) {
-	sameContent := item{
-		node:    &model.Node{ID: "x", Status: model.StatusOK},
-		step:    "sk1",
-		content: "same",
-		pathKey: "pk1",
-	}
-	diffContent := item{
-		node:    &model.Node{ID: "y", Status: model.StatusOK},
-		step:    "sk2",
-		content: "other",
-		pathKey: "pk2",
-	}
-	sameContentB := item{
-		node:    &model.Node{ID: "z", Status: model.StatusOK},
-		step:    "sk2",
-		content: "same",
-		pathKey: "pk2",
-	}
-
-	assert.Equal(t, "step_key", tierOf(sameContent, sameContent))
-	assert.Equal(t, "content", tierOf(sameContent, sameContentB))
-	assert.Equal(t, "position", tierOf(sameContent, diffContent))
-}
-
 func TestNormArgsNilPayload(t *testing.T) {
 	n := &model.Node{ID: "x", Status: model.StatusOK}
 	assert.Equal(t, "", normArgs(n))
@@ -288,4 +265,58 @@ func TestDiffOrderStableUnderFullReversal(t *testing.T) {
 	result2 := DiffGraphs(anRev, aeRev, bnRev, beRev)
 
 	require.Equal(t, result1, result2)
+}
+
+func bashNode(id, cmd string, sec int64) *model.Node {
+	n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
+	n.Payload = &model.Payload{Input: []byte(`{"command":"` + cmd + `"}`)}
+	return n
+}
+
+func TestStepsAreReportedInWallClockOrderNotStepKeyOrder(t *testing.T) {
+	turn := &model.Node{ID: "turn", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+	early := bashNode("early", "ls", 1)
+	late := bashNode("late", "cat x", 2)
+	nodes := []*model.Node{turn, early, late}
+	edges := []*model.Edge{
+		{Type: model.EdgeParentChild, Src: "turn", Dst: "early"},
+		{Type: model.EdgeParentChild, Src: "turn", Dst: "late"},
+	}
+
+	keys := stepkey.Compute(nodes, edges)
+	require.Greater(t, keys["early"].Key, keys["late"].Key,
+		"fixture must invert the step-key tiebreak, otherwise wall-clock ordering is unobservable")
+
+	result := DiffGraphs(nodes, edges, nil, nil)
+
+	require.Len(t, result.Removed, 2)
+	assert.Equal(t,
+		[]string{keys["early"].Content, keys["late"].Content},
+		[]string{result.Removed[0].ContentKey, result.Removed[1].ContentKey},
+		"steps must be emitted oldest-first")
+}
+
+func TestRepeatedContentIsRealignedByLongestCommonSubsequenceNotByPosition(t *testing.T) {
+	build := func(prefix string, cmds []string) ([]*model.Node, []*model.Edge) {
+		turn := &model.Node{ID: prefix + "turn", Type: model.NodeAssistantTurn, Status: model.StatusOK}
+		nodes := []*model.Node{turn}
+		edges := []*model.Edge{}
+		for i, c := range cmds {
+			id := fmt.Sprintf("%s%d", prefix, i)
+			nodes = append(nodes, bashNode(id, c, int64(i+1)))
+			edges = append(edges, &model.Edge{Type: model.EdgeParentChild, Src: turn.ID, Dst: id})
+		}
+		return nodes, edges
+	}
+
+	an, ae := build("a", []string{"ls", "ls", "cat x"})
+	bn, be := build("b", []string{"echo one", "echo two", "ls", "ls", "cat x"})
+
+	result := DiffGraphs(an, ae, bn, be)
+
+	assert.Empty(t, result.Removed, "nothing was dropped from the A run")
+	assert.Empty(t, result.Changed,
+		"the two repeated ls calls must realign onto the shifted ls calls, not onto the inserted echo calls")
+	assert.Len(t, result.Unchanged, 3)
+	assert.Len(t, result.Added, 2)
 }

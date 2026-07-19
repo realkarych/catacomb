@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -93,14 +94,34 @@ func TestTaskStats(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestTaskStatsAsymmetryMatchesStats(t *testing.T) {
+func TestTaskStatsCountsOnlyMeasuredSamplesPerMetric(t *testing.T) {
 	tasks := Aggregate(taskGroup(), Options{}).Tasks
 	require.Len(t, tasks, 3)
 	alpha := tasks[0]
-	assert.Equal(t, stats([]float64{1000, 3000}), alpha.DurationMS)
-	assert.Equal(t, stats([]float64{1, 2, 3}), alpha.CostUSD)
+	require.Equal(t, "alpha", alpha.Task)
+	assert.Equal(t, 3, alpha.Runs)
+	assert.Equal(t, MetricStats{N: 2, Median: 1000, P25: 1000, P75: 3000, P90: 3000}, alpha.DurationMS)
+	assert.Equal(t, MetricStats{N: 3, Median: 2, P25: 1, P75: 3, P90: 3}, alpha.CostUSD)
+	require.NotNil(t, alpha.Outcome)
+	assert.Equal(t, &TaskOutcome{N: 2, Ones: 1}, alpha.Outcome)
 	assert.Less(t, alpha.DurationMS.N, alpha.CostUSD.N)
 	assert.Less(t, alpha.Outcome.N, alpha.Runs)
+}
+
+func TestTaskOutcomeCountsOnlyExactlyOneAsAPassAndEveryPresentValueAsATrial(t *testing.T) {
+	values := []float64{1, 0, 0.5, 2, -1, 1}
+	group := make([]RunGraph, 0, len(values)+1)
+	for i, v := range values {
+		score := v
+		group = append(group, taskRun(fmt.Sprintf("r%d", i), "alpha", 1000, 1, 10, 5, &score))
+	}
+	group = append(group, taskRun("r-noann", "alpha", 1000, 1, 10, 5, nil))
+
+	tasks := Aggregate(group, Options{}).Tasks
+	require.Len(t, tasks, 1)
+	require.NotNil(t, tasks[0].Outcome)
+	assert.Equal(t, &TaskOutcome{N: 6, Ones: 2}, tasks[0].Outcome)
+	assert.Equal(t, 7, tasks[0].Runs)
 }
 
 func TestTaskStatsJSONShape(t *testing.T) {

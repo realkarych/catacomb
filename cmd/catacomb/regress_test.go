@@ -445,15 +445,6 @@ func TestRegressFormatMarkdownRenders(t *testing.T) {
 	assert.Contains(t, out, "|---|---|---|---|---|---|---|---|---|")
 }
 
-func TestRegressCmdWired(t *testing.T) {
-	root := newRootCmd()
-	names := make(map[string]bool)
-	for _, sub := range root.Commands() {
-		names[sub.Name()] = true
-	}
-	assert.True(t, names["regress"])
-}
-
 type appendErrStore struct {
 	store.Store
 }

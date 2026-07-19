@@ -11,6 +11,7 @@ func HashPayload(p *Payload) string {
 	}
 	h := sha256.New()
 	h.Write(p.Input)
+	h.Write([]byte{0})
 	h.Write(p.Output)
 	return hex.EncodeToString(h.Sum(nil))
 }

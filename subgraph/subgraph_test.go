@@ -105,14 +105,22 @@ func TestSubgraphFiltersNodesMarkersAndInducesEdges(t *testing.T) {
 	sn, se := Subgraph(nodes, edges, w)
 
 	assert.Equal(t, []string{"in1", "in2"}, ids(sn))
-	assert.Len(t, se, 1)
-	assert.Equal(t, "e1", se[0].ID)
+	assert.Equal(t, []string{"e1"}, edgeIDs(se),
+		"only edges with both endpoints in the window are induced")
 }
 
 func ids(ns []*model.Node) []string {
 	out := make([]string, len(ns))
 	for i, n := range ns {
 		out[i] = n.ID
+	}
+	return out
+}
+
+func edgeIDs(es []*model.Edge) []string {
+	out := make([]string, len(es))
+	for i, e := range es {
+		out[i] = e.ID
 	}
 	return out
 }
@@ -140,8 +148,7 @@ func TestSubgraphExcludesUnstampedSessionRoot(t *testing.T) {
 
 	assert.Equal(t, []string{"prompt", "tool"}, ids(sn),
 		"the reported scope is the in-window node set, never the unstamped session root")
-	assert.Len(t, se, 1)
-	assert.Equal(t, "e2", se[0].ID)
+	assert.Equal(t, []string{"e2"}, edgeIDs(se))
 }
 
 func TestSubgraphAnchoredRetainsUnstampedSessionRoot(t *testing.T) {
@@ -152,7 +159,8 @@ func TestSubgraphAnchoredRetainsUnstampedSessionRoot(t *testing.T) {
 
 	assert.Equal(t, []string{"session", "prompt", "tool"}, ids(sn),
 		"the session root anchors path levels and must survive anchored scoping")
-	assert.Len(t, se, 2)
+	assert.Equal(t, []string{"e1", "e2"}, edgeIDs(se),
+		"anchoring re-admits the session edge into the window but not the edge to the out-of-window node")
 }
 
 func TestSubgraphAnchoredOnEmptyWindowKeepsOnlyTheAnchor(t *testing.T) {
@@ -207,7 +215,7 @@ func TestScopeExecutionParsedAnchoredKeepsSessionRoot(t *testing.T) {
 	require.True(t, ok)
 
 	assert.Equal(t, []string{"session", "inG"}, ids(sn))
-	assert.Len(t, se, 1)
+	assert.Equal(t, []string{"e1"}, edgeIDs(se))
 }
 
 func TestScopeExecutionParsedAnchoredReportsMissingPhase(t *testing.T) {

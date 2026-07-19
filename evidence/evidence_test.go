@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/realkarych/catacomb/evidence"
-	"github.com/realkarych/catacomb/redact"
 )
 
 func sampleMeta(runID, variant string) evidence.Meta {
@@ -36,7 +35,48 @@ func TestWriteReadRoundtrip(t *testing.T) {
 	require.Equal(t, m, got)
 	copied, err := os.ReadFile(filepath.Join(dir, "session.jsonl"))
 	require.NoError(t, err)
-	require.Equal(t, string(redact.Redact([]byte("{\"a\":1}")).Data)+"\n"+string(redact.Redact([]byte("{\"b\":2}")).Data)+"\n", string(copied))
+	require.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(copied), "secret-free lines must be copied through byte-identical")
+}
+
+func TestWriteRedactsEachSourceLineIndependently(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl")
+	body := "{\"tool\":\"Bash\",\"cmd\":\"aws configure set key AKIAIOSFODNN7EXAMPLE\"}\n" +
+		"{\"tool\":\"Read\",\"file\":\"main.go\"}\n" +
+		"{\"password\":\"hunter2\",\"note\":\"keep me\"}\n"
+	require.NoError(t, os.WriteFile(src, []byte(body), 0o600))
+	dir := filepath.Join(t.TempDir(), "run-red")
+	require.NoError(t, evidence.Write(dir, sampleMeta("run-red", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}}))
+
+	copied, err := os.ReadFile(filepath.Join(dir, "session.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t,
+		"{\"cmd\":\"aws configure set key ‹redacted:aws-key›\",\"tool\":\"Bash\"}\n"+
+			"{\"tool\":\"Read\",\"file\":\"main.go\"}\n"+
+			"{\"note\":\"keep me\",\"password\":\"‹redacted:sensitive-key›\"}\n",
+		string(copied),
+	)
+}
+
+func TestWriteKeepsOneOutputLinePerNonEmptySourceLine(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl")
+	require.NoError(t, os.WriteFile(src, []byte("{\"a\":1}\n\n{\"b\":2}\n\n"), 0o600))
+	dir := filepath.Join(t.TempDir(), "run-blank")
+	require.NoError(t, evidence.Write(dir, sampleMeta("run-blank", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}}))
+
+	copied, err := os.ReadFile(filepath.Join(dir, "session.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(copied), "blank lines are dropped; every other line survives exactly once")
+}
+
+func TestWriteAppendsMissingFinalNewline(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "in.jsonl")
+	require.NoError(t, os.WriteFile(src, []byte("{\"a\":1}\n{\"b\":2}"), 0o600))
+	dir := filepath.Join(t.TempDir(), "run-nonl")
+	require.NoError(t, evidence.Write(dir, sampleMeta("run-nonl", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}}))
+
+	copied, err := os.ReadFile(filepath.Join(dir, "session.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(copied), "a final line without a newline must still be emitted, newline-terminated")
 }
 
 func TestWriteDecompressesZstSources(t *testing.T) {
@@ -57,11 +97,17 @@ func TestWriteDecompressesZstSources(t *testing.T) {
 	require.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(copied))
 }
 
-func TestWriteCorruptZstSourceFails(t *testing.T) {
+func TestWriteCorruptZstSourceFailsWithoutStampingMeta(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "bad.jsonl.zst")
 	require.NoError(t, os.WriteFile(src, []byte("not zstd"), 0o600))
-	err := evidence.Write(filepath.Join(t.TempDir(), "run-bz"), sampleMeta("run-bz", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}})
+	dir := filepath.Join(t.TempDir(), "run-bz")
+	err := evidence.Write(dir, sampleMeta("run-bz", "base"), []evidence.SourceFile{{Src: src, Rel: "session.jsonl"}})
 	require.Error(t, err)
+
+	_, serr := os.Stat(filepath.Join(dir, "meta.json"))
+	require.ErrorIs(t, serr, os.ErrNotExist, "a failed Write must not leave a meta.json that makes the dir look like a complete run")
+	_, merr := evidence.ReadMeta(dir)
+	require.ErrorIs(t, merr, os.ErrNotExist, "ScanRuns must not be able to pick this half-written dir up as a run")
 }
 
 func TestWriteNestedRelAndErrors(t *testing.T) {
@@ -222,29 +268,67 @@ func TestReadMetaLegacyWithoutEnv(t *testing.T) {
 	require.Nil(t, runs[0].Meta.Env)
 }
 
-func TestReadMetaErrors(t *testing.T) {
+func TestReadMetaMissingFileIsNotExist(t *testing.T) {
 	_, err := evidence.ReadMeta(t.TempDir())
-	require.Error(t, err)
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.json"), []byte("{"), 0o600))
-	_, err = evidence.ReadMeta(dir)
-	require.Error(t, err)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestScanRunsAndMatchLabels(t *testing.T) {
+func TestReadMetaMalformedJSONIsSyntaxError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.json"), []byte("{"), 0o600))
+	_, err := evidence.ReadMeta(dir)
+	require.Error(t, err)
+	var syntax *json.SyntaxError
+	require.ErrorAs(t, err, &syntax)
+}
+
+func TestScanRunsReturnsRunsSortedByRunID(t *testing.T) {
 	root := t.TempDir()
-	for _, id := range []string{"run-b", "run-a"} {
-		require.NoError(t, evidence.Write(filepath.Join(root, id), sampleMeta(id, "base"), nil))
+	dirToRun := map[string]string{"01": "run-d", "02": "run-b", "03": "run-c", "04": "run-a"}
+	for dir, id := range dirToRun {
+		require.NoError(t, evidence.Write(filepath.Join(root, dir), sampleMeta(id, "base"), nil))
 	}
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "junk"), 0o700))
+
 	runs, err := evidence.ScanRuns(root)
 	require.NoError(t, err)
-	require.Len(t, runs, 2)
-	require.Equal(t, "run-a", runs[0].Meta.RunID)
-	require.True(t, evidence.MatchLabels(map[string]string{"a": "1", "b": "2"}, map[string]string{"a": "1"}))
-	require.False(t, evidence.MatchLabels(map[string]string{"a": "1"}, map[string]string{"a": "2"}))
-	_, err = evidence.ScanRuns(filepath.Join(root, "absent"))
-	require.Error(t, err)
+
+	ids := make([]string, len(runs))
+	dirs := make([]string, len(runs))
+	for i, r := range runs {
+		ids[i] = r.Meta.RunID
+		dirs[i] = filepath.Base(r.Dir)
+	}
+	require.Equal(t, []string{"run-a", "run-b", "run-c", "run-d"}, ids, "ScanRuns must order by RunID, not by directory-listing order")
+	require.Equal(t, []string{"04", "02", "03", "01"}, dirs, "each Run must keep the Dir it was read from, so RunID order is not dir order")
+}
+
+func TestScanRunsMissingRootErrors(t *testing.T) {
+	_, err := evidence.ScanRuns(filepath.Join(t.TempDir(), "absent"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestMatchLabels(t *testing.T) {
+	tests := []struct {
+		name string
+		have map[string]string
+		want map[string]string
+		ok   bool
+	}{
+		{"empty want matches anything", map[string]string{"a": "1"}, nil, true},
+		{"subset matches", map[string]string{"a": "1", "b": "2"}, map[string]string{"a": "1"}, true},
+		{"exact match", map[string]string{"a": "1"}, map[string]string{"a": "1"}, true},
+		{"all keys must match, not just one", map[string]string{"a": "1", "b": "2"}, map[string]string{"a": "1", "b": "9"}, false},
+		{"value mismatch fails", map[string]string{"a": "1"}, map[string]string{"a": "2"}, false},
+		{"missing key fails", map[string]string{"a": "1"}, map[string]string{"z": "1"}, false},
+		{"missing key wanting empty value matches", map[string]string{"a": "1"}, map[string]string{"z": ""}, true},
+		{"nil have with non-empty want fails", nil, map[string]string{"a": "1"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.ok, evidence.MatchLabels(tc.have, tc.want))
+		})
+	}
 }
 
 func TestScanRunsSkipsPlainFiles(t *testing.T) {

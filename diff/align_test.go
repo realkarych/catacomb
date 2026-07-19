@@ -45,7 +45,7 @@ func TestAlignUnmatchedGoToResidual(t *testing.T) {
 	assert.Equal(t, []int{0}, rb)
 }
 
-func TestAlignGreedyMultisetOrder(t *testing.T) {
+func TestAlignPairsDuplicateStepKeysInEncounterOrder(t *testing.T) {
 	a := []item{
 		makeItem("a1", "sk1", "c1", "pk1"),
 		makeItem("a2", "sk1", "c1", "pk1"),
@@ -55,8 +55,25 @@ func TestAlignGreedyMultisetOrder(t *testing.T) {
 		makeItem("b2", "sk1", "c1", "pk1"),
 	}
 	matched, ra, rb := alignItems(a, b)
-	assert.Len(t, matched, 2)
+	assert.Equal(t, [][2]int{{0, 0}, {1, 1}}, matched,
+		"repeated step keys must pair first-with-first, not cross over")
 	assert.Empty(t, ra)
+	assert.Empty(t, rb)
+}
+
+func TestAlignLeavesExtraDuplicatesOnTheLongerSideUnmatched(t *testing.T) {
+	a := []item{
+		makeItem("a1", "sk1", "c1", "pk1"),
+		makeItem("a2", "sk1", "c1", "pk1"),
+		makeItem("a3", "sk1", "c1", "pk1"),
+	}
+	b := []item{
+		makeItem("b1", "sk1", "c1", "pk1"),
+		makeItem("b2", "sk1", "c1", "pk1"),
+	}
+	matched, ra, rb := alignItems(a, b)
+	assert.Equal(t, [][2]int{{0, 0}, {1, 1}}, matched)
+	assert.Equal(t, []int{2}, ra, "the surplus A item must be reported removed, not silently paired")
 	assert.Empty(t, rb)
 }
 
@@ -243,7 +260,7 @@ func TestPositionDoesNotPairDifferentTools(t *testing.T) {
 	assert.Equal(t, "Read", result.Added[0].Tool)
 }
 
-func TestDriftWithRepeatedContentAlignsViaLCS(t *testing.T) {
+func TestDriftWithRepeatedContentRealignsOnceTheRepeatsBecomeUniqueAgain(t *testing.T) {
 	makeCmd := func(id, cmd string, sec int64) *model.Node {
 		n := &model.Node{ID: id, Type: model.NodeToolCall, Name: "Bash", Status: model.StatusOK, TStart: ts(sec)}
 		n.Payload = &model.Payload{Input: []byte(`{"command":"` + cmd + `"}`)}
@@ -283,5 +300,5 @@ func TestDriftWithRepeatedContentAlignsViaLCS(t *testing.T) {
 	require.Len(t, result.Added, 1, "echo should be Added")
 	assert.Empty(t, result.Removed)
 	assert.Empty(t, result.Changed)
-	require.Len(t, result.Unchanged, 3, "ls, ls, cat should be Unchanged via LCS")
+	require.Len(t, result.Unchanged, 3, "ls, ls, cat should be Unchanged")
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,16 +16,49 @@ import (
 	"github.com/realkarych/catacomb/subgraph"
 )
 
-func TestSubgraphCommandJSON(t *testing.T) {
+func executionPrefix(t *testing.T, ids []string) string {
+	t.Helper()
+	require.NotEmpty(t, ids)
+	prefix, _, found := strings.Cut(ids[0], ":")
+	require.True(t, found, "node id %q has no execution-id prefix", ids[0])
+	for _, id := range ids {
+		require.True(t, strings.HasPrefix(id, prefix+":"), "node id %q does not share execution %q", id, prefix)
+	}
+	return prefix
+}
+
+func TestSubgraphCommandJSONEmitsTheExactScopedNodeSequence(t *testing.T) {
 	root := newRootCmd()
 	var sb strings.Builder
 	root.SetOut(&sb)
 	root.SetArgs([]string{"subgraph", "--phase", "plan", "--json", "testdata/session_marked.jsonl"})
 	require.NoError(t, root.Execute())
-	out := sb.String()
-	assert.Contains(t, out, "toolu_2")
-	assert.NotContains(t, out, "toolu_1")
-	assert.NotContains(t, out, "toolu_3")
+
+	var doc struct {
+		Nodes []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+			Name string `json:"name"`
+		} `json:"nodes"`
+		Edges []struct {
+			ID string `json:"id"`
+		} `json:"edges"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(sb.String()), &doc))
+
+	ids := make([]string, 0, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		ids = append(ids, n.ID)
+	}
+	exec := executionPrefix(t, ids)
+	assert.Equal(t, []string{
+		exec + ":tool:toolu_2",
+		exec + ":turn:msg_2",
+		exec + ":turn:msg_3",
+	}, ids)
+	assert.Equal(t, []string{"tool_call", "assistant_turn", "assistant_turn"},
+		[]string{doc.Nodes[0].Type, doc.Nodes[1].Type, doc.Nodes[2].Type})
+	assert.Len(t, doc.Edges, 1)
 }
 
 func TestRunSubgraphIsDeterministicallySorted(t *testing.T) {
@@ -82,16 +116,27 @@ func snapshotIDs(nodes []*model.Node, edges []*model.Edge) snapshotIDSet {
 	return out
 }
 
-func TestSubgraphCommandHuman(t *testing.T) {
+func TestSubgraphCommandHumanRendersHeadlineThenNodesInIDOrder(t *testing.T) {
 	root := newRootCmd()
 	var sb strings.Builder
 	root.SetOut(&sb)
 	root.SetArgs([]string{"subgraph", "--phase", "plan", "testdata/session_marked.jsonl"})
 	require.NoError(t, root.Execute())
-	out := sb.String()
-	assert.Contains(t, out, "nodes:")
-	assert.Contains(t, out, "toolu_2")
-	assert.NotContains(t, out, "toolu_1")
+
+	lines := strings.Split(strings.TrimSuffix(sb.String(), "\n"), "\n")
+	require.Len(t, lines, 4)
+	assert.Equal(t, "nodes: 3  edges: 1", lines[0])
+	ids := make([]string, 0, 3)
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		ids = append(ids, fields[len(fields)-1])
+	}
+	exec := executionPrefix(t, ids)
+	assert.Equal(t, []string{
+		"tool_call Bash " + exec + ":tool:toolu_2",
+		"assistant_turn  " + exec + ":turn:msg_2",
+		"assistant_turn  " + exec + ":turn:msg_3",
+	}, lines[1:])
 }
 
 func TestSubgraphCommandPhaseNotFound(t *testing.T) {

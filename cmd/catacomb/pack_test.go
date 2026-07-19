@@ -133,7 +133,9 @@ func TestPackManifestAndInstructions(t *testing.T) {
 	}
 	out := filepath.Join(t.TempDir(), "pack")
 	var stdout, stderr bytes.Buffer
+	before := time.Now().UTC().Truncate(time.Second)
 	code := run([]string{"pack", "label:variant=base", "--runs-dir", root, "--out", out, "--sample", "3"}, &stdout, &stderr)
+	after := time.Now().UTC()
 	require.Equal(t, 0, code, stderr.String())
 	assert.Equal(t, fmt.Sprintf("packed 3 of 5 runs into %s\n", out), stdout.String())
 
@@ -150,10 +152,13 @@ func TestPackManifestAndInstructions(t *testing.T) {
 	assert.Equal(t, "runid-stride", m.SampleRule)
 	assert.Equal(t, 3, m.Requested)
 	assert.Equal(t, []string{"r-00", "r-01", "r-03"}, m.Runs)
-	assert.False(t, m.CreatedAt.IsZero())
+	assert.False(t, m.CreatedAt.Before(before), "created_at %s predates the run", m.CreatedAt)
+	assert.False(t, m.CreatedAt.After(after), "created_at %s postdates the run", m.CreatedAt)
+	assert.Equal(t, time.UTC, m.CreatedAt.Location())
 
 	instr, err := os.ReadFile(filepath.Join(out, "INSTRUCTIONS.md"))
 	require.NoError(t, err)
+	assert.Equal(t, packInstructions, string(instr))
 	assert.Contains(t, string(instr),
 		`{"key":"audit.clean","value":1,"run_id":"<run id>","tool":"<judge name>","tool_version":"<version>"}`)
 	assert.Contains(t, string(instr), "regress --scores findings.jsonl --annotation audit.clean:higher-better")

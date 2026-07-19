@@ -94,23 +94,14 @@ func TestPairedDormantNoTasks(t *testing.T) {
 
 func TestPairedScopeOrder(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, scopeOrder["total"]+1, scopeOrder["paired"])
-	assert.Less(t, scopeOrder["paired"], scopeOrder["phase"])
-	assert.Less(t, scopeOrder["phase"], scopeOrder["step"])
-
 	rep := Compare(pairedDurationInput(repeatDeltas(5, 0, 0)), DefaultThresholds())
-	totalIdx, pairedIdx := -1, -1
-	for i, f := range rep.Findings {
-		if f.Scope == "total" && totalIdx == -1 {
-			totalIdx = i
-		}
-		if f.Scope == "paired" && pairedIdx == -1 {
-			pairedIdx = i
+	var scopes []string
+	for _, f := range rep.Findings {
+		if len(scopes) == 0 || scopes[len(scopes)-1] != f.Scope {
+			scopes = append(scopes, f.Scope)
 		}
 	}
-	require.NotEqual(t, -1, totalIdx)
-	require.NotEqual(t, -1, pairedIdx)
-	assert.Less(t, totalIdx, pairedIdx)
+	require.Equal(t, []string{"total", "paired"}, scopes)
 }
 
 func TestPairedDisclosureFires(t *testing.T) {

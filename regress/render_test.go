@@ -16,6 +16,10 @@ import (
 )
 
 func sampleReport() Report {
+	return sampleReportWithRowOrder(false)
+}
+
+func sampleReportWithRowOrder(reversed bool) Report {
 	totals := func(cost float64) aggregate.RunTotals {
 		return aggregate.RunTotals{
 			DurationMS: metric(5, 1000, 900, 1100),
@@ -35,17 +39,26 @@ func sampleReport() Report {
 	s1Cand := presentRow("s1", "step-one", 5)
 	s1Cand.DurationMS = metric(5, 1600, 1500, 1700)
 
+	basePhases := []aggregate.Row{paBase, presentRow("pb", "beta", 5)}
+	baseSteps := []aggregate.Row{s1Base, presentRow("s2", "step-two", 5)}
+	candPhases := []aggregate.Row{paCand, presentRow("pd", "delta", 5)}
+	if reversed {
+		basePhases = []aggregate.Row{basePhases[1], basePhases[0]}
+		baseSteps = []aggregate.Row{baseSteps[1], baseSteps[0]}
+		candPhases = []aggregate.Row{candPhases[1], candPhases[0]}
+	}
+
 	in := Input{
 		Baseline: aggregate.Report{
 			Runs:   5,
 			Totals: totals(0.10),
-			Phases: []aggregate.Row{paBase, presentRow("pb", "beta", 5)},
-			Steps:  []aggregate.Row{s1Base, presentRow("s2", "step-two", 5)},
+			Phases: basePhases,
+			Steps:  baseSteps,
 		},
 		Candidate: aggregate.Report{
 			Runs:   5,
 			Totals: totals(0.20),
-			Phases: []aggregate.Row{paCand, presentRow("pd", "delta", 5)},
+			Phases: candPhases,
 			Steps:  []aggregate.Row{s1Cand},
 		},
 	}
@@ -432,12 +445,13 @@ func TestRenderMarkdownOmitsDetailsWhenBothNil(t *testing.T) {
 	assert.NotContains(t, buf.String(), "<details>")
 }
 
-func TestRenderMarkdownDeterministic(t *testing.T) {
+func TestRenderMarkdownIsInvariantUnderInputRowOrder(t *testing.T) {
 	t.Parallel()
-	var first, second bytes.Buffer
-	RenderMarkdown(sampleReport(), &first)
-	RenderMarkdown(sampleReport(), &second)
-	assert.Equal(t, first.Bytes(), second.Bytes())
+	var forward, reversed bytes.Buffer
+	RenderMarkdown(sampleReportWithRowOrder(false), &forward)
+	RenderMarkdown(sampleReportWithRowOrder(true), &reversed)
+	require.NotEmpty(t, forward.String())
+	assert.Equal(t, forward.String(), reversed.String())
 }
 
 type errWriter struct{}

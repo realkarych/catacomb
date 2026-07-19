@@ -3,6 +3,7 @@ package regress
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -79,6 +80,39 @@ func TestGroupFlagsCalibration(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestGroupFlagsNeverFlagsGroupsSmallerThanThreeCellsHoweverExtreme(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	valueSets := [][]float64{
+		{},
+		{0},
+		{1e9},
+		{-1e9},
+		{0, 1e9},
+		{1, 1000},
+		{-500, 500},
+		{100, 100},
+		{0, 0},
+	}
+	for _, values := range valueSets {
+		ids := make([]string, len(values))
+		for i := range values {
+			ids[i] = fmt.Sprintf("r%d", i)
+		}
+		require.Nil(t, groupFlags(tokensOutCells(ids, values), th), "values %v", values)
+	}
+}
+
+func TestGroupFlagsSkipsTwoCellGroupsEvenWhenALoweredIQRFactorWouldOtherwiseFlagThem(t *testing.T) {
+	t.Parallel()
+	th := DefaultThresholds()
+	th.AuditIQRFactor = 0.5
+	th.AuditRelDelta = 0
+	cells := tokensOutCells([]string{"r0", "r1"}, []float64{0, 1e9})
+	assert.Nil(t, groupFlags(cells, th))
+	assert.NotNil(t, groupFlags(tokensOutCells([]string{"r0", "r1", "r2"}, []float64{0, 0, 1e9}), th))
 }
 
 func TestGroupFlagsIQRZeroNeedsRelFloor(t *testing.T) {

@@ -2,13 +2,13 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,6 +75,29 @@ func TestBaselineExportDeterministic(t *testing.T) {
 	secondBytes, err := os.ReadFile(second)
 	require.NoError(t, err)
 	assert.Equal(t, firstBytes, secondBytes)
+	assert.NotEmpty(t, firstBytes)
+}
+
+func TestBaselineExportBytesSurviveEvidenceMTimeChanges(t *testing.T) {
+	dbPath, runsDir := seedExportBaseline(t)
+	dir := t.TempDir()
+	before := filepath.Join(dir, "before.tar.gz")
+	after := filepath.Join(dir, "after.tar.gz")
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 0, run(baselineExportArgs(dbPath, runsDir, before), &stdout, &stderr), stderr.String())
+
+	skew := time.Date(1999, 4, 5, 6, 7, 8, 0, time.UTC)
+	for _, rel := range goldenRunFiles() {
+		require.NoError(t, os.Chtimes(filepath.Join(runsDir, rel), skew, skew))
+	}
+
+	require.Equal(t, 0, run(baselineExportArgs(dbPath, runsDir, after), &stdout, &stderr), stderr.String())
+	beforeBytes, err := os.ReadFile(before)
+	require.NoError(t, err)
+	afterBytes, err := os.ReadFile(after)
+	require.NoError(t, err)
+	assert.Equal(t, beforeBytes, afterBytes)
 }
 
 func TestBaselineExportUnknownBaseline(t *testing.T) {
@@ -101,7 +124,9 @@ func TestBaselineExportMissingRunDir(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(baselineExportArgs(dbPath, runsDir, out), &stdout, &stderr)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, stderr.String(), `"base-1"`)
+	assert.Contains(t, stderr.String(), fmt.Sprintf(
+		`baseline export "golden": pinned run "base-1" has no evidence dir under %q`, runsDir))
+	assert.Empty(t, stdout.String())
 
 	_, statErr := os.Stat(out)
 	require.ErrorIs(t, statErr, fs.ErrNotExist)
@@ -229,16 +254,22 @@ type getErrStore struct {
 }
 
 func (g *getErrStore) GetBaseline(string) (model.Baseline, bool, error) {
-	return model.Baseline{}, false, errors.New("boom")
+	return model.Baseline{}, false, errStoreBoom
 }
 
-func TestBaselineExportGetBaselineError(t *testing.T) {
+func TestBaselineExportGetBaselineErrorIsWrappedAndWritesNothing(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "*.db")
 	require.NoError(t, err)
 	_ = f.Close()
-	err = runBaselineExport(io.Discard, openStore(&getErrStore{}), f.Name(), "golden", t.TempDir(), filepath.Join(t.TempDir(), "x.tar.gz"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "baseline export")
+	outDir := t.TempDir()
+	err = runBaselineExport(io.Discard, openStore(&getErrStore{}), f.Name(), "golden", t.TempDir(), filepath.Join(outDir, "x.tar.gz"))
+	require.ErrorIs(t, err, errStoreBoom)
+	assert.NotErrorIs(t, err, ErrBaselineNotFound)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	entries, readErr := os.ReadDir(outDir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
 }
 
 func TestBaselineExportRequiresOut(t *testing.T) {

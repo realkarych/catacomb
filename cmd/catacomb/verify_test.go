@@ -60,16 +60,16 @@ func TestRunVerifyHappyPathTwoDirs(t *testing.T) {
 	var out, errb bytes.Buffer
 	require.NoError(t, runVerify(t.Context(), &out, &errb, basketPath, verifyFlags{runsDir: runs}))
 
-	assert.Contains(t, out.String(), "verify bench-bk-t1-base-r1: ok")
-	assert.Contains(t, out.String(), "verify bench-bk-t1-base-r2: ok")
-	assert.NotContains(t, out.String(), "bench-bk-t2-base-r1")
+	assert.Equal(t,
+		"verify bench-bk-t1-base-r1: ok\nverify bench-bk-t1-base-r2: ok\n",
+		out.String(), "only the two verifiable t1 cells report, in recorded-run order")
 	assert.Empty(t, errb.String())
 
 	entries, err := loadEvidenceScores(dirA, "bench-bk-t1-base-r1")
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "verifier.pass", entries[0].Key)
-	assert.Equal(t, "bench-bk-t1-base-r1", entries[0].RunID)
+	assert.Equal(t, []scoreEntry{
+		{Key: "verifier.pass", Value: 1, RunID: "bench-bk-t1-base-r1"},
+	}, entries)
 
 	rec, ok, err := evidence.ReadVerify(dirA)
 	require.NoError(t, err)
@@ -383,14 +383,7 @@ func TestVerifyCLIExitCodes(t *testing.T) {
 	})
 }
 
-func TestVerifyCmdWiredAndFlags(t *testing.T) {
-	root := newRootCmd()
-	names := map[string]bool{}
-	for _, sub := range root.Commands() {
-		names[sub.Name()] = true
-	}
-	assert.True(t, names["verify"])
-
+func TestVerifyCmdExposesRunsDirAndLabelFlags(t *testing.T) {
 	cmd := newVerifyCmd()
 	rd := cmd.Flags().Lookup("runs-dir")
 	require.NotNil(t, rd)
