@@ -38,7 +38,7 @@ func TestLoadHappyPath(t *testing.T) {
 	assert.Equal(t, []string{"echo setup-baseline"}, b.Variants[0].Setup)
 	assert.Equal(t, []string{"echo setup-candidate", "echo warmup"}, b.Variants[1].Setup)
 
-	assert.NotEmpty(t, hash)
+	assert.Len(t, hash, 64)
 }
 
 func TestLoadHashIsSha256OfRawBytes(t *testing.T) {
