@@ -33,9 +33,9 @@ var (
 
 	reGitHubPAT = regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{40,}\b`)
 
-	reOpenAIKey = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}`)
+	reOpenAIKey = regexp.MustCompile(`(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}`)
 
-	reSlackToken = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9]([A-Za-z0-9-]{8,})\b`)
+	reSlackToken = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9](?:[A-Za-z0-9-]{8,})\b`)
 
 	reJWT = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\b`)
 
@@ -85,28 +85,31 @@ func shannonEntropy(s string) float64 {
 }
 
 type valueRule struct {
-	re     *regexp.Regexp
-	reason string
+	re                    *regexp.Regexp
+	reason                string
+	reemittedLeadingGroup string
 }
 
+const firstGroupIsALeadingDelimiter = "${1}"
+
 var valueRules = []valueRule{
-	{reConnectionString, "connection-string"},
-	{reAWSKey, "aws-key"},
-	{reGitHubToken, "github-token"},
-	{reGitHubPAT, "github-token"},
-	{reOpenAIKey, "openai-key"},
-	{reSlackToken, "slack-token"},
-	{rePEMMarker, "pem-private-key"},
-	{reGoogleAPIKey, "google-api-key"},
-	{reBearerToken, "bearer-token"},
-	{reJWT, "jwt"},
-	{reStripeKey, "stripe-key"},
-	{reSendGrid, "sendgrid-key"},
-	{reTwilioKey, "twilio-key"},
-	{reNPMToken, "npm-token"},
-	{rePyPIToken, "pypi-token"},
-	{reGitLabPAT, "gitlab-token"},
-	{reGoogleOAuth, "google-oauth"},
+	{re: reConnectionString, reason: "connection-string"},
+	{re: reAWSKey, reason: "aws-key"},
+	{re: reGitHubToken, reason: "github-token"},
+	{re: reGitHubPAT, reason: "github-token"},
+	{re: reOpenAIKey, reason: "openai-key", reemittedLeadingGroup: firstGroupIsALeadingDelimiter},
+	{re: reSlackToken, reason: "slack-token"},
+	{re: rePEMMarker, reason: "pem-private-key"},
+	{re: reGoogleAPIKey, reason: "google-api-key"},
+	{re: reBearerToken, reason: "bearer-token"},
+	{re: reJWT, reason: "jwt"},
+	{re: reStripeKey, reason: "stripe-key"},
+	{re: reSendGrid, reason: "sendgrid-key"},
+	{re: reTwilioKey, reason: "twilio-key"},
+	{re: reNPMToken, reason: "npm-token"},
+	{re: rePyPIToken, reason: "pypi-token"},
+	{re: reGitLabPAT, reason: "gitlab-token"},
+	{re: reGoogleOAuth, reason: "google-oauth"},
 }
 
 type entropyRule struct {
@@ -419,9 +422,7 @@ func replaceSecretSpans(text string) (string, []string) {
 			continue
 		}
 		if rule.re.MatchString(result) {
-			result = rule.re.ReplaceAllStringFunc(result, func(string) string {
-				return placeholder(rule.reason)
-			})
+			result = rule.re.ReplaceAllString(result, rule.reemittedLeadingGroup+placeholder(rule.reason))
 			reasons = append(reasons, rule.reason)
 		}
 	}

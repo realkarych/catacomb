@@ -226,6 +226,48 @@ func TestRedact_ValueScan_OpenAI_Key(t *testing.T) {
 	})
 }
 
+func TestRedact_OpenAIKey_PreservesTheDelimiterPrecedingTheKey(t *testing.T) {
+	key := "sk-ABCDEFGHIJKLMNOPQRSTUVWX"
+	t.Run("comma before the key survives in a json string value", func(t *testing.T) {
+		result := redact.Redact([]byte(`{"cmd":"a,` + key + `,b"}`))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Contains(t, string(result.Data), `"cmd":"a,‹redacted:openai-key›,b"`)
+	})
+	t.Run("equals sign of an env assignment survives", func(t *testing.T) {
+		result := redact.Redact([]byte("export OPENAI_API_KEY=" + key))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Equal(t, "export OPENAI_API_KEY=‹redacted:openai-key›", string(result.Data))
+	})
+	t.Run("space after an authorization scheme survives", func(t *testing.T) {
+		result := redact.Redact([]byte("Authorization: Bearer " + key))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Contains(t, string(result.Data), "Bearer ‹redacted:")
+	})
+	t.Run("key at the very start of the input still redacts", func(t *testing.T) {
+		result := redact.Redact([]byte(key + " trailing"))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Equal(t, "‹redacted:openai-key› trailing", string(result.Data))
+	})
+	t.Run("two keys separated by a single delimiter both redact and keep the delimiter", func(t *testing.T) {
+		second := "sk-ZYXWVUTSRQPONMLKJIHGFED"
+		result := redact.Redact([]byte(key + "," + second))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, key))
+		assert.False(t, containsSecret(result.Data, second))
+		assert.Equal(t, "‹redacted:openai-key›,‹redacted:openai-key›", string(result.Data))
+	})
+	t.Run("multibyte delimiter before the key survives intact", func(t *testing.T) {
+		result := redact.Redact([]byte("ключ→" + key))
+		assert.True(t, result.Redacted)
+		assert.False(t, containsSecret(result.Data, key))
+		assert.Equal(t, "ключ→‹redacted:openai-key›", string(result.Data))
+	})
+}
+
 func TestRedact_ValueScan_Slack_Token(t *testing.T) {
 	t.Run("xoxb positive under non-sensitive key", func(t *testing.T) {
 		token := "xoxb-" + strings.Repeat("1", 10)
