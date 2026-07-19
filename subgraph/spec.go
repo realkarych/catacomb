@@ -69,17 +69,27 @@ func RangeWindow(nodes []*model.Node, execID, fromName string, fromOcc int, toNa
 	return Window{Start: from.Start, End: &end}, true
 }
 
-func ScopeExecutionParsed(nodes []*model.Node, edges []*model.Edge, execID string, p Parsed) ([]*model.Node, []*model.Edge, bool) {
-	var w Window
-	var ok bool
+func scopeWindow(nodes []*model.Node, execID string, p Parsed) (Window, bool) {
 	if p.isRange {
-		w, ok = RangeWindow(nodes, execID, p.fromName, p.fromOcc, p.toName, p.toOcc)
-	} else {
-		w, ok = PhaseWindow(nodes, execID, p.name, p.occ)
+		return RangeWindow(nodes, execID, p.fromName, p.fromOcc, p.toName, p.toOcc)
 	}
+	return PhaseWindow(nodes, execID, p.name, p.occ)
+}
+
+func ScopeExecutionParsed(nodes []*model.Node, edges []*model.Edge, execID string, p Parsed) ([]*model.Node, []*model.Edge, bool) {
+	w, ok := scopeWindow(nodes, execID, p)
 	if !ok {
 		return nil, nil, false
 	}
 	sn, se := Subgraph(nodes, edges, w)
+	return sn, se, true
+}
+
+func ScopeExecutionParsedAnchored(nodes []*model.Node, edges []*model.Edge, execID string, p Parsed) ([]*model.Node, []*model.Edge, bool) {
+	w, ok := scopeWindow(nodes, execID, p)
+	if !ok {
+		return nil, nil, false
+	}
+	sn, se := SubgraphAnchored(nodes, edges, w)
 	return sn, se, true
 }

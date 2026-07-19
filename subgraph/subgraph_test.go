@@ -117,8 +117,7 @@ func ids(ns []*model.Node) []string {
 	return out
 }
 
-func TestSubgraphRetainsUnstampedSessionRoot(t *testing.T) {
-	w := Window{Start: time.Unix(100, 0).UTC(), End: ts(200)}
+func anchorFixture() ([]*model.Node, []*model.Edge) {
 	nodes := []*model.Node{
 		node("session", model.NodeSession, nil),
 		node("prompt", model.NodeUserPrompt, ts(110)),
@@ -130,11 +129,95 @@ func TestSubgraphRetainsUnstampedSessionRoot(t *testing.T) {
 		{ID: "e2", Src: "prompt", Dst: "tool"},
 		{ID: "e3", Src: "session", Dst: "out"},
 	}
+	return nodes, edges
+}
+
+func TestSubgraphExcludesUnstampedSessionRoot(t *testing.T) {
+	w := Window{Start: time.Unix(100, 0).UTC(), End: ts(200)}
+	nodes, edges := anchorFixture()
 
 	sn, se := Subgraph(nodes, edges, w)
 
-	assert.Contains(t, ids(sn), "session",
-		"the session root anchors path levels and must survive scoping")
-	assert.NotContains(t, ids(sn), "out")
+	assert.Equal(t, []string{"prompt", "tool"}, ids(sn),
+		"the reported scope is the in-window node set, never the unstamped session root")
+	assert.Len(t, se, 1)
+	assert.Equal(t, "e2", se[0].ID)
+}
+
+func TestSubgraphAnchoredRetainsUnstampedSessionRoot(t *testing.T) {
+	w := Window{Start: time.Unix(100, 0).UTC(), End: ts(200)}
+	nodes, edges := anchorFixture()
+
+	sn, se := SubgraphAnchored(nodes, edges, w)
+
+	assert.Equal(t, []string{"session", "prompt", "tool"}, ids(sn),
+		"the session root anchors path levels and must survive anchored scoping")
 	assert.Len(t, se, 2)
+}
+
+func TestSubgraphAnchoredOnEmptyWindowKeepsOnlyTheAnchor(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	w := Window{Start: at, End: &at}
+	nodes, edges := anchorFixture()
+
+	sn, se := SubgraphAnchored(nodes, edges, w)
+
+	assert.Equal(t, []string{"session"}, ids(sn))
+	assert.Empty(t, se)
+}
+
+func TestScopeExecutionParsedZeroWidthRangeIsEmpty(t *testing.T) {
+	exec := "E"
+	g := model.PhaseMarkerID(exec, "g", 0)
+	nodes := []*model.Node{
+		node("session", model.NodeSession, nil),
+		{ID: g, Type: model.NodeMarker, TStart: ts(200), TEnd: ts(300)},
+		{ID: "inG", Type: model.NodeToolCall, TStart: ts(200)},
+	}
+	edges := []*model.Edge{{ID: "e1", Src: "session", Dst: "inG"}}
+
+	p, err := ParseSpec(Spec{From: "g", To: "g"})
+	require.NoError(t, err)
+	sn, se, ok := ScopeExecutionParsed(nodes, edges, exec, p)
+	require.True(t, ok)
+
+	assert.Empty(t, sn, "--from X --to X is a zero-width range and must report no nodes")
+	assert.Empty(t, se)
+
+	pp, err := ParseSpec(Spec{Phase: "g"})
+	require.NoError(t, err)
+	pn, _, ok := ScopeExecutionParsed(nodes, edges, exec, pp)
+	require.True(t, ok)
+	assert.Equal(t, []string{"inG"}, ids(pn), "non-vacuity: --phase X is the non-empty contrast")
+}
+
+func TestScopeExecutionParsedAnchoredKeepsSessionRoot(t *testing.T) {
+	exec := "E"
+	g := model.PhaseMarkerID(exec, "g", 0)
+	nodes := []*model.Node{
+		node("session", model.NodeSession, nil),
+		{ID: g, Type: model.NodeMarker, TStart: ts(200), TEnd: ts(300)},
+		{ID: "inG", Type: model.NodeToolCall, TStart: ts(200)},
+	}
+	edges := []*model.Edge{{ID: "e1", Src: "session", Dst: "inG"}}
+
+	p, err := ParseSpec(Spec{Phase: "g"})
+	require.NoError(t, err)
+	sn, se, ok := ScopeExecutionParsedAnchored(nodes, edges, exec, p)
+	require.True(t, ok)
+
+	assert.Equal(t, []string{"session", "inG"}, ids(sn))
+	assert.Len(t, se, 1)
+}
+
+func TestScopeExecutionParsedAnchoredReportsMissingPhase(t *testing.T) {
+	nodes := []*model.Node{node("session", model.NodeSession, nil)}
+
+	p, err := ParseSpec(Spec{Phase: "nope"})
+	require.NoError(t, err)
+	sn, se, ok := ScopeExecutionParsedAnchored(nodes, nil, "E", p)
+
+	assert.False(t, ok)
+	assert.Nil(t, sn)
+	assert.Nil(t, se)
 }

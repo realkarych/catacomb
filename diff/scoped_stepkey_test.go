@@ -60,7 +60,7 @@ func promptScopedSnapshot(t *testing.T, exec string, commands []string) ([]*mode
 	nodes, edges := g.Snapshot()
 	parsed, err := subgraph.ParseSpec(subgraph.Spec{Phase: "plan"})
 	require.NoError(t, err)
-	sn, se, ok := subgraph.ScopeExecutionParsed(nodes, edges, exec, parsed)
+	sn, se, ok := subgraph.ScopeExecutionParsedAnchored(nodes, edges, exec, parsed)
 	require.True(t, ok)
 	return nodes, edges, sn, se
 }

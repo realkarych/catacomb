@@ -44,7 +44,7 @@ func scopeCLISide(nodes []*model.Node, edges []*model.Edge, execID string, spec 
 	if err != nil {
 		return nil, nil, err
 	}
-	sn, se, ok := subgraph.ScopeExecutionParsed(nodes, edges, execID, parsed)
+	sn, se, ok := subgraph.ScopeExecutionParsedAnchored(nodes, edges, execID, parsed)
 	if !ok {
 		return nil, nil, fmt.Errorf("diff: phase not found: %w", subgraph.ErrPhaseNotFound)
 	}
