@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
+	"github.com/realkarych/catacomb/reduce"
 )
 
 func captureDriftOut(t *testing.T) *bytes.Buffer {
@@ -74,44 +76,139 @@ func TestBoundaryObservationsShape(t *testing.T) {
 	start, end := time.Unix(10, 0), time.Unix(20, 0)
 	obs := boundaryObservations("sess-9", "task:t1", start, end)
 	require.Len(t, obs, 2)
-	require.Equal(t, "marker", obs[0].Kind)
-	require.Equal(t, "task:t1", obs[0].Attrs["name"])
-	require.Equal(t, "start", obs[0].Attrs["boundary"])
-	require.Equal(t, "end", obs[1].Attrs["boundary"])
-	require.Equal(t, "sess-9", obs[0].Correlation.SessionID)
-	require.True(t, obs[0].EventTime.Equal(start.UTC()))
+	for i, want := range []string{"start", "end"} {
+		assert.Equal(t, "marker", obs[i].Kind)
+		assert.Equal(t, model.SourceHook, obs[i].Source)
+		assert.Equal(t, "task:t1", obs[i].Attrs["name"])
+		assert.Equal(t, want, obs[i].Attrs["boundary"])
+		assert.Equal(t, "sess-9", obs[i].Correlation.SessionID)
+		assert.Equal(t, "sess-9", obs[i].RunID)
+	}
+	assert.True(t, obs[0].EventTime.Equal(start.UTC()), "start boundary carries the start time")
+	assert.True(t, obs[1].EventTime.Equal(end.UTC()), "end boundary carries the end time")
+	assert.True(t, obs[0].ObservedAt.Equal(start.UTC()))
+	assert.True(t, obs[1].ObservedAt.Equal(end.UTC()))
+	assert.NotEqual(t, obs[0].ObsID, obs[1].ObsID)
 }
 
-func TestLoadGraphOfflineInjectsMarkers(t *testing.T) {
+func nodeIDs(nodes []*model.Node) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	return ids
+}
+
+func edgeIDs(edges []*model.Edge) []string {
+	ids := make([]string, 0, len(edges))
+	for _, e := range edges {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
+func TestLoadGraphOfflineInjectsMarkersWithoutMutatingCallerObservations(t *testing.T) {
 	main := filepath.Join("testdata", "session.jsonl")
 	boundary := boundaryObservations("s", "task:demo", time.Unix(1, 0), time.Unix(2, 0))
+
+	plain, err := loadGraphOffline(main, nil, "exec-2", nil, nil)
+	require.NoError(t, err)
+	require.NotContains(t, graphMarkerNames(plain), "task:demo")
+
 	g, err := loadGraphOffline(main, nil, "exec-2", nil, boundary)
 	require.NoError(t, err)
-	names := graphMarkerNames(g)
-	_, ok := names["task:demo"]
-	require.True(t, ok)
-	require.Empty(t, boundary[0].ExecutionID)
-	require.Empty(t, boundary[1].ExecutionID)
-	require.Zero(t, boundary[0].Seq)
-	require.Zero(t, boundary[1].Seq)
-	g2, err := loadGraphOffline(main, nil, "exec-2", nil, boundaryObservations("s", "task:demo", time.Unix(1, 0), time.Unix(2, 0)))
-	require.NoError(t, err)
-	n1, e1 := g.Snapshot()
-	n2, e2 := g2.Snapshot()
-	require.Equal(t, len(n1), len(n2))
-	require.Equal(t, len(e1), len(e2))
+	require.Contains(t, graphMarkerNames(g), "task:demo")
+
+	for _, o := range boundary {
+		require.Empty(t, o.ExecutionID)
+		require.Zero(t, o.Seq)
+	}
 }
 
-func TestLoadGraphOfflineWithPricer(t *testing.T) {
+func TestLoadGraphOfflineIsDeterministicAcrossLoads(t *testing.T) {
+	main := filepath.Join("testdata", "session.jsonl")
+	load := func() ([]string, []string) {
+		g, err := loadGraphOffline(main, nil, "exec-2", nil,
+			boundaryObservations("s", "task:demo", time.Unix(1, 0), time.Unix(2, 0)))
+		require.NoError(t, err)
+		nodes, edges := sortedGraphSnapshot(g)
+		return nodeIDs(nodes), edgeIDs(edges)
+	}
+	firstNodes, firstEdges := load()
+	secondNodes, secondEdges := load()
+	require.NotEmpty(t, firstNodes)
+	require.NotEmpty(t, firstEdges)
+	require.Equal(t, firstNodes, secondNodes)
+	require.Equal(t, firstEdges, secondEdges)
+}
+
+func pricedTurnCosts(t *testing.T, g *reduce.Graph) map[string]float64 {
+	t.Helper()
+	nodes, _ := sortedGraphSnapshot(g)
+	out := map[string]float64{}
+	for _, n := range nodes {
+		if n.Type != model.NodeAssistantTurn {
+			require.Nil(t, n.CostUSD, n.ID)
+			continue
+		}
+		if n.CostUSD == nil {
+			continue
+		}
+		out[n.ID] = *n.CostUSD
+	}
+	return out
+}
+
+func TestLoadGraphOfflinePricesAssistantTurnsOnlyWhenPricerGiven(t *testing.T) {
+	main := filepath.Join("testdata", "session.jsonl")
+
+	unpriced, err := loadGraphOffline(main, nil, "exec-3", nil, nil)
+	require.NoError(t, err)
+	require.Empty(t, pricedTurnCosts(t, unpriced))
+
+	priced, err := loadGraphOffline(main, nil, "exec-3", newPricer(), nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, pricedTurnCosts(t, priced))
+
+	nodes, _ := sortedGraphSnapshot(priced)
+	tokenBearingTurns := 0
+	for _, n := range nodes {
+		if n.Type != model.NodeAssistantTurn {
+			continue
+		}
+		require.NotNil(t, n.CostUSD, n.ID)
+		if n.TokensIn == nil && n.TokensOut == nil {
+			assert.Zero(t, *n.CostUSD, n.ID)
+			continue
+		}
+		tokenBearingTurns++
+		assert.Positive(t, *n.CostUSD, n.ID)
+	}
+	require.Positive(t, tokenBearingTurns)
+}
+
+func TestLoadGraphOfflineMergesSubagentTranscriptAndFailsOnMissingFile(t *testing.T) {
 	main := filepath.Join("testdata", "session.jsonl")
 	sub := filepath.Join(t.TempDir(), "agent-a.jsonl")
 	data, err := os.ReadFile(main)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(sub, data, 0o600))
-	g, err := loadGraphOffline(main, []string{sub}, "exec-3", newPricer(), nil)
+
+	mainOnly, err := loadGraphOffline(main, nil, "exec-3", newPricer(), nil)
 	require.NoError(t, err)
-	nodes, _ := g.Snapshot()
-	require.NotEmpty(t, nodes)
+	withSub, err := loadGraphOffline(main, []string{sub}, "exec-3", newPricer(), nil)
+	require.NoError(t, err)
+
+	mainObs, err := parseTranscripts(main, nil, "exec-3")
+	require.NoError(t, err)
+	bothObs, err := parseTranscripts(main, []string{sub}, "exec-3")
+	require.NoError(t, err)
+	require.Len(t, bothObs, 2*len(mainObs))
+
+	mainNodes, _ := sortedGraphSnapshot(mainOnly)
+	subNodes, _ := sortedGraphSnapshot(withSub)
+	require.Equal(t, nodeIDs(mainNodes), nodeIDs(subNodes))
+
 	_, err = loadGraphOffline(filepath.Join(t.TempDir(), "absent.jsonl"), nil, "exec-3", newPricer(), nil)
 	require.Error(t, err)
 }
@@ -129,6 +226,27 @@ func TestParseTranscriptsWarnsOnUnknownRecords(t *testing.T) {
 	require.NotEmpty(t, obs)
 	assert.Contains(t, buf.String(), "unrecognized transcript record")
 	assert.Contains(t, buf.String(), "unknown_record_type=1")
+}
+
+func TestParseTranscriptsWarnsWithDriftReasonsInSortedOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	lines := []string{
+		`{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"hi"}}`,
+		`{"type":"checkpoint_v9","sessionId":"s1"}`,
+		`{"type":"assistant","uuid":"a1","sessionId":"s1","timestamp":"not-a-timestamp","message":{"role":"assistant","id":"msg_1","model":"claude-opus-4-8","content":[{"type":"user_prompt_v9"}]}}`,
+	}
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	buf := captureDriftOut(t)
+	_, err := parseTranscripts(path, nil, "exec-sorted")
+	require.NoError(t, err)
+
+	assert.Equal(t,
+		"warning: 3 unrecognized transcript record(s) ["+
+			drift.ReasonBadTimestamp+"=1, "+
+			drift.ReasonUnknownContentBlock+"=1, "+
+			drift.ReasonUnknownRecordType+"=1]\n",
+		buf.String())
 }
 
 func TestParseTranscriptsNoWarnOnCleanTranscript(t *testing.T) {
@@ -229,19 +347,53 @@ func TestGraphFromObservationsAppliesExtraAndPricer(t *testing.T) {
 	obs, err := parseTranscripts("testdata/session.jsonl", nil, "exec-1")
 	require.NoError(t, err)
 	extra := boundaryObservations("s1", "task:t1", time.Unix(0, 0).UTC(), time.Unix(10, 0).UTC())
-	g := graphFromObservations(obs, "exec-1", newPricer(), extra)
-	require.NotNil(t, g)
-	marks := graphMarkerNames(g)
-	_, ok := marks["task:t1"]
-	assert.True(t, ok)
+
+	priced := graphFromObservations(obs, "exec-1", newPricer(), extra)
+	require.Contains(t, graphMarkerNames(priced), "task:t1")
+	costs := pricedTurnCosts(t, priced)
+	require.NotEmpty(t, costs)
+
+	obs2, err := parseTranscripts("testdata/session.jsonl", nil, "exec-1")
+	require.NoError(t, err)
+	unpriced := graphFromObservations(obs2, "exec-1", nil,
+		boundaryObservations("s1", "task:t1", time.Unix(0, 0).UTC(), time.Unix(10, 0).UTC()))
+	require.Contains(t, graphMarkerNames(unpriced), "task:t1")
+	require.Empty(t, pricedTurnCosts(t, unpriced))
 }
 
-func TestTranscriptTimeBounds(t *testing.T) {
+func TestGraphFromObservationsSequencesExtraAfterTranscript(t *testing.T) {
 	obs, err := parseTranscripts("testdata/session.jsonl", nil, "exec-1")
 	require.NoError(t, err)
+	require.NotEmpty(t, obs)
+	extra := boundaryObservations("s1", "task:t1", time.Unix(0, 0).UTC(), time.Unix(10, 0).UTC())
+	base := len(obs)
+
+	graphFromObservations(obs, "exec-9", nil, extra)
+
+	require.Zero(t, extra[0].Seq)
+	require.Zero(t, extra[1].Seq)
+	require.Equal(t, uint64(base), obs[base-1].Seq)
+}
+
+func TestTranscriptTimeBoundsMatchTranscriptExtremes(t *testing.T) {
+	obs, err := parseTranscripts("testdata/session.jsonl", nil, "exec-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, obs)
+
+	var times []time.Time
+	for _, o := range obs {
+		if !o.EventTime.IsZero() {
+			times = append(times, o.EventTime)
+		}
+	}
+	require.NotEmpty(t, times)
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+
 	start, end, ok := transcriptTimeBounds(obs)
 	require.True(t, ok)
-	assert.False(t, start.After(end))
+	assert.True(t, start.Equal(times[0]), "start %s want %s", start, times[0])
+	assert.True(t, end.Equal(times[len(times)-1]), "end %s want %s", end, times[len(times)-1])
+	assert.False(t, start.Equal(end))
 }
 
 func TestTranscriptTimeBoundsEmpty(t *testing.T) {
@@ -260,10 +412,4 @@ func TestTranscriptTimeBoundsSkipsZeroAndOutOfOrder(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, start.Equal(time.Unix(50, 0).UTC()))
 	assert.True(t, end.Equal(time.Unix(200, 0).UTC()))
-}
-
-func TestLoadGraphOfflineStillWorks(t *testing.T) {
-	g, err := loadGraphOffline("testdata/session.jsonl", nil, "exec-1", newPricer(), nil)
-	require.NoError(t, err)
-	require.NotNil(t, g)
 }
