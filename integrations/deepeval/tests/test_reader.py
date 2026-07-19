@@ -99,3 +99,19 @@ def test_parse_session_run_id():
     lines = load_jsonl(str(_testdata_path("session.jsonl")))
     sd = parse_session(lines, "run-001")
     assert sd.run_id == "run-001"
+
+
+def test_parse_session_actual_output_skips_tool_only_final_turn():
+    lines = load_jsonl(str(_testdata_path("session_tool_final.jsonl")))
+    ids = list_run_ids(lines)
+    sd = parse_session(lines, ids[0])
+    assert sd.actual_output == "I will write it now."
+
+
+def test_parse_session_actual_output_empty_when_no_turn_has_output():
+    lines = [
+        {"kind": "node", "run_id": "r1", "type": "assistant_turn",
+         "t_start": "2024-01-01T10:00:00Z", "payload": None},
+    ]
+    sd = parse_session(lines, "r1")
+    assert sd.actual_output == ""

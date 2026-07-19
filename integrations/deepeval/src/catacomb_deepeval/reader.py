@@ -89,10 +89,12 @@ def _extract_prompt_input(nodes: List[dict]) -> str:
 
 def _extract_actual_output(nodes: List[dict]) -> str:
     turns = [n for n in nodes if n.get("type") == "assistant_turn"]
-    if not turns:
-        return ""
     turns.sort(key=_sort_key)
-    return _text_of(_payload_output(turns[-1]))
+    for turn in reversed(turns):
+        out = _payload_output(turn)
+        if out is not None:
+            return _text_of(out)
+    return ""
 
 
 def _extract_tools(nodes: List[dict]) -> List[ToolCallData]:
