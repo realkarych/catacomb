@@ -115,3 +115,24 @@ def test_parse_session_actual_output_empty_when_no_turn_has_output():
     ]
     sd = parse_session(lines, "r1")
     assert sd.actual_output == ""
+
+
+def test_parse_session_preserves_text_that_is_a_json_string_literal():
+    lines = [
+        {"kind": "node", "run_id": "r1", "type": "user_prompt",
+         "t_start": "2024-01-01T10:00:00Z", "payload": {"input": '"hello"'}},
+        {"kind": "node", "run_id": "r1", "type": "assistant_turn",
+         "t_start": "2024-01-01T10:00:01Z", "payload": {"output": '"quoted\\nreply"'}},
+    ]
+    sd = parse_session(lines, "r1")
+    assert sd.input == '"hello"'
+    assert sd.actual_output == '"quoted\\nreply"'
+
+
+def test_parse_session_preserves_numeric_looking_text():
+    lines = [
+        {"kind": "node", "run_id": "r1", "type": "user_prompt",
+         "t_start": "2024-01-01T10:00:00Z", "payload": {"input": "42"}},
+    ]
+    sd = parse_session(lines, "r1")
+    assert sd.input == "42"

@@ -46,22 +46,17 @@ def parse_session(lines: List[dict], run_id: str) -> SessionData:
     )
 
 
-def _sort_key(node: dict) -> Tuple[str, str]:
+def _sort_key(node: dict) -> Tuple[str, int, str]:
     t = node.get("t_start") or ""
-    return (t, node.get("id", ""))
+    emitter_first = 0 if node.get("type") == "assistant_turn" else 1
+    return (t, emitter_first, node.get("id", ""))
 
 
 def _text_of(raw: Optional[Any]) -> str:
     if raw is None:
         return ""
     if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-            if isinstance(decoded, str):
-                return decoded
-            return raw
-        except (json.JSONDecodeError, ValueError):
-            return raw
+        return raw
     return str(raw)
 
 

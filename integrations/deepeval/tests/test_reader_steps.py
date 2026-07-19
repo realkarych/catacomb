@@ -55,3 +55,16 @@ def test_steps_backward_compat_tools_called_unchanged():
     sd = parse_session(lines, "run-001")
     names = [t.name for t in sd.tools_called]
     assert names == ["Bash", "mcp__fs__read"]
+
+
+def test_steps_put_assistant_turn_before_its_tool_call_at_equal_timestamps():
+    lines = [
+        {"kind": "node", "run_id": "r1", "type": "tool_call", "name": "Bash",
+         "id": "aaa", "t_start": "2024-01-01T10:00:02Z",
+         "payload": {"input": {"command": "ls"}, "output": "ok"}},
+        {"kind": "node", "run_id": "r1", "type": "assistant_turn", "name": "assistant_turn",
+         "id": "zzz", "t_start": "2024-01-01T10:00:02Z",
+         "payload": {"output": "running ls"}},
+    ]
+    sd = parse_session(lines, "r1")
+    assert [s.kind for s in sd.steps] == ["llm", "tool"]
