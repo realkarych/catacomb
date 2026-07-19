@@ -3,7 +3,7 @@ title = "catacomb gitleaks config"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Test fixtures and redaction tables intentionally contain fake secrets"
 paths = [
   '''redact/.*_test\.go''',
@@ -21,7 +21,26 @@ paths = [
   '''webui/e2e/eval-node-fields\.spec\.ts''',
   '''webui/e2e/eval-markers\.spec\.ts''',
 ]
+
+[[allowlists]]
+description = "Indented-JSON step keys are content hashes, not credentials"
 regexTarget = "line"
 regexes = [
   '''"step_key": "[0-9a-f]{16}"''',
+]
+
+# Compact-JSON step keys in the deepeval fixtures. Step keys are content hashes,
+# not credentials, but in one-record-per-line JSONL a line-scoped allowlist would
+# shadow every other field in the same record — so this one requires BOTH the
+# fixture path AND the step_key match, keeping the widening out of the rest of
+# the repo and off every line in those files that has no step_key.
+[[allowlists]]
+description = "step_key content hashes in compact-JSON deepeval fixtures"
+condition = "AND"
+paths = [
+  '''integrations/deepeval/tests/testdata/.*\.jsonl''',
+]
+regexTarget = "line"
+regexes = [
+  '''"step_key":"[0-9a-f]{32}"''',
 ]
