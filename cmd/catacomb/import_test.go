@@ -201,6 +201,34 @@ func TestImportRunIDOverride(t *testing.T) {
 	require.FileExists(t, filepath.Join(runs, "manual-1", "meta.json"))
 }
 
+func TestImportRejectsNonLocalRunID(t *testing.T) {
+	for _, id := range []string{"..", "../evil", ".", "./nested", "a/b", "not-clean/./x"} {
+		t.Run(fmt.Sprintf("id %q", id), func(t *testing.T) {
+			dir := t.TempDir()
+			basket := writeImportBasket(t, dir)
+			projects := filepath.Join(dir, "projects")
+			stageTranscript(t, projects, "sess-xyz")
+			runs := filepath.Join(dir, "runs")
+			require.NoError(t, os.MkdirAll(runs, 0o755))
+			sentinel := filepath.Join(dir, "catacomb.db")
+			require.NoError(t, os.WriteFile(sentinel, []byte("baselines"), 0o600))
+
+			var out, errb bytes.Buffer
+			err := runImport(context.Background(), &out, &errb, basket, importFlags{
+				task: "add-item", variant: "trunk", rep: 1, sessionID: "sess-xyz", runID: id,
+				projectsDir: projects, runsDir: runs,
+			})
+			require.ErrorIs(t, err, errImportRunID)
+			var opErr *operationalError
+			require.ErrorAs(t, err, &opErr)
+
+			require.FileExists(t, sentinel)
+			require.DirExists(t, runs)
+			assert.Empty(t, out.String())
+		})
+	}
+}
+
 func TestImportWarnsMissingCheckpoint(t *testing.T) {
 	dir := t.TempDir()
 	basket := writeImportBasket(t, dir)

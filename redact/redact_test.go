@@ -776,7 +776,7 @@ func TestRedact_SecretInObjectKey(t *testing.T) {
 		input := []byte(`{"AKIAAAAAAAAAAAAAAAAA":1,"AKIABBBBBBBBBBBBBBBB":2}`)
 		r1 := redact.Redact(input)
 		assert.True(t, r1.Redacted)
-		assert.Equal(t, `{"‹redacted:aws-key›":2}`, string(r1.Data))
+		assert.Equal(t, `{"‹redacted:aws-key›":1,"‹redacted:aws-key›#2":2}`, string(r1.Data))
 		for i := 0; i < 16; i++ {
 			ri := redact.Redact(input)
 			assert.Equal(t, r1.Data, ri.Data)
@@ -1051,5 +1051,83 @@ func TestRedactAnchorsTypedRefLookalikesUnderSensitiveKey(t *testing.T) {
 			assert.False(t, containsSecret(result.Data, tc.value), "lookalike %q must not survive byte-identical", tc.value)
 			assert.Contains(t, string(result.Data), "‹redacted:", "lookalike %q must be wrapped", tc.value)
 		})
+	}
+}
+
+func TestRedactPreservingBytes(t *testing.T) {
+	t.Run("invalid utf8 keeps raw bytes and redacts secrets", func(t *testing.T) {
+		raw := []byte("caf\xe9,token=AKIAIOSFODNN7EXAMPLE")
+		result := redact.RedactPreservingBytes(raw)
+		assert.True(t, result.Redacted)
+		assert.Equal(t, "caf\xe9,token=‹redacted:aws-key›", string(result.Data))
+		assert.NotContains(t, string(result.Data), "‹binary:")
+	})
+	t.Run("invalid utf8 without secrets is byte-identical", func(t *testing.T) {
+		raw := []byte("caf\xe9,plain")
+		result := redact.RedactPreservingBytes(raw)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, raw, result.Data)
+		assert.Empty(t, result.Findings)
+	})
+	t.Run("valid utf8 matches Redact", func(t *testing.T) {
+		raw := []byte(`{"token":"AKIAIOSFODNN7EXAMPLE"}`)
+		assert.Equal(t, redact.Redact(raw), redact.RedactPreservingBytes(raw))
+	})
+	t.Run("invalid utf8 json still redacts sensitive keys", func(t *testing.T) {
+		raw := []byte("{\"password\":\"hunter2\",\"note\":\"caf\xe9\"}")
+		result := redact.RedactPreservingBytes(raw)
+		assert.True(t, result.Redacted)
+		assert.NotContains(t, string(result.Data), "hunter2")
+		assert.Contains(t, string(result.Data), "caf\xe9")
+		assert.NotContains(t, string(result.Data), "‹binary:")
+		assert.NotEmpty(t, result.Findings)
+	})
+	t.Run("invalid utf8 json without secrets is byte-identical", func(t *testing.T) {
+		raw := []byte("{\"note\":\"caf\xe9\"}")
+		result := redact.RedactPreservingBytes(raw)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, raw, result.Data)
+	})
+	t.Run("private use runes survive the invalid utf8 round trip", func(t *testing.T) {
+		raw := []byte("\ue07f\ue0e9 caf\xe9 \ue07f")
+		result := redact.RedactPreservingBytes(raw)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, raw, result.Data)
+	})
+	t.Run("every invalid byte value round trips", func(t *testing.T) {
+		raw := make([]byte, 0, 128)
+		for b := 0x80; b <= 0xff; b++ {
+			raw = append(raw, byte(b))
+		}
+		result := redact.RedactPreservingBytes(raw)
+		assert.Equal(t, raw, result.Data)
+	})
+}
+
+func TestRedactKeepsCollidingRedactedKeysDistinct(t *testing.T) {
+	input := []byte(`{"commits":{` +
+		`"3f7a1b2c4d5e6f708192a3b4c5d6e7f809a1b2c3":"fix auth",` +
+		`"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678":"add cache",` +
+		`"deadbeefcafebabe0123456789abcdef01234567":"bump deps"}}`)
+
+	result := redact.Redact(input)
+	require.True(t, result.Redacted)
+
+	var got map[string]map[string]string
+	require.NoError(t, json.Unmarshal(result.Data, &got))
+	assert.Len(t, got["commits"], 3, "entry count must be invariant across redaction")
+
+	values := make([]string, 0, len(got["commits"]))
+	for _, v := range got["commits"] {
+		values = append(values, v)
+	}
+	sort.Strings(values)
+	assert.Equal(t, []string{"add cache", "bump deps", "fix auth"}, values)
+	for k := range got["commits"] {
+		assert.Contains(t, k, "‹redacted:high-entropy›")
+	}
+
+	for i := 0; i < 16; i++ {
+		assert.Equal(t, string(result.Data), string(redact.Redact(input).Data))
 	}
 }

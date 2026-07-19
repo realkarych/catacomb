@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -250,12 +251,111 @@ func TestIsTextArtifact(t *testing.T) {
 		{"nul byte", []byte{'a', 0x00, 'b'}, false},
 		{"invalid utf8", []byte{0xff, 0xfe, 0xfd}, false},
 		{"large text truncated to sniff window", append([]byte(strings.Repeat("x", artifactSniffLen+16)), 0x00), true},
+		{
+			"rune ending exactly on sniff boundary",
+			[]byte(strings.Repeat("x", artifactSniffLen-2) + "é" + strings.Repeat("y", 32)),
+			true,
+		},
+		{
+			"orphan continuation bytes on sniff boundary",
+			append(bytes.Repeat([]byte{0x80}, artifactSniffLen), []byte(strings.Repeat("y", 32))...),
+			false,
+		},
+		{
+			"invalid lead byte on sniff boundary",
+			append([]byte(strings.Repeat("x", artifactSniffLen-1)+"\xff"), []byte(strings.Repeat("y", 32))...),
+			true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, isTextArtifact(tc.data))
 		})
 	}
+}
+
+func straddlingRunePayload(tail string) []byte {
+	head := strings.Repeat("x", artifactSniffLen-1) + "é"
+	return []byte(head + "\n" + tail)
+}
+
+func TestIsTextArtifactRuneStraddlingSniffBoundary(t *testing.T) {
+	data := straddlingRunePayload("plain\n")
+	require.Equal(t, byte(0xc3), data[artifactSniffLen-1])
+	assert.True(t, isTextArtifact(data))
+}
+
+func TestCaptureArtifactsRedactsAfterStraddlingRune(t *testing.T) {
+	work := t.TempDir()
+	src := straddlingRunePayload("token=AKIAIOSFODNN7EXAMPLE\n")
+	writeFile(t, filepath.Join(work, "log.txt"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"log.txt"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 1)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "log.txt"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(written), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(written), "‹redacted:aws-key›")
+}
+
+func TestCaptureArtifactsPreservesLatin1RowsPastSniffWindow(t *testing.T) {
+	work := t.TempDir()
+	head := strings.Repeat("id,value\n", artifactSniffLen/9+8)
+	require.Greater(t, len(head), artifactSniffLen)
+	src := []byte(head + "1,caf\xe9\n\n2,token=AKIAIOSFODNN7EXAMPLE\n")
+	writeFile(t, filepath.Join(work, "results.csv"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"results.csv"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 1)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "results.csv"))
+	require.NoError(t, rerr)
+	assert.Contains(t, string(written), "1,caf\xe9\n")
+	assert.NotContains(t, string(written), "‹binary:")
+	assert.NotContains(t, string(written), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(written), "‹redacted:aws-key›")
+	assert.Equal(t, bytes.Count(src, []byte{'\n'}), bytes.Count(written, []byte{'\n'}))
+}
+
+func TestCaptureArtifactsRedactsSensitiveKeysInNonUTF8Line(t *testing.T) {
+	work := t.TempDir()
+	head := strings.Repeat("ok\n", artifactSniffLen/3+8)
+	require.Greater(t, len(head), artifactSniffLen)
+	src := []byte(head + "{\"password\":\"hunter2\",\"note\":\"caf\xe9\"}\n")
+	writeFile(t, filepath.Join(work, "out.jsonl"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"out.jsonl"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 1)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "out.jsonl"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(written), "hunter2")
+	assert.Contains(t, string(written), "caf\xe9")
+	assert.NotContains(t, string(written), "‹binary:")
+}
+
+func TestCaptureArtifactsPreservesTrailingLineWithoutNewline(t *testing.T) {
+	work := t.TempDir()
+	src := []byte("a\n\nb")
+	writeFile(t, filepath.Join(work, "tail.txt"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	_, _, err := CaptureArtifacts(dir, work, []string{"tail.txt"})
+	require.NoError(t, err)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "tail.txt"))
+	require.NoError(t, rerr)
+	assert.Equal(t, src, written)
 }
 
 func TestCaptureArtifactsMetaRoundtrip(t *testing.T) {

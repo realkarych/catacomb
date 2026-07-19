@@ -172,9 +172,47 @@ func TestRunBenchCellsStopsOnContextCancel(t *testing.T) {
 	var opErr *operationalError
 	require.ErrorAs(t, err, &opErr)
 
-	entries := readManifest(t, manifest)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "bench-bord-t1-v1-r1", entries[0].RunID)
+	assert.NoFileExists(t, manifest)
+}
+
+func TestRunBenchCellsPreCancelledRunsNoCell(t *testing.T) {
+	basket, hash, cells := loadBasket(t, twoVariantBasket)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	ran := 0
+	countFn := func(_ context.Context, cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
+		ran++
+		return manifestFor(cell, hash, true), false, false
+	}
+
+	err := runBenchCells(ctx, io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, countFn)
+	require.ErrorIs(t, err, errBenchInterrupted)
+	assert.Zero(t, ran)
+	assert.NoFileExists(t, manifest)
+}
+
+func TestRunBenchCellsResumeRerunsInterruptedCell(t *testing.T) {
+	basket, hash, cells := loadBasket(t, twoVariantBasket)
+	manifest := filepath.Join(t.TempDir(), "m.jsonl")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancelFn := func(_ context.Context, cell bench.Cell, _ map[string]string) (bench.ManifestEntry, bool, bool) {
+		cancel()
+		return manifestFor(cell, hash, true), false, false
+	}
+	err := runBenchCells(ctx, io.Discard, "b.yaml", basket, cells, hash, benchFlags{manifest: manifest}, cancelFn)
+	require.ErrorIs(t, err, errBenchInterrupted)
+
+	var out bytes.Buffer
+	require.NoError(t, runBenchCells(t.Context(), &out, "b.yaml", basket, cells, hash,
+		benchFlags{manifest: manifest, resume: true}, markedCellFn(hash)))
+	assert.NotContains(t, out.String(), "skip bench-bord-t1-v1-r1")
+
+	ids := make([]string, 0, 2)
+	for _, e := range readManifest(t, manifest) {
+		ids = append(ids, e.RunID)
+	}
+	assert.Contains(t, ids, "bench-bord-t1-v1-r1")
 }
 
 func TestRunBenchCellsCompletedReadError(t *testing.T) {

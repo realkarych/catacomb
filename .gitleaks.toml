@@ -14,6 +14,11 @@ paths = [
   '''regress/testdata/.*''',
   '''bench/testdata/.*''',
   '''cmd/catacomb/testdata/.*''',
+  # Exported-snapshot fixtures whose records carry real 32-hex step keys; those are
+  # content hashes, not credentials, but in compact JSONL a line-scoped regex would
+  # shadow every other field in the same record, so the whole fixture dir is listed
+  # here instead — the same treatment the other testdata dirs above already get.
+  '''integrations/deepeval/tests/testdata/.*''',
   '''docs/superpowers/plans/.*''',
   # Two deleted webui Playwright specs whose SSE fixtures use fake repeated-hex
   # step/phase keys (e.g. a1b2c3d4e5f6...); scoped to the exact files — not e2e/.* —

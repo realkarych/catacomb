@@ -360,6 +360,61 @@ func TestEvidenceRunGraphOverlaysStatusAndModel(t *testing.T) {
 	assert.Equal(t, m.MarkerEnd, *rg.Run.EndedAt)
 }
 
+func TestEvidenceRunGraphNonZeroExitCodeMarksRunErrored(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+		want     model.Status
+	}{
+		{name: "killed", exitCode: -1, want: model.StatusError},
+		{name: "failed", exitCode: 1, want: model.StatusError},
+		{name: "clean", exitCode: 0, want: model.StatusRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			m := evidence.Meta{
+				RunID:       "r-exit",
+				SessionID:   "s1",
+				ExitCode:    tc.exitCode,
+				MarkerName:  "task:t1",
+				MarkerStart: time.Unix(100, 0).UTC(),
+				MarkerEnd:   time.Unix(200, 0).UTC(),
+			}
+			require.NoError(t, evidence.Write(filepath.Join(root, "r-exit"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session_marked.jsonl"), Rel: "session.jsonl"}}))
+			rg, err := evidenceRunGraph(filepath.Join(root, "r-exit"), m, newPricer())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, rg.Run.Status)
+		})
+	}
+}
+
+func TestEvidenceRunGraphExitCodeMarksErrorWithoutSnapshotEntry(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r-exit-empty")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), nil, 0o600))
+	m := evidence.Meta{RunID: "r-exit-empty", SessionID: "s1", ExitCode: 137}
+	rg, err := evidenceRunGraph(dir, m, newPricer())
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusError, rg.Run.Status)
+}
+
+func TestCrashedRunAggregatesToFullErrorRate(t *testing.T) {
+	root := t.TempDir()
+	m := evidence.Meta{
+		RunID:       "crashed-r1",
+		SessionID:   "s1",
+		ExitCode:    -1,
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+	}
+	require.NoError(t, evidence.Write(filepath.Join(root, "crashed-r1"), m, []evidence.SourceFile{{Src: filepath.Join("testdata", "session_marked.jsonl"), Rel: "session.jsonl"}}))
+	rg, err := evidenceRunGraph(filepath.Join(root, "crashed-r1"), m, newPricer())
+	require.NoError(t, err)
+	rep := aggregate.Aggregate([]aggregate.RunGraph{rg}, aggregate.Options{})
+	assert.Equal(t, float64(1), rep.Totals.ErrorRate)
+}
+
 func TestEvidenceRunGraphEmptySnapshotLeavesRunZero(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "r4")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
@@ -738,4 +793,38 @@ func TestRegressReportUnchangedByAggregationStrip(t *testing.T) {
 		return string(b)
 	}
 	assert.Equal(t, reportJSON(loadFullGraphs), reportJSON(loadForAggregation))
+}
+
+func writeSubagentTranscript(t *testing.T, path, sessionID string) {
+	t.Helper()
+	line := fmt.Sprintf(`{"type":"assistant","uuid":"ua-%s","sessionId":%q,"timestamp":"2026-06-20T10:00:05Z","message":{"role":"assistant","id":"msg-%s","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu-%s","name":"Read","input":{"file_path":"a.txt"}}],"usage":{"input_tokens":3,"output_tokens":2}}}`, sessionID, sessionID, sessionID, sessionID)
+	require.NoError(t, os.WriteFile(path, []byte(line+"\n"), 0o600))
+}
+
+func TestEvidenceRunGraphSessionIDsAreDeterministic(t *testing.T) {
+	src := t.TempDir()
+	files := []evidence.SourceFile{{Src: filepath.Join("testdata", "session.jsonl"), Rel: "session.jsonl"}}
+	for i, sessionID := range []string{"sub3", "sub1", "sub4", "sub2"} {
+		p := filepath.Join(src, fmt.Sprintf("agent-%03d.jsonl", i+1))
+		writeSubagentTranscript(t, p, sessionID)
+		files = append(files, evidence.SourceFile{Src: p, Rel: filepath.Join("subagents", filepath.Base(p))})
+	}
+	m := evidence.Meta{
+		RunID:       "run-det",
+		SessionID:   "s1",
+		Labels:      map[string]string{"variant": "base"},
+		MarkerName:  "task:t1",
+		MarkerStart: time.Unix(100, 0).UTC(),
+		MarkerEnd:   time.Unix(200, 0).UTC(),
+		FinishedAt:  time.Unix(201, 0).UTC(),
+	}
+	dir := filepath.Join(t.TempDir(), "run-det")
+	require.NoError(t, evidence.Write(dir, m, files))
+
+	want := []string{"s1", "sub1", "sub2", "sub3", "sub4"}
+	for i := 0; i < 40; i++ {
+		rg, err := evidenceRunGraph(dir, m, newPricer())
+		require.NoError(t, err)
+		require.Equal(t, want, rg.Run.SessionIDs, "session_ids must be byte-stable across identical invocations")
+	}
 }

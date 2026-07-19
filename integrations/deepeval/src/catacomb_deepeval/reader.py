@@ -46,22 +46,17 @@ def parse_session(lines: List[dict], run_id: str) -> SessionData:
     )
 
 
-def _sort_key(node: dict) -> Tuple[str, str]:
+def _sort_key(node: dict) -> Tuple[str, int, str]:
     t = node.get("t_start") or ""
-    return (t, node.get("id", ""))
+    emitter_first = 0 if node.get("type") == "assistant_turn" else 1
+    return (t, emitter_first, node.get("id", ""))
 
 
 def _text_of(raw: Optional[Any]) -> str:
     if raw is None:
         return ""
     if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-            if isinstance(decoded, str):
-                return decoded
-            return raw
-        except (json.JSONDecodeError, ValueError):
-            return raw
+        return raw
     return str(raw)
 
 
@@ -89,10 +84,12 @@ def _extract_prompt_input(nodes: List[dict]) -> str:
 
 def _extract_actual_output(nodes: List[dict]) -> str:
     turns = [n for n in nodes if n.get("type") == "assistant_turn"]
-    if not turns:
-        return ""
     turns.sort(key=_sort_key)
-    return _text_of(_payload_output(turns[-1]))
+    for turn in reversed(turns):
+        out = _payload_output(turn)
+        if out is not None:
+            return _text_of(out)
+    return ""
 
 
 def _extract_tools(nodes: List[dict]) -> List[ToolCallData]:
