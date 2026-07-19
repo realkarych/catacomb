@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -250,12 +251,55 @@ func TestIsTextArtifact(t *testing.T) {
 		{"nul byte", []byte{'a', 0x00, 'b'}, false},
 		{"invalid utf8", []byte{0xff, 0xfe, 0xfd}, false},
 		{"large text truncated to sniff window", append([]byte(strings.Repeat("x", artifactSniffLen+16)), 0x00), true},
+		{
+			"rune ending exactly on sniff boundary",
+			[]byte(strings.Repeat("x", artifactSniffLen-2) + "é" + strings.Repeat("y", 32)),
+			true,
+		},
+		{
+			"orphan continuation bytes on sniff boundary",
+			append(bytes.Repeat([]byte{0x80}, artifactSniffLen), []byte(strings.Repeat("y", 32))...),
+			false,
+		},
+		{
+			"invalid lead byte on sniff boundary",
+			append([]byte(strings.Repeat("x", artifactSniffLen-1)+"\xff"), []byte(strings.Repeat("y", 32))...),
+			true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, isTextArtifact(tc.data))
 		})
 	}
+}
+
+func straddlingRunePayload(tail string) []byte {
+	head := strings.Repeat("x", artifactSniffLen-1) + "é"
+	return []byte(head + "\n" + tail)
+}
+
+func TestIsTextArtifactRuneStraddlingSniffBoundary(t *testing.T) {
+	data := straddlingRunePayload("plain\n")
+	require.Equal(t, byte(0xc3), data[artifactSniffLen-1])
+	assert.True(t, isTextArtifact(data))
+}
+
+func TestCaptureArtifactsRedactsAfterStraddlingRune(t *testing.T) {
+	work := t.TempDir()
+	src := straddlingRunePayload("token=AKIAIOSFODNN7EXAMPLE\n")
+	writeFile(t, filepath.Join(work, "log.txt"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"log.txt"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 1)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "log.txt"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(written), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(written), "‹redacted:aws-key›")
 }
 
 func TestCaptureArtifactsMetaRoundtrip(t *testing.T) {

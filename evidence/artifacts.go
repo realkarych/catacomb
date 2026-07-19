@@ -151,7 +151,20 @@ func copyArtifact(root *os.Root, rel, src string) (int64, string, error) {
 func isTextArtifact(data []byte) bool {
 	chunk := data
 	if len(chunk) > artifactSniffLen {
-		chunk = chunk[:artifactSniffLen]
+		chunk = trimPartialRune(chunk[:artifactSniffLen])
 	}
 	return utf8.Valid(chunk) && !bytes.ContainsRune(chunk, 0)
+}
+
+func trimPartialRune(chunk []byte) []byte {
+	for i := len(chunk); i > 0 && len(chunk)-i < utf8.UTFMax; i-- {
+		if !utf8.RuneStart(chunk[i-1]) {
+			continue
+		}
+		if r, size := utf8.DecodeRune(chunk[i-1:]); r == utf8.RuneError && size == 1 {
+			return chunk[:i-1]
+		}
+		return chunk
+	}
+	return chunk
 }
