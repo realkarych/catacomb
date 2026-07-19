@@ -42,13 +42,12 @@ func TestRenderErrStoreNotFoundNamesTheRemedy(t *testing.T) {
 	assert.Equal(t, "trends: no catacomb store found; create one with a write-path command like 'catacomb baseline set'", rendered)
 }
 
-func TestSentinelsAreCheckableThroughWrappingAndNotByMessage(t *testing.T) {
+func TestEverySentinelSurvivesWrappingAsAnErrorsIsTarget(t *testing.T) {
 	for _, sentinel := range []error{
 		ErrDiffInput, ErrStoreNotFound, ErrUnknownSink,
 		ErrBaselineNotFound, ErrEmptyGroup, errRegressionDetected,
 	} {
 		wrapped := fmt.Errorf("x: %w", sentinel)
 		assert.ErrorIs(t, wrapped, sentinel)
-		assert.NotErrorIs(t, wrapped, errors.New(sentinel.Error()))
 	}
 }

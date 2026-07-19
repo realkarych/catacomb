@@ -34,10 +34,18 @@ func decodeSnapshotLines(t *testing.T, out string) []map[string]any {
 	return lines
 }
 
-var ulidPattern = regexp.MustCompile(`[0-9A-HJKMNP-TV-Z]{26}`)
+const ulidToken = `[0-9A-HJKMNP-TV-Z]{26}`
+
+var (
+	obsIDPattern       = regexp.MustCompile(`"obs_id":"` + ulidToken + `"`)
+	sessionExecutionID = regexp.MustCompile(`session:` + ulidToken + `\b`)
+	scopedExecutionID  = regexp.MustCompile(`([":]|\\u003e)` + ulidToken + `:`)
+)
 
 func withoutExecutionIDs(snapshot string) string {
-	return ulidPattern.ReplaceAllString(snapshot, "EXEC")
+	snapshot = obsIDPattern.ReplaceAllString(snapshot, `"obs_id":"EXEC"`)
+	snapshot = sessionExecutionID.ReplaceAllString(snapshot, "session:EXEC")
+	return scopedExecutionID.ReplaceAllString(snapshot, "${1}EXEC:")
 }
 
 func countKinds(lines []map[string]any) map[string]int {
