@@ -22,6 +22,8 @@ import (
 
 var errImportInput = errors.New("import: exactly one of --session-id or --transcript is required")
 
+var errImportRunID = errors.New("import: --run-id is not a clean local name (no separators, no . or .. segments)")
+
 type importFlags struct {
 	task        string
 	variant     string
@@ -62,6 +64,9 @@ func newImportCmd() *cobra.Command {
 func runImport(ctx context.Context, stdout, stderr io.Writer, basketPath string, f importFlags) error {
 	if (f.sessionID == "") == (f.transcript == "") {
 		return operational(errImportInput)
+	}
+	if f.runID != "" && !validBundleRunID(f.runID) {
+		return operational(fmt.Errorf("%w: %q", errImportRunID, f.runID))
 	}
 	basket, hash, err := bench.LoadOffline(basketPath)
 	if err != nil {

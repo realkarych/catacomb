@@ -228,6 +228,58 @@ func Redact(raw []byte) Result {
 	return Result{Data: cur, Findings: findings, Redacted: redacted}
 }
 
+const (
+	rawByteEscape        = '\ue07f'
+	rawByteBase     rune = 0xe000
+	firstInvalidRaw      = 0x80
+)
+
+func rawByteRestorePairs() []string {
+	pairs := make([]string, 0, 2*(1+256-firstInvalidRaw))
+	pairs = append(pairs, string([]rune{rawByteEscape, rawByteEscape}), string(rawByteEscape))
+	for b := rune(firstInvalidRaw); b < 256; b++ {
+		pairs = append(pairs,
+			string([]rune{rawByteEscape, rawByteBase + b}),
+			string([]byte{byte(b)}),
+		)
+	}
+	return pairs
+}
+
+var rawByteRestorer = strings.NewReplacer(rawByteRestorePairs()...)
+
+func escapeInvalidBytes(raw []byte) []byte {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for i := 0; i < len(raw); {
+		r, size := utf8.DecodeRune(raw[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			b.WriteRune(rawByteEscape)
+			b.WriteRune(rawByteBase + rune(raw[i]))
+		case r == rawByteEscape:
+			b.WriteRune(rawByteEscape)
+			b.WriteRune(rawByteEscape)
+		default:
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return []byte(b.String())
+}
+
+func RedactPreservingBytes(raw []byte) Result {
+	if utf8.Valid(raw) {
+		return Redact(raw)
+	}
+	escaped := Redact(escapeInvalidBytes(raw))
+	return Result{
+		Data:     []byte(rawByteRestorer.Replace(string(escaped.Data))),
+		Findings: escaped.Findings,
+		Redacted: escaped.Redacted,
+	}
+}
+
 func mergeFindings(dst, src []Finding) []Finding {
 	for _, f := range src {
 		if !containsFinding(dst, f) {
@@ -407,6 +459,7 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 	for _, k := range slices.Sorted(maps.Keys(obj)) {
 		v := obj[k]
 		rk, keyReasons := replaceSecretSpans(k)
+		rk = disambiguateKey(result, rk)
 		childPath := joinPath(path, rk)
 		for _, reason := range keyReasons {
 			*findings = append(*findings, Finding{Path: childPath, Reason: reason})
@@ -431,6 +484,18 @@ func walkObject(obj map[string]any, path string, findings *[]Finding) map[string
 		}
 	}
 	return result
+}
+
+func disambiguateKey(taken map[string]any, key string) string {
+	if _, clash := taken[key]; !clash {
+		return key
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s#%d", key, i)
+		if _, clash := taken[candidate]; !clash {
+			return candidate
+		}
+	}
 }
 
 func walkArray(arr []any, path string, findings *[]Finding) []any {
