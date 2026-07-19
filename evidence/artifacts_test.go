@@ -324,6 +324,26 @@ func TestCaptureArtifactsPreservesLatin1RowsPastSniffWindow(t *testing.T) {
 	assert.Equal(t, bytes.Count(src, []byte{'\n'}), bytes.Count(written, []byte{'\n'}))
 }
 
+func TestCaptureArtifactsRedactsSensitiveKeysInNonUTF8Line(t *testing.T) {
+	work := t.TempDir()
+	head := strings.Repeat("ok\n", artifactSniffLen/3+8)
+	require.Greater(t, len(head), artifactSniffLen)
+	src := []byte(head + "{\"password\":\"hunter2\",\"note\":\"caf\xe9\"}\n")
+	writeFile(t, filepath.Join(work, "out.jsonl"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"out.jsonl"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 1)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "out.jsonl"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(written), "hunter2")
+	assert.Contains(t, string(written), "caf\xe9")
+	assert.NotContains(t, string(written), "‹binary:")
+}
+
 func TestCaptureArtifactsPreservesTrailingLineWithoutNewline(t *testing.T) {
 	work := t.TempDir()
 	src := []byte("a\n\nb")

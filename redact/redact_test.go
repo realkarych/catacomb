@@ -1073,6 +1073,35 @@ func TestRedactPreservingBytes(t *testing.T) {
 		raw := []byte(`{"token":"AKIAIOSFODNN7EXAMPLE"}`)
 		assert.Equal(t, redact.Redact(raw), redact.RedactPreservingBytes(raw))
 	})
+	t.Run("invalid utf8 json still redacts sensitive keys", func(t *testing.T) {
+		raw := []byte("{\"password\":\"hunter2\",\"note\":\"caf\xe9\"}")
+		result := redact.RedactPreservingBytes(raw)
+		assert.True(t, result.Redacted)
+		assert.NotContains(t, string(result.Data), "hunter2")
+		assert.Contains(t, string(result.Data), "caf\xe9")
+		assert.NotContains(t, string(result.Data), "‹binary:")
+		assert.NotEmpty(t, result.Findings)
+	})
+	t.Run("invalid utf8 json without secrets is byte-identical", func(t *testing.T) {
+		raw := []byte("{\"note\":\"caf\xe9\"}")
+		result := redact.RedactPreservingBytes(raw)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, raw, result.Data)
+	})
+	t.Run("private use runes survive the invalid utf8 round trip", func(t *testing.T) {
+		raw := []byte("\ue07f\ue0e9 caf\xe9 \ue07f")
+		result := redact.RedactPreservingBytes(raw)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, raw, result.Data)
+	})
+	t.Run("every invalid byte value round trips", func(t *testing.T) {
+		raw := make([]byte, 0, 128)
+		for b := 0x80; b <= 0xff; b++ {
+			raw = append(raw, byte(b))
+		}
+		result := redact.RedactPreservingBytes(raw)
+		assert.Equal(t, raw, result.Data)
+	})
 }
 
 func TestRedactKeepsCollidingRedactedKeysDistinct(t *testing.T) {

@@ -228,11 +228,56 @@ func Redact(raw []byte) Result {
 	return Result{Data: cur, Findings: findings, Redacted: redacted}
 }
 
+const (
+	rawByteEscape   = '\ue07f'
+	rawByteBase     = 0xe000
+	firstInvalidRaw = 0x80
+)
+
+func rawByteRestorePairs() []string {
+	pairs := make([]string, 0, 2*(1+256-firstInvalidRaw))
+	pairs = append(pairs, string([]rune{rawByteEscape, rawByteEscape}), string(rawByteEscape))
+	for b := firstInvalidRaw; b < 256; b++ {
+		pairs = append(pairs,
+			string([]rune{rawByteEscape, rune(rawByteBase + b)}),
+			string([]byte{byte(b)}),
+		)
+	}
+	return pairs
+}
+
+var rawByteRestorer = strings.NewReplacer(rawByteRestorePairs()...)
+
+func escapeInvalidBytes(raw []byte) []byte {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for i := 0; i < len(raw); {
+		r, size := utf8.DecodeRune(raw[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			b.WriteRune(rawByteEscape)
+			b.WriteRune(rune(rawByteBase + int(raw[i])))
+		case r == rawByteEscape:
+			b.WriteRune(rawByteEscape)
+			b.WriteRune(rawByteEscape)
+		default:
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return []byte(b.String())
+}
+
 func RedactPreservingBytes(raw []byte) Result {
 	if utf8.Valid(raw) {
 		return Redact(raw)
 	}
-	return redactFreeText(raw)
+	escaped := Redact(escapeInvalidBytes(raw))
+	return Result{
+		Data:     []byte(rawByteRestorer.Replace(string(escaped.Data))),
+		Findings: escaped.Findings,
+		Redacted: escaped.Redacted,
+	}
 }
 
 func mergeFindings(dst, src []Finding) []Finding {
