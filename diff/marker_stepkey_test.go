@@ -10,7 +10,6 @@ import (
 
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
-	"github.com/realkarych/catacomb/stepkey"
 )
 
 const markerExecA = "execA"
@@ -104,21 +103,82 @@ func TestBuildItemsKeysMatchCanonicalStepKeyOnMarkedGraph(t *testing.T) {
 	}
 }
 
-func TestBuildItemsIgnoresMarkersWhenComputingKeys(t *testing.T) {
-	nodes, edges := markedSnapshot(t, markerExecA, []string{"ls", "pwd"})
-	markerFree, markerFreeEdges := withoutMarkers(nodes, edges)
-	for _, n := range markerFree {
-		assert.NotEqual(t, model.NodeMarker, n.Type)
+func unmarkedSnapshot(t *testing.T, exec string, commands []string) ([]*model.Node, []*model.Edge) {
+	t.Helper()
+	kept := make([]model.Observation, 0)
+	for _, o := range markedObservations(exec, commands) {
+		if o.Kind == "marker" {
+			continue
+		}
+		kept = append(kept, o)
 	}
-	assert.Less(t, len(markerFree), len(nodes))
-	assert.Less(t, len(markerFreeEdges), len(edges))
+	g := reduce.NewGraph()
+	g.ApplyAll(kept)
+	nodes, edges := g.Snapshot()
+	for _, n := range nodes {
+		require.NotEqual(t, model.NodeMarker, n.Type, "fixture must contain no marker nodes")
+	}
+	return nodes, edges
+}
 
-	keys := stepkey.Compute(markerFree, markerFreeEdges)
-	for _, it := range buildItems(nodes, edges) {
-		assert.Equal(t, keys[it.node.ID].Key, it.step)
-		assert.Equal(t, keys[it.node.ID].Content, it.content)
-		assert.Equal(t, keys[it.node.ID].PathKey, it.pathKey)
+func stepsByNodeID(items []item) map[string]item {
+	out := make(map[string]item, len(items))
+	for _, it := range items {
+		out[it.node.ID] = it
 	}
+	return out
+}
+
+func TestMarkersDoNotShiftTheStepKeysOfTheStepsAroundThem(t *testing.T) {
+	marked, markedEdges := markedSnapshot(t, markerExecA, []string{"ls", "pwd"})
+	plain, plainEdges := unmarkedSnapshot(t, markerExecA, []string{"ls", "pwd"})
+
+	withMarker := stepsByNodeID(buildItems(marked, markedEdges))
+	withoutMarker := stepsByNodeID(buildItems(plain, plainEdges))
+
+	require.NotEmpty(t, withoutMarker)
+	require.Len(t, withMarker, len(withoutMarker),
+		"a marker must not add or remove keyed steps")
+	for id, want := range withoutMarker {
+		got, ok := withMarker[id]
+		require.True(t, ok, "step %s disappeared when a marker was recorded", id)
+		assert.Equal(t, want.step, got.step,
+			"recording a marker must not change the step key of %s", id)
+		assert.Equal(t, want.pathKey, got.pathKey,
+			"recording a marker must not change the path key of %s", id)
+		assert.Equal(t, want.content, got.content)
+	}
+}
+
+func TestWithoutMarkersDropsMarkerNodesAndEveryEdgeTouchingThem(t *testing.T) {
+	nodes, edges := markedSnapshot(t, markerExecA, []string{"ls", "pwd"})
+
+	keptNodes, keptEdges := withoutMarkers(nodes, edges)
+
+	markerIDs := map[string]bool{}
+	for _, n := range nodes {
+		if n.Type == model.NodeMarker {
+			markerIDs[n.ID] = true
+		}
+	}
+	require.NotEmpty(t, markerIDs)
+	assert.Len(t, keptNodes, len(nodes)-len(markerIDs))
+	for _, n := range keptNodes {
+		assert.NotContains(t, markerIDs, n.ID)
+	}
+	for _, e := range keptEdges {
+		assert.NotContains(t, markerIDs, e.Src, "edge from a marker survived")
+		assert.NotContains(t, markerIDs, e.Dst, "edge into a marker survived")
+	}
+
+	var dropped int
+	for _, e := range edges {
+		if markerIDs[e.Src] || markerIDs[e.Dst] {
+			dropped++
+		}
+	}
+	require.Positive(t, dropped, "fixture must contain edges touching markers")
+	assert.Len(t, keptEdges, len(edges)-dropped)
 }
 
 func TestDiffGraphsReportsCanonicalStepKeysForDifferentMarkedTranscripts(t *testing.T) {

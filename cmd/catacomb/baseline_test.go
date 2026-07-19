@@ -8,10 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -116,8 +118,31 @@ func TestBaselineSetNameValidation(t *testing.T) {
 	}
 }
 
-func TestFormatSelectorEmpty(t *testing.T) {
-	assert.Equal(t, "-", formatSelector(nil))
+func TestFormatSelector(t *testing.T) {
+	cases := []struct {
+		name string
+		sel  map[string]string
+		want string
+	}{
+		{"nil", nil, "-"},
+		{"empty", map[string]string{}, "-"},
+		{"single", map[string]string{"variant": "base"}, "variant=base"},
+		{"keys sorted regardless of map order", map[string]string{"zone": "z", "arch": "a", "model": "m"}, "arch=a,model=m,zone=z"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, formatSelector(tc.sel))
+		})
+	}
+}
+
+func TestFormatSelectorIsStableAcrossRepeatedCalls(t *testing.T) {
+	sel := map[string]string{"a": "1", "b": "2", "c": "3", "d": "4", "e": "5"}
+	want := formatSelector(sel)
+	for i := 0; i < 50; i++ {
+		require.Equal(t, want, formatSelector(sel))
+	}
+	assert.Equal(t, "a=1,b=2,c=3,d=4,e=5", want)
 }
 
 func TestBaselineSetInvalidLabel(t *testing.T) {
@@ -151,27 +176,88 @@ func (f *fakeStore) AppendRegressResult(string, json.RawMessage) (int, error) { 
 
 func (f *fakeStore) RegressResultsFor(string) ([]model.RegressResult, error) { return nil, nil }
 
+var errStoreBoom = errors.New("baseline test: store failed")
+
 type upsertErrStore struct {
 	fakeStore
 }
 
-func (u *upsertErrStore) UpsertBaseline(model.Baseline) error { return errors.New("boom") }
+func (u *upsertErrStore) UpsertBaseline(model.Baseline) error { return errStoreBoom }
 
-func TestBaselineSetUpsertError(t *testing.T) {
+func TestBaselineSetUpsertErrorIsWrappedNotSwallowed(t *testing.T) {
 	err := runBaselineSet(io.Discard, openStore(&upsertErrStore{}), filepath.Join(t.TempDir(), "x.db"), "x", []string{"variant=base"}, evidenceRoot(t))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "baseline set")
+	require.ErrorIs(t, err, errStoreBoom)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
 }
 
-func TestBaselineListSortsMultiple(t *testing.T) {
-	dbPath := emptyStoreDB(t)
-	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "zeta", RunIDs: []string{"base-0"}, Selector: map[string]string{"variant": "base"}})
-	upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: "alpha", RunIDs: []string{"base-1"}, Selector: map[string]string{"variant": "other"}})
+func baselineListNames(t *testing.T, out string) []string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.NotEmpty(t, lines)
+	require.True(t, strings.HasPrefix(lines[0], "NAME"), lines[0])
+	names := make([]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		require.NotEmpty(t, fields, line)
+		names = append(names, fields[0])
+	}
+	return names
+}
 
-	var buf bytes.Buffer
-	require.NoError(t, runBaselineList(&buf, store.OpenSQLiteReadOnly, dbPath, false))
-	out := buf.String()
-	assert.Less(t, strings.Index(out, "alpha"), strings.Index(out, "zeta"))
+func TestBaselineListSortsNamesAscendingInBothFormats(t *testing.T) {
+	dbPath := emptyStoreDB(t)
+	for _, name := range []string{"zeta", "alpha", "mid"} {
+		upsertBaselineRunsDir(t, dbPath, model.Baseline{Name: name, RunIDs: []string{"base-0"}, Selector: map[string]string{"variant": "base"}})
+	}
+	want := []string{"alpha", "mid", "zeta"}
+
+	var table bytes.Buffer
+	require.NoError(t, runBaselineList(&table, store.OpenSQLiteReadOnly, dbPath, false))
+	assert.Equal(t, want, baselineListNames(t, table.String()))
+
+	var asJSON bytes.Buffer
+	require.NoError(t, runBaselineList(&asJSON, store.OpenSQLiteReadOnly, dbPath, true))
+	var baselines []model.Baseline
+	require.NoError(t, json.Unmarshal(asJSON.Bytes(), &baselines))
+	got := make([]string, 0, len(baselines))
+	for _, b := range baselines {
+		got = append(got, b.Name)
+	}
+	assert.Equal(t, want, got)
+}
+
+type unsortedListStore struct {
+	fakeStore
+	baselines []model.Baseline
+}
+
+func (u *unsortedListStore) ListBaselines() ([]model.Baseline, error) { return u.baselines, nil }
+
+func TestBaselineListSortsEvenWhenStoreReturnsUnordered(t *testing.T) {
+	unsorted := &unsortedListStore{baselines: []model.Baseline{
+		{Name: "zeta", RunIDs: []string{"r1"}},
+		{Name: "alpha", RunIDs: []string{"r2"}},
+		{Name: "mid", RunIDs: []string{"r3"}},
+	}}
+	f, err := os.CreateTemp(t.TempDir(), "*.db")
+	require.NoError(t, err)
+	_ = f.Close()
+	want := []string{"alpha", "mid", "zeta"}
+
+	var table bytes.Buffer
+	require.NoError(t, runBaselineList(&table, openStore(unsorted), f.Name(), false))
+	assert.Equal(t, want, baselineListNames(t, table.String()))
+
+	var asJSON bytes.Buffer
+	require.NoError(t, runBaselineList(&asJSON, openStore(unsorted), f.Name(), true))
+	var baselines []model.Baseline
+	require.NoError(t, json.Unmarshal(asJSON.Bytes(), &baselines))
+	got := make([]string, 0, len(baselines))
+	for _, b := range baselines {
+		got = append(got, b.Name)
+	}
+	assert.Equal(t, want, got)
 }
 
 func TestBaselineListJSONEmpty(t *testing.T) {
@@ -200,15 +286,18 @@ type listErrStore struct {
 	fakeStore
 }
 
-func (l *listErrStore) ListBaselines() ([]model.Baseline, error) { return nil, errors.New("boom") }
+func (l *listErrStore) ListBaselines() ([]model.Baseline, error) { return nil, errStoreBoom }
 
-func TestBaselineListError(t *testing.T) {
+func TestBaselineListErrorIsWrappedNotSwallowed(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "*.db")
 	require.NoError(t, err)
 	_ = f.Close()
-	err = runBaselineList(io.Discard, openStore(&listErrStore{}), f.Name(), false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "baseline list")
+	var buf bytes.Buffer
+	err = runBaselineList(&buf, openStore(&listErrStore{}), f.Name(), false)
+	require.ErrorIs(t, err, errStoreBoom)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Empty(t, buf.String())
 }
 
 func TestBaselineRmStoreMissing(t *testing.T) {
@@ -221,15 +310,18 @@ type deleteErrStore struct {
 	fakeStore
 }
 
-func (d *deleteErrStore) DeleteBaseline(string) error { return errors.New("boom") }
+func (d *deleteErrStore) DeleteBaseline(string) error { return errStoreBoom }
 
-func TestBaselineRmError(t *testing.T) {
+func TestBaselineRmErrorIsWrappedAndReportsNoRemoval(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "*.db")
 	require.NoError(t, err)
 	_ = f.Close()
-	err = runBaselineRm(io.Discard, openStore(&deleteErrStore{}), f.Name(), "x")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "baseline rm")
+	var buf bytes.Buffer
+	err = runBaselineRm(&buf, openStore(&deleteErrStore{}), f.Name(), "x")
+	require.ErrorIs(t, err, errStoreBoom)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Empty(t, buf.String())
 }
 
 func TestBaselineSetRunsDirPersistsOffline(t *testing.T) {
@@ -291,10 +383,11 @@ func TestBaselineSetRunsDirCreatesStoreOnFreshMachine(t *testing.T) {
 
 func TestBaselineSetRunsDirOpenError(t *testing.T) {
 	runsDir := evidenceRoot(t)
-	failing := func(string) (store.Store, error) { return nil, errors.New("boom-open") }
+	failing := func(string) (store.Store, error) { return nil, errStoreBoom }
 	err := runBaselineSet(io.Discard, failing, filepath.Join(t.TempDir(), "x.db"), "golden", []string{"variant=base"}, runsDir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "boom-open")
+	require.ErrorIs(t, err, errStoreBoom)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
 }
 
 func TestBaselineListLegacyRowWithoutStamps(t *testing.T) {
@@ -320,13 +413,27 @@ func TestBaselineListLegacyRowWithoutStamps(t *testing.T) {
 	assert.Contains(t, buf.String(), "legacy")
 }
 
-func TestBaselineCmdWired(t *testing.T) {
-	root := newRootCmd()
-	names := make(map[string]bool)
-	for _, sub := range root.Commands() {
-		names[sub.Name()] = true
+func subcommandNames(cmd *cobra.Command) []string {
+	names := make([]string, 0, len(cmd.Commands()))
+	for _, sub := range cmd.Commands() {
+		names = append(names, sub.Name())
 	}
-	assert.True(t, names["baseline"])
+	sort.Strings(names)
+	return names
+}
+
+func TestBaselineCmdExposesEverySubcommand(t *testing.T) {
+	root := newRootCmd()
+	assert.Contains(t, subcommandNames(root), "baseline")
+
+	var baseline *cobra.Command
+	for _, sub := range root.Commands() {
+		if sub.Name() == "baseline" {
+			baseline = sub
+		}
+	}
+	require.NotNil(t, baseline)
+	assert.Equal(t, []string{"export", "import", "list", "rm", "set"}, subcommandNames(baseline))
 }
 
 func TestBaselineExitCodesOperational(t *testing.T) {

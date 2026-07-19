@@ -483,7 +483,7 @@ func (g *Graph) ensureRun(o model.Observation) {
 		r = &model.Run{ID: o.RunID, Status: model.StatusRunning}
 		g.Runs[o.RunID] = r
 	}
-	if r.StartedAt == nil && !o.EventTime.IsZero() {
+	if !o.EventTime.IsZero() && (r.StartedAt == nil || o.EventTime.Before(*r.StartedAt)) {
 		started := o.EventTime
 		r.StartedAt = &started
 	}
@@ -491,30 +491,70 @@ func (g *Graph) ensureRun(o model.Observation) {
 		r.LastSeq = o.Seq
 	}
 	r.SessionIDs = appendUnique(r.SessionIDs, o.Correlation.SessionID)
-	if r.ModelID == "" {
-		if m, ok := o.Attrs["model"].(string); ok && m != "" {
-			r.ModelID = m
-		}
+	rs := g.runStampsFor(o.RunID)
+	if m, ok := o.Attrs["model"].(string); ok && m != "" && rs.model.claims(o.Seq) {
+		r.ModelID = m
 	}
-	if v, ok := o.Attrs["claude_code_version"].(string); ok && v != "" {
-		if r.Repro == nil {
-			r.Repro = &model.ReproMeta{}
-		}
-		if r.Repro.ClaudeCodeVersion == "" {
-			r.Repro.ClaudeCodeVersion = v
-		}
+	if v, ok := o.Attrs["claude_code_version"].(string); ok && v != "" && rs.version.claims(o.Seq) {
+		ensureRepro(r).ClaudeCodeVersion = v
 	}
-	if v, ok := o.Attrs["cwd"].(string); ok && v != "" {
-		if r.Repro == nil {
-			r.Repro = &model.ReproMeta{}
-		}
-		if r.Repro.Cwd == "" {
-			r.Repro.Cwd = v
-		}
+	if v, ok := o.Attrs["cwd"].(string); ok && v != "" && rs.cwd.claims(o.Seq) {
+		ensureRepro(r).Cwd = v
 	}
 	if raw, ok := o.Attrs["catacomb.labels"].(string); ok && raw != "" {
-		r.Labels = model.MergeLabels(r.Labels, model.ParseLabels(raw))
+		r.Labels = mergeLabelsBySeq(r.Labels, rs.labelSeq, model.ParseLabels(raw), o.Seq)
 	}
+}
+
+func ensureRepro(r *model.Run) *model.ReproMeta {
+	if r.Repro == nil {
+		r.Repro = &model.ReproMeta{}
+	}
+	return r.Repro
+}
+
+type seqClaim struct {
+	seq  uint64
+	held bool
+}
+
+func (c *seqClaim) claims(seq uint64) bool {
+	if c.held && seq >= c.seq {
+		return false
+	}
+	c.seq = seq
+	c.held = true
+	return true
+}
+
+type runStamps struct {
+	model    seqClaim
+	version  seqClaim
+	cwd      seqClaim
+	labelSeq map[string]uint64
+}
+
+func (g *Graph) runStampsFor(runID string) *runStamps {
+	rs, ok := g.runStamps[runID]
+	if !ok {
+		rs = &runStamps{labelSeq: map[string]uint64{}}
+		g.runStamps[runID] = rs
+	}
+	return rs
+}
+
+func mergeLabelsBySeq(dst map[string]string, claimed map[string]uint64, src map[string]string, seq uint64) map[string]string {
+	if dst == nil {
+		dst = map[string]string{}
+	}
+	for k, v := range src {
+		if held, ok := claimed[k]; ok && seq <= held {
+			continue
+		}
+		claimed[k] = seq
+		dst[k] = v
+	}
+	return dst
 }
 
 func appendUnique(xs []string, x string) []string {

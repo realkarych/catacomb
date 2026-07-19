@@ -52,7 +52,8 @@ func TestRunVerifyCellSuccess(t *testing.T) {
 	assert.Empty(t, rec.Error)
 	assert.Equal(t, 0, rec.ExitCode)
 	assert.Equal(t, "bench", rec.Mode)
-	assert.NotEmpty(t, rec.SHA256)
+	assert.Equal(t, []string{"verify"}, rec.Cmd)
+	assert.Equal(t, evidence.VerifyConfigSHA256([]string{"verify"}, map[string]string{}), rec.SHA256)
 
 	entries, err := loadEvidenceScores(dir, "r1")
 	require.NoError(t, err)
@@ -82,11 +83,17 @@ func TestRunVerifyCellPreservesProvenance(t *testing.T) {
 	assert.JSONEq(t, `{"key":"verifier.pass","value":1,"run_id":"r1","tool":"deepeval","tool_version":"3.1","prompt_hash":"abc"}`, lines[1])
 }
 
-func TestRunVerifyCellZeroTimeout(t *testing.T) {
+func TestRunVerifyCellZeroTimeoutRunsToCompletionInsteadOfExpiringImmediately(t *testing.T) {
 	stubVerify(t)
 	dir := t.TempDir()
 	rec := runVerifyCell(t.Context(), io.Discard, bench.Verify{Cmd: []string{"verify"}, Timeout: "0s"}, benchSpec(dir))
 	assert.Empty(t, rec.Error)
+	assert.Equal(t, 0, rec.ExitCode)
+
+	entries, err := loadEvidenceScores(dir, "r1")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.InDelta(t, 1.0, entries[0].Value, 1e-9)
 }
 
 func TestRunVerifyCellFailingExit(t *testing.T) {
@@ -187,10 +194,20 @@ func TestParseVerifierScores(t *testing.T) {
 	assert.Contains(t, err.Error(), "line 1")
 }
 
-func TestCanonicalEnv(t *testing.T) {
-	assert.Equal(t, map[string]string{}, canonicalEnv(nil))
-	m := map[string]string{"A": "1"}
-	assert.Equal(t, m, canonicalEnv(m))
+func TestVerifyConfigDigestTreatsAbsentAndEmptyEnvAlikeButDiscriminatesOnContent(t *testing.T) {
+	stubVerify(t)
+	digest := func(v bench.Verify) string {
+		return runVerifyCell(t.Context(), io.Discard, v, benchSpec(t.TempDir())).SHA256
+	}
+	noEnv := digest(bench.Verify{Cmd: []string{"verify"}})
+	emptyEnv := digest(bench.Verify{Cmd: []string{"verify"}, Env: map[string]string{}})
+	assert.Equal(t, noEnv, emptyEnv, "an absent env must not read as a different verifier config than an empty one")
+
+	assert.NotEqual(t, noEnv, digest(bench.Verify{Cmd: []string{"verify"}, Env: map[string]string{"A": "1"}}))
+	assert.NotEqual(t, noEnv, digest(bench.Verify{Cmd: []string{"verify", "--strict"}}))
+	assert.NotEqual(t,
+		digest(bench.Verify{Cmd: []string{"verify"}, Env: map[string]string{"A": "1"}}),
+		digest(bench.Verify{Cmd: []string{"verify"}, Env: map[string]string{"A": "2"}}))
 }
 
 func TestCapWriter(t *testing.T) {

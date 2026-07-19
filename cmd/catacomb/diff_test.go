@@ -16,38 +16,111 @@ import (
 	"github.com/realkarych/catacomb/subgraph"
 )
 
-func TestRunDiffIdentical(t *testing.T) {
-	result, err := runDiff(diffArgs{a: "testdata/session.jsonl", b: "testdata/session.jsonl"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, result.Unchanged)
-	assert.Empty(t, result.Added)
-	assert.Empty(t, result.Removed)
+func diffCounts(r catdiff.DiffResult) [4]int {
+	return [4]int{len(r.Unchanged), len(r.Changed), len(r.Added), len(r.Removed)}
 }
 
-func TestRunDiffAddedFixture(t *testing.T) {
-	result, err := runDiff(diffArgs{a: "testdata/session.jsonl", b: "testdata/session_added.jsonl"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, result.Added)
+func TestRunDiffCountsAreAsymmetricInTheDirectionOfTheChange(t *testing.T) {
+	const (
+		base  = "testdata/session.jsonl"
+		extra = "testdata/session_added.jsonl"
+	)
+	cases := []struct {
+		name       string
+		a, b       string
+		want       [4]int
+		wantTools  []string
+		wantAddedT []string
+	}{
+		{name: "a file against itself has no change at all", a: base, b: base, want: [4]int{2, 0, 0, 0}},
+		{name: "b has one step a lacks: added", a: base, b: extra, want: [4]int{2, 0, 1, 0}, wantAddedT: []string{"Bash"}},
+		{name: "a has one step b lacks: removed", a: extra, b: base, want: [4]int{2, 0, 0, 1}, wantTools: []string{"Bash"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := runDiff(diffArgs{a: tc.a, b: tc.b})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, diffCounts(result), "unchanged/changed/added/removed")
+			added := make([]string, 0, len(result.Added))
+			for _, s := range result.Added {
+				added = append(added, s.Tool)
+			}
+			removed := make([]string, 0, len(result.Removed))
+			for _, s := range result.Removed {
+				removed = append(removed, s.Tool)
+			}
+			assert.Equal(t, tc.wantAddedT, nilIfEmpty(added))
+			assert.Equal(t, tc.wantTools, nilIfEmpty(removed))
+		})
+	}
 }
 
-func TestDiffCommandHuman(t *testing.T) {
+func nilIfEmpty(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
+}
+
+func TestDiffCommandHumanRendersHeadlineThenAddedLines(t *testing.T) {
 	root := newRootCmd()
 	var sb strings.Builder
 	root.SetOut(&sb)
-	root.SetArgs([]string{"diff", "testdata/session.jsonl", "testdata/session.jsonl"})
+	root.SetArgs([]string{"diff", "testdata/session.jsonl", "testdata/session_added.jsonl"})
 	require.NoError(t, root.Execute())
-	assert.Contains(t, sb.String(), "unchanged:")
+	assert.Equal(t, "unchanged: 2  changed: 0  added: 1  removed: 0\n+ tool_call Bash\n", sb.String())
 }
 
-func TestDiffCommandJSON(t *testing.T) {
+func TestDiffCommandHumanRendersRemovedLinesForTheReverseDirection(t *testing.T) {
 	root := newRootCmd()
 	var sb strings.Builder
 	root.SetOut(&sb)
-	root.SetArgs([]string{"diff", "--json", "testdata/session.jsonl", "testdata/session.jsonl"})
+	root.SetArgs([]string{"diff", "testdata/session_added.jsonl", "testdata/session.jsonl"})
+	require.NoError(t, root.Execute())
+	assert.Equal(t, "unchanged: 2  changed: 0  added: 0  removed: 1\n- tool_call Bash\n", sb.String())
+}
+
+func writeTwoToolTranscript(t *testing.T, secondTool string, input map[string]string) string {
+	t.Helper()
+	arg, err := json.Marshal(input)
+	require.NoError(t, err)
+	lines := `{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:00Z","message":{"role":"user","content":"go"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"s1","timestamp":"2026-06-20T10:00:01Z","message":{"role":"assistant","id":"msg_1","model":"m","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"s1","timestamp":"2026-06-20T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"u2","sessionId":"s1","timestamp":"2026-06-20T10:00:03Z","message":{"role":"assistant","id":"msg_2","model":"m","content":[{"type":"tool_use","id":"toolu_2","name":"` + secondTool + `","input":` + string(arg) + `}]}}
+{"type":"user","uuid":"u3","parentUuid":"a2","sessionId":"s1","timestamp":"2026-06-20T10:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"ok","is_error":false}]}}
+`
+	path := filepath.Join(t.TempDir(), "two-tool.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(lines), 0o600))
+	return path
+}
+
+func TestDiffCommandHumanRendersAddedBeforeRemovedWhenBothArePresent(t *testing.T) {
+	a := writeTwoToolTranscript(t, "Read", map[string]string{"file_path": "/x"})
+	b := writeTwoToolTranscript(t, "Grep", map[string]string{"pattern": "y"})
+
+	root := newRootCmd()
+	var sb strings.Builder
+	root.SetOut(&sb)
+	root.SetArgs([]string{"diff", a, b})
+	require.NoError(t, root.Execute())
+	assert.Equal(t,
+		"unchanged: 1  changed: 0  added: 1  removed: 1\n+ tool_call Grep\n- tool_call Read\n",
+		sb.String())
+}
+
+func TestDiffCommandJSONCarriesTheSameCountsAsTheHumanRender(t *testing.T) {
+	root := newRootCmd()
+	var sb strings.Builder
+	root.SetOut(&sb)
+	root.SetArgs([]string{"diff", "--json", "testdata/session.jsonl", "testdata/session_added.jsonl"})
 	require.NoError(t, root.Execute())
 	var result catdiff.DiffResult
 	require.NoError(t, json.Unmarshal([]byte(sb.String()), &result))
-	assert.NotEmpty(t, result.Unchanged)
+	assert.Equal(t, [4]int{2, 0, 1, 0}, diffCounts(result))
+	require.Len(t, result.Added, 1)
+	assert.Equal(t, "Bash", result.Added[0].Tool)
+	assert.Equal(t, "tool_call", result.Added[0].Type)
 }
 
 func TestRunDiffMissingA(t *testing.T) {
@@ -105,25 +178,6 @@ func TestDiffMalformedInputIsOperational(t *testing.T) {
 	assert.NotEmpty(t, errBuf.String())
 }
 
-func TestDiffCommandShowsAddedRemoved(t *testing.T) {
-	root := newRootCmd()
-	var sb strings.Builder
-	root.SetOut(&sb)
-	root.SetArgs([]string{"diff", "testdata/session.jsonl", "testdata/session_added.jsonl"})
-	require.NoError(t, root.Execute())
-	assert.Contains(t, sb.String(), "+")
-}
-
-func TestRenderDiffRemoved(t *testing.T) {
-	result, err := runDiff(diffArgs{a: "testdata/session_added.jsonl", b: "testdata/session.jsonl"})
-	require.NoError(t, err)
-	cmd := newDiffCmd()
-	var sb strings.Builder
-	cmd.SetOut(&sb)
-	renderDiff(cmd, result)
-	assert.Contains(t, sb.String(), "-")
-}
-
 func TestRenderDiffChanged(t *testing.T) {
 	cost := 0.05
 	result := catdiff.DiffResult{
@@ -143,8 +197,7 @@ func TestRenderDiffChanged(t *testing.T) {
 	var sb strings.Builder
 	cmd.SetOut(&sb)
 	renderDiff(cmd, result)
-	assert.Contains(t, sb.String(), "~")
-	assert.Contains(t, sb.String(), "cost")
+	assert.Equal(t, "unchanged: 0  changed: 1  added: 0  removed: 0\n~ tool_call Bash cost\n", sb.String())
 }
 
 func TestRunDiffPhaseScopeReducesSet(t *testing.T) {
@@ -202,27 +255,38 @@ func TestRunDiffRangeRequiresBoth(t *testing.T) {
 	assert.ErrorIs(t, err, subgraph.ErrInvalidSelector)
 }
 
-func TestSummarizeDeltas(t *testing.T) {
-	d := catdiff.Deltas{}
-	assert.Equal(t, "", summarizeDeltas(d))
+func TestSummarizeDeltasEmitsAFixedFieldOrderIndependentOfWhichFieldsChanged(t *testing.T) {
+	args := &catdiff.StringChange{Before: "a", After: "b"}
+	status := &catdiff.StringChange{Before: "ok", After: "error"}
+	cost := &catdiff.FloatChange{Before: 0, After: 0.05, Delta: 0.05}
+	dur := &catdiff.IntChange{Before: 0, After: 100, Delta: 100}
+	tokIn := &catdiff.IntChange{Before: 0, After: 10, Delta: 10}
+	tokOut := &catdiff.IntChange{Before: 0, After: 5, Delta: 5}
 
-	cost := 0.05
-	dur := int64(100)
-	tokIn := int64(10)
-	tokOut := int64(5)
-	d2 := catdiff.Deltas{
-		Args:       &catdiff.StringChange{Before: "a", After: "b"},
-		Status:     &catdiff.StringChange{Before: "ok", After: "error"},
-		CostUSD:    &catdiff.FloatChange{Before: 0, After: cost, Delta: cost},
-		DurationMS: &catdiff.IntChange{Before: 0, After: dur, Delta: dur},
-		TokensIn:   &catdiff.IntChange{Before: 0, After: tokIn, Delta: tokIn},
-		TokensOut:  &catdiff.IntChange{Before: 0, After: tokOut, Delta: tokOut},
+	cases := []struct {
+		name string
+		in   catdiff.Deltas
+		want string
+	}{
+		{name: "no deltas", in: catdiff.Deltas{}, want: ""},
+		{name: "single delta carries no separator", in: catdiff.Deltas{CostUSD: cost}, want: "cost"},
+		{
+			name: "sparse deltas keep the declared order",
+			in:   catdiff.Deltas{Status: status, TokensOut: tokOut},
+			want: "status,tokens_out",
+		},
+		{
+			name: "every delta renders in the declared order",
+			in: catdiff.Deltas{
+				Args: args, Status: status, CostUSD: cost,
+				DurationMS: dur, TokensIn: tokIn, TokensOut: tokOut,
+			},
+			want: "args,status,cost,duration,tokens_in,tokens_out",
+		},
 	}
-	r := summarizeDeltas(d2)
-	assert.Contains(t, r, "args")
-	assert.Contains(t, r, "status")
-	assert.Contains(t, r, "cost")
-	assert.Contains(t, r, "duration")
-	assert.Contains(t, r, "tokens_in")
-	assert.Contains(t, r, "tokens_out")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, summarizeDeltas(tc.in))
+		})
+	}
 }
