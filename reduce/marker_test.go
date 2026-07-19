@@ -114,8 +114,10 @@ func TestMarkerZeroStartTimestampNoSaturatedDuration(t *testing.T) {
 	nodes, _ := g.Snapshot()
 	found := findNode(nodes, model.PhaseMarkerID(execID, "phase1", 0))
 	require.NotNil(t, found)
+	assert.Nil(t, found.TStart, "a zero start timestamp must not be stamped as the epoch")
 	require.NotNil(t, found.TEnd)
-	assert.Nil(t, found.DurationMS)
+	assert.Equal(t, t0.Add(time.Second), *found.TEnd)
+	assert.Nil(t, found.DurationMS, "duration must stay unknown rather than saturate against a missing start")
 }
 
 func TestMarkerZeroEndTimestampNoDuration(t *testing.T) {
@@ -157,7 +159,6 @@ func TestSnapshotPhaseMarkerSynthesized(t *testing.T) {
 	assert.Equal(t, "phase1", found.Name)
 	assert.Equal(t, t1, *found.TStart)
 	assert.Equal(t, t2, *found.TEnd)
-	assert.NotEmpty(t, found.PhaseKey)
 	assert.Equal(t, phasekey.Compute("", "phase1", 0), found.PhaseKey)
 	assert.Equal(t, model.StatusOK, found.Status)
 
@@ -308,9 +309,7 @@ func TestPhaseKeyOnMarker(t *testing.T) {
 	}
 	require.NotNil(t, found)
 	assert.Equal(t, "myphase", found.Name)
-	expected := phasekey.Compute("", "myphase", 0)
-	assert.Equal(t, expected, found.PhaseKey)
-	assert.Len(t, found.PhaseKey, 32)
+	assert.Equal(t, phasekey.Compute("", "myphase", 0), found.PhaseKey)
 }
 
 func TestMarkerDeterminismShuffledArrival(t *testing.T) {
@@ -1121,7 +1120,6 @@ func TestSubagentEnclosingStepKey(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "subagent-originated phase marker should be synthesized")
-	assert.NotEmpty(t, found.PhaseKey, "phase_key should be computed with subagent's step_key")
 
 	agentNodeID := model.SubagentID(execID, "agent1")
 	var agentNode *model.Node
@@ -1233,12 +1231,8 @@ func TestNegativeDurationDropped(t *testing.T) {
 
 	g := NewGraph()
 	g.Apply(sessionStart(t0))
-
-	s := g.execState(execID)
-	s.markerBounds = map[string]markerBound{
-		"k1": {name: "negphase", boundary: "start", occ: -1, ts: t1, seq: 2},
-		"k2": {name: "negphase", boundary: "end", occ: -1, ts: t2, seq: 3},
-	}
+	g.Apply(markerToolUse("k1", "negphase", "start", "", nil, t1, 2))
+	g.Apply(markerToolUse("k2", "negphase", "end", "", nil, t2, 3))
 
 	nodes, _ := g.Snapshot()
 

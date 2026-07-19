@@ -54,6 +54,7 @@ type Graph struct {
 	Edges            map[string]*model.Edge
 	Runs             map[string]*model.Run
 	stamps           map[string]*fieldStamps
+	runStamps        map[string]*runStamps
 	execs            map[string]*execState
 	pricer           Pricer
 	synthMarkerNodes map[string]bool
@@ -74,6 +75,7 @@ func newGraph(p Pricer) *Graph {
 		Edges:            map[string]*model.Edge{},
 		Runs:             map[string]*model.Run{},
 		stamps:           map[string]*fieldStamps{},
+		runStamps:        map[string]*runStamps{},
 		execs:            map[string]*execState{},
 		pricer:           p,
 		synthMarkerNodes: map[string]bool{},

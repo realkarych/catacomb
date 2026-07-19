@@ -11,33 +11,51 @@ import (
 	"github.com/realkarych/catacomb/stepkey"
 )
 
-func TestSnapshotPopulatesStepKeyOnToolCall(t *testing.T) {
-	t0 := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
-	use := ob("assistant_tool_use", "toolu_sk1", t0)
-	use.Correlation.MessageID = "msg_sk1"
-	use.Attrs = map[string]any{"name": "Bash"}
-	use.Payload = &model.Payload{Input: []byte(`{"command":"ls"}`)}
-
-	res := ob("tool_result", "toolu_sk1", t0.Add(time.Second))
-	res.Attrs = map[string]any{"status": string(model.StatusOK)}
-
-	g := NewGraph()
-	g.ApplyAll([]model.Observation{use, res})
-
-	nodes, _ := g.Snapshot()
-
-	toolID := model.ToolCallID(execID, "toolu_sk1")
-	var toolNode *model.Node
+func nodeByID(nodes []*model.Node, id string) *model.Node {
 	for _, n := range nodes {
-		if n.ID == toolID {
-			toolNode = n
-			break
+		if n.ID == id {
+			return n
 		}
 	}
-	require.NotNil(t, toolNode)
-	assert.NotEmpty(t, toolNode.StepKey)
-	assert.Equal(t, stepkey.Method, toolNode.StepKeyMethod)
-	assert.Len(t, toolNode.StepKey, 32)
+	return nil
+}
+
+func toolCallObs(toolUseID, msgID, name, input string, t0 time.Time) []model.Observation {
+	use := ob("assistant_tool_use", toolUseID, t0)
+	use.Correlation.MessageID = msgID
+	use.Attrs = map[string]any{"name": name}
+	use.Payload = &model.Payload{Input: []byte(input)}
+	res := ob("tool_result", toolUseID, t0.Add(time.Second))
+	res.Attrs = map[string]any{"status": string(model.StatusOK)}
+	return []model.Observation{use, res}
+}
+
+func TestSnapshotStampsExactlyTheKeysStepkeyComputesForTheSnapshotItself(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	g := NewGraph()
+	g.ApplyAll(toolCallObs("toolu_sk1", "msg_sk1", "Bash", `{"command":"ls"}`, t0))
+	g.ApplyAll(toolCallObs("toolu_sk2", "msg_sk1", "mcp__fs__read", `{"path":"a.go"}`, t0.Add(2*time.Second)))
+
+	nodes, edges := g.Snapshot()
+	want := stepkey.Compute(nodes, edges)
+	require.Len(t, want, 2)
+
+	stamped := map[string]string{}
+	for _, n := range nodes {
+		if n.StepKey == "" {
+			assert.Empty(t, n.StepKeyMethod, "node %s carries a method without a key", n.ID)
+			continue
+		}
+		assert.Equal(t, stepkey.Method, n.StepKeyMethod)
+		stamped[n.ID] = n.StepKey
+	}
+
+	wantStamped := map[string]string{}
+	for id, k := range want {
+		wantStamped[id] = k.Key
+	}
+	assert.Equal(t, wantStamped, stamped,
+		"Snapshot must stamp every eligible node with its own computed key and no other node")
 }
 
 func TestSnapshotSessionNodeHasNoStepKey(t *testing.T) {
@@ -50,50 +68,53 @@ func TestSnapshotSessionNodeHasNoStepKey(t *testing.T) {
 
 	nodes, _ := g.Snapshot()
 
-	sessID := model.SessionNodeID(execID)
-	for _, n := range nodes {
-		if n.ID == sessID {
-			assert.Empty(t, n.StepKey)
-			assert.Empty(t, n.StepKeyMethod)
-			return
-		}
-	}
-	t.Fatal("session node not found")
+	sess := nodeByID(nodes, model.SessionNodeID(execID))
+	require.NotNil(t, sess)
+	assert.Empty(t, sess.StepKey)
+	assert.Empty(t, sess.StepKeyMethod)
 }
 
-func TestSnapshotStepKeyStableAcrossIdenticalGraphs(t *testing.T) {
+func TestSnapshotStepKeyIgnoresTimestampsButTracksToolIdentity(t *testing.T) {
 	t0 := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
-
-	buildGraph := func() *Graph {
-		use := ob("assistant_tool_use", "toolu_stable", t0)
-		use.Correlation.MessageID = "msg_stable"
-		use.Attrs = map[string]any{"name": "Read"}
-		use.Payload = &model.Payload{Input: []byte(`{"file_path":"a.go"}`)}
-		res := ob("tool_result", "toolu_stable", t0.Add(time.Second))
-		res.Attrs = map[string]any{"status": string(model.StatusOK)}
+	keyFor := func(obs []model.Observation) string {
 		g := NewGraph()
-		g.ApplyAll([]model.Observation{use, res})
-		return g
+		g.ApplyAll(obs)
+		nodes, _ := g.Snapshot()
+		n := nodeByID(nodes, model.ToolCallID(execID, "toolu_stable"))
+		require.NotNil(t, n)
+		require.NotEmpty(t, n.StepKey)
+		return n.StepKey
 	}
 
-	g1 := buildGraph()
-	g2 := buildGraph()
+	base := keyFor(toolCallObs("toolu_stable", "msg_stable", "Read", `{"file_path":"a.go"}`, t0))
 
-	nodes1, _ := g1.Snapshot()
-	nodes2, _ := g2.Snapshot()
+	assert.Equal(t, base, keyFor(toolCallObs("toolu_stable", "msg_stable", "Read", `{"file_path":"a.go"}`, t0.Add(time.Hour))),
+		"the step key identifies a step across runs, so wall-clock drift must not move it")
+	assert.NotEqual(t, base, keyFor(toolCallObs("toolu_stable", "msg_stable", "Write", `{"file_path":"a.go"}`, t0)),
+		"a different tool is a different step")
+	assert.NotEqual(t, base, keyFor(toolCallObs("toolu_stable", "msg_stable", "Read", `{"file_path":"b.go"}`, t0)),
+		"a different target is a different step")
+}
 
-	toolID := model.ToolCallID(execID, "toolu_stable")
-	var k1, k2 string
-	for _, n := range nodes1 {
-		if n.ID == toolID {
-			k1 = n.StepKey
+func TestSnapshotRestampsStepKeysWhenALateObservationShiftsOccurrenceIndex(t *testing.T) {
+	t0 := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	g := NewGraph()
+	g.ApplyAll(toolCallObs("toolu_a", "msg_r", "Read", `{"file_path":"a.go"}`, t0))
+
+	first, _ := g.Snapshot()
+	before := nodeByID(first, model.ToolCallID(execID, "toolu_a")).StepKey
+	require.NotEmpty(t, before)
+
+	g.ApplyAll(toolCallObs("toolu_earlier", "msg_r", "Read", `{"file_path":"a.go"}`, t0.Add(-time.Hour)))
+	second, edges := g.Snapshot()
+
+	want := stepkey.Compute(second, edges)
+	for _, n := range second {
+		if k, ok := want[n.ID]; ok {
+			assert.Equal(t, k.Key, n.StepKey, "node %s kept a stale key from an earlier snapshot", n.ID)
 		}
 	}
-	for _, n := range nodes2 {
-		if n.ID == toolID {
-			k2 = n.StepKey
-		}
-	}
-	require.NotEmpty(t, k1)
-	assert.Equal(t, k1, k2)
+	after := nodeByID(second, model.ToolCallID(execID, "toolu_a")).StepKey
+	assert.NotEqual(t, before, after,
+		"an out-of-order earlier sibling pushes this call to occurrence 1, so its key must be recomputed")
 }

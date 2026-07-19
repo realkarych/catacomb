@@ -261,8 +261,10 @@ func (g *Graph) buildMarker(execID string, sessNode *model.Node, name string, oc
 		Name:     name,
 		Type:     model.NodeMarker,
 		PhaseKey: pk,
-		TStart:   &tStart,
 		Attrs:    attrs,
+	}
+	if !tStart.IsZero() {
+		n.TStart = &tStart
 	}
 	if len(attrs) == 0 {
 		n.Attrs = nil
