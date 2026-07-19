@@ -134,9 +134,6 @@ func metaRuntime(m evidence.Meta) string {
 }
 
 func appendUniqueString(dst []string, v string) []string {
-	if v == "" {
-		return dst
-	}
 	for _, existing := range dst {
 		if existing == v {
 			return dst
