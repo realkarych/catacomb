@@ -229,17 +229,17 @@ func Redact(raw []byte) Result {
 }
 
 const (
-	rawByteEscape   = '\ue07f'
-	rawByteBase     = 0xe000
-	firstInvalidRaw = 0x80
+	rawByteEscape        = '\ue07f'
+	rawByteBase     rune = 0xe000
+	firstInvalidRaw      = 0x80
 )
 
 func rawByteRestorePairs() []string {
 	pairs := make([]string, 0, 2*(1+256-firstInvalidRaw))
 	pairs = append(pairs, string([]rune{rawByteEscape, rawByteEscape}), string(rawByteEscape))
-	for b := firstInvalidRaw; b < 256; b++ {
+	for b := rune(firstInvalidRaw); b < 256; b++ {
 		pairs = append(pairs,
-			string([]rune{rawByteEscape, rune(rawByteBase + b)}),
+			string([]rune{rawByteEscape, rawByteBase + b}),
 			string([]byte{byte(b)}),
 		)
 	}
@@ -256,7 +256,7 @@ func escapeInvalidBytes(raw []byte) []byte {
 		switch {
 		case r == utf8.RuneError && size == 1:
 			b.WriteRune(rawByteEscape)
-			b.WriteRune(rune(rawByteBase + int(raw[i])))
+			b.WriteRune(rawByteBase + rune(raw[i]))
 		case r == rawByteEscape:
 			b.WriteRune(rawByteEscape)
 			b.WriteRune(rawByteEscape)
