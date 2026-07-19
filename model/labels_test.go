@@ -35,15 +35,20 @@ func TestParseLabels(t *testing.T) {
 	}
 }
 
-func TestParseLabelsPairCap(t *testing.T) {
+func TestParseLabelsPairCapKeepsTheFirstThirtyTwoKeysInInputOrder(t *testing.T) {
 	var b strings.Builder
+	want := map[string]string{}
 	for i := range 40 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(string(rune('a'+i%26)) + string(rune('0'+i/26)) + "=v")
+		key := fmt.Sprintf("k%02d", i)
+		fmt.Fprintf(&b, "%s=v%02d", key, i)
+		if i < 32 {
+			want[key] = fmt.Sprintf("v%02d", i)
+		}
 	}
-	assert.Len(t, model.ParseLabels(b.String()), 32)
+	assert.Equal(t, want, model.ParseLabels(b.String()))
 }
 
 func TestParseLabelsPairCapUpdateExistingDropNew(t *testing.T) {
@@ -62,9 +67,22 @@ func TestParseLabelsPairCapUpdateExistingDropNew(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestFormatLabelsCanonical(t *testing.T) {
-	assert.Equal(t, "a=1,b=2", model.FormatLabels(map[string]string{"b": "2", "a": "1"}))
+func TestFormatLabelsSortsKeysRegardlessOfMapIterationOrder(t *testing.T) {
+	in := map[string]string{}
+	var want []string
+	for i := range 16 {
+		key := fmt.Sprintf("k%02d", i)
+		in[key] = fmt.Sprintf("v%02d", i)
+		want = append(want, key+"="+in[key])
+	}
+	assert.Equal(t, strings.Join(want, ","), model.FormatLabels(in))
 	assert.Equal(t, "", model.FormatLabels(nil))
+}
+
+func TestFormatLabelsRoundTripsThroughParseLabels(t *testing.T) {
+	in := map[string]string{"b": "2", "a": "1", "c.d": ""}
+	assert.Equal(t, "a=1,b=2,c.d=", model.FormatLabels(in))
+	assert.Equal(t, in, model.ParseLabels(model.FormatLabels(in)))
 }
 
 func TestMergeLabels(t *testing.T) {
