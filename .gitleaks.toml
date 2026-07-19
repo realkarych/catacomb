@@ -7,6 +7,8 @@ useDefault = true
 description = "Test fixtures and redaction tables intentionally contain fake secrets"
 paths = [
   '''redact/.*_test\.go''',
+  # Redaction test asserts fake secrets in Run.Labels/Repro.Cwd are scrubbed on export.
+  '''export/jsonl/.*_test\.go''',
   '''redact/testdata/.*''',
   '''reduce/testdata/.*''',
   '''regress/testdata/.*''',
