@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -307,9 +308,10 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 		}
 	}
 	cases := []struct {
-		name   string
-		bundle func(t *testing.T) []byte
-		want   string
+		name    string
+		bundle  func(t *testing.T) []byte
+		want    string
+		wantErr error
 	}{
 		{
 			"tampered file content",
@@ -322,6 +324,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"hash mismatch",
+			errBundleHash,
 		},
 		{
 			"tar file not in manifest",
@@ -334,6 +337,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"not in the manifest",
+			errBundleHash,
 		},
 		{
 			"manifest file missing from archive",
@@ -346,6 +350,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"missing from the archive",
+			errBundleHash,
 		},
 		{
 			"duplicate archive entry",
@@ -356,6 +361,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("r1"), importHashes(files)), entry, entry)
 			},
 			"duplicate archive entry",
+			errBundleHash,
 		},
 		{
 			"version too new",
@@ -364,6 +370,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, bundleManifestEntry(t, 2))
 			},
 			"newer than this catacomb supports",
+			errBundleVersion,
 		},
 		{
 			"hostile symlink entry",
@@ -373,6 +380,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline(), map[string]string{}), link)
 			},
 			"not a regular file",
+			errBundleEntry,
 		},
 		{
 			"declared run id with no bundled files",
@@ -383,6 +391,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"run ids do not match bundled files",
+			errBundleRunSet,
 		},
 		{
 			"bundled file under undeclared run id",
@@ -394,6 +403,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"run ids do not match bundled files",
+			errBundleRunSet,
 		},
 		{
 			"manifest file key outside runs",
@@ -406,6 +416,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"run ids do not match bundled files",
+			errBundleRunSet,
 		},
 		{
 			"run id path traversal",
@@ -414,6 +425,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("../evil"), map[string]string{}))
 			},
 			"run id is not a clean local name",
+			errBundleRunID,
 		},
 		{
 			"run id embedded slash",
@@ -422,6 +434,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("nested/run"), map[string]string{}))
 			},
 			"run id is not a clean local name",
+			errBundleRunID,
 		},
 		{
 			"run id embedded backslash",
@@ -430,6 +443,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline(`nested\run`), map[string]string{}))
 			},
 			"run id is not a clean local name",
+			errBundleRunID,
 		},
 		{
 			"run id dot aliases the runs dir",
@@ -438,6 +452,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline("."), map[string]string{}))
 			},
 			"run id is not a clean local name",
+			errBundleRunID,
 		},
 		{
 			"run id empty",
@@ -446,6 +461,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, importManifestEntry(t, importTestBaseline(""), map[string]string{}))
 			},
 			"run id is not a clean local name",
+			errBundleRunID,
 		},
 		{
 			"invalid baseline name",
@@ -458,6 +474,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"whitespace",
+			nil,
 		},
 		{
 			"file then nested under file",
@@ -470,6 +487,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"baseline import",
+			nil,
 		},
 		{
 			"file over staged dir",
@@ -482,17 +500,22 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, entries...)
 			},
 			"baseline import",
+			nil,
 		},
 		{
 			"truncated file payload",
 			func(t *testing.T) []byte {
 				t.Helper()
-				files := map[string][]byte{sessionPath: bytes.Repeat([]byte("x"), 600)}
+				payload := bytes.Repeat([]byte("x"), 600)
+				files := map[string][]byte{sessionPath: payload}
 				entries := append([]bundleTarEntry{importManifestEntry(t, importTestBaseline("r1"), importHashes(files))}, importFileEntries(files)...)
 				raw := gunzipBundle(t, gzipTarBundle(t, entries...))
-				return gzipBytes(t, raw[:len(raw)-1724])
+				start := bytes.Index(raw, payload)
+				require.Positive(t, start, "payload must be present to truncate mid-stream")
+				return gzipBytes(t, raw[:start+len(payload)/2])
 			},
 			"unexpected EOF",
+			io.ErrUnexpectedEOF,
 		},
 		{
 			"oversized manifest",
@@ -502,6 +525,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return gzipTarBundle(t, bundleTarEntry{name: bundleManifestName, typeflag: tar.TypeReg, data: data})
 			},
 			"manifest too large",
+			errBundleManifestTooLarge,
 		},
 		{
 			"garbage gzip",
@@ -510,6 +534,7 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 				return []byte("not a gzip stream")
 			},
 			"open gzip",
+			gzip.ErrHeader,
 		},
 	}
 	for _, tc := range cases {
@@ -522,7 +547,15 @@ func TestBaselineImportRejectsBadBundles(t *testing.T) {
 			code := run(importArgs(bundle, targetDB, targetRuns), &stdout, &stderr)
 			assert.Equal(t, 2, code, stderr.String())
 			assert.Contains(t, stderr.String(), tc.want)
+			assert.Empty(t, stdout.String())
 			assertNoImportResidue(t, targetRuns, targetDB)
+
+			if tc.wantErr != nil {
+				err := runBaselineImport(io.Discard, store.OpenSQLite, emptyStoreDB(t), bundle, filepath.Join(t.TempDir(), "runs"))
+				require.ErrorIs(t, err, tc.wantErr)
+				var opErr *operationalError
+				require.ErrorAs(t, err, &opErr)
+			}
 		})
 	}
 }

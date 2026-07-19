@@ -3,6 +3,7 @@
 package evidence
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,7 +102,11 @@ func TestStampArtifactsWriteError(t *testing.T) {
 	meta := filepath.Join(dir, "meta.json")
 	require.NoError(t, os.Chmod(meta, 0o400))
 	t.Cleanup(func() { _ = os.Chmod(meta, 0o600) })
+	before, rerr := os.ReadFile(meta)
+	require.NoError(t, rerr)
 	err := StampArtifacts(dir, []ArtifactMeta{{Rel: "a", SHA256: "b", Bytes: 1}}, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "evidence.StampArtifacts")
+	require.ErrorIs(t, err, fs.ErrPermission)
+	after, rerr := os.ReadFile(meta)
+	require.NoError(t, rerr)
+	assert.Equal(t, string(before), string(after), "a failed stamp must leave meta.json exactly as it was")
 }

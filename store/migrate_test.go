@@ -220,16 +220,38 @@ func TestMigrateLogsStartAndFinishWithChangedRowCounts(t *testing.T) {
 	err = migrate(db, 3, schemaMigrations, logger)
 	require.NoError(t, err)
 
-	logs := buf.String()
-	assert.Contains(t, logs, "schema migration start")
-	assert.Contains(t, logs, "schema migration finish")
-	assert.Contains(t, logs, `"from":3`)
-	assert.Contains(t, logs, `"to":5`)
-	assert.Contains(t, logs, `"observations":1`)
-	assert.Contains(t, logs, `"nodes":1`)
-	assert.Contains(t, logs, `"runs":1`)
-	assert.Contains(t, logs, `"graph_tables":7`)
-	assert.Contains(t, logs, "duration_ms")
+	records := decodeLogRecords(t, buf.String())
+	require.Len(t, records, 2)
+
+	assert.Equal(t, "store: schema migration start", records[0]["msg"])
+	assert.InDelta(t, 3.0, records[0]["from"], 0)
+	assert.InDelta(t, 5.0, records[0]["to"], 0)
+	assert.NotContains(t, records[0], "changed_rows",
+		"the start record cannot know the row counts yet")
+
+	assert.Equal(t, "store: schema migration finish", records[1]["msg"])
+	assert.InDelta(t, 3.0, records[1]["from"], 0)
+	assert.InDelta(t, 5.0, records[1]["to"], 0)
+	assert.Equal(t, map[string]any{
+		"observations": 1.0, "nodes": 1.0, "runs": 1.0,
+		"graph_tables": float64(len(deadGraphTables)),
+	}, records[1]["changed_rows"])
+	require.Contains(t, records[1], "duration_ms")
+	assert.GreaterOrEqual(t, records[1]["duration_ms"], 0.0)
+}
+
+func decodeLogRecords(t *testing.T, logs string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec map[string]any
+		require.NoErrorf(t, json.Unmarshal([]byte(line), &rec), "log line %q", line)
+		out = append(out, rec)
+	}
+	return out
 }
 
 func TestMigrateAtCurrentVersionLogsNothing(t *testing.T) {
@@ -965,15 +987,35 @@ func TestOpenSQLiteReadOnlyRefusesOutdatedSchema(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSchemaOutdated)
 }
 
-func TestOpenSQLiteReadOnlyAcceptsCurrentSchema(t *testing.T) {
+func TestOpenSQLiteReadOnlyServesMigratedBaselinesAndRefusesEveryWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.db")
 	seedV3DB(t, path)
 	s, err := openSQLite(sql.Open, path)
 	require.NoError(t, err)
+	require.NoError(t, s.UpsertBaseline(model.Baseline{Name: "golden", RunIDs: []string{"r1"}}))
 	require.NoError(t, s.Close())
+
 	ro, err := openSQLiteReadOnly(sql.Open, path)
 	require.NoError(t, err)
-	require.NoError(t, ro.Close())
+	t.Cleanup(func() { _ = ro.Close() })
+
+	got, ok, err := ro.GetBaseline("golden")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"r1"}, got.RunIDs)
+
+	require.Error(t, ro.UpsertBaseline(model.Baseline{Name: "intruder"}))
+	require.Error(t, ro.DeleteBaseline("golden"))
+	_, err = ro.AppendRegressResult("golden", json.RawMessage(`{"n":1}`))
+	require.Error(t, err)
+
+	list, err := ro.ListBaselines()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "golden", list[0].Name)
+	results, err := ro.RegressResultsFor("golden")
+	require.NoError(t, err)
+	assert.Empty(t, results)
 }
 
 func TestScrubTableSelectError(t *testing.T) {

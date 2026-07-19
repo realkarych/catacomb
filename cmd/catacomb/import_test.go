@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,11 @@ import (
 	"github.com/realkarych/catacomb/ingest/drift"
 	"github.com/realkarych/catacomb/model"
 	"github.com/realkarych/catacomb/reduce"
+)
+
+var (
+	fixtureTranscriptStart = time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	fixtureTranscriptEnd   = time.Date(2026, 6, 20, 10, 0, 4, 0, time.UTC)
 )
 
 func writeImportBasket(t *testing.T, dir string) string {
@@ -41,8 +47,10 @@ func TestImportRequiresSessionXorTranscript(t *testing.T) {
 	err := runImport(context.Background(), &out, &errb, basket, importFlags{
 		task: "add-item", variant: "trunk", rep: 1, runsDir: dir, projectsDir: dir,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "session-id")
+	require.ErrorIs(t, err, errImportInput)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Empty(t, out.String())
 }
 
 func TestImportRejectsBothInputs(t *testing.T) {
@@ -52,7 +60,10 @@ func TestImportRejectsBothInputs(t *testing.T) {
 	err := runImport(context.Background(), &out, &errb, basket, importFlags{
 		task: "add-item", variant: "trunk", rep: 1, sessionID: "s1", transcript: "x.jsonl", runsDir: dir, projectsDir: dir,
 	})
-	require.Error(t, err)
+	require.ErrorIs(t, err, errImportInput)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.Empty(t, out.String())
 }
 
 func TestImportUnknownTask(t *testing.T) {
@@ -114,7 +125,30 @@ func TestImportTranscriptsBySessionID(t *testing.T) {
 	ts, sid, err := importTranscripts(drift.RuntimeClaudeCode, importFlags{sessionID: "sess-123", projectsDir: projects})
 	require.NoError(t, err)
 	assert.Equal(t, "sess-123", sid)
-	assert.Contains(t, ts.Main, "sess-123.jsonl")
+	assert.Equal(t, filepath.Join(projects, "proj", "sess-123.jsonl"), ts.Main)
+	assert.Empty(t, ts.Subagents)
+}
+
+func TestImportTranscriptsByPathCollectsSubagentsInSortedOrder(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "sess-abc.jsonl")
+	data, err := os.ReadFile("testdata/session.jsonl")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(main, data, 0o600))
+	subDir := filepath.Join(dir, "sess-abc", "subagents")
+	require.NoError(t, os.MkdirAll(subDir, 0o750))
+	for _, name := range []string{"agent-003.jsonl", "agent-001.jsonl", "agent-002.jsonl", "notes.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(subDir, name), data, 0o600))
+	}
+
+	ts, sid, err := importTranscripts(drift.RuntimeClaudeCode, importFlags{transcript: main})
+	require.NoError(t, err)
+	assert.Equal(t, "sess-abc", sid)
+	assert.Equal(t, []string{
+		filepath.Join(subDir, "agent-001.jsonl"),
+		filepath.Join(subDir, "agent-002.jsonl"),
+		filepath.Join(subDir, "agent-003.jsonl"),
+	}, ts.Subagents)
 }
 
 func TestImportTranscriptsBySessionIDNotFound(t *testing.T) {
@@ -184,21 +218,39 @@ func TestImportMetaShape(t *testing.T) {
 	assert.Equal(t, "checkout", m.Labels["basket"])
 	assert.Equal(t, "2", m.Labels["rep"])
 	assert.Nil(t, m.CostUSD)
-	assert.False(t, m.MarkerStart.After(m.MarkerEnd))
+	assert.Equal(t, "import-checkout-add-item-patched-r2", m.RunID)
+	assert.Equal(t, "add-item", m.Task)
+	assert.Equal(t, "patched", m.Variant)
+	assert.Equal(t, 2, m.Rep)
+	assert.Equal(t, "sess-xyz", m.SessionID)
+	assert.Equal(t, 0, m.ExitCode)
+	assert.True(t, m.MarkerStart.Equal(fixtureTranscriptStart), m.MarkerStart)
+	assert.True(t, m.MarkerEnd.Equal(fixtureTranscriptEnd), m.MarkerEnd)
+	assert.Equal(t, time.UTC, m.MarkerStart.Location())
+	assert.Equal(t, time.UTC, m.MarkerEnd.Location())
 }
 
-func TestImportRunIDOverride(t *testing.T) {
-	dir := t.TempDir()
-	basket := writeImportBasket(t, dir)
-	projects := filepath.Join(dir, "projects")
-	stageTranscript(t, projects, "sess-xyz")
-	runs := filepath.Join(dir, "runs")
-	var out, errb bytes.Buffer
-	require.NoError(t, runImport(context.Background(), &out, &errb, basket, importFlags{
-		task: "add-item", variant: "trunk", rep: 1, sessionID: "sess-xyz", runID: "manual-1",
-		projectsDir: projects, runsDir: runs,
-	}))
-	require.FileExists(t, filepath.Join(runs, "manual-1", "meta.json"))
+func TestImportRunIDOverrideNamesTheDirAndTheMetaRunID(t *testing.T) {
+	for _, id := range []string{"manual-1", "a.b", "run_2026-07-19", "..hidden", "x..y", "UPPER"} {
+		t.Run(id, func(t *testing.T) {
+			dir := t.TempDir()
+			basket := writeImportBasket(t, dir)
+			projects := filepath.Join(dir, "projects")
+			stageTranscript(t, projects, "sess-xyz")
+			runs := filepath.Join(dir, "runs")
+			var out, errb bytes.Buffer
+			require.NoError(t, runImport(context.Background(), &out, &errb, basket, importFlags{
+				task: "add-item", variant: "trunk", rep: 1, sessionID: "sess-xyz", runID: id,
+				projectsDir: projects, runsDir: runs,
+			}))
+
+			m, err := evidence.ReadMeta(filepath.Join(runs, id))
+			require.NoError(t, err)
+			assert.Equal(t, id, m.RunID)
+			assert.Equal(t, []string{id}, runDirNames(t, runs))
+			assert.Equal(t, fmt.Sprintf("import %s: %s\n", id, filepath.Join(runs, id)), out.String())
+		})
+	}
 }
 
 func TestImportRejectsNonLocalRunID(t *testing.T) {
