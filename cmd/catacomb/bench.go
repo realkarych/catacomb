@@ -32,6 +32,8 @@ var errBenchOfflineDirs = errors.New("bench: --projects-dir and --runs-dir are r
 
 var errBenchCodexDirs = errors.New("bench: --sessions-dir and --runs-dir are required (home directory could not be resolved; set them explicitly)")
 
+var errBenchBasketHashMismatch = errors.New("bench: manifest basket hash does not match the current basket; delete the manifest or revert the basket")
+
 type benchFlags struct {
 	manifest       string
 	resume         bool
@@ -652,7 +654,7 @@ func verifyResumeHash(completed map[string]bench.ManifestEntry, hash string) err
 	sort.Strings(ids)
 	for _, id := range ids {
 		if e := completed[id]; e.BasketHash != hash {
-			return fmt.Errorf("bench: manifest basket hash %s does not match current basket %s; delete the manifest or revert the basket", e.BasketHash, hash)
+			return fmt.Errorf("%w (manifest %s, basket %s)", errBenchBasketHashMismatch, e.BasketHash, hash)
 		}
 	}
 	return nil
