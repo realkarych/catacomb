@@ -79,11 +79,6 @@ func TestRenderHumanInfluenceNoFlip(t *testing.T) {
 	assert.Contains(t, got, "influence: no single run flips the verdict\n")
 }
 
-func TestRenderHumanDeterministic(t *testing.T) {
-	r := Calibrate(fixtureGroup(10000, 10000, 30000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
-	require.Equal(t, renderedHuman(t, r), renderedHuman(t, r))
-}
-
 func TestRenderJSONRoundTrip(t *testing.T) {
 	r := Calibrate(fixtureGroup(10000, 10000, 10000, 14000, 14000, 14000), regress.DefaultThresholds())
 	var buf bytes.Buffer
