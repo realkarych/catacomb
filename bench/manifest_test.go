@@ -2,8 +2,10 @@ package bench_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -128,30 +130,51 @@ func TestManifestCompletedAbsentFile(t *testing.T) {
 	assert.Empty(t, done)
 }
 
-func TestManifestCompletedSkipsBlankLines(t *testing.T) {
+func TestManifestCompletedSkipsBlankAndWhitespaceOnlyLines(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.jsonl")
-	body := "{\"run_id\":\"a\"}\n\n   \n{\"run_id\":\"b\"}\n"
+	body := "{\"run_id\":\"a\",\"exit_code\":3}\n\n   \n{\"run_id\":\"b\"}\n"
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
 	done, err := bench.Manifest{Path: path}.Completed()
 	require.NoError(t, err)
-	assert.Len(t, done, 2)
+
+	ids := make([]string, 0, len(done))
+	for id := range done {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	assert.Equal(t, []string{"a", "b"}, ids, "blank lines must be skipped, not turned into empty entries")
+	assert.Equal(t, 3, done["a"].ExitCode)
 }
 
-func TestManifestCompletedMalformedLine(t *testing.T) {
+func TestManifestCompletedRejectsTheWholeFileOnAMalformedLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte("{\"run_id\":\"a\"}\n{not-json\n"), 0o600))
-	_, err := bench.Manifest{Path: path}.Completed()
+
+	done, err := bench.Manifest{Path: path}.Completed()
+
 	require.Error(t, err)
+	var syntaxErr *json.SyntaxError
+	assert.ErrorAs(t, err, &syntaxErr)
+	assert.Nil(t, done, "a partially parsed manifest must not be handed back as if it were complete")
 }
 
-func TestManifestCompletedReadError(t *testing.T) {
-	_, err := bench.Manifest{Path: t.TempDir()}.Completed()
+func TestManifestCompletedReadErrorIsReportedNotSwallowedAsAbsent(t *testing.T) {
+	done, err := bench.Manifest{Path: t.TempDir()}.Completed()
+
 	require.Error(t, err)
+	assert.NotErrorIs(t, err, os.ErrNotExist,
+		"only a missing file may be treated as an empty manifest")
+	assert.Nil(t, done)
 }
 
 func TestManifestAppendOpenError(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+
 	err := bench.Manifest{Path: filepath.Join(blocker, "manifest.jsonl")}.Append(bench.ManifestEntry{RunID: "r"})
+
 	require.Error(t, err)
+	var pathErr *fs.PathError
+	assert.ErrorAs(t, err, &pathErr)
 }
