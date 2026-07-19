@@ -21,6 +21,8 @@ var errVerifyNoRunsDir = errors.New("verify: --runs-dir is required (home direct
 
 var errVerifyFailed = errors.New("verify: one or more cells failed re-verification")
 
+var errVerifyInterrupted = errors.New("verify: interrupted before all recorded runs were re-verified")
+
 type verifyFlags struct {
 	runsDir string
 	labels  string
@@ -69,7 +71,13 @@ func runVerify(ctx context.Context, stdout, stderr io.Writer, basketPath string,
 		want:     model.ParseLabels(f.labels),
 	}
 	for _, r := range runs {
+		if ctx.Err() != nil {
+			break
+		}
 		vf.run(ctx, r)
+	}
+	if ctx.Err() != nil {
+		return operational(errVerifyInterrupted)
 	}
 	if vf.matched == 0 {
 		return operational(fmt.Errorf("verify: %w", ErrEmptyGroup))

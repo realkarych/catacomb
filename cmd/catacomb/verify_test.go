@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -195,6 +197,66 @@ func TestRunVerifyLabelFilter(t *testing.T) {
 	require.NoError(t, runVerify(t.Context(), &out, &errb, basketPath, verifyFlags{runsDir: runs, labels: "variant=base"}))
 	assert.Contains(t, out.String(), "verify bench-bk-t1-base-r1: ok")
 	assert.NotContains(t, out.String(), "bench-bk-t1-bad-r1")
+}
+
+func stubVerifyCancellingAfterFirstCell(t *testing.T, cancel context.CancelFunc) {
+	t.Helper()
+	t.Setenv("GO_HELPER_VERIFY", "1")
+	orig := execCommandContext
+	calls := 0
+	execCommandContext = func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+		calls++
+		if calls == 1 {
+			cancel()
+		}
+		return exec.Command(os.Args[0], "-test.run=TestHelperVerify")
+	}
+	t.Cleanup(func() { execCommandContext = orig })
+}
+
+func TestRunVerifyStopsOnContextCancel(t *testing.T) {
+	basketPath, hash := verifyBasket(t)
+	runs := t.TempDir()
+	first := writeVerifyEvidence(t, runs, "bench-bk-t1-base-r1", "t1", "base", hash, 0)
+	second := writeVerifyEvidence(t, runs, "bench-bk-t1-base-r2", "t1", "base", hash, 0)
+	third := writeVerifyEvidence(t, runs, "bench-bk-t1-base-r3", "t1", "base", hash, 0)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stubVerifyCancellingAfterFirstCell(t, cancel)
+
+	var out, errb bytes.Buffer
+	err := runVerify(ctx, &out, &errb, basketPath, verifyFlags{runsDir: runs})
+	require.ErrorIs(t, err, errVerifyInterrupted)
+	var opErr *operationalError
+	require.ErrorAs(t, err, &opErr)
+	assert.NotErrorIs(t, err, errVerifyFailed)
+
+	_, ok, rerr := evidence.ReadVerify(first)
+	require.NoError(t, rerr)
+	assert.True(t, ok)
+	for _, dir := range []string{second, third} {
+		_, ok, rerr := evidence.ReadVerify(dir)
+		require.NoError(t, rerr)
+		assert.False(t, ok, "untouched dir %s must keep its original verify.json", dir)
+	}
+}
+
+func TestRunVerifyPreCancelledContextTouchesNothing(t *testing.T) {
+	stubVerify(t)
+	basketPath, hash := verifyBasket(t)
+	runs := t.TempDir()
+	dir := writeVerifyEvidence(t, runs, "bench-bk-t1-base-r1", "t1", "base", hash, 0)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var out, errb bytes.Buffer
+	err := runVerify(ctx, &out, &errb, basketPath, verifyFlags{runsDir: runs})
+	require.ErrorIs(t, err, errVerifyInterrupted)
+	assert.NotErrorIs(t, err, ErrEmptyGroup)
+
+	_, ok, rerr := evidence.ReadVerify(dir)
+	require.NoError(t, rerr)
+	assert.False(t, ok)
 }
 
 func TestRunVerifyRejectsMalformedLabelTerms(t *testing.T) {
