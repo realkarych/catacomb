@@ -97,6 +97,8 @@ type eventMsgPayload struct {
 	Invocation mcpInvocation   `json:"invocation"`
 	Error      json.RawMessage `json:"error"`
 	Result     json.RawMessage `json:"result"`
+	ExitCode   *int            `json:"exit_code"`
+	Success    *bool           `json:"success"`
 }
 
 type turnState struct {
@@ -126,6 +128,7 @@ type parser struct {
 	currentTurnID  string
 	turns          map[string]*turnState
 	turnOrder      []string
+	failedCalls    map[string]bool
 	emissions      []emission
 	counts         drift.Counts
 }
@@ -133,7 +136,7 @@ type parser struct {
 func Parse(r io.Reader, mainRunID, executionID string, nextSeq func() uint64, observedAt func(eventTime time.Time) time.Time) ([]model.Observation, drift.Counts, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
-	p := &parser{turns: map[string]*turnState{}}
+	p := &parser{turns: map[string]*turnState{}, failedCalls: map[string]bool{}}
 	for sc.Scan() {
 		raw := strings.TrimSpace(sc.Text())
 		if raw == "" {
@@ -342,6 +345,8 @@ func (p *parser) eventMsg(raw json.RawMessage, ts time.Time) error {
 		p.mcpToolCallBegin(ev, ts)
 	case "mcp_tool_call_end":
 		p.mcpToolCallEnd(ev, ts)
+	case "exec_command_end", "patch_apply_end":
+		p.toolCallEnd(ev)
 	default:
 		if !knownEventType(ev.Type) {
 			p.counts = p.counts.Bump(drift.ReasonUnknownRecordType)
@@ -358,6 +363,29 @@ func knownEventType(t string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (p *parser) toolCallEnd(ev eventMsgPayload) {
+	if ev.CallID == "" || !endEventReportedFailure(ev) {
+		return
+	}
+	p.failedCalls[ev.CallID] = true
+}
+
+func endEventReportedFailure(ev eventMsgPayload) bool {
+	if ev.ExitCode != nil && *ev.ExitCode != 0 {
+		return true
+	}
+	return ev.Success != nil && !*ev.Success
+}
+
+func (p *parser) applyFailedCallStatus() {
+	for i := range p.emissions {
+		e := &p.emissions[i]
+		if e.kind == "tool_result" && p.failedCalls[e.correlation.ToolUseID] {
+			e.attrs["status"] = string(model.StatusError)
+		}
 	}
 }
 
@@ -528,6 +556,7 @@ func (p *parser) observations(mainRunID, executionID string, nextSeq func() uint
 	if runID == "" {
 		runID = p.sessionID
 	}
+	p.applyFailedCallStatus()
 	var out []model.Observation
 	for _, e := range p.emissions {
 		if p.parentThreadID != "" {

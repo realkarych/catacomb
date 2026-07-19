@@ -50,6 +50,46 @@ func TestStampsMismatch(t *testing.T) {
 	}
 }
 
+func TestStampsMismatchIgnoresVersionPrefix(t *testing.T) {
+	cases := []struct {
+		name string
+		a    Stamps
+		b    Stamps
+		want bool
+	}{
+		{
+			name: "goreleaser stamp vs go install stamp",
+			a:    Stamps{CatacombVersion: "0.9.1", StepKeyScheme: "stepkey/v1"},
+			b:    Stamps{CatacombVersion: "v0.9.1", StepKeyScheme: "stepkey/v1"},
+			want: false,
+		},
+		{
+			name: "prefix normalized but versions still differ",
+			a:    Stamps{CatacombVersion: "0.9.1", StepKeyScheme: "stepkey/v1"},
+			b:    Stamps{CatacombVersion: "v0.9.2", StepKeyScheme: "stepkey/v1"},
+			want: true,
+		},
+		{
+			name: "prefix normalized but scheme differs",
+			a:    Stamps{CatacombVersion: "0.9.1", StepKeyScheme: "stepkey/v1"},
+			b:    Stamps{CatacombVersion: "v0.9.1", StepKeyScheme: "stepkey/v2"},
+			want: true,
+		},
+		{
+			name: "dev stamps unaffected",
+			a:    Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"},
+			b:    Stamps{CatacombVersion: "dev", StepKeyScheme: "stepkey/v1"},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.a.Mismatch(tc.b))
+			assert.Equal(t, tc.want, tc.b.Mismatch(tc.a))
+		})
+	}
+}
+
 func TestStampsJSONTags(t *testing.T) {
 	raw, err := json.Marshal(Stamps{CatacombVersion: "v1.2.3", StepKeyScheme: "stepkey/v1"})
 	require.NoError(t, err)

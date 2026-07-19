@@ -30,6 +30,7 @@ var (
 	ErrSchemaMigrationFailed = errors.New("store: schema migration failed")
 	ErrSchemaTooNew          = errors.New("store: on-disk schema is newer than this catacomb binary; upgrade catacomb")
 	ErrSchemaOutdated        = errors.New("store schema is older than this binary; run a write-path command like 'catacomb baseline set' to migrate")
+	ErrCheckpointBusy        = errors.New("store: wal checkpoint blocked by a concurrent reader")
 )
 
 type migration struct {
@@ -340,15 +341,26 @@ func finishPendingVacuum(conn vacuumConn, logger *slog.Logger) error {
 	return nil
 }
 
-func vacuumAfterScrub(conn migrationConn, logger *slog.Logger) bool {
+func vacuumAfterScrub(conn vacuumConn, logger *slog.Logger) bool {
 	ok := true
 	if _, err := conn.Exec("VACUUM"); err != nil {
 		logger.Warn("store: post-migration vacuum failed; pre-scrub row images may linger in free pages", "err", err)
 		ok = false
 	}
-	if _, err := conn.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	if err := checkpointTruncate(conn); err != nil {
 		logger.Warn("store: post-migration wal checkpoint failed; pre-scrub row images may linger in the wal", "err", err)
 		ok = false
 	}
 	return ok
+}
+
+func checkpointTruncate(conn vacuumConn) error {
+	var busy, walFrames, checkpointed int
+	if err := conn.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		return fmt.Errorf("store.checkpointTruncate: %w", err)
+	}
+	if busy != 0 {
+		return ErrCheckpointBusy
+	}
+	return nil
 }

@@ -672,6 +672,71 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func statusByCallID(obs []model.Observation) map[string]string {
+	out := map[string]string{}
+	for _, o := range byKind(obs, "tool_result") {
+		s, _ := o.Attrs["status"].(string)
+		out[o.Correlation.ToolUseID] = s
+	}
+	return out
+}
+
+func parseString(t *testing.T, input string) []model.Observation {
+	t.Helper()
+	obs, _, err := Parse(strings.NewReader(input), "", "exec", seqFor(t), identityObservedAt)
+	require.NoError(t, err)
+	return obs
+}
+
+func TestParseMarksFailedNonExecToolResultsAsError(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines string
+		want  map[string]string
+	}{
+		{
+			name: "failed apply_patch",
+			lines: `{"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"apply_patch","arguments":"{}"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"patch_apply_end","call_id":"c1","success":false}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"failed to apply patch: context mismatch"}}` + "\n",
+			want: map[string]string{"c1": string(model.StatusError)},
+		},
+		{
+			name: "successful apply_patch stays ok",
+			lines: `{"type":"response_item","payload":{"type":"function_call","call_id":"c2","name":"apply_patch","arguments":"{}"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"patch_apply_end","call_id":"c2","success":true}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":"done"}}` + "\n",
+			want: map[string]string{"c2": string(model.StatusOK)},
+		},
+		{
+			name: "nonzero exec_command_end exit code",
+			lines: `{"type":"response_item","payload":{"type":"function_call","call_id":"c3","name":"exec_command","arguments":"{}"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"c3","exit_code":2}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c3","output":"boom"}}` + "\n",
+			want: map[string]string{"c3": string(model.StatusError)},
+		},
+		{
+			name: "zero exec_command_end exit code stays ok",
+			lines: `{"type":"response_item","payload":{"type":"function_call","call_id":"c4","name":"exec_command","arguments":"{}"}}` + "\n" +
+				`{"type":"event_msg","payload":{"type":"exec_command_end","call_id":"c4","exit_code":0}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c4","output":"ok"}}` + "\n",
+			want: map[string]string{"c4": string(model.StatusOK)},
+		},
+		{
+			name: "end event before its result and without a call id",
+			lines: `{"type":"event_msg","payload":{"type":"patch_apply_end","success":false}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call","call_id":"c5","name":"apply_patch","arguments":"{}"}}` + "\n" +
+				`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c5","output":"done"}}` + "\n",
+			want: map[string]string{"c5": string(model.StatusOK)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, statusByCallID(parseString(t, tc.lines)))
+		})
+	}
+}
+
 func TestParseScannerError(t *testing.T) {
 	_, _, err := Parse(&errReader{}, "", "exec-C", seqFor(t), identityObservedAt)
 	require.Error(t, err)

@@ -71,8 +71,28 @@ type item struct {
 	pathKey string
 }
 
+func withoutMarkers(nodes []*model.Node, edges []*model.Edge) ([]*model.Node, []*model.Edge) {
+	markers := make(map[string]bool)
+	keptNodes := make([]*model.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Type == model.NodeMarker {
+			markers[n.ID] = true
+			continue
+		}
+		keptNodes = append(keptNodes, n)
+	}
+	keptEdges := make([]*model.Edge, 0, len(edges))
+	for _, e := range edges {
+		if markers[e.Src] || markers[e.Dst] {
+			continue
+		}
+		keptEdges = append(keptEdges, e)
+	}
+	return keptNodes, keptEdges
+}
+
 func buildItems(nodes []*model.Node, edges []*model.Edge) []item {
-	keys := stepkey.Compute(nodes, edges)
+	keys := stepkey.Compute(withoutMarkers(nodes, edges))
 	items := make([]item, 0, len(keys))
 	for _, n := range nodes {
 		k, ok := keys[n.ID]

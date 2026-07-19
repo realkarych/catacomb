@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,19 +248,98 @@ func TestShouldVacuumAfterMigration(t *testing.T) {
 	assert.True(t, shouldVacuumAfterMigration(map[string]int{"observations": 0, "nodes": 2}))
 }
 
-type execErrConn struct{}
+type execErrConn struct{ closed *sql.DB }
 
 func (execErrConn) Query(string, ...any) (*sql.Rows, error) { return nil, errors.New("query boom") }
 func (execErrConn) Exec(string, ...any) (sql.Result, error) { return nil, errors.New("exec boom") }
 
+func (c execErrConn) QueryRow(query string, args ...any) *sql.Row {
+	return c.closed.QueryRow(query, args...)
+}
+
+func newExecErrConn(t *testing.T) execErrConn {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "closed.db"))
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return execErrConn{closed: db}
+}
+
 func TestVacuumAfterScrubLogsErrors(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	assert.False(t, vacuumAfterScrub(execErrConn{}, logger))
+	assert.False(t, vacuumAfterScrub(newExecErrConn(t), logger))
 	logs := buf.String()
 	assert.Contains(t, logs, "vacuum failed")
 	assert.Contains(t, logs, "wal checkpoint failed")
 	assert.Contains(t, logs, "exec boom")
+}
+
+type vacuumSkippingConn struct {
+	*sql.DB
+	vacuums int
+}
+
+func (c *vacuumSkippingConn) Exec(query string, args ...any) (sql.Result, error) {
+	if query == "VACUUM" {
+		c.vacuums++
+		return driver.RowsAffected(0), nil
+	}
+	return c.DB.Exec(query, args...)
+}
+
+func walDBWithConcurrentReader(t *testing.T) *vacuumSkippingConn {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "wal.db")
+	writer, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = writer.Close() })
+	_, err = writer.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+	_, err = writer.Exec("CREATE TABLE t(a)")
+	require.NoError(t, err)
+	_, err = writer.Exec("INSERT INTO t VALUES (1)")
+	require.NoError(t, err)
+
+	reader, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close() })
+	tx, err := reader.Begin()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	var a int
+	require.NoError(t, tx.QueryRow("SELECT a FROM t").Scan(&a))
+
+	return &vacuumSkippingConn{DB: writer}
+}
+
+func TestVacuumAfterScrubFailsOnBusyCheckpoint(t *testing.T) {
+	conn := walDBWithConcurrentReader(t)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	_, err := conn.DB.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	require.NoError(t, err, "a blocked checkpoint must not surface as a Go error")
+
+	assert.ErrorIs(t, checkpointTruncate(conn), ErrCheckpointBusy)
+	assert.False(t, vacuumAfterScrub(conn, logger))
+	assert.Equal(t, 1, conn.vacuums)
+	assert.Contains(t, buf.String(), "wal checkpoint failed")
+}
+
+func TestFinishPendingVacuumKeepsMarkerWhenCheckpointBusy(t *testing.T) {
+	conn := walDBWithConcurrentReader(t)
+	_, err := conn.DB.Exec(schemaStoreMeta)
+	require.NoError(t, err)
+	_, err = conn.DB.Exec(markPendingVacuum)
+	require.NoError(t, err)
+
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	require.NoError(t, finishPendingVacuum(conn, logger))
+
+	pending, err := pendingVacuum(conn)
+	require.NoError(t, err)
+	assert.True(t, pending, "a blocked checkpoint must leave the retry marker in place")
 }
 
 const freezeStoreMetaInserts = `CREATE TRIGGER meta_frozen BEFORE INSERT ON store_meta BEGIN SELECT RAISE(ABORT, 'frozen'); END`
