@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func TestLoadHappyPath(t *testing.T) {
 	assert.Equal(t, []string{"echo setup-baseline"}, b.Variants[0].Setup)
 	assert.Equal(t, []string{"echo setup-candidate", "echo warmup"}, b.Variants[1].Setup)
 
-	assert.Len(t, hash, 64)
+	assert.NotEmpty(t, hash)
 }
 
 func TestLoadHashIsSha256OfRawBytes(t *testing.T) {
@@ -67,9 +68,11 @@ func TestLoadHashStability(t *testing.T) {
 	assert.NotEqual(t, h1, h3)
 }
 
-func TestLoadReadError(t *testing.T) {
+func TestLoadReadErrorWrapsThePathError(t *testing.T) {
 	_, _, err := bench.Load(t.TempDir())
 	require.Error(t, err)
+	var pathErr *fs.PathError
+	require.ErrorAs(t, err, &pathErr)
 }
 
 func TestLoadDecodeError(t *testing.T) {
@@ -85,6 +88,7 @@ func TestLoadUnknownFieldError(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	_, _, err := bench.Load(path)
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bogus", "an unknown key must be named so the author can fix it")
 }
 
 func TestTaskTimeoutDuration(t *testing.T) {
@@ -214,14 +218,18 @@ func TestCellsInterleaveRepMajor(t *testing.T) {
 	}, gotRunIDs)
 }
 
-func TestCellsEmptyWhenNoReps(t *testing.T) {
-	b := bench.Basket{Name: "n", Reps: 0, Tasks: []bench.Task{{ID: "t"}}, Variants: []bench.Variant{{ID: "v"}}}
-	assert.Empty(t, b.Cells())
-}
-
-func TestCellsNilWhenNegativeReps(t *testing.T) {
-	b := bench.Basket{Name: "n", Reps: -1, Tasks: []bench.Task{{ID: "t"}}, Variants: []bench.Variant{{ID: "v"}}}
-	assert.Nil(t, b.Cells())
+func TestCellsIsNilWhenRepsIsNotPositive(t *testing.T) {
+	for _, reps := range []int{0, -1, -7} {
+		t.Run(fmt.Sprintf("reps=%d", reps), func(t *testing.T) {
+			b := bench.Basket{
+				Name:     "n",
+				Reps:     reps,
+				Tasks:    []bench.Task{{ID: "t"}},
+				Variants: []bench.Variant{{ID: "v"}},
+			}
+			assert.Nil(t, b.Cells())
+		})
+	}
 }
 
 func TestLoadRunIDCollision(t *testing.T) {
@@ -687,7 +695,17 @@ variants:
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	b, _, err := bench.Load(path)
 	require.NoError(t, err)
-	assert.Len(t, b.Cells(), 4)
+
+	got := make([]string, 0, 4)
+	for _, c := range b.Cells() {
+		got = append(got, c.RunID)
+	}
+	assert.Equal(t, []string{
+		"bench-multi-word-basket-add-item-base-line-r1",
+		"bench-multi-word-basket-add-item-cand-idate-r1",
+		"bench-multi-word-basket-remove-item-base-line-r1",
+		"bench-multi-word-basket-remove-item-cand-idate-r1",
+	}, got, "dashed ids must still yield four distinct run ids")
 }
 
 func TestLoadTypeErrorIsHuman(t *testing.T) {
