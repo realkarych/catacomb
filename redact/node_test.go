@@ -3,6 +3,7 @@ package redact_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -214,6 +215,42 @@ func TestNode_PreservesHashWhenAllNonEmptySidesAreTypedRefs(t *testing.T) {
 	assert.Equal(t, "content-hash-by-design", rn.Payload.Hash)
 	assert.Equal(t, "content-hash-by-design", rn.PayloadHash)
 	assert.Equal(t, string(n.Payload.Input), string(rn.Payload.Input))
+}
+
+func TestNode_CarriesEveryNonRedactedFieldThroughUnchanged(t *testing.T) {
+	tStart := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	tEnd := tStart.Add(time.Minute)
+	durMS := int64(60000)
+	tokensIn, tokensOut := int64(120), int64(45)
+	cost := 0.0031
+	n := &model.Node{
+		ID:            "n1",
+		RunID:         "s1",
+		Type:          model.NodeToolCall,
+		ParentID:      "n0",
+		AgentID:       "agent-7",
+		Status:        model.StatusOK,
+		TStart:        &tStart,
+		TEnd:          &tEnd,
+		DurationMS:    &durMS,
+		TokensIn:      &tokensIn,
+		TokensOut:     &tokensOut,
+		CostUSD:       &cost,
+		Sources:       []model.SourceRef{{Source: model.SourceJSONL, ObsID: "o1", ObservedAt: tStart}},
+		Tier:          "primary",
+		StepKey:       "sk-1",
+		StepKeyMethod: "exact",
+		PhaseKey:      "ph-1",
+		Annotations:   map[string]any{"eval.score": "high"},
+		Rev:           9,
+	}
+	want := *n
+
+	got := redact.Node(n)
+
+	require.NotNil(t, got)
+	assert.Equal(t, want, *got,
+		"redact.Node touches Name, SubagentType, Attrs and Payload only; every other field must survive untouched")
 }
 
 func TestNode_Idempotent(t *testing.T) {

@@ -2,6 +2,7 @@ package redact_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,9 +12,16 @@ import (
 )
 
 func secretRun() model.Run {
+	started := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	ended := started.Add(2 * time.Minute)
 	return model.Run{
-		ID:     "r1",
-		Status: model.StatusRunning,
+		ID:         "r1",
+		SessionIDs: []string{"sess-a", "sess-b"},
+		ModelID:    "claude-opus-4-8",
+		Status:     model.StatusRunning,
+		LastSeq:    77,
+		StartedAt:  &started,
+		EndedAt:    &ended,
 		Labels: map[string]string{
 			"team": "core",
 			"note": "postgres://runner:run_label_password@db.internal/labels",
@@ -32,11 +40,30 @@ func TestRunRedactsLabelValuesAndReproCwdSpanLevel(t *testing.T) {
 	assert.Equal(t, "/deploy/‹redacted:aws-key›/build", r.Repro.Cwd)
 }
 
-func TestRunPreservesReproVersionAndIdentity(t *testing.T) {
-	r := redact.Run(secretRun())
-	assert.Equal(t, "2.1.199", r.Repro.ClaudeCodeVersion)
-	assert.Equal(t, "r1", r.ID)
-	assert.Equal(t, model.StatusRunning, r.Status)
+func TestRunCarriesEveryNonSecretFieldThroughUnchanged(t *testing.T) {
+	in := secretRun()
+	r := redact.Run(in)
+
+	assert.Equal(t, in.ID, r.ID)
+	assert.Equal(t, in.SessionIDs, r.SessionIDs)
+	assert.Equal(t, in.ModelID, r.ModelID)
+	assert.Equal(t, in.Status, r.Status)
+	assert.Equal(t, in.LastSeq, r.LastSeq)
+	assert.Equal(t, in.StartedAt, r.StartedAt)
+	assert.Equal(t, in.EndedAt, r.EndedAt)
+	assert.Equal(t, in.Repro.ClaudeCodeVersion, r.Repro.ClaudeCodeVersion)
+	assert.Equal(t, in.Labels["team"], r.Labels["team"])
+	assert.Len(t, r.Labels, len(in.Labels), "label count must be invariant across redaction")
+}
+
+func TestRunRedactsNothingButLabelValuesAndCwd(t *testing.T) {
+	in := secretRun()
+	want := in
+	want.Labels = map[string]string{"team": "core", "note": "‹redacted:connection-string›"}
+	want.Repro = &model.ReproMeta{Cwd: "/deploy/‹redacted:aws-key›/build", ClaudeCodeVersion: "2.1.199"}
+
+	assert.Equal(t, want, redact.Run(in),
+		"redact.Run must be the identity on every field except label values and Repro.Cwd")
 }
 
 func TestRunDoesNotMutateInput(t *testing.T) {
