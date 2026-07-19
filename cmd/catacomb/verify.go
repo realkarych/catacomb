@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -44,6 +45,11 @@ func newVerifyCmd() *cobra.Command {
 func runVerify(ctx context.Context, stdout, stderr io.Writer, basketPath string, f verifyFlags) error {
 	if f.runsDir == "" {
 		return operational(errVerifyNoRunsDir)
+	}
+	if f.labels != "" {
+		if verr := validateLabelTerms(strings.Split(f.labels, ",")); verr != nil {
+			return operational(verr)
+		}
 	}
 	basket, hash, err := bench.LoadOffline(basketPath)
 	if err != nil {

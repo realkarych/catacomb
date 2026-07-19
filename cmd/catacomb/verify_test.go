@@ -197,6 +197,37 @@ func TestRunVerifyLabelFilter(t *testing.T) {
 	assert.NotContains(t, out.String(), "bench-bk-t1-bad-r1")
 }
 
+func TestRunVerifyRejectsMalformedLabelTerms(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels string
+	}{
+		{name: "uppercase key", labels: "Variant=base"},
+		{name: "missing separator", labels: "variant"},
+		{name: "empty term in list", labels: "variant=base,"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubVerify(t)
+			basketPath, hash := verifyBasket(t)
+			runs := t.TempDir()
+			dir := writeVerifyEvidence(t, runs, "bench-bk-t1-base-r1", "t1", "base", hash, 0)
+
+			var out, errb bytes.Buffer
+			err := runVerify(t.Context(), &out, &errb, basketPath, verifyFlags{runsDir: runs, labels: tt.labels})
+			require.Error(t, err)
+			var opErr *operationalError
+			require.ErrorAs(t, err, &opErr)
+			assert.Contains(t, err.Error(), "invalid --label")
+			assert.Empty(t, out.String())
+
+			_, ok, rerr := evidence.ReadVerify(dir)
+			require.NoError(t, rerr)
+			assert.False(t, ok)
+		})
+	}
+}
+
 func TestRunVerifyHashMismatchWarnsOnce(t *testing.T) {
 	stubVerify(t)
 	basketPath, _ := verifyBasket(t)
