@@ -188,6 +188,25 @@ func TestBaselineExportNoPartialOutOnWriteError(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+func TestWriteBundleFileAtomicRemovesTempOnWriteError(t *testing.T) {
+	_, runsDir := seedExportBaseline(t)
+	link := filepath.Join(runsDir, "base-0", "loop.jsonl")
+	if err := os.Symlink(filepath.Join(runsDir, "base-0", "session.jsonl"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	outDir := t.TempDir()
+	out := filepath.Join(outDir, "golden.tar.gz")
+
+	n, err := writeBundleFileAtomic(out, model.Baseline{Name: "golden", RunIDs: []string{"base-0"}}, runsDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink")
+	assert.Zero(t, n)
+
+	entries, readErr := os.ReadDir(outDir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
+}
+
 func TestBaselineExportTempCreateError(t *testing.T) {
 	dbPath, runsDir := seedExportBaseline(t)
 	out := filepath.Join(t.TempDir(), "missing-parent", "golden.tar.gz")
