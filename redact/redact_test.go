@@ -1053,3 +1053,24 @@ func TestRedactAnchorsTypedRefLookalikesUnderSensitiveKey(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactPreservingBytes(t *testing.T) {
+	t.Run("invalid utf8 keeps raw bytes and redacts secrets", func(t *testing.T) {
+		raw := []byte("caf\xe9,token=AKIAIOSFODNN7EXAMPLE")
+		result := redact.RedactPreservingBytes(raw)
+		assert.True(t, result.Redacted)
+		assert.Equal(t, "caf\xe9,token=‹redacted:aws-key›", string(result.Data))
+		assert.NotContains(t, string(result.Data), "‹binary:")
+	})
+	t.Run("invalid utf8 without secrets is byte-identical", func(t *testing.T) {
+		raw := []byte("caf\xe9,plain")
+		result := redact.RedactPreservingBytes(raw)
+		assert.False(t, result.Redacted)
+		assert.Equal(t, raw, result.Data)
+		assert.Empty(t, result.Findings)
+	})
+	t.Run("valid utf8 matches Redact", func(t *testing.T) {
+		raw := []byte(`{"token":"AKIAIOSFODNN7EXAMPLE"}`)
+		assert.Equal(t, redact.Redact(raw), redact.RedactPreservingBytes(raw))
+	})
+}

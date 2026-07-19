@@ -302,6 +302,42 @@ func TestCaptureArtifactsRedactsAfterStraddlingRune(t *testing.T) {
 	assert.Contains(t, string(written), "‹redacted:aws-key›")
 }
 
+func TestCaptureArtifactsPreservesLatin1RowsPastSniffWindow(t *testing.T) {
+	work := t.TempDir()
+	head := strings.Repeat("id,value\n", artifactSniffLen/9+8)
+	require.Greater(t, len(head), artifactSniffLen)
+	src := []byte(head + "1,caf\xe9\n\n2,token=AKIAIOSFODNN7EXAMPLE\n")
+	writeFile(t, filepath.Join(work, "results.csv"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	metas, note, err := CaptureArtifacts(dir, work, []string{"results.csv"})
+	require.NoError(t, err)
+	require.Empty(t, note)
+	require.Len(t, metas, 1)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "results.csv"))
+	require.NoError(t, rerr)
+	assert.Contains(t, string(written), "1,caf\xe9\n")
+	assert.NotContains(t, string(written), "‹binary:")
+	assert.NotContains(t, string(written), "AKIAIOSFODNN7EXAMPLE")
+	assert.Contains(t, string(written), "‹redacted:aws-key›")
+	assert.Equal(t, bytes.Count(src, []byte{'\n'}), bytes.Count(written, []byte{'\n'}))
+}
+
+func TestCaptureArtifactsPreservesTrailingLineWithoutNewline(t *testing.T) {
+	work := t.TempDir()
+	src := []byte("a\n\nb")
+	writeFile(t, filepath.Join(work, "tail.txt"), src)
+	dir := filepath.Join(t.TempDir(), "run")
+
+	_, _, err := CaptureArtifacts(dir, work, []string{"tail.txt"})
+	require.NoError(t, err)
+
+	written, rerr := os.ReadFile(filepath.Join(dir, ArtifactsDirName, "tail.txt"))
+	require.NoError(t, rerr)
+	assert.Equal(t, src, written)
+}
+
 func TestCaptureArtifactsMetaRoundtrip(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "run")
 	m := sampleArtifactMeta()

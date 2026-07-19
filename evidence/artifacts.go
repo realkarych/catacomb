@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/realkarych/catacomb/redact"
 )
 
 type ArtifactMeta struct {
@@ -132,9 +134,7 @@ func copyArtifact(root *os.Root, rel, src string) (int64, string, error) {
 	}
 	out := data
 	if isTextArtifact(data) {
-		var buf bytes.Buffer
-		_ = redactLines(bytes.NewReader(data), &buf)
-		out = buf.Bytes()
+		out = redactArtifactBytes(data)
 	}
 	if parent := filepath.Dir(rel); parent != "." {
 		if err := root.MkdirAll(parent, 0o700); err != nil {
@@ -146,6 +146,22 @@ func copyArtifact(root *os.Root, rel, src string) (int64, string, error) {
 	}
 	sum := sha256.Sum256(out)
 	return int64(len(out)), hex.EncodeToString(sum[:]), nil
+}
+
+func redactArtifactBytes(data []byte) []byte {
+	var buf bytes.Buffer
+	for rest := data; len(rest) > 0; {
+		line := rest
+		if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+			line, rest = rest[:i+1], rest[i+1:]
+		} else {
+			rest = nil
+		}
+		body := bytes.TrimSuffix(line, []byte{'\n'})
+		buf.Write(redact.RedactPreservingBytes(body).Data)
+		buf.Write(line[len(body):])
+	}
+	return buf.Bytes()
 }
 
 func isTextArtifact(data []byte) bool {

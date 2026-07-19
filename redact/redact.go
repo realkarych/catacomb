@@ -228,6 +228,13 @@ func Redact(raw []byte) Result {
 	return Result{Data: cur, Findings: findings, Redacted: redacted}
 }
 
+func RedactPreservingBytes(raw []byte) Result {
+	if utf8.Valid(raw) {
+		return Redact(raw)
+	}
+	return redactFreeText(raw)
+}
+
 func mergeFindings(dst, src []Finding) []Finding {
 	for _, f := range src {
 		if !containsFinding(dst, f) {
