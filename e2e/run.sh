@@ -146,9 +146,9 @@ export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 # A silent blanket-Haiku swap would re-introduce those failures and quietly defang
 # the gate, so this $0 static check over the REAL basket files fails loudly and
 # early if any sensitive basket loses its Sonnet pin. The cheap baskets —
-# continuous, the presence `echo` step task, and failmode — stay on the default
-# Haiku, and are asserted to NOT pin Sonnet. Runs on every invocation, before any
-# spend; no fixtures, no auth, no network.
+# continuous, the presence `echo` step task, failmode, and the tokensin continuous
+# axis — stay on the default Haiku, and are asserted to NOT pin Sonnet. Runs on
+# every invocation, before any spend; no fixtures, no auth, no network.
 sonnet_pin='CHILD_MODEL: claude-sonnet-5'
 for b in basket-presence.yaml basket-sql.yaml basket-subagent.yaml basket-skill.yaml basket-mcp.yaml basket-composite.yaml basket-nested.yaml basket-redaction.yaml; do
 	grep -q "$sonnet_pin" "$e2e_dir/$b" ||
@@ -160,7 +160,7 @@ presence_pins="$(grep -c "$sonnet_pin" "$e2e_dir/basket-presence.yaml" || true)"
 [ "$presence_pins" -eq 1 ] ||
 	fatal "model-policy guardrail: basket-presence.yaml has $presence_pins Sonnet pins (want exactly 1 — the haiku checkpoint-mark task; the echo step task must stay on Haiku)"
 # The cheap baskets must NOT pin Sonnet (they default to Haiku).
-for b in basket-continuous.yaml basket-failmode.yaml; do
+for b in basket-continuous.yaml basket-failmode.yaml basket-tokensin.yaml; do
 	if grep -q "$sonnet_pin" "$e2e_dir/$b"; then
 		fatal "model-policy guardrail: $b pins Sonnet ('$sonnet_pin') but must stay on the default Haiku (the mixed-model policy keeps Sonnet off the cheap baskets)"
 	fi
@@ -254,6 +254,10 @@ copy_artifacts() {
 	cp -f "$manifest9" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest10" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest11" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_tokensin" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_redaction" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_nested" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_composite" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
