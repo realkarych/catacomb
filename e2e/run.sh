@@ -195,6 +195,12 @@ manifest11="$work/manifest-codex-skill.jsonl"
 # cost report.
 runs_tokensin="$work/runs-tokensin"
 manifest_tokensin="$work/manifest-tokensin.jsonl"
+# Live redaction basket (step u5-u7): the LIVE capture+redaction seam. Same
+# descriptive-name convention as the tokens_in vars above; bench MkdirAll's the runs
+# dir on the first cell, so runs_redaction needs no mkdir entry. manifest_redaction
+# feeds Task 7's cost report.
+runs_redaction="$work/runs-redaction"
+manifest_redaction="$work/manifest-redaction.jsonl"
 db="$work/e2e.db"
 mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8" \
 	"$runs9" "$runs10" "$runs11"
@@ -2258,6 +2264,35 @@ run_json 0 "$artifacts/regress-tokensin-AvA.json" \
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-tokensin-AvA.json" || rc=$?
 record "$rc" "tokens_in A-vs-A reports zero regressions"
+
+echo "== u5. bench e2e-redaction basket (5 live claude -p cells) — live secret redaction seam =="
+run_expect 0 "bench e2e-redaction basket" -- \
+	catacomb bench basket-redaction.yaml --runs-dir "$runs_redaction" --manifest "$manifest_redaction"
+
+echo "== u6. live redaction: raw fake token ABSENT from all captured evidence; placeholder present in a majority =="
+# The fake token is assembled the SAME way the basket workspace assembles it, so
+# this driver never carries a committed secret-shaped line either.
+red_p="ghp_"; red_b="FAKEfakeFAKEfake0123456789ABCDEF012345"; red_token="${red_p}${red_b}"
+red_total=0; red_leaks=0; red_placeholder_hits=0
+for d in "$runs_redaction"/bench-e2e-redaction-redaction-baseline-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	red_total=$((red_total + 1))
+	if grep -Fq "$red_token" "$d/session.jsonl"; then red_leaks=$((red_leaks + 1)); fi
+	if grep -Fq '‹redacted:github-token›' "$d/session.jsonl"; then red_placeholder_hits=$((red_placeholder_hits + 1)); fi
+done
+rc=0
+[ "$red_leaks" -eq 0 ] || rc=1
+record "$rc" "live redaction: raw fake token absent from ALL captured session.jsonl ($red_leaks leaks in $red_total runs)"
+rc=0
+[ "$red_placeholder_hits" -ge 3 ] || rc=1
+record "$rc" "live redaction non-vacuity: ‹redacted:github-token› placeholder present in a majority of runs ($red_placeholder_hits/$red_total >=3)"
+
+echo "== u7. live redaction: pack (third-party-auditor bundle) also scrubbed =="
+run_json 0 "$artifacts/redaction-pack.out" "pack e2e-redaction for external audit" -- \
+	catacomb pack label:basket=e2e-redaction --runs-dir "$runs_redaction" --out "$work/redaction-pack"
+rc=0
+if grep -Frq "$red_token" "$work/redaction-pack" 2>/dev/null; then rc=1; fi
+record "$rc" "live redaction: packed bundle contains no raw fake token"
 
 echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells) =="
 # The codex leg is OPTIONAL: unlike claude (hard-required at the top of this
