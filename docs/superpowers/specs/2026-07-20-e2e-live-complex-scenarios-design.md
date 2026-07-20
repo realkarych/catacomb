@@ -50,7 +50,12 @@ Goals:
 - Preserve the **soft-live / hard-hermetic** rule for every stochastic assertion: the
   live leg LOGS, the hermetic mirror over fabricated evidence ASSERTS. Structurally
   forced signals (delegation forced via tool-allowances) stay hard live.
-- Keep the run **within the $20 ceiling**, enforced — not hoped — via a cost-guard.
+- Make the run's real dollar cost **observable** — a report-only `cost_usd` total (with
+  a per-basket breakdown) in the summary, so the maintainer can review spend against the
+  $20 target after each run and adjust. The run is never failed on cost.
+- Exercise the phase-key machinery end-to-end on real evidence: the composite carries
+  **≥3 distinct phases** whose sub-intervals differ along every `phasekey` separation
+  axis (marker name, occurrence, enclosing step key).
 
 Non-goals:
 
@@ -60,7 +65,7 @@ Non-goals:
 - No new product MCP tool surface. The composite reuses the existing `catacomb mark`
   MCP tool and the existing `e2e/mcp-e2ekit` fixture server.
 - `reps` stays at **5** for every new basket (the standing default; the user accepted
-  the resulting worst-case spend), with the cost-guard as the ceiling backstop.
+  the resulting worst-case spend), with the §4 cost report making actual spend visible.
 
 ## 3. The four components
 
@@ -70,24 +75,50 @@ additive to `e2e/run.sh` and `e2e-live.yml`.
 ### 3.1 Composite mega-basket (headline)
 
 `e2e/basket-composite.yaml` + `e2e/composite.sh`, reusing `e2e/skills/e2e-emit/` and the
-`catacomb mark` MCP tool. One session; the subagent performs several **forced** actions:
-`mark` a checkpoint → invoke the `e2e-emit` skill → write the verifiable
-`out/result.csv`.
+`catacomb mark` MCP tool. One session carrying **at least three distinct phases whose
+sub-intervals differ along every phase-key separation axis** (see below), plus a
+skill invocation and a verifiable artifact.
 
-- **baseline / baseline2**: the main agent is given ONLY `Task` (no `Bash`/`Write`), so
-  it physically must delegate; the subagent is given `Skill`, `mcp__catacomb__mark`, and
-  `Write`. The reduced graph then carries **`subagent` + `marker` + `skill` nodes AND
-  `verifier.pass` simultaneously** — the reducer path that co-existence exercises has
-  never run on live evidence.
-- **degraded**: the main agent gets `Skill`/`mcp__catacomb__mark`/`Write` and NO `Task`,
-  so it does the work inline without delegating and without the skill → the `subagent`
-  node (primary) and the `skill` node drop.
+The `mark` tool is `mark(name, boundary=start|end)`; a phase is one start/end pair.
+`phasekey.Compute(enclosingStepKey, markerName, occurrence)` separates phases on three
+axes, and the composite is shaped to exercise **all three** on real evidence:
+
+1. **distinct marker name** — a top-level `orchestration` phase (name A) vs an inner
+   `work` phase (name B);
+2. **occurrence** — the inner `work` phase is opened/closed **twice** (`work` occ 0 and
+   occ 1), the repeated-name axis;
+3. **enclosing step key** — `orchestration` is marked at top level (enclosing key = a
+   top-level step) while `work#0/#1` are marked **inside the subagent** (enclosing key =
+   a subagent-scoped step) — the `reduce/marker_test.go::TestSubagentEnclosingStepKey`
+   path, never driven live.
+
+Each phase also wraps **different internal steps** so the sub-intervals are genuinely
+different shapes, not identical empty spans: `orchestration` encloses the `Task`
+delegation; `work#0` encloses the `Skill` invocation; `work#1` encloses the `Write` of
+the artifact.
+
+- **baseline / baseline2**: the main agent is given `Task` + `mcp__catacomb__mark` (no
+  `Bash`/`Write`/`Skill`), so it marks the outer `orchestration` phase but physically
+  must delegate the inner work; the subagent is given `Skill`, `mcp__catacomb__mark`, and
+  `Write` and marks its two inner `work` phases, invokes the skill, and writes the
+  artifact. The reduced graph then carries **`subagent` + three `marker` phases (distinct
+  name / occurrence / subagent-enclosing) + `skill` node + `verifier.pass`
+  simultaneously** — the co-existence path, never run on live evidence.
+- **degraded**: the main agent gets `mcp__catacomb__mark`/`Skill`/`Write` and NO `Task`,
+  so it does the work inline (no subagent) and marks only the single outer phase → the
+  `subagent` node (primary), the `skill` node, and the two subagent-scoped `work` phases
+  all drop.
 - **Gate (hard, live):** `subagent`-presence separation, structurally forced by the
   tool-allowance split → deterministic, exactly like `basket-subagent.yaml`.
-- **Log (soft, live):** the co-existence of `marker` + `skill` + `subagent` nodes in one
-  baseline graph (a 3-action subagent script is obedience-stochastic on sonnet).
-- **Hard-mirror:** `e2e/hermetic/prod/scenarios/40-composite.sh` already asserts the
-  deterministic co-existence + gate over fixtures.
+- **Log (soft, live):** the co-existence of the three distinct phase keys + `skill` +
+  `subagent` nodes in one baseline graph, and the PHASE-scope separation (the two inner
+  phases dropping in degraded). A multi-action subagent script is obedience-stochastic on
+  sonnet, so live logs; the hermetic mirror asserts.
+- **Hard-mirror:** `e2e/hermetic/prod/scenarios/40-composite.sh`, **extended** from its
+  current single-`work`-phase fixture to the three-phase shape above, hard-asserting
+  three distinct phase keys (name / occurrence / subagent-enclosing separation), the
+  per-phase aggregation, and a seeded PHASE-scope regression (dropping the inner phases
+  gates) — all deterministically over fixtures.
 - **Shape/cost:** 1 task × 3 variants × 5 reps = 15 cells, sonnet, subagent spawns a
   child. ~$4.5–7.5.
 
@@ -148,18 +179,20 @@ A new `bigprompt` variant in `e2e/basket-continuous.yaml`: a multi-KB `TASK_PROM
 - **Shape/cost:** +1 variant → the continuous basket becomes 4 variants × 5 reps = 20
   cells (+5 cheap haiku cells). ~$0.25.
 
-## 4. Cost-guard ($20 as an enforced invariant)
+## 4. Cost report (informational — never fails the run)
 
-Extend the existing `w. cost report` step in `e2e/run.sh`: sum `cost_usd` across every
-bench manifest / `regress --json` the run produced and **fail the run (non-zero exit)
-when the total exceeds `E2E_COST_CEILING_USD` (default `20`).** The ceiling becomes a
-checked invariant instead of an estimate.
+Extend the existing `w. cost report` step in `e2e/run.sh` to sum `cost_usd` across every
+bench manifest / `regress --json` the run produced and **print a prominent total
+(with a per-basket breakdown) in the run summary.** This is **report-only**: the run is
+NEVER failed on cost — the maintainer reads the total after each run and decides whether
+to adjust reps or scope. No `$20` ceiling is enforced in code; $20 stays a target the
+report makes observable.
 
-- Under OAuth/subscription billing `cost_usd` may report `0`; the guard is then
-  vacuously safe (it can never false-fail). Under `ANTHROPIC_API_KEY` (API billing, what
-  the workflow uses) `cost_usd` is populated, so the guard is live.
-- The threshold is env-overridable so a maintainer can raise it for a one-off deep run
-  without editing the driver.
+- Under OAuth/subscription billing `cost_usd` may report `0`; the total then shows `$0`
+  (harmless — the report simply cannot see subscription spend). Under `ANTHROPIC_API_KEY`
+  (API billing, what the workflow uses) `cost_usd` is populated, so the total is real.
+- The report also uploads with the existing `e2e-artifacts/` so the breakdown is
+  retrievable from the workflow run.
 
 ## 5. Risk mitigation — spike first
 
@@ -184,9 +217,10 @@ e2e/nested.sh                    nested cell wrapper
 e2e/basket-redaction.yaml        live redaction basket (§3.3)
 e2e/redaction.sh                 redaction cell wrapper (seeds fake token, cat→write)
 e2e/basket-continuous.yaml       + bigprompt variant (§3.4)
-e2e/run.sh                       + 4 basket sections, cost-guard, updated cost header
-e2e/hermetic/prod/scenarios/     + tokens_in hermetic assert (§3.4);
-                                   40/25/60 mirrors for §3.1–3.3 already exist
+e2e/run.sh                       + 4 basket sections, cost report, updated cost header
+e2e/hermetic/prod/scenarios/     40-composite.sh EXTENDED to the ≥3-phase shape (§3.1);
+                                   + tokens_in hermetic assert (§3.4);
+                                   25/60 mirrors for §3.2–3.3 already exist
 .github/workflows/e2e-live.yml   timeout-minutes bump + cost-header text
 AGENTS.md                        E2E row(s) mention the complex live baskets
 ```
@@ -199,13 +233,14 @@ self-asserting (A-vs-A exits 0, seeded regression exits 1, node presence /
 `verifier.pass` / redaction placeholder pinned), so a reducer/gate/redaction regression
 turns the hermetic PR run red for free, and the live leg catches drift twice weekly. Any
 Go product change surfaced by §5 is TDD-first under the existing gates. The hermetic
-mirrors (`40`, `25`, `60`, and the new `tokens_in` assert) carry the deterministic hard
-proofs; the live baskets prove the real CLI produces such sessions and the cost-guard
-keeps the run under budget.
+mirrors (the extended `40`, plus `25`, `60`, and the new `tokens_in` assert) carry the
+deterministic hard proofs; the live baskets prove the real CLI produces such sessions and
+the §4 report keeps the run's actual spend visible.
 
 ## 8. Expected cost
 
 Existing ~$7 + composite ~$4.5–7.5 + nested ~$3–5 + redaction ~$0.3 + `tokens_in`
-~$0.25 = **~$14–20 per run**, with the §4 cost-guard hard-capping the worst case at $20.
-Figures are order-of-magnitude estimates to confirm on the first dispatch (per the run.sh
-cost header convention).
+~$0.25 = **~$14–20 per run**. The §4 report surfaces the real total after each run so the
+maintainer can decide whether to trim reps; the run is never failed on cost. Figures are
+order-of-magnitude estimates to confirm on the first dispatch (per the run.sh cost header
+convention).
