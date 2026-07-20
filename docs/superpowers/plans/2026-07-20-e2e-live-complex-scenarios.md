@@ -52,6 +52,7 @@ AGENTS.md                        EDIT E2E row mentions the complex live baskets
 Cheapest, self-contained warm-up. A large-input / short-output basket gating the `tokens_in` continuous axis, plus its hermetic mirror.
 
 **Files:**
+
 - Create: `e2e/bigprompt.sh`
 - Create: `e2e/basket-tokensin.yaml`
 - Modify: `e2e/run.sh` (new `runs`/`manifest` vars near lines 170–189; new bench+gate section after step `u`)
@@ -59,6 +60,7 @@ Cheapest, self-contained warm-up. A large-input / short-output basket gating the
 - Create: `e2e/hermetic/prod/scenarios/45-continuous-axis.sh`
 
 **Interfaces:**
+
 - Produces: basket id `e2e-tokensin`; run dir var `runs_tokensin`; manifest var `manifest_tokensin` (consumed by the cost report in Task 7).
 
 - [ ] **Step 1: Write `e2e/bigprompt.sh`**
@@ -267,11 +269,13 @@ git commit -m "test(e2e): add tokens_in continuous-axis live basket + hermetic m
 A live session emits a fake secret-shaped token through a `tool_result`; the captured evidence must scrub it. Invariant/moat — single variant, not a seeded triple. Hermetic hard-proof already exists (`60-redaction.sh`).
 
 **Files:**
+
 - Create: `e2e/redaction.sh`
 - Create: `e2e/basket-redaction.yaml`
 - Modify: `e2e/run.sh` (vars + new section)
 
 **Interfaces:**
+
 - Produces: basket id `e2e-redaction`; `runs_redaction`; `manifest_redaction` (cost report, Task 7). Sensitive basket → add to the model-policy guard (Task 8).
 
 - [ ] **Step 1: Write `e2e/redaction.sh`**
@@ -406,12 +410,14 @@ Two forced levels of delegation via a staged custom subagent (`tools: Task`), ga
 > **Revised 2026-07-20 after a live probe** (see memory `claude-p-subagent-tool-behavior`): in `claude -p` 2.1.215 a subagent keeps its OWN full toolset (it runs Bash), and nesting works — so the earlier fear that a Task-only main yields a toolless subagent is disproven. BUT a subagent's file WRITE can be blocked by Claude Code's bash-tool sandbox, so this basket **does NOT assert any `out/result.csv` artifact** — it gates purely on subagent-node DEPTH (count), exactly like `basket-subagent.yaml`. The leaf runs the SQL query and reports the result in its reply (no file write); `verify_sql.py` is NOT copied or used.
 
 **Files:**
+
 - Create: `e2e/agents/sql-delegator.md`
 - Create: `e2e/nested.sh`
 - Create: `e2e/basket-nested.yaml`
 - Modify: `e2e/run.sh` (vars + section)
 
 **Interfaces:**
+
 - Consumes: the SQL seed DB path `$SQL_DB` (already exported by run.sh's SQL setup, ~line 196–204). The gate does NOT verify an artifact, so `verify_sql.py` is not used.
 - Produces: basket id `e2e-nested`; `runs_nested`; `manifest_nested`. Sensitive basket → add to the model-policy guard (Task 8).
 
@@ -578,11 +584,13 @@ One session carrying ≥3 distinct phases (distinct name / occurrence / subagent
 > **Validated 2026-07-20 by the live probe** (memory `claude-p-subagent-tool-behavior`): a `claude -p` 2.1.215 subagent CAN invoke `mcp__catacomb__mark` and `Skill` from inside itself — so the composite's subagent marking `work` twice and invoking the skill is viable. The only residual uncertainty is whether the subagent-invoked skill's file WRITE lands in CI (bash-tool sandbox), so the artifact/`verifier.pass` stays SOFT (the basket keeps the `verify:` hook, but the run.sh section hard-gates only the forced subagent presence and LOGS coexistence + verifier — never hard-fails on the artifact).
 
 **Files:**
+
 - Create: `e2e/composite.sh`
 - Create: `e2e/basket-composite.yaml`
 - Modify: `e2e/run.sh` (vars + section)
 
 **Interfaces:**
+
 - Consumes: `e2e/mcp.json` (the `catacomb mcp` mark server, existing), `e2e/skills/e2e-emit/` (existing), `e2e/verify_emit.py` (existing).
 - Produces: basket id `e2e-composite`; `runs_composite`; `manifest_composite`. Sensitive basket → model-policy guard (Task 8).
 
@@ -754,11 +762,13 @@ git commit -m "test(e2e): add composite mega-basket (subagent+3 phases+skill+ver
 Make `40-composite.sh` the hard-mirror the composite live basket claims: three phases separated by name, occurrence, and enclosing step key.
 
 **Files:**
+
 - Modify: `e2e/hermetic/prod/fixtures/composite.jsonl.tmpl` (add an outer `orchestration` phase around the Task, and a second `work` occurrence inside the subagent)
 - Modify: `e2e/hermetic/prod/fixtures/composite.basket.yaml.tmpl` (`checkpoints: [orchestration, work]`)
 - Modify: `e2e/hermetic/prod/scenarios/40-composite.sh` (add name/occurrence/enclosing hard-asserts)
 
 **Interfaces:**
+
 - Consumes: the reducer's phase-key derivation (`phasekey.Compute(enclosingStepKey, markerName, occurrence)`) and occurrence auto-assignment (`reduce/marker.go::assignOccurrences`).
 
 - [ ] **Step 1: Add an outer top-level `orchestration` phase to `composite.jsonl.tmpl`**
@@ -861,6 +871,7 @@ git commit -m "test(e2e): extend hermetic composite mirror to 3 phases (name/occ
 Extend the existing `w. cost report` to include the new manifests and print a per-basket breakdown. Never fails the run.
 
 **Files:**
+
 - Modify: `e2e/run.sh` (the `w. cost report` block, ~lines 3040–3075)
 
 - [ ] **Step 1: Replace the cost-report Python with a per-basket breakdown**
@@ -934,6 +945,7 @@ git commit -m "test(e2e): cost report — per-basket breakdown, report-only (nev
 Bump the live workflow timeout, update its cost header, add the new baskets to the model-policy guard, and update AGENTS.md.
 
 **Files:**
+
 - Modify: `.github/workflows/e2e-live.yml` (`timeout-minutes`, header comment)
 - Modify: `e2e/run.sh` (cost header comment; model-policy guard basket list)
 - Modify: `AGENTS.md` (E2E row)
@@ -989,6 +1001,7 @@ Expected: all PASS (the new `prod.45` and extended `prod.40` included; nothing e
 - [ ] **Step 2: Dry-run every new basket once more (`$0`)**
 
 Run:
+
 ```bash
 cd e2e
 for b in basket-tokensin basket-redaction basket-nested basket-composite; do
@@ -996,6 +1009,7 @@ for b in basket-tokensin basket-redaction basket-nested basket-composite; do
 done
 cd ..
 ```
+
 Expected: `basket-tokensin: 15`, `basket-redaction: 5`, `basket-nested: 15`, `basket-composite: 15`.
 
 - [ ] **Step 3: Confirm the model-policy guard passes over the real basket files**
@@ -1062,6 +1076,7 @@ Once green, append the observed per-basket cost + total to the design spec's §8
 ## Self-Review
 
 **Spec coverage:**
+
 - §3.1 composite (≥3 phases, name/occurrence/enclosing) → Task 4 (live) + Task 5 (hermetic hard-mirror). ✓
 - §3.2 nested subagents → Task 3. ✓
 - §3.3 live redaction gate → Task 2. ✓
