@@ -724,7 +724,7 @@ for d in "$runs_composite"/bench-e2e-composite-composite-baseline-r*; do
 	[ -f "$snap" ] || continue
 	has_sub=$(grep -c '"type":"subagent"' "$snap" || true)
 	has_skill=$(grep -c '"type":"skill"' "$snap" || true)
-	n_phase=$(grep -o '"phase_key":"[0-9a-f]*"' "$snap" | sort -u | wc -l | tr -d ' ')
+	n_phase=$(grep -o '"phase_key":"[0-9a-f]*"' "$snap" | sort -u | wc -l | tr -d ' ' || true)
 	if [ "$has_sub" -ge 1 ] && [ "$has_skill" -ge 1 ] && [ "$n_phase" -ge 2 ]; then comp_rich=$((comp_rich + 1)); fi
 done
 echo "  LOG   composite rich-node coexistence: $comp_rich baseline run(s) reduced subagent+skill+>=2 phase keys together (informational)"
