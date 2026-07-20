@@ -1,0 +1,21 @@
+# tokens_in continuous-axis basket: does a large INPUT (with a deliberately short
+# output) trip the continuous gate on tokens_in — an axis distinct from the
+# tokens_out gate of basket-continuous.yaml? 1 task x 3 variants x 5 reps = 15
+# cells. baseline/baseline2 send a tiny prompt (A-vs-A control, must NOT gate);
+# bigprompt sends a ~600-line filler prompt (seeded regression: tokens_in far past
+# the band) while still asking for one sentence, so tokens_out stays flat and
+# tokens_in is the sole moving axis. `dir: .` matches basket-continuous.yaml so
+# run.sh's cd into e2e resolves ./bigprompt.sh. Haiku: input tokens are cheap.
+basket: e2e-tokensin
+reps: 5
+tasks:
+  - id: bigprompt
+    cmd: ["./bigprompt.sh"]
+    dir: .
+variants:
+  - id: baseline
+    env: { PROMPT_REPEATS: "0" }
+  - id: bigprompt
+    env: { PROMPT_REPEATS: "600" }
+  - id: baseline2
+    env: { PROMPT_REPEATS: "0" }

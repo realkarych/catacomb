@@ -30,10 +30,11 @@
 #     baseline pin/record and external-scores smokes.
 #
 # MIXED-MODEL POLICY — the mark/multi-step/delegation-sensitive baskets pin
-# CHILD_MODEL: claude-sonnet-5 on five baskets (presence's haiku mark task, sql,
-# subagent, skill, mcp) because claude-haiku-4-5 no longer reliably follows their
-# instructions; the cheap baskets (continuous, the presence `echo` step task, and
-# failmode) stay on the default Haiku. A $0 preflight guardrail (just below the
+# CHILD_MODEL: claude-sonnet-5 on eight baskets (presence's haiku mark task, sql,
+# subagent, skill, mcp, plus the composite/nested/redaction complex baskets) because
+# claude-haiku-4-5 no longer reliably follows their instructions; the cheap baskets
+# (continuous, the presence `echo` step task, failmode, and the tokensin continuous
+# axis) stay on the default Haiku. A $0 preflight guardrail (just below the
 # binary checks) statically enforces this over the real basket files and fails
 # loudly if a sensitive basket loses its Sonnet pin — blocking a silent
 # blanket-Haiku swap that would quietly defang the gate.
@@ -50,10 +51,12 @@
 #
 # See docs/internal/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$3–7 of real API spend (114 bench cells — the presence/continuous/sql +
+# Cost: ~$14–20 of real API spend (164 bench cells — the presence/continuous/sql +
 # subagent/skill/mcp production baskets = 105 cells, the sensitive ones on sonnet,
 # subagent cells spawn children; plus the failmode basket's 9 cells, of which only
-# the 6 live Haiku clean/errseed cells cost a few cents — the 3 prefail cells are $0).
+# the 6 live Haiku clean/errseed cells cost a few cents — the 3 prefail cells are $0;
+# plus the four complex baskets — composite/nested/redaction on sonnet + tokensin on
+# haiku = 50 cells — added alongside a report-only per-basket cost total in the summary).
 #
 # CODEX SIDE — an OPTIONAL codex leg runs after the claude baskets when the codex
 # CLI is present AND authenticated (stored `codex login` or CODEX_API_KEY), and
@@ -134,19 +137,20 @@ repo="$(cd "$e2e_dir/.." && pwd)"
 export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # --- model-policy guardrail (Task 10) -----------------------------------------
-# The mixed Haiku+Sonnet policy is DELIBERATE, not incidental: the five
+# The mixed Haiku+Sonnet policy is DELIBERATE, not incidental: the eight
 # delegation-sensitive baskets — presence (the haiku checkpoint-mark task), sql,
-# subagent, skill, and mcp — pin CHILD_MODEL: claude-sonnet-5 because
-# claude-haiku-4-5 no longer reliably follows their mark / multi-step / delegation
-# instructions (each basket's own comment records the measured baseline failure).
+# subagent, skill, mcp, and the composite/nested/redaction complex baskets — pin
+# CHILD_MODEL: claude-sonnet-5 because claude-haiku-4-5 no longer reliably follows
+# their mark / multi-step / delegation instructions (each basket's own comment
+# records the measured baseline failure).
 # A silent blanket-Haiku swap would re-introduce those failures and quietly defang
 # the gate, so this $0 static check over the REAL basket files fails loudly and
 # early if any sensitive basket loses its Sonnet pin. The cheap baskets —
-# continuous, the presence `echo` step task, and failmode — stay on the default
-# Haiku, and are asserted to NOT pin Sonnet. Runs on every invocation, before any
-# spend; no fixtures, no auth, no network.
+# continuous, the presence `echo` step task, failmode, and the tokensin continuous
+# axis — stay on the default Haiku, and are asserted to NOT pin Sonnet. Runs on
+# every invocation, before any spend; no fixtures, no auth, no network.
 sonnet_pin='CHILD_MODEL: claude-sonnet-5'
-for b in basket-presence.yaml basket-sql.yaml basket-subagent.yaml basket-skill.yaml basket-mcp.yaml; do
+for b in basket-presence.yaml basket-sql.yaml basket-subagent.yaml basket-skill.yaml basket-mcp.yaml basket-composite.yaml basket-nested.yaml basket-redaction.yaml; do
 	grep -q "$sonnet_pin" "$e2e_dir/$b" ||
 		fatal "model-policy guardrail: $b lost its Sonnet pin ('$sonnet_pin') — a delegation-sensitive basket must NOT default to Haiku (a blanket-Haiku swap would re-introduce the measured mark/sql/delegation failures)"
 done
@@ -156,7 +160,7 @@ presence_pins="$(grep -c "$sonnet_pin" "$e2e_dir/basket-presence.yaml" || true)"
 [ "$presence_pins" -eq 1 ] ||
 	fatal "model-policy guardrail: basket-presence.yaml has $presence_pins Sonnet pins (want exactly 1 — the haiku checkpoint-mark task; the echo step task must stay on Haiku)"
 # The cheap baskets must NOT pin Sonnet (they default to Haiku).
-for b in basket-continuous.yaml basket-failmode.yaml; do
+for b in basket-continuous.yaml basket-failmode.yaml basket-tokensin.yaml; do
 	if grep -q "$sonnet_pin" "$e2e_dir/$b"; then
 		fatal "model-policy guardrail: $b pins Sonnet ('$sonnet_pin') but must stay on the default Haiku (the mixed-model policy keeps Sonnet off the cheap baskets)"
 	fi
@@ -189,6 +193,31 @@ manifest8="$work/manifest-failmode.jsonl"
 manifest9="$work/manifest-codex-mcp.jsonl"
 manifest10="$work/manifest-codex-subagent.jsonl"
 manifest11="$work/manifest-codex-skill.jsonl"
+# tokens_in continuous-axis basket (step u2-u4): descriptively named — not part of
+# the numbered runsN/manifestN series. bench MkdirAll's the runs dir on first cell,
+# so runs_tokensin needs no entry in the mkdir below. manifest_tokensin feeds Task 7's
+# cost report.
+runs_tokensin="$work/runs-tokensin"
+manifest_tokensin="$work/manifest-tokensin.jsonl"
+# Live redaction basket (step u5-u7): the LIVE capture+redaction seam. Same
+# descriptive-name convention as the tokens_in vars above; bench MkdirAll's the runs
+# dir on the first cell, so runs_redaction needs no mkdir entry. manifest_redaction
+# feeds Task 7's cost report.
+runs_redaction="$work/runs-redaction"
+manifest_redaction="$work/manifest-redaction.jsonl"
+# Live nested-subagent basket (step u8-u10): two FORCED levels of delegation. Same
+# descriptive-name convention as the tokens_in/redaction vars above; bench MkdirAll's
+# the runs dir on the first cell, so runs_nested needs no mkdir entry. manifest_nested
+# feeds Task 7's cost report.
+runs_nested="$work/runs-nested"
+manifest_nested="$work/manifest-nested.jsonl"
+# Live composite mega-basket (step u11-u13): subagent + THREE distinct phases + skill +
+# verifier co-existing in one reduced graph. Same descriptive-name convention as the
+# tokens_in/redaction/nested vars above; bench MkdirAll's the runs dir on the first
+# cell, so runs_composite needs no mkdir entry. manifest_composite feeds Task 7's cost
+# report.
+runs_composite="$work/runs-composite"
+manifest_composite="$work/manifest-composite.jsonl"
 db="$work/e2e.db"
 mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8" \
 	"$runs9" "$runs10" "$runs11"
@@ -225,6 +254,10 @@ copy_artifacts() {
 	cp -f "$manifest9" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest10" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest11" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_tokensin" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_redaction" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_nested" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_composite" "$artifacts"/ 2>/dev/null || true
 	rm -rf "$sqlout" 2>/dev/null || true
 }
 trap copy_artifacts EXIT
@@ -2217,6 +2250,151 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-mcp-AvA.json" || rc=$?
 record "$rc" "mcp A-vs-A reports zero regressions"
 
+echo "== u2. bench e2e-tokensin basket (15 live claude -p cells) — the tokens_in continuous axis =="
+run_expect 0 "bench e2e-tokensin basket" -- \
+	catacomb bench basket-tokensin.yaml --runs-dir "$runs_tokensin" --manifest "$manifest_tokensin"
+
+echo "== u3. tokens_in seeded regression (baseline vs bigprompt) must gate on the tokens_in axis =="
+run_json 1 "$artifacts/regress-tokensin-seeded.json" \
+	"tokens_in seeded regression (baseline vs bigprompt)" -- \
+	catacomb regress --runs-dir "$runs_tokensin" \
+	--baseline label:basket=e2e-tokensin,variant=baseline \
+	--candidate label:basket=e2e-tokensin,variant=bigprompt --json
+rc=0
+python3 - "$artifacts/regress-tokensin-seeded.json" <<'PY' || rc=$?
+import json, sys
+rep = json.load(open(sys.argv[1]))
+hit = [f for f in rep.get("findings", [])
+       if f.get("metric") == "tokens_in" and f.get("verdict") in ("regression", "notable")]
+if not hit:
+    print("no tokens_in regression/notable finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict")}, file=sys.stderr)
+    sys.exit(1)
+print("tokens_in gate fires:", ", ".join(f"{f['scope']}:{f['verdict']}" for f in hit))
+PY
+record "$rc" "tokens_in seeded regression gates on the tokens_in continuous axis (baseline vs bigprompt)"
+
+echo "== u4. tokens_in A-vs-A control (baseline vs baseline2) must NOT gate =="
+run_json 0 "$artifacts/regress-tokensin-AvA.json" \
+	"tokens_in A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs_tokensin" \
+	--baseline label:basket=e2e-tokensin,variant=baseline \
+	--candidate label:basket=e2e-tokensin,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-tokensin-AvA.json" || rc=$?
+record "$rc" "tokens_in A-vs-A reports zero regressions"
+
+echo "== u5. bench e2e-redaction basket (5 live claude -p cells) — live secret redaction seam =="
+run_expect 0 "bench e2e-redaction basket" -- \
+	catacomb bench basket-redaction.yaml --runs-dir "$runs_redaction" --manifest "$manifest_redaction"
+
+echo "== u6. live redaction: raw fake token ABSENT from all captured evidence; placeholder present in a majority =="
+# The fake token is assembled the SAME way the basket workspace assembles it, so
+# this driver never carries a committed secret-shaped line either.
+red_p="ghp_"; red_b="FAKEfakeFAKEfake0123456789ABCDEF012345"; red_token="${red_p}${red_b}"
+red_total=0; red_leaks=0; red_placeholder_hits=0
+for d in "$runs_redaction"/bench-e2e-redaction-redaction-baseline-r*; do
+	[ -f "$d/session.jsonl" ] || continue
+	red_total=$((red_total + 1))
+	if grep -Fq "$red_token" "$d/session.jsonl"; then red_leaks=$((red_leaks + 1)); fi
+	if grep -Fq '‹redacted:github-token›' "$d/session.jsonl"; then red_placeholder_hits=$((red_placeholder_hits + 1)); fi
+done
+rc=0
+[ "$red_leaks" -eq 0 ] || rc=1
+record "$rc" "live redaction: raw fake token absent from ALL captured session.jsonl ($red_leaks leaks in $red_total runs)"
+rc=0
+[ "$red_placeholder_hits" -ge 3 ] || rc=1
+record "$rc" "live redaction non-vacuity: ‹redacted:github-token› placeholder present in a majority of runs ($red_placeholder_hits/$red_total >=3)"
+
+echo "== u7. live redaction: pack (third-party-auditor bundle) also scrubbed =="
+run_json 0 "$artifacts/redaction-pack.out" "pack e2e-redaction for external audit" -- \
+	catacomb pack label:basket=e2e-redaction --runs-dir "$runs_redaction" --out "$work/redaction-pack"
+rc=0
+if grep -Frq "$red_token" "$work/redaction-pack" 2>/dev/null; then rc=1; fi
+record "$rc" "live redaction: packed bundle contains no raw fake token"
+
+echo "== u8. bench e2e-nested basket (15 live claude -p cells) — two-level subagent nesting =="
+run_expect 0 "bench e2e-nested basket" -- \
+	catacomb bench basket-nested.yaml --runs-dir "$runs_nested" --manifest "$manifest_nested"
+
+echo "== u9. nested-subagent depth separation (seeded regression): baseline reduces >=2 subagent nodes, degraded <=1 =="
+# Depth is the count of distinct subagent nodes reduced from the FULL evidence
+# (session.jsonl + subagents/agent-*.jsonl): baseline forces two levels (>=2 nodes),
+# degraded one level (1 node). Tolerant of live jitter/timeouts (they only shrink the
+# denominator), like step n.
+count_subagent_depth() { # <variant> -> "hits total" where hits = runs with >=2 subagent nodes
+	local variant="$1" hits=0 total=0 d comb snap sf n
+	for d in "$runs_nested"/bench-e2e-nested-nested-"$variant"-r*; do
+		[ -f "$d/session.jsonl" ] || continue
+		total=$((total + 1))
+		comb="$work/nested-comb-$(basename "$d").jsonl"
+		cat "$d/session.jsonl" > "$comb"
+		for sf in "$d"/subagents/agent-*.jsonl; do
+			[ -f "$sf" ] && cat "$sf" >> "$comb"
+		done
+		snap="$work/nested-full-$(basename "$d").jsonl"
+		catacomb replay "$comb" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+		n=$(grep -o '"type":"subagent"' "$snap" | wc -l | tr -d ' ')
+		if [ "$n" -ge 2 ]; then hits=$((hits + 1)); fi
+	done
+	printf '%s %s' "$hits" "$total"
+}
+read -r nested_base_hits nested_base_total <<<"$(count_subagent_depth baseline)"
+read -r nested_deg_hits nested_deg_total <<<"$(count_subagent_depth degraded)"
+read -r nested_base2_hits nested_base2_total <<<"$(count_subagent_depth baseline2)"
+rc=0
+{ [ "$nested_base_hits" -ge 3 ] && [ "$nested_deg_hits" -le 1 ]; } || rc=1
+record "$rc" "nested depth: >=2 subagent nodes in a majority of baseline runs, <=1 in degraded (baseline $nested_base_hits/$nested_base_total >=3 vs degraded $nested_deg_hits/$nested_deg_total <=1)"
+
+echo "== u10. nested A-vs-A depth specificity: baseline2 also nests in a majority (no spurious separation) =="
+rc=0
+[ "$nested_base2_hits" -ge 3 ] || rc=1
+record "$rc" "nested A-vs-A: baseline2 also reaches depth 2 in a majority ($nested_base2_hits/$nested_base2_total >=3)"
+
+echo "== u11. bench e2e-composite basket (15 live claude -p cells) — subagent+phases+skill+verifier in one session =="
+run_expect 0 "bench e2e-composite basket" -- \
+	catacomb bench basket-composite.yaml --runs-dir "$runs_composite" --manifest "$manifest_composite"
+
+echo "== u12. composite subagent-presence separation (seeded regression): baseline delegates in a majority, degraded near-never =="
+count_composite_subagents() { # <variant> -> "hits total"
+	local variant="$1" hits=0 total=0 d comb snap sf
+	for d in "$runs_composite"/bench-e2e-composite-composite-"$variant"-r*; do
+		[ -f "$d/session.jsonl" ] || continue
+		total=$((total + 1))
+		comb="$work/composite-comb-$(basename "$d").jsonl"
+		cat "$d/session.jsonl" > "$comb"
+		for sf in "$d"/subagents/agent-*.jsonl; do
+			[ -f "$sf" ] && cat "$sf" >> "$comb"
+		done
+		snap="$work/composite-full-$(basename "$d").jsonl"
+		catacomb replay "$comb" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+		if grep -q '"type":"subagent"' "$snap"; then hits=$((hits + 1)); fi
+	done
+	printf '%s %s' "$hits" "$total"
+}
+read -r comp_base_hits comp_base_total <<<"$(count_composite_subagents baseline)"
+read -r comp_deg_hits comp_deg_total <<<"$(count_composite_subagents degraded)"
+rc=0
+{ [ "$comp_base_hits" -ge 3 ] && [ "$comp_deg_hits" -le 1 ]; } || rc=1
+record "$rc" "composite delegation: subagent node in a majority of baseline runs, absent in degraded (baseline $comp_base_hits/$comp_base_total >=3 vs degraded $comp_deg_hits/$comp_deg_total <=1)"
+
+echo "== u13. composite rich-node coexistence (LOGGED — soft-live; hard-asserted in hermetic 40-composite.sh) =="
+# Multi-action subagent obedience is stochastic on sonnet, so this is informational.
+# It reports how many baseline runs reduced subagent + skill + >=2 distinct phase keys
+# together; the hermetic 40-composite.sh asserts the deterministic version.
+comp_rich=0
+for d in "$runs_composite"/bench-e2e-composite-composite-baseline-r*; do
+	snap="$work/composite-full-$(basename "$d").jsonl"
+	[ -f "$snap" ] || continue
+	has_sub=$(grep -c '"type":"subagent"' "$snap" || true)
+	has_skill=$(grep -c '"type":"skill"' "$snap" || true)
+	n_phase=$(grep -o '"phase_key":"[0-9a-f]*"' "$snap" | sort -u | wc -l | tr -d ' ' || true)
+	if [ "$has_sub" -ge 1 ] && [ "$has_skill" -ge 1 ] && [ "$n_phase" -ge 2 ]; then comp_rich=$((comp_rich + 1)); fi
+done
+echo "  LOG   composite rich-node coexistence: $comp_rich baseline run(s) reduced subagent+skill+>=2 phase keys together (informational)"
+
 echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells) =="
 # The codex leg is OPTIONAL: unlike claude (hard-required at the top of this
 # driver), a missing or unauthenticated codex CLI SKIPS this section and leaves
@@ -3040,24 +3218,44 @@ print(f"baseline list after rm: e2e-presence-main absent (remaining: {names!r})"
 PY
 record "$rc" "baseline list no longer shows e2e-presence-main after rm"
 
-echo "== w. cost report =="
-python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$manifest8" "$artifacts/cost.txt" <<'PY'
+echo "== w. cost report (informational — never fails the run) =="
+python3 - "$artifacts/cost.txt" <<PY || true
 import json, sys
 
+manifests = {
+    "presence": "$manifest1",
+    "continuous": "$manifest2",
+    "sql": "$manifest3",
+    "subagent": "$manifest4",
+    "skill": "$manifest5",
+    "mcp": "$manifest6",
+    "failmode": "$manifest8",
+    "tokensin": "$manifest_tokensin",
+    "redaction": "$manifest_redaction",
+    "nested": "$manifest_nested",
+    "composite": "$manifest_composite",
+}
+out = open(sys.argv[1], "w")
 total = 0.0
-for p in sys.argv[1:8]:
+for name, path in manifests.items():
+    sub = 0.0
     try:
-        for line in open(p):
+        for line in open(path):
             line = line.strip()
             if not line:
                 continue
             c = json.loads(line).get("cost_usd")
             if isinstance(c, (int, float)):
-                total += c
-    except FileNotFoundError:
-        pass
-open(sys.argv[8], "w").write(f"total live spend: ${total:.2f}\n")
-print(f"total live spend: ${total:.2f}")
+                sub += c
+    except (OSError, ValueError):
+        continue
+    total += sub
+    msg = f"  {name:<11} \${sub:.2f}"
+    print(msg)
+    out.write(msg + "\n")
+msg = f"total live spend: \${total:.2f} (target \$20; report-only, never fails the run)"
+print(msg)
+out.write(msg + "\n")
 PY
 # The codex leg is token-billed and codex reports NO cost_usd, so it can never be
 # part of the dollar total above — note it separately so the spend record is honest.

@@ -1,0 +1,41 @@
+# Live composite mega-basket: one session exercising subagent + THREE distinct phases
+# (distinct name / occurrence / subagent-enclosing step key) + skill + verifiable
+# artifact together — the reducer path where all node types co-exist, never run on
+# live evidence. 1 task x 3 variants x 5 reps = 15 cells. baseline/baseline2: main has
+# ONLY Task + mark (marks the outer orchestration phase, must delegate); the
+# general-purpose subagent marks the inner work phase twice (occ 0/1), invokes the
+# e2e-emit skill, writes out/result.csv. degraded: main has mark + Skill + Write and NO
+# Task -> inline, one phase, no skill -> drops the subagent node (primary gate), the
+# skill node, and the two subagent-scoped work phases. The gate (run.sh) is the FORCED
+# subagent-presence separation; the phase/skill co-existence is LOGGED live and
+# hard-asserted in the hermetic 40-composite.sh. The workspace stages the skill dir,
+# copies wrapper + verifier, and the mark tool is served by `catacomb mcp` via mcp.json.
+# Sonnet for reliable multi-step obedience.
+basket: e2e-composite
+reps: 5
+tasks:
+  - id: composite
+    cmd: ["./composite.sh"]
+    workspace:
+      cmd: ["sh", "-c", "mkdir -p .claude/skills && cp -R \"$E2E_DIR\"/skills/e2e-emit .claude/skills/ && cp \"$E2E_DIR\"/composite.sh \"$E2E_DIR\"/verify_emit.py \"$E2E_DIR\"/mcp.json ."]
+    timeout: 420s
+    checkpoints: [orchestration, work]
+    artifacts: ["out/result.csv"]
+    verify:
+      cmd: ["python3", "./verify_emit.py"]
+      timeout: 30s
+    env:
+      CHILD_MODEL: claude-sonnet-5
+variants:
+  - id: baseline
+    env:
+      COMPOSITE_TOOLS: "Task,mcp__catacomb__mark"
+      COMPOSITE_INSTRUCTION: "Call mcp__catacomb__mark with name=orchestration boundary=start. Then spawn a subagent (Task, subagent_type general-purpose) and instruct it to, in order: call mcp__catacomb__mark name=work boundary=start; use the e2e-emit skill to produce out/result.csv; call mcp__catacomb__mark name=work boundary=end; call mcp__catacomb__mark name=work boundary=start again; call mcp__catacomb__mark name=work boundary=end again. After the subagent returns, call mcp__catacomb__mark with name=orchestration boundary=end. You have no other tools; you MUST delegate the file work."
+  - id: degraded
+    env:
+      COMPOSITE_TOOLS: "mcp__catacomb__mark,Skill,Write"
+      COMPOSITE_INSTRUCTION: "Call mcp__catacomb__mark with name=orchestration boundary=start. Then, WITHOUT using any skill and WITHOUT delegating, write exactly the text CATACOMB-SKILL-OK to out/result.csv using the Write tool. Then call mcp__catacomb__mark with name=orchestration boundary=end."
+  - id: baseline2
+    env:
+      COMPOSITE_TOOLS: "Task,mcp__catacomb__mark"
+      COMPOSITE_INSTRUCTION: "Call mcp__catacomb__mark with name=orchestration boundary=start. Then spawn a subagent (Task, subagent_type general-purpose) and instruct it to, in order: call mcp__catacomb__mark name=work boundary=start; use the e2e-emit skill to produce out/result.csv; call mcp__catacomb__mark name=work boundary=end; call mcp__catacomb__mark name=work boundary=start again; call mcp__catacomb__mark name=work boundary=end again. After the subagent returns, call mcp__catacomb__mark with name=orchestration boundary=end. You have no other tools; you MUST delegate the file work."

@@ -1,0 +1,22 @@
+# Live redaction basket: a real claude -p session emits a fake secret-shaped token
+# through a Bash tool_result; the captured evidence must scrub it. This proves the
+# LIVE capture+redaction seam (ADR-0008) end-to-end, which no other live basket
+# does. 1 variant x 5 reps = 5 cells (an invariant/moat, not an A-vs-A gate — the
+# hard redaction-policy-regression proof lives in the hermetic 60-redaction.sh).
+# The workspace assembles the fake ghp_ token at RUNTIME from inert chunks so no
+# committed line is itself secret-shaped (gitleaks scans committed lines), writes
+# it to secret.txt, and copies the wrapper from E2E_DIR. Sonnet for reliable
+# cat-then-write obedience.
+basket: e2e-redaction
+reps: 5
+tasks:
+  - id: redaction
+    cmd: ["./redaction.sh"]
+    workspace:
+      cmd: ["sh", "-c", "cp \"$E2E_DIR\"/redaction.sh . && p=ghp_ && b=FAKEfakeFAKEfake0123456789ABCDEF012345 && printf '%s%s' \"$p\" \"$b\" > secret.txt"]
+    timeout: 180s
+    env:
+      CHILD_MODEL: claude-sonnet-5
+variants:
+  - id: baseline
+    env: {}

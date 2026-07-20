@@ -15,7 +15,11 @@
 #     baseline (CATACOMB-OK), 0/5 in degraded (WRONG) (metric=ann:verifier.pass,
 #     verdict=regression).
 # Both the phase and annotation drops are regressions, so the composite comparison
-# gates under a plain `regress --json` (exit 1) without --fail-on-notable. A-vs-A
+# gates under a plain `regress --json` (exit 1) without --fail-on-notable. The baseline
+# also reduces three DISTINCT phase keys, exercising every axis of phasekey.Compute:
+# a top-level `orchestration` phase (distinct name), the subagent-scoped `work` phase
+# marked twice (occurrence 0 and 1), and its subagent-enclosing step key — asserted
+# directly against the reduced snapshot. A-vs-A
 # (baseline vs baseline2) stays clean. PYTHONPATH carries the verifier SDK so the verify
 # hook can import catacomb_verifier. Sourced by run.sh with lib.sh loaded and
 # PROD/WORK/HERMETIC_* exported. Zero API spend.
@@ -65,6 +69,43 @@ if not hits:
 print("phase-scope regression present (work marker dropped in degraded)")
 PY
 record "$rc" "regress attributes a PHASE-scope regression to the dropped work marker"
+
+echo "== prod.40 composite: >=3 distinct phase keys (name / occurrence / enclosing) =="
+base_dir=$(find "$w/runs" -type d -name 'bench-prod-composite-composite-baseline-r*' | sort | head -1)
+snap="$w/base.snap.jsonl"
+catacomb replay "$base_dir/session.jsonl" --export-jsonl "$snap" >/dev/null 2>&1 || true
+rc=0; python3 - "$snap" <<'PY' || rc=$?
+import json, sys
+names, keys = set(), set()
+work_occ = 0
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    o = json.loads(line)
+    if o.get("kind") == "marker" or o.get("type") == "marker":
+        n = o.get("name") or o.get("marker") or ""
+        k = o.get("phase_key")
+        if n:
+            names.add(n)
+        if k:
+            keys.add(k)
+        if n == "work":
+            work_occ += 1
+errs = []
+if not {"orchestration", "work"} <= names:
+    errs.append(f"want phases orchestration+work, got names={sorted(names)}")
+if work_occ < 2:
+    errs.append(f"want work marked twice (occurrence axis), got {work_occ}")
+if len(keys) < 3:
+    errs.append(f"want >=3 distinct phase keys (name/occurrence/enclosing), got {len(keys)}: {sorted(keys)}")
+if errs:
+    for e in errs:
+        print("  -", e, file=sys.stderr)
+    sys.exit(1)
+print(f"composite reduces {len(keys)} distinct phase keys across names={sorted(names)}, work occurrences={work_occ}")
+PY
+record "$rc" "composite reduces >=3 distinct phase keys (distinct name, repeated-work occurrence, subagent-enclosing step key)"
 
 echo "== prod.40 composite: A-vs-A must NOT gate =="
 run_json 0 "$w/ava.json" "A-vs-A must NOT gate" -- \
