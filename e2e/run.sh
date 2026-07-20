@@ -189,6 +189,12 @@ manifest8="$work/manifest-failmode.jsonl"
 manifest9="$work/manifest-codex-mcp.jsonl"
 manifest10="$work/manifest-codex-subagent.jsonl"
 manifest11="$work/manifest-codex-skill.jsonl"
+# tokens_in continuous-axis basket (step u2-u4): descriptively named — not part of
+# the numbered runsN/manifestN series. bench MkdirAll's the runs dir on first cell,
+# so runs_tokensin needs no entry in the mkdir below. manifest_tokensin feeds Task 7's
+# cost report.
+runs_tokensin="$work/runs-tokensin"
+manifest_tokensin="$work/manifest-tokensin.jsonl"
 db="$work/e2e.db"
 mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8" \
 	"$runs9" "$runs10" "$runs11"
@@ -2216,6 +2222,42 @@ run_json 0 "$artifacts/regress-mcp-AvA.json" \
 rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-mcp-AvA.json" || rc=$?
 record "$rc" "mcp A-vs-A reports zero regressions"
+
+echo "== u2. bench e2e-tokensin basket (15 live claude -p cells) — the tokens_in continuous axis =="
+run_expect 0 "bench e2e-tokensin basket" -- \
+	catacomb bench basket-tokensin.yaml --runs-dir "$runs_tokensin" --manifest "$manifest_tokensin"
+
+echo "== u3. tokens_in seeded regression (baseline vs bigprompt) must gate on the tokens_in axis =="
+run_json 1 "$artifacts/regress-tokensin-seeded.json" \
+	"tokens_in seeded regression (baseline vs bigprompt)" -- \
+	catacomb regress --runs-dir "$runs_tokensin" \
+	--baseline label:basket=e2e-tokensin,variant=baseline \
+	--candidate label:basket=e2e-tokensin,variant=bigprompt --json
+rc=0
+python3 - "$artifacts/regress-tokensin-seeded.json" <<'PY' || rc=$?
+import json, sys
+rep = json.load(open(sys.argv[1]))
+hit = [f for f in rep.get("findings", [])
+       if f.get("metric") == "tokens_in" and f.get("verdict") in ("regression", "notable")]
+if not hit:
+    print("no tokens_in regression/notable finding; findings were:", file=sys.stderr)
+    for f in rep.get("findings", []):
+        print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict")}, file=sys.stderr)
+    sys.exit(1)
+print("tokens_in gate fires:", ", ".join(f"{f['scope']}:{f['verdict']}" for f in hit))
+PY
+record "$rc" "tokens_in seeded regression gates on the tokens_in continuous axis (baseline vs bigprompt)"
+
+echo "== u4. tokens_in A-vs-A control (baseline vs baseline2) must NOT gate =="
+run_json 0 "$artifacts/regress-tokensin-AvA.json" \
+	"tokens_in A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs_tokensin" \
+	--baseline label:basket=e2e-tokensin,variant=baseline \
+	--candidate label:basket=e2e-tokensin,variant=baseline2 \
+	--metric-rel-delta "$ava_metric_band" --json
+rc=0
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-tokensin-AvA.json" || rc=$?
+record "$rc" "tokens_in A-vs-A reports zero regressions"
 
 echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells) =="
 # The codex leg is OPTIONAL: unlike claude (hard-required at the top of this
