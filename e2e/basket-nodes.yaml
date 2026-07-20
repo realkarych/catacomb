@@ -1,0 +1,24 @@
+# nodes continuous-axis basket: does a session that makes MANY tool calls trip the
+# continuous gate on `nodes` (graph node count) — a structural axis distinct from
+# tokens_out and independent of billing mode? 1 task x 3 variants x 5 reps = 15 cells.
+# baseline/baseline2 read a 1-link chain (few nodes, the A-vs-A control); manynodes
+# follows a 6-link chain -> ~6 Read step nodes -> the seeded `nodes` regression. The
+# wrapper builds the chain from CHAIN_LEN and the reads are structurally forced (each
+# file names the next). Each cell runs in a fresh per-cell workspace (the wrapper writes
+# link*.txt into the cell's own cwd) so chains never collide. Haiku: reads are cheap and
+# the chain-follow is a simple loop.
+basket: e2e-nodes
+reps: 5
+tasks:
+  - id: nodechain
+    cmd: ["./nodechain.sh"]
+    workspace:
+      cmd: ["sh", "-c", "cp \"$E2E_DIR\"/nodechain.sh ."]
+    timeout: 120s
+variants:
+  - id: baseline
+    env: { CHAIN_LEN: "1" }
+  - id: manynodes
+    env: { CHAIN_LEN: "6" }
+  - id: baseline2
+    env: { CHAIN_LEN: "1" }

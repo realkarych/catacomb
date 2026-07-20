@@ -33,7 +33,7 @@
 # CHILD_MODEL: claude-sonnet-5 on eight baskets (presence's haiku mark task, sql,
 # subagent, skill, mcp, plus the composite/nested/redaction complex baskets) because
 # claude-haiku-4-5 no longer reliably follows their instructions; the cheap baskets
-# (continuous, the presence `echo` step task, failmode, and the tokensin continuous
+# (continuous, the presence `echo` step task, failmode, and the nodes continuous
 # axis) stay on the default Haiku. A $0 preflight guardrail (just below the
 # binary checks) statically enforces this over the real basket files and fails
 # loudly if a sensitive basket loses its Sonnet pin — blocking a silent
@@ -55,7 +55,7 @@
 # subagent/skill/mcp production baskets = 105 cells, the sensitive ones on sonnet,
 # subagent cells spawn children; plus the failmode basket's 9 cells, of which only
 # the 6 live Haiku clean/errseed cells cost a few cents — the 3 prefail cells are $0;
-# plus the four complex baskets — composite/nested/redaction on sonnet + tokensin on
+# plus the four complex baskets — composite/nested/redaction on sonnet + nodes on
 # haiku = 50 cells — added alongside a report-only per-basket cost total in the summary).
 #
 # CODEX SIDE — an OPTIONAL codex leg runs after the claude baskets when the codex
@@ -146,7 +146,7 @@ export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 # A silent blanket-Haiku swap would re-introduce those failures and quietly defang
 # the gate, so this $0 static check over the REAL basket files fails loudly and
 # early if any sensitive basket loses its Sonnet pin. The cheap baskets —
-# continuous, the presence `echo` step task, failmode, and the tokensin continuous
+# continuous, the presence `echo` step task, failmode, and the nodes continuous
 # axis — stay on the default Haiku, and are asserted to NOT pin Sonnet. Runs on
 # every invocation, before any spend; no fixtures, no auth, no network.
 sonnet_pin='CHILD_MODEL: claude-sonnet-5'
@@ -160,7 +160,7 @@ presence_pins="$(grep -c "$sonnet_pin" "$e2e_dir/basket-presence.yaml" || true)"
 [ "$presence_pins" -eq 1 ] ||
 	fatal "model-policy guardrail: basket-presence.yaml has $presence_pins Sonnet pins (want exactly 1 — the haiku checkpoint-mark task; the echo step task must stay on Haiku)"
 # The cheap baskets must NOT pin Sonnet (they default to Haiku).
-for b in basket-continuous.yaml basket-failmode.yaml basket-tokensin.yaml; do
+for b in basket-continuous.yaml basket-failmode.yaml basket-nodes.yaml; do
 	if grep -q "$sonnet_pin" "$e2e_dir/$b"; then
 		fatal "model-policy guardrail: $b pins Sonnet ('$sonnet_pin') but must stay on the default Haiku (the mixed-model policy keeps Sonnet off the cheap baskets)"
 	fi
@@ -193,27 +193,27 @@ manifest8="$work/manifest-failmode.jsonl"
 manifest9="$work/manifest-codex-mcp.jsonl"
 manifest10="$work/manifest-codex-subagent.jsonl"
 manifest11="$work/manifest-codex-skill.jsonl"
-# tokens_in continuous-axis basket (step u2-u4): descriptively named — not part of
+# nodes continuous-axis basket (step u2-u4): descriptively named — not part of
 # the numbered runsN/manifestN series. bench MkdirAll's the runs dir on first cell,
-# so runs_tokensin needs no entry in the mkdir below. manifest_tokensin feeds Task 7's
+# so runs_nodes needs no entry in the mkdir below. manifest_nodes feeds Task 7's
 # cost report.
-runs_tokensin="$work/runs-tokensin"
-manifest_tokensin="$work/manifest-tokensin.jsonl"
+runs_nodes="$work/runs-nodes"
+manifest_nodes="$work/manifest-nodes.jsonl"
 # Live redaction basket (step u5-u7): the LIVE capture+redaction seam. Same
-# descriptive-name convention as the tokens_in vars above; bench MkdirAll's the runs
+# descriptive-name convention as the nodes vars above; bench MkdirAll's the runs
 # dir on the first cell, so runs_redaction needs no mkdir entry. manifest_redaction
 # feeds Task 7's cost report.
 runs_redaction="$work/runs-redaction"
 manifest_redaction="$work/manifest-redaction.jsonl"
 # Live nested-subagent basket (step u8-u10): two FORCED levels of delegation. Same
-# descriptive-name convention as the tokens_in/redaction vars above; bench MkdirAll's
+# descriptive-name convention as the nodes/redaction vars above; bench MkdirAll's
 # the runs dir on the first cell, so runs_nested needs no mkdir entry. manifest_nested
 # feeds Task 7's cost report.
 runs_nested="$work/runs-nested"
 manifest_nested="$work/manifest-nested.jsonl"
 # Live composite mega-basket (step u11-u13): subagent + THREE distinct phases + skill +
 # verifier co-existing in one reduced graph. Same descriptive-name convention as the
-# tokens_in/redaction/nested vars above; bench MkdirAll's the runs dir on the first
+# nodes/redaction/nested vars above; bench MkdirAll's the runs dir on the first
 # cell, so runs_composite needs no mkdir entry. manifest_composite feeds Task 7's cost
 # report.
 runs_composite="$work/runs-composite"
@@ -254,7 +254,7 @@ copy_artifacts() {
 	cp -f "$manifest9" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest10" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest11" "$artifacts"/ 2>/dev/null || true
-	cp -f "$manifest_tokensin" "$artifacts"/ 2>/dev/null || true
+	cp -f "$manifest_nodes" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest_redaction" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest_nested" "$artifacts"/ 2>/dev/null || true
 	cp -f "$manifest_composite" "$artifacts"/ 2>/dev/null || true
@@ -2250,41 +2250,41 @@ rc=0
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-mcp-AvA.json" || rc=$?
 record "$rc" "mcp A-vs-A reports zero regressions"
 
-echo "== u2. bench e2e-tokensin basket (15 live claude -p cells) — the tokens_in continuous axis =="
-run_expect 0 "bench e2e-tokensin basket" -- \
-	catacomb bench basket-tokensin.yaml --runs-dir "$runs_tokensin" --manifest "$manifest_tokensin"
+echo "== u2. bench e2e-nodes basket (15 live claude -p cells) — the nodes (graph node count) continuous axis =="
+run_expect 0 "bench e2e-nodes basket" -- \
+	catacomb bench basket-nodes.yaml --runs-dir "$runs_nodes" --manifest "$manifest_nodes"
 
-echo "== u3. tokens_in seeded regression (baseline vs bigprompt) must gate on the tokens_in axis =="
-run_json 1 "$artifacts/regress-tokensin-seeded.json" \
-	"tokens_in seeded regression (baseline vs bigprompt)" -- \
-	catacomb regress --runs-dir "$runs_tokensin" \
-	--baseline label:basket=e2e-tokensin,variant=baseline \
-	--candidate label:basket=e2e-tokensin,variant=bigprompt --json
+echo "== u3. nodes seeded regression (baseline vs manynodes) must gate on the nodes axis =="
+run_json 1 "$artifacts/regress-nodes-seeded.json" \
+	"nodes seeded regression (baseline vs manynodes)" -- \
+	catacomb regress --runs-dir "$runs_nodes" \
+	--baseline label:basket=e2e-nodes,variant=baseline \
+	--candidate label:basket=e2e-nodes,variant=manynodes --json
 rc=0
-python3 - "$artifacts/regress-tokensin-seeded.json" <<'PY' || rc=$?
+python3 - "$artifacts/regress-nodes-seeded.json" <<'PY' || rc=$?
 import json, sys
 rep = json.load(open(sys.argv[1]))
 hit = [f for f in rep.get("findings", [])
-       if f.get("metric") == "tokens_in" and f.get("verdict") in ("regression", "notable")]
+       if f.get("metric") == "nodes" and f.get("verdict") in ("regression", "notable")]
 if not hit:
-    print("no tokens_in regression/notable finding; findings were:", file=sys.stderr)
+    print("no nodes regression/notable finding; findings were:", file=sys.stderr)
     for f in rep.get("findings", []):
         print("  ", {k: f.get(k) for k in ("scope", "metric", "verdict")}, file=sys.stderr)
     sys.exit(1)
-print("tokens_in gate fires:", ", ".join(f"{f['scope']}:{f['verdict']}" for f in hit))
+print("nodes gate fires:", ", ".join(f"{f['scope']}:{f['verdict']}" for f in hit))
 PY
-record "$rc" "tokens_in seeded regression gates on the tokens_in continuous axis (baseline vs bigprompt)"
+record "$rc" "nodes seeded regression gates on the nodes continuous axis (baseline vs manynodes)"
 
-echo "== u4. tokens_in A-vs-A control (baseline vs baseline2) must NOT gate =="
-run_json 0 "$artifacts/regress-tokensin-AvA.json" \
-	"tokens_in A-vs-A must NOT gate (continuous band widened)" -- \
-	catacomb regress --runs-dir "$runs_tokensin" \
-	--baseline label:basket=e2e-tokensin,variant=baseline \
-	--candidate label:basket=e2e-tokensin,variant=baseline2 \
+echo "== u4. nodes A-vs-A control (baseline vs baseline2) must NOT gate =="
+run_json 0 "$artifacts/regress-nodes-AvA.json" \
+	"nodes A-vs-A must NOT gate (continuous band widened)" -- \
+	catacomb regress --runs-dir "$runs_nodes" \
+	--baseline label:basket=e2e-nodes,variant=baseline \
+	--candidate label:basket=e2e-nodes,variant=baseline2 \
 	--metric-rel-delta "$ava_metric_band" --json
 rc=0
-python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-tokensin-AvA.json" || rc=$?
-record "$rc" "tokens_in A-vs-A reports zero regressions"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["regressions"]==0 and r["overall_verdict"]!="regression" else 1)' "$artifacts/regress-nodes-AvA.json" || rc=$?
+record "$rc" "nodes A-vs-A reports zero regressions"
 
 echo "== u5. bench e2e-redaction basket (5 live claude -p cells) — live secret redaction seam =="
 run_expect 0 "bench e2e-redaction basket" -- \
@@ -3230,7 +3230,7 @@ manifests = {
     "skill": "$manifest5",
     "mcp": "$manifest6",
     "failmode": "$manifest8",
-    "tokensin": "$manifest_tokensin",
+    "nodes": "$manifest_nodes",
     "redaction": "$manifest_redaction",
     "nested": "$manifest_nested",
     "composite": "$manifest_composite",
