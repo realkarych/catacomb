@@ -7,7 +7,7 @@
 # manynodes uses a long chain (many nodes) -> the seeded `nodes` continuous regression.
 # Node count is a structural axis, independent of billing mode and distinct from
 # tokens_out. Only the Read tool is allowed. Isolation flags match the other live
-# wrappers so local runs match CI. set -u makes an unset CHAIN_LEN a loud failure.
+# wrappers so local runs match CI. The ${CHAIN_LEN:?} expansion makes an unset CHAIN_LEN a loud failure.
 set -euo pipefail
 n="${CHAIN_LEN:?CHAIN_LEN must be set}"
 rm -f link*.txt
