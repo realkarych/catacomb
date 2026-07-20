@@ -201,6 +201,12 @@ manifest_tokensin="$work/manifest-tokensin.jsonl"
 # feeds Task 7's cost report.
 runs_redaction="$work/runs-redaction"
 manifest_redaction="$work/manifest-redaction.jsonl"
+# Live nested-subagent basket (step u8-u10): two FORCED levels of delegation. Same
+# descriptive-name convention as the tokens_in/redaction vars above; bench MkdirAll's
+# the runs dir on the first cell, so runs_nested needs no mkdir entry. manifest_nested
+# feeds Task 7's cost report.
+runs_nested="$work/runs-nested"
+manifest_nested="$work/manifest-nested.jsonl"
 db="$work/e2e.db"
 mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8" \
 	"$runs9" "$runs10" "$runs11"
@@ -2293,6 +2299,44 @@ run_json 0 "$artifacts/redaction-pack.out" "pack e2e-redaction for external audi
 rc=0
 if grep -Frq "$red_token" "$work/redaction-pack" 2>/dev/null; then rc=1; fi
 record "$rc" "live redaction: packed bundle contains no raw fake token"
+
+echo "== u8. bench e2e-nested basket (15 live claude -p cells) — two-level subagent nesting =="
+run_expect 0 "bench e2e-nested basket" -- \
+	catacomb bench basket-nested.yaml --runs-dir "$runs_nested" --manifest "$manifest_nested"
+
+echo "== u9. nested-subagent depth separation (seeded regression): baseline reduces >=2 subagent nodes, degraded <=1 =="
+# Depth is the count of distinct subagent nodes reduced from the FULL evidence
+# (session.jsonl + subagents/agent-*.jsonl): baseline forces two levels (>=2 nodes),
+# degraded one level (1 node). Tolerant of live jitter/timeouts (they only shrink the
+# denominator), like step n.
+count_subagent_depth() { # <variant> -> "hits total" where hits = runs with >=2 subagent nodes
+	local variant="$1" hits=0 total=0 d comb snap sf n
+	for d in "$runs_nested"/bench-e2e-nested-nested-"$variant"-r*; do
+		[ -f "$d/session.jsonl" ] || continue
+		total=$((total + 1))
+		comb="$work/nested-comb-$(basename "$d").jsonl"
+		cat "$d/session.jsonl" > "$comb"
+		for sf in "$d"/subagents/agent-*.jsonl; do
+			[ -f "$sf" ] && cat "$sf" >> "$comb"
+		done
+		snap="$work/nested-full-$(basename "$d").jsonl"
+		catacomb replay "$comb" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+		n=$(grep -o '"type":"subagent"' "$snap" | wc -l | tr -d ' ')
+		if [ "$n" -ge 2 ]; then hits=$((hits + 1)); fi
+	done
+	printf '%s %s' "$hits" "$total"
+}
+read -r nested_base_hits nested_base_total <<<"$(count_subagent_depth baseline)"
+read -r nested_deg_hits nested_deg_total <<<"$(count_subagent_depth degraded)"
+read -r nested_base2_hits nested_base2_total <<<"$(count_subagent_depth baseline2)"
+rc=0
+{ [ "$nested_base_hits" -ge 3 ] && [ "$nested_deg_hits" -le 1 ]; } || rc=1
+record "$rc" "nested depth: >=2 subagent nodes in a majority of baseline runs, <=1 in degraded (baseline $nested_base_hits/$nested_base_total >=3 vs degraded $nested_deg_hits/$nested_deg_total <=1)"
+
+echo "== u10. nested A-vs-A depth specificity: baseline2 also nests in a majority (no spurious separation) =="
+rc=0
+[ "$nested_base2_hits" -ge 3 ] || rc=1
+record "$rc" "nested A-vs-A: baseline2 also reaches depth 2 in a majority ($nested_base2_hits/$nested_base2_total >=3)"
 
 echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells) =="
 # The codex leg is OPTIONAL: unlike claude (hard-required at the top of this
