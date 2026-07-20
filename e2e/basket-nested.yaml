@@ -6,15 +6,17 @@
 # -> which delegates to a general-purpose subagent that runs sqlite3 (>=2 subagent
 # nodes). degraded delegates one level to a general-purpose subagent that runs the
 # query itself (1 subagent node — the seeded nesting regression). The workspace
-# stages e2e/agents/ into .claude/agents/, seeds the SQL db, and copies verify_sql.py.
-# Sonnet for reliable multi-level obedience.
+# stages e2e/agents/ into .claude/agents/. Gate is on subagent-node DEPTH only; the
+# leaf reports the query result in its reply and NO out/result.csv is asserted (a
+# subagent's file write can be sandbox-blocked in CI — probe finding), matching
+# basket-subagent.yaml's no-artifact posture. Sonnet for reliable multi-level obedience.
 basket: e2e-nested
 reps: 5
 tasks:
   - id: nested
     cmd: ["./nested.sh"]
     workspace:
-      cmd: ["sh", "-c", "mkdir -p .claude/agents && cp -R \"$E2E_DIR\"/agents/. .claude/agents/ && cp \"$E2E_DIR\"/nested.sh \"$E2E_DIR\"/verify_sql.py ."]
+      cmd: ["sh", "-c", "mkdir -p .claude/agents && cp -R \"$E2E_DIR\"/agents/. .claude/agents/ && cp \"$E2E_DIR\"/nested.sh ."]
     timeout: 420s
     env:
       CHILD_MODEL: claude-sonnet-5
