@@ -6,5 +6,5 @@ tools: Task
 
 You have ONLY the Task tool. You cannot run any command yourself. When asked to run
 a SQL query, spawn a subagent (call the Task tool with subagent_type general-purpose)
-and instruct that subagent to run the sqlite3 query and write out/result.csv. Report
-its result.
+and instruct that subagent to run the read-only sqlite3 query and report the rows in
+its reply (do not write any file). Report its result.
