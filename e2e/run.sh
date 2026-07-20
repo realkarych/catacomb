@@ -207,6 +207,13 @@ manifest_redaction="$work/manifest-redaction.jsonl"
 # feeds Task 7's cost report.
 runs_nested="$work/runs-nested"
 manifest_nested="$work/manifest-nested.jsonl"
+# Live composite mega-basket (step u11-u13): subagent + THREE distinct phases + skill +
+# verifier co-existing in one reduced graph. Same descriptive-name convention as the
+# tokens_in/redaction/nested vars above; bench MkdirAll's the runs dir on the first
+# cell, so runs_composite needs no mkdir entry. manifest_composite feeds Task 7's cost
+# report.
+runs_composite="$work/runs-composite"
+manifest_composite="$work/manifest-composite.jsonl"
 db="$work/e2e.db"
 mkdir -p "$runs1" "$runs2" "$runs3" "$runs4" "$runs5" "$runs6" "$runs7" "$runs8" \
 	"$runs9" "$runs10" "$runs11"
@@ -2337,6 +2344,48 @@ echo "== u10. nested A-vs-A depth specificity: baseline2 also nests in a majorit
 rc=0
 [ "$nested_base2_hits" -ge 3 ] || rc=1
 record "$rc" "nested A-vs-A: baseline2 also reaches depth 2 in a majority ($nested_base2_hits/$nested_base2_total >=3)"
+
+echo "== u11. bench e2e-composite basket (15 live claude -p cells) — subagent+phases+skill+verifier in one session =="
+run_expect 0 "bench e2e-composite basket" -- \
+	catacomb bench basket-composite.yaml --runs-dir "$runs_composite" --manifest "$manifest_composite"
+
+echo "== u12. composite subagent-presence separation (seeded regression): baseline delegates in a majority, degraded near-never =="
+count_composite_subagents() { # <variant> -> "hits total"
+	local variant="$1" hits=0 total=0 d comb snap sf
+	for d in "$runs_composite"/bench-e2e-composite-composite-"$variant"-r*; do
+		[ -f "$d/session.jsonl" ] || continue
+		total=$((total + 1))
+		comb="$work/composite-comb-$(basename "$d").jsonl"
+		cat "$d/session.jsonl" > "$comb"
+		for sf in "$d"/subagents/agent-*.jsonl; do
+			[ -f "$sf" ] && cat "$sf" >> "$comb"
+		done
+		snap="$work/composite-full-$(basename "$d").jsonl"
+		catacomb replay "$comb" --export-jsonl "$snap" >/dev/null 2>&1 || continue
+		if grep -q '"type":"subagent"' "$snap"; then hits=$((hits + 1)); fi
+	done
+	printf '%s %s' "$hits" "$total"
+}
+read -r comp_base_hits comp_base_total <<<"$(count_composite_subagents baseline)"
+read -r comp_deg_hits comp_deg_total <<<"$(count_composite_subagents degraded)"
+rc=0
+{ [ "$comp_base_hits" -ge 3 ] && [ "$comp_deg_hits" -le 1 ]; } || rc=1
+record "$rc" "composite delegation: subagent node in a majority of baseline runs, absent in degraded (baseline $comp_base_hits/$comp_base_total >=3 vs degraded $comp_deg_hits/$comp_deg_total <=1)"
+
+echo "== u13. composite rich-node coexistence (LOGGED — soft-live; hard-asserted in hermetic 40-composite.sh) =="
+# Multi-action subagent obedience is stochastic on sonnet, so this is informational.
+# It reports how many baseline runs reduced subagent + skill + >=2 distinct phase keys
+# together; the hermetic 40-composite.sh asserts the deterministic version.
+comp_rich=0
+for d in "$runs_composite"/bench-e2e-composite-composite-baseline-r*; do
+	snap="$work/composite-full-$(basename "$d").jsonl"
+	[ -f "$snap" ] || continue
+	has_sub=$(grep -c '"type":"subagent"' "$snap" || true)
+	has_skill=$(grep -c '"type":"skill"' "$snap" || true)
+	n_phase=$(grep -o '"phase_key":"[0-9a-f]*"' "$snap" | sort -u | wc -l | tr -d ' ')
+	if [ "$has_sub" -ge 1 ] && [ "$has_skill" -ge 1 ] && [ "$n_phase" -ge 2 ]; then comp_rich=$((comp_rich + 1)); fi
+done
+echo "  LOG   composite rich-node coexistence: $comp_rich baseline run(s) reduced subagent+skill+>=2 phase keys together (informational)"
 
 echo "== v. optional codex live leg (runtime: codex — 6 live codex exec cells) =="
 # The codex leg is OPTIONAL: unlike claude (hard-required at the top of this
