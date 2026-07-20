@@ -30,10 +30,11 @@
 #     baseline pin/record and external-scores smokes.
 #
 # MIXED-MODEL POLICY — the mark/multi-step/delegation-sensitive baskets pin
-# CHILD_MODEL: claude-sonnet-5 on five baskets (presence's haiku mark task, sql,
-# subagent, skill, mcp) because claude-haiku-4-5 no longer reliably follows their
-# instructions; the cheap baskets (continuous, the presence `echo` step task, and
-# failmode) stay on the default Haiku. A $0 preflight guardrail (just below the
+# CHILD_MODEL: claude-sonnet-5 on eight baskets (presence's haiku mark task, sql,
+# subagent, skill, mcp, plus the composite/nested/redaction complex baskets) because
+# claude-haiku-4-5 no longer reliably follows their instructions; the cheap baskets
+# (continuous, the presence `echo` step task, failmode, and the tokensin continuous
+# axis) stay on the default Haiku. A $0 preflight guardrail (just below the
 # binary checks) statically enforces this over the real basket files and fails
 # loudly if a sensitive basket loses its Sonnet pin — blocking a silent
 # blanket-Haiku swap that would quietly defang the gate.
@@ -50,10 +51,12 @@
 #
 # See docs/internal/reviews/2026-07-08-pv6b-live-calibration.md for the methodology.
 #
-# Cost: ~$3–7 of real API spend (114 bench cells — the presence/continuous/sql +
+# Cost: ~$14–20 of real API spend (164 bench cells — the presence/continuous/sql +
 # subagent/skill/mcp production baskets = 105 cells, the sensitive ones on sonnet,
 # subagent cells spawn children; plus the failmode basket's 9 cells, of which only
-# the 6 live Haiku clean/errseed cells cost a few cents — the 3 prefail cells are $0).
+# the 6 live Haiku clean/errseed cells cost a few cents — the 3 prefail cells are $0;
+# plus the four complex baskets — composite/nested/redaction on sonnet + tokensin on
+# haiku = 50 cells — added alongside a report-only per-basket cost total in the summary).
 #
 # CODEX SIDE — an OPTIONAL codex leg runs after the claude baskets when the codex
 # CLI is present AND authenticated (stored `codex login` or CODEX_API_KEY), and
@@ -134,11 +137,12 @@ repo="$(cd "$e2e_dir/.." && pwd)"
 export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # --- model-policy guardrail (Task 10) -----------------------------------------
-# The mixed Haiku+Sonnet policy is DELIBERATE, not incidental: the five
+# The mixed Haiku+Sonnet policy is DELIBERATE, not incidental: the eight
 # delegation-sensitive baskets — presence (the haiku checkpoint-mark task), sql,
-# subagent, skill, and mcp — pin CHILD_MODEL: claude-sonnet-5 because
-# claude-haiku-4-5 no longer reliably follows their mark / multi-step / delegation
-# instructions (each basket's own comment records the measured baseline failure).
+# subagent, skill, mcp, and the composite/nested/redaction complex baskets — pin
+# CHILD_MODEL: claude-sonnet-5 because claude-haiku-4-5 no longer reliably follows
+# their mark / multi-step / delegation instructions (each basket's own comment
+# records the measured baseline failure).
 # A silent blanket-Haiku swap would re-introduce those failures and quietly defang
 # the gate, so this $0 static check over the REAL basket files fails loudly and
 # early if any sensitive basket loses its Sonnet pin. The cheap baskets —
@@ -146,7 +150,7 @@ export PYTHONPATH="$repo/integrations/verifier/src${PYTHONPATH:+:$PYTHONPATH}"
 # Haiku, and are asserted to NOT pin Sonnet. Runs on every invocation, before any
 # spend; no fixtures, no auth, no network.
 sonnet_pin='CHILD_MODEL: claude-sonnet-5'
-for b in basket-presence.yaml basket-sql.yaml basket-subagent.yaml basket-skill.yaml basket-mcp.yaml; do
+for b in basket-presence.yaml basket-sql.yaml basket-subagent.yaml basket-skill.yaml basket-mcp.yaml basket-composite.yaml basket-nested.yaml basket-redaction.yaml; do
 	grep -q "$sonnet_pin" "$e2e_dir/$b" ||
 		fatal "model-policy guardrail: $b lost its Sonnet pin ('$sonnet_pin') — a delegation-sensitive basket must NOT default to Haiku (a blanket-Haiku swap would re-introduce the measured mark/sql/delegation failures)"
 done

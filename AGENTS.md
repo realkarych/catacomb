@@ -73,7 +73,7 @@ This is enforced in CI by a test in [`internal/codepolicy`](internal/codepolicy)
 | DeepEval bridge | `pytest` over [`integrations/deepeval`](integrations/deepeval) (own workflow) |
 | Security scanners | `gitleaks`, `govulncheck`, `gosec`, CodeQL, `dependency-review`, `actionlint`+`zizmor` ([`security.yml`](.github/workflows/security.yml)) |
 | E2E hermetic (per-PR) | `.github/workflows/e2e-hermetic.yml` — fixture-transcript pipeline incl. subagent/skill/real-MCP production scenarios; $0 |
-| E2E live gate (weekly/dispatch) | `.github/workflows/e2e-live.yml` — real `claude -p` baskets: presence/continuous/sql + subagent/skill/mcp production scenarios; needs `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| E2E live gate (weekly/dispatch) | `.github/workflows/e2e-live.yml` — real `claude -p` baskets: presence/continuous/sql + subagent/skill/mcp production scenarios; also drives a composite mega-basket (≥3 phases), nested subagents, a live redaction gate, and a `tokens_in` continuous axis, with a report-only per-basket cost total; needs `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 
 ## Build / dev
 
