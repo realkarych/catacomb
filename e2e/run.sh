@@ -3210,24 +3210,44 @@ print(f"baseline list after rm: e2e-presence-main absent (remaining: {names!r})"
 PY
 record "$rc" "baseline list no longer shows e2e-presence-main after rm"
 
-echo "== w. cost report =="
-python3 - "$manifest1" "$manifest2" "$manifest3" "$manifest4" "$manifest5" "$manifest6" "$manifest8" "$artifacts/cost.txt" <<'PY'
+echo "== w. cost report (informational — never fails the run) =="
+python3 - "$artifacts/cost.txt" <<PY
 import json, sys
 
+manifests = {
+    "presence": "$manifest1",
+    "continuous": "$manifest2",
+    "sql": "$manifest3",
+    "subagent": "$manifest4",
+    "skill": "$manifest5",
+    "mcp": "$manifest6",
+    "failmode": "$manifest8",
+    "tokensin": "$manifest_tokensin",
+    "redaction": "$manifest_redaction",
+    "nested": "$manifest_nested",
+    "composite": "$manifest_composite",
+}
+out = open(sys.argv[1], "w")
 total = 0.0
-for p in sys.argv[1:8]:
+for name, path in manifests.items():
+    sub = 0.0
     try:
-        for line in open(p):
+        for line in open(path):
             line = line.strip()
             if not line:
                 continue
             c = json.loads(line).get("cost_usd")
             if isinstance(c, (int, float)):
-                total += c
+                sub += c
     except FileNotFoundError:
-        pass
-open(sys.argv[8], "w").write(f"total live spend: ${total:.2f}\n")
-print(f"total live spend: ${total:.2f}")
+        continue
+    total += sub
+    msg = f"  {name:<11} \${sub:.2f}"
+    print(msg)
+    out.write(msg + "\n")
+msg = f"total live spend: \${total:.2f} (target \$20; report-only, never fails the run)"
+print(msg)
+out.write(msg + "\n")
 PY
 # The codex leg is token-billed and codex reports NO cost_usd, so it can never be
 # part of the dollar total above — note it separately so the spend record is honest.
