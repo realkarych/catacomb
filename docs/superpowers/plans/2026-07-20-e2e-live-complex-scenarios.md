@@ -403,6 +403,8 @@ git commit -m "test(e2e): add live secret-redaction gate to the E2E live basket"
 
 Two forced levels of delegation via a staged custom subagent (`tools: Task`), gating on depth-2 subagent-node presence. Hermetic hard-mirror `25-multi-nested-subagent.sh` already exists.
 
+> **Revised 2026-07-20 after a live probe** (see memory `claude-p-subagent-tool-behavior`): in `claude -p` 2.1.215 a subagent keeps its OWN full toolset (it runs Bash), and nesting works — so the earlier fear that a Task-only main yields a toolless subagent is disproven. BUT a subagent's file WRITE can be blocked by Claude Code's bash-tool sandbox, so this basket **does NOT assert any `out/result.csv` artifact** — it gates purely on subagent-node DEPTH (count), exactly like `basket-subagent.yaml`. The leaf runs the SQL query and reports the result in its reply (no file write); `verify_sql.py` is NOT copied or used.
+
 **Files:**
 - Create: `e2e/agents/sql-delegator.md`
 - Create: `e2e/nested.sh`
@@ -410,7 +412,7 @@ Two forced levels of delegation via a staged custom subagent (`tools: Task`), ga
 - Modify: `e2e/run.sh` (vars + section)
 
 **Interfaces:**
-- Consumes: the SQL seed DB path `$SQL_DB` (already exported by run.sh's SQL setup, ~line 196–204) and `e2e/verify_sql.py` (existing).
+- Consumes: the SQL seed DB path `$SQL_DB` (already exported by run.sh's SQL setup, ~line 196–204). The gate does NOT verify an artifact, so `verify_sql.py` is not used.
 - Produces: basket id `e2e-nested`; `runs_nested`; `manifest_nested`. Sensitive basket → add to the model-policy guard (Task 8).
 
 - [ ] **Step 1: Write the custom subagent `e2e/agents/sql-delegator.md`**
@@ -439,14 +441,15 @@ its result.
 # degraded gives the main agent "Task" but instructs it to delegate to a
 # general-purpose subagent that runs the query ITSELF (depth 1, no nested node) —
 # the seeded nesting regression. The workspace stages e2e/agents/ into the cell's
-# .claude/agents/ so --setting-sources project discovers the custom agent, seeds the
-# SQL db, and copies verify_sql.py in. reduce synthesizes a subagent node per
-# agentId from the subagents/agent-*.jsonl sub-transcripts; run.sh counts depth (>=2
-# nodes for baseline, <=1 for degraded). Sonnet for reliable multi-level obedience.
+# .claude/agents/ so --setting-sources project discovers the custom agent. reduce
+# synthesizes a subagent node per agentId from the subagents/agent-*.jsonl
+# sub-transcripts; run.sh counts DEPTH (>=2 nodes for baseline, <=1 for degraded).
+# The gate is subagent-node depth ONLY: no out/result.csv is asserted (a subagent's
+# file write can be sandbox-blocked in CI — probe finding), so the leaf just runs the
+# read query and reports the totals in its reply, matching basket-subagent.yaml's
+# "no artifact verified" posture. Sonnet for reliable multi-level obedience.
 set -euo pipefail
-mkdir -p out
-rm -f out/result.csv
-exec claude -p "There is a SQLite database (table orders(id, region, status, amount)) at ${SQL_DB}. ${NESTED_INSTRUCTION} The final subagent must compute the total paid amount (status='paid') per region, columns region and total, ordered by region, and write it as CSV with a header to out/result.csv using: sqlite3 -header -csv \"${SQL_DB}\" -cmd \".once out/result.csv\" \"<SELECT>\"" \
+exec claude -p "There is a SQLite database (table orders(id, region, status, amount)) at ${SQL_DB}. ${NESTED_INSTRUCTION} The final subagent must run this read-only query and report the rows in its reply (do NOT write any file): sqlite3 -header -csv \"${SQL_DB}\" \"SELECT region, SUM(amount) AS total FROM orders WHERE status='paid' GROUP BY region ORDER BY region\"" \
 	--model "${CHILD_MODEL:-claude-sonnet-5}" \
 	--output-format stream-json --verbose \
 	--setting-sources project --strict-mcp-config \
@@ -469,15 +472,17 @@ Expected: exit 0.
 # -> which delegates to a general-purpose subagent that runs sqlite3 (>=2 subagent
 # nodes). degraded delegates one level to a general-purpose subagent that runs the
 # query itself (1 subagent node — the seeded nesting regression). The workspace
-# stages e2e/agents/ into .claude/agents/, seeds the SQL db, and copies verify_sql.py.
-# Sonnet for reliable multi-level obedience.
+# stages e2e/agents/ into .claude/agents/. Gate is on subagent-node DEPTH only; the
+# leaf reports the query result in its reply and NO out/result.csv is asserted (a
+# subagent's file write can be sandbox-blocked in CI — probe finding), matching
+# basket-subagent.yaml's no-artifact posture. Sonnet for reliable multi-level obedience.
 basket: e2e-nested
 reps: 5
 tasks:
   - id: nested
     cmd: ["./nested.sh"]
     workspace:
-      cmd: ["sh", "-c", "mkdir -p .claude/agents && cp -R \"$E2E_DIR\"/agents/. .claude/agents/ && cp \"$E2E_DIR\"/nested.sh \"$E2E_DIR\"/verify_sql.py ."]
+      cmd: ["sh", "-c", "mkdir -p .claude/agents && cp -R \"$E2E_DIR\"/agents/. .claude/agents/ && cp \"$E2E_DIR\"/nested.sh ."]
     timeout: 420s
     env:
       CHILD_MODEL: claude-sonnet-5
@@ -569,6 +574,8 @@ git commit -m "test(e2e): add nested-subagent live basket (forced two-level dele
 ## Task 4: Composite mega-basket
 
 One session carrying ≥3 distinct phases (distinct name / occurrence / subagent-enclosing) + skill + verifiable artifact; hard-gates on forced subagent presence, logs the rich-node coexistence.
+
+> **Validated 2026-07-20 by the live probe** (memory `claude-p-subagent-tool-behavior`): a `claude -p` 2.1.215 subagent CAN invoke `mcp__catacomb__mark` and `Skill` from inside itself — so the composite's subagent marking `work` twice and invoking the skill is viable. The only residual uncertainty is whether the subagent-invoked skill's file WRITE lands in CI (bash-tool sandbox), so the artifact/`verifier.pass` stays SOFT (the basket keeps the `verify:` hook, but the run.sh section hard-gates only the forced subagent presence and LOGS coexistence + verifier — never hard-fails on the artifact).
 
 **Files:**
 - Create: `e2e/composite.sh`
