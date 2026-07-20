@@ -869,7 +869,7 @@ Replace the `python3 - "$manifest1" ... <<'PY' ... PY` block in step `w` with on
 
 ```bash
 echo "== w. cost report (informational — never fails the run) =="
-python3 - "$artifacts/cost.txt" <<PY
+python3 - "$artifacts/cost.txt" <<PY || true
 import json, sys
 
 manifests = {
@@ -897,7 +897,7 @@ for name, path in manifests.items():
             c = json.loads(line).get("cost_usd")
             if isinstance(c, (int, float)):
                 sub += c
-    except FileNotFoundError:
+    except (OSError, ValueError):
         continue
     total += sub
     msg = f"  {name:<11} \${sub:.2f}"
