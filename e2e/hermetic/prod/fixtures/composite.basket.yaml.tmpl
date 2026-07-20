@@ -4,7 +4,7 @@ tasks:
   - id: composite
     cmd: ["__PROD__/fixtures/emit.sh"]
     dir: __WORK__/cellwork
-    checkpoints: [work]
+    checkpoints: [orchestration, work]
     artifacts: ["out/result.csv"]
     verify:
       cmd: ["python3", "__PROD__/fixtures/verify_token.py"]
